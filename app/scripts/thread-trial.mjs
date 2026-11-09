@@ -600,6 +600,19 @@ async function dockedIn(windowId, what) {
 }
 const composerValue = (contentsId) => client.main.read(contentsId, `document.querySelector('[data-ev="discussion-composer"]')?.value ?? null`);
 const composerFocused = (contentsId) => client.main.read(contentsId, `JSON.stringify({ focused: document.hasFocus(), active: document.activeElement?.getAttribute('data-ev') ?? document.activeElement?.tagName ?? null })`).then((text) => JSON.parse(text));
+/** DSP-184: the review discussion's saved questions, read from the isolated profile on disk. */
+function savedQuestions() {
+  const found = [];
+  const walkFolder = (folder) => {
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory()) walkFolder(full);
+      else if (entry.name.endsWith('.discussion.json')) found.push(full);
+    }
+  };
+  if (profile !== '' && fs.existsSync(profile)) walkFolder(profile);
+  return found.flatMap((file) => JSON.parse(fs.readFileSync(file, 'utf8')).messages ?? []).filter((message) => message.role === 'question').length;
+}
 const turnCount = (contentsId) => client.main.read(contentsId, `document.querySelectorAll('.rv-discussion-turn').length`);
 
 /** The whole reading of a docked discussion, checked: drawn, said visible, the room sized, and a click and typed text reaching it. */
@@ -1256,19 +1269,20 @@ async function main() {
   check('Ask from an answer names the question it answered', true);
   await osClickAt(pcw, '[data-ev="discussion-quote-clear"]');
   await clickInPanel('right-tab-step');
-  const explainedBefore = await read(pcw, `document.querySelectorAll('[data-ev="step-deepening"]').length`);
-  const turnsBeforeExplain = await turnCount(pcw);
-  await selectText(pcw, '.rv-step-panel .rv-explanation p');
+  // DSP-184: Explain this from Step is asked at once in the step's own explanation channel and
+  // shown in Step with the selection it explains; it adds nothing to the discussion.
+  const explainedBefore = await read(pcw, `document.querySelectorAll('[data-ev="profile-explanation"][data-action="explain"]').length`);
+  const questionsBeforeExplain = savedQuestions();
+  const explainPicked = await selectText(pcw, '.rv-step-panel .rv-explanation p');
   await osClickAt(pcw, '[data-ev="walk-explain-this"]');
-  // Explain this is asked at once; the panel may show the discussion, where it goes first.
-  await poll('Explain this asked', async () => (await turnCount(pcw)) > turnsBeforeExplain || ((await read(pcw, `document.querySelectorAll('[data-ev="step-deepening"]').length`)) ?? 0) > explainedBefore, 20_000);
-  check('Explain this from the explanation is asked at once', true);
-  check('the docked panel is still drawn after Explain this showed it again', (await panelView())?.view.visible === true, JSON.stringify((await panelView())?.view ?? null));
-  if ((await read(pcw, `document.querySelector('[data-ev="discussion-composer"]')?.offsetParent!=null`)) !== true) await clickInPanel('right-tab-discussion');
-  await delay(300);
-  const explainScroll = JSON.parse(await read(pcw, DISCUSSION_SCROLLER));
-  check('the Explain this question is in view at the end of the discussion', (await turnCount(pcw)) > turnsBeforeExplain && explainScroll.gap <= 64, JSON.stringify(explainScroll));
-  await poll('the explanation done', async () => (await lastAnswerStatus(pcw)) === 'done', 90_000);
+  await poll('Explain this asked', async () => ((await read(pcw, `document.querySelectorAll('[data-ev="profile-explanation"][data-action="explain"]').length`)) ?? 0) > explainedBefore, 20_000);
+  check('Explain this from the explanation is asked at once, in Step', true);
+  check('the docked panel is still drawn after Explain this', (await panelView())?.view.visible === true, JSON.stringify((await panelView())?.view ?? null));
+  await poll('the explanation done', async () => /SIMULATED explain-this/.test(await read(pcw, `document.querySelector('[data-ev="profile-explanation"][data-action="explain"]')?.textContent ?? ''`)), 90_000);
+  const explainedText = await read(pcw, `document.querySelector('[data-ev="profile-explanation"][data-action="explain"]').textContent`);
+  check('Explain this explains the selected text, shown with it in Step', explainedText.includes(explainPicked.trim().slice(0, 20)) && /only the selection is explained/.test(explainedText), JSON.stringify({ picked: explainPicked.slice(0, 60), shown: explainedText.slice(0, 300) }));
+  await w_shot(pcw, '27b-explain-this-in-step');
+  check('Explain this from Step adds nothing to the discussion', savedQuestions() === questionsBeforeExplain, JSON.stringify({ before: questionsBeforeExplain, after: savedQuestions() }));
 
   stage = 'a selection in a thread is asked in that thread';
   await clickInPanel('right-tab-step');

@@ -12,8 +12,10 @@
  * widened by Git's default three lines of context on the focus's own side (base lines
  * for a base focus, target lines for a target focus), so a focus that starts on the
  * unchanged line just above a change still belongs to it. A station joins the pane of
- * the station just before it in the walk when both are in the same changed file and
- * its hunks overlap the hunks of that pane so far. Only neighbours in walk order are
+ * the station just before it in the walk only as the other side of the same change: the
+ * pane holds one station so far, at the other side of the same changed file, and their
+ * hunks overlap (DSP-185: one pane per code place; before it, any station in the same
+ * change area joined, so close places of one file shared a pane that scrolled). Only neighbours in walk order are
  * joined: the map reads left to right in walk order, and a later return to the same
  * change still opens a new pane further right. Places in separate regions of a file,
  * in other files, in unchanged files or in binary files keep panes of their own.
@@ -91,16 +93,19 @@ export function hunksOf(focus: PaneFocus, file: PaneDiffFile | null): ReadonlySe
 
 /** The panes of a walk's stations, given each station's focus in walk order. */
 export function panesOf(foci: readonly PaneFocus[], diffFileOf: (path: string) => PaneDiffFile | null): WalkPane[] {
-  const panes: { index: number; path: string; stations: number[]; hunks: Set<number> }[] = [];
+  const panes: { index: number; path: string; side: RevisionSide; stations: number[]; hunks: Set<number> }[] = [];
   foci.forEach((focus, station) => {
     const hunks = hunksOf(focus, diffFileOf(focus.path));
     const last = panes[panes.length - 1];
-    if (last !== undefined && last.path === focus.path && [...hunks].some((hunk) => last.hunks.has(hunk))) {
+    // DSP-185: a pane per place. Only the other side of the same change joins: one station of
+    // the pane so far, at the other side, in the same change area. Two places at the same side
+    // of one file are two panes however close, so stepping never scrolls one shared file view.
+    if (last !== undefined && last.path === focus.path && last.stations.length === 1 && last.side !== focus.side && [...hunks].some((hunk) => last.hunks.has(hunk))) {
       last.stations.push(station);
       hunks.forEach((hunk) => last.hunks.add(hunk));
       return;
     }
-    panes.push({ index: panes.length, path: focus.path, stations: [station], hunks: new Set(hunks) });
+    panes.push({ index: panes.length, path: focus.path, side: focus.side, stations: [station], hunks: new Set(hunks) });
   });
   return panes.map(({ index, path, stations }) => ({ index, path, stations }));
 }

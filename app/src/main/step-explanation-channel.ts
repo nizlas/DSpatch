@@ -26,8 +26,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AgentEvent } from '../adapter/types';
-import { PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES, isPublicProfile, outlineFrom, type PresentationSection } from '../shared/presentation-profiles';
-import { buildEnvelopePrompt, splitCodeAnswer, splitDetails, type DiscussionIdentity, type DiscussionProvider, type EnvelopeOutcome } from '../shared/review-discussion';
+import { PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES, isPublicProfile, outlineFrom, type PresentationSection, type PublicProfile } from '../shared/presentation-profiles';
+import { buildEnvelopePrompt, splitCodeAnswer, splitDetails, type ContextEnvelope, type DiscussionIdentity, type DiscussionProvider, type EnvelopeOutcome } from '../shared/review-discussion';
 import {
   EXPLANATION_ACTIONS,
   STEP_EXPLANATIONS_FORMAT_VERSION,
@@ -100,6 +100,35 @@ function questionFor(action: ExplanationAction, profile: string, selection: stri
     case 'explain':
       return `Explain this, in the context of this step: "${(selection ?? '').slice(0, 2000)}"`;
   }
+}
+
+/**
+ * The exact prompt a step explanation sends (DSP-185: one function, so a script can build the
+ * same prompts outside a session for an independent check): the step's envelope, the question
+ * for the action, the folder section when the agent can read the revisions, and the profile's
+ * section with what was shown before and the walk's outline.
+ */
+export function stepExplanationPrompt(input: {
+  readonly envelope: ContextEnvelope;
+  readonly action: ExplanationAction;
+  readonly profile: PublicProfile;
+  readonly selection?: string;
+  /** What was shown before, oldest first, along the parent links. */
+  readonly chain: readonly { readonly label: string; readonly text: string }[];
+  readonly outline: unknown;
+  /** The revision folder's prompt section, or `null` without code access. */
+  readonly folderSection: string | null;
+}): string {
+  const { envelope, action, profile, selection, outline, folderSection } = input;
+  const chain = [...input.chain];
+  const prepared = envelope.explanation;
+  // With nothing of this profile yet, the walk's own text.
+  if (chain.length === 0 && action !== 'present' && prepared !== null) {
+    chain.push({ label: 'The prepared explanation of the step', text: [prepared.summary, prepared.body, prepared.why].filter((part) => part.trim() !== '').join('\n\n') });
+  }
+  const mode: PresentationSection['mode'] = action;
+  const section: PresentationSection = { profile, mode, shown: mode === 'present' ? [] : mode === 'regenerate' || mode === 'more' || mode === 'explain' ? chain.slice(-1) : chain, walk: outlineFrom(outline) };
+  return buildEnvelopePrompt(envelope, questionFor(action, PROFILE_PROMPT_NAMES[profile], selection), null, folderSection === null ? null : { folder: folderSection }, null, section);
 }
 
 export class StepExplanationChannel {
@@ -329,13 +358,15 @@ export class StepExplanationChannel {
       }
       // What was shown before, along the parent links; with nothing of this profile yet, the walk's own text.
       const chain = chainTo(this.entries, parentId).map((entry) => ({ label: explanationLabel(entry), text: splitDetails(entry.text).short }));
-      const prepared = envelope.explanation;
-      if (chain.length === 0 && action !== 'present' && prepared !== null) {
-        chain.push({ label: 'The prepared explanation of the step', text: [prepared.summary, prepared.body, prepared.why].filter((part) => part.trim() !== '').join('\n\n') });
-      }
-      const mode: PresentationSection['mode'] = action as ExplanationAction;
-      const section: PresentationSection = { profile: slot.profile, mode, shown: mode === 'present' ? [] : mode === 'regenerate' || mode === 'more' || mode === 'explain' ? chain.slice(-1) : chain, walk: outlineFrom(raw['outline']) };
-      prompt = buildEnvelopePrompt(envelope, questionFor(action as ExplanationAction, PROFILE_PROMPT_NAMES[slot.profile], selection), null, session.revisions === null ? null : { folder: session.revisions.section }, null, section);
+      prompt = stepExplanationPrompt({
+        envelope,
+        action: action as ExplanationAction,
+        profile: slot.profile,
+        ...(selection === undefined ? {} : { selection }),
+        chain,
+        outline: raw['outline'],
+        folderSection: session.revisions === null ? null : session.revisions.section,
+      });
       this.counter += 1;
       const entry: Mutable = {
         ...slot,
@@ -546,6 +577,9 @@ export class StepExplanationChannel {
             entry.references = checked.references;
             if ((checked.contextReferences?.length ?? 0) > 0) {
               entry.contextReferences = checked.contextReferences;
+            }
+            if ((checked.stepReferences?.length ?? 0) > 0) {
+              entry.stepReferences = checked.stepReferences;
             }
             if (checked.insufficient) {
               entry.insufficient = true;

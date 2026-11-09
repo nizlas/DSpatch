@@ -327,6 +327,10 @@ interface SimStep {
   readonly summary: string;
   readonly body: string;
   readonly details?: string;
+  /** DSP-185: why several places are shown together, on the one comparison step. */
+  readonly together?: string;
+  /** DSP-185: what is new at a place shown again. */
+  readonly revisit?: string;
   readonly places: unknown[];
 }
 
@@ -382,6 +386,49 @@ function stepExplanation(
       'A real agent explains the reason for the change from the code; this text only shows the shape of a Standard explanation.',
     details: `SIMULATED deepening (Standard): the mechanism step by step in ${where}, the special case${call === null ? '' : ` of ${call} giving nothing back`}, and the test that covers it.`,
   };
+}
+
+/**
+ * DSP-185, SIMULATED: the changed ranges of one file in the order a walk follows them. A range
+ * that calls a function defined in another changed range of the same file and side is followed
+ * by that range, in call order, which records the call it is reached from; the rest keep their
+ * order. Stands in for a real agent's judgement that the implementations are central.
+ */
+function callOrder(
+  ranges: readonly SimRange[],
+  linesOf: (side: 'base' | 'target') => string[] | null,
+): { readonly range: SimRange; readonly from: { readonly name: string; readonly range: SimRange } | null }[] {
+  const defines = (range: SimRange): string | null => {
+    const text = (linesOf(range.side) ?? []).slice(range.start - 1, range.end).join('\n');
+    return /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/.exec(text)?.[1] ?? null;
+  };
+  const calls = (range: SimRange): string[] => {
+    const text = (linesOf(range.side) ?? []).slice(range.start - 1, range.end).join('\n');
+    return [...text.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map((match) => match[1] ?? '').filter((name) => name !== '' && !/^(function|if|for|while|switch|return)$/.test(name));
+  };
+  const out: { range: SimRange; from: { name: string; range: SimRange } | null }[] = [];
+  const placed = new Set<SimRange>();
+  const visit = (range: SimRange, from: { name: string; range: SimRange } | null): void => {
+    if (placed.has(range)) {
+      return;
+    }
+    placed.add(range);
+    out.push({ range, from });
+    const own = defines(range);
+    for (const name of calls(range)) {
+      if (name === own) {
+        continue;
+      }
+      const callee = ranges.find((other) => other !== range && other.side === range.side && !placed.has(other) && defines(other) === name);
+      if (callee !== undefined) {
+        visit(callee, { name, range });
+      }
+    }
+  };
+  for (const range of ranges) {
+    visit(range, null);
+  }
+  return out;
 }
 
 function prepareWalks(prompt: string, reader: Reader): string {
@@ -457,26 +504,25 @@ function prepareWalks(prompt: string, reader: Reader): string {
         purpose: `You will see each change in ${base(filePath)} and what it calls. SIMULATED: written by the presentation adapter, not by a model.`,
         // DSPATCH_REVIEW_SIM=threads (DSP-175): in line order, a change's old and new lines
         // one after the other, as an agent explains a change from both sides.
-        steps: (process.env['DSPATCH_REVIEW_SIM'] === 'threads' ? [...ranges].sort((a, b) => a.start - b.start || (a.side === 'base' ? -1 : 1)) : ranges).map((range, index) => {
+        // DSP-185: one place per step; a called function's definition is a step of its own after the call.
+        // DSP-185: a function the change calls and defines in another changed part of the same
+        // file is visited right after its caller, in call order, reached from the call.
+        steps: callOrder(process.env['DSPATCH_REVIEW_SIM'] === 'threads' ? [...ranges].sort((a, b) => a.start - b.start || (a.side === 'base' ? -1 : 1)) : ranges, linesOf).flatMap(({ range, from: calledFrom }, index): SimStep[] => {
           const lines = linesOf(range.side);
           const changedText = (lines ?? []).slice(range.start - 1, range.end).join('\n');
           const definition = lines === null ? null : followCall(reader, range.side, filePath, lines, changedText);
           // DSP-175: a call into a package another repository of the workspace defines.
           const inContext = definition !== null || lines === null ? null : followCallIntoContext(reader, lines, changedText);
           const places: unknown[] = [
-            { label: `${base(filePath)} lines ${String(range.start)}–${String(range.end)}`, path: filePath, side: range.side, start: range.start, end: range.end },
-          ];
-          if (definition !== null) {
-            places.push({
-              label: `Where ${definition.name} is defined`,
-              path: definition.path,
+            {
+              label: calledFrom === null ? `${base(filePath)} lines ${String(range.start)}–${String(range.end)}` : `${calledFrom.name}, as the change adds it`,
+              path: filePath,
               side: range.side,
-              start: definition.start,
-              end: definition.end,
-              anchor: definition.name,
-              from: { label: `The call of ${definition.name}`, path: filePath, side: range.side, start: range.start, end: range.end },
-            });
-          }
+              start: range.start,
+              end: range.end,
+              ...(calledFrom === null ? {} : { from: { label: `The call of ${calledFrom.name}`, path: filePath, side: range.side, start: calledFrom.range.start, end: calledFrom.range.end } }),
+            },
+          ];
           if (inContext !== null) {
             places.push({
               label: `Where ${inContext.name} is defined, in ${inContext.repository} (context)`,
@@ -489,23 +535,50 @@ function prepareWalks(prompt: string, reader: Reader): string {
             });
           }
           const legacyBody =
+              (calledFrom === null ? '' : `**Where this comes from:** the caller calls \`${calledFrom.name}\` (the step before); here is what it does.\n\n`) +
               `**What happens:** ${range.side === 'base' ? 'these lines were removed' : 'these lines were added or changed'} in \`${filePath}\`.\n\n` +
               (inContext === null
                 ? ''
                 : `**What it depends on:** \`${inContext.name}\`, defined in \`${inContext.repository}\` (another repository of the workspace, read as context) in \`${inContext.path}\` lines ${String(inContext.start)}–${String(inContext.end)}.\n\n`) +
               (definition === null
                 ? ''
-                : `**What it depends on:** \`${definition.name}\`, defined in \`${definition.path}\` lines ${String(definition.start)}–${String(definition.end)}, which this change does not touch.` +
+                : `**What it depends on:** \`${definition.name}\`, which this change does not touch; the next step shows where it is defined.` +
                   (definition.returnsNull ? ' It can return `null`.' : '') +
                   '\n\n') +
               `**Why:** a simulated answer cannot say; a real agent explains the reason from the code.\n\n` +
               `**Notice:** step ${String(index + 1)} of this file.`;
-          return {
-            title: `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}`,
+          const change: SimStep = {
+            title: calledFrom === null ? `${range.side === 'base' ? 'Removed' : 'Changed'} lines ${String(range.start)}–${String(range.end)}` : `What ${calledFrom.name} does`,
             summary: `${range.side === 'base' ? 'The From version had' : 'The To version has'} these lines in ${base(filePath)}.`,
             ...stepExplanation(profile, legacyBody, filePath, range, definition),
             places,
           };
+          if (definition === null) {
+            return [change];
+          }
+          // The definition the change calls, reached from the call: its own step, building on the one before.
+          return [
+            change,
+            {
+              title: `Where ${definition.name} is defined`,
+              summary: `The definition the previous step calls, unchanged by this change.`,
+              body:
+                `${profile === null ? '' : `SIMULATED ${profile}: `}**What happens:** in the previous step the changed lines call \`${definition.name}\`; here is its definition, which this change does not touch.` +
+                (definition.returnsNull ? ' It can return `null`, and the caller decides what that means.' : '') +
+                '\n\n**Why:** a simulated answer cannot say; a real agent explains what the definition means for the change.',
+              places: [
+                {
+                  label: `Where ${definition.name} is defined`,
+                  path: definition.path,
+                  side: range.side,
+                  start: definition.start,
+                  end: definition.end,
+                  anchor: definition.name,
+                  from: { label: `The call of ${definition.name}`, path: filePath, side: range.side, start: range.start, end: range.end },
+                },
+              ],
+            },
+          ];
         }),
       },
     ];
@@ -520,8 +593,29 @@ function prepareWalks(prompt: string, reader: Reader): string {
         title: 'Back to the first change',
         summary: 'The first change again, now that the rest has been read.',
         body: '**What happens:** the walk returns to where it began. SIMULATED: a later return to the same code, in a pane of its own.',
+        revisit: 'Now that the rest has been read, the first change reads as the start of everything that follows.',
         places: [{ ...(firstPlace as Record<string, unknown>), label: 'The first change, again' }],
       } as never);
+    }
+  }
+  // DSP-185: in the default scenario, one justified exception: two changed places of the first
+  // code walk shown side by side, with the reason why seeing them together helps.
+  if (process.env['DSPATCH_REVIEW_SIM'] === undefined || process.env['DSPATCH_REVIEW_SIM'] === '') {
+    for (const walk of walks) {
+      const ownPlaces = walk.kind === 'walk' ? walk.steps.map((step) => step.places[0] as { path?: string; side?: string; start?: number; end?: number; label?: string } | undefined) : [];
+      const changed = ownPlaces.filter((place) => place !== undefined && place.side === 'target' && !('from' in place));
+      const [first, second] = changed;
+      if (first === undefined || second === undefined || isData(String(first.path)) || first.path !== second.path) {
+        continue;
+      }
+      walk.steps.push({
+        title: 'The two changes side by side',
+        summary: 'Two of the changed places of this file, compared.',
+        body: `${profile === null ? '' : `SIMULATED ${profile}: `}**What to compare:** the earlier steps explained each of these places on its own; side by side they show whether the file changes in the same way in both. SIMULATED: a real agent says what the comparison shows.`,
+        together: 'Seeing both changed places at once lets the reader compare how the two parts of the file change.',
+        places: [first, second].map((place) => ({ ...place, label: `${String(place?.label ?? '')} (compared)` })),
+      } as SimStep);
+      break;
     }
   }
   const readings = walks.filter((walk) => walk.kind === 'reading').length;
@@ -532,6 +626,29 @@ function prepareWalks(prompt: string, reader: Reader): string {
     walks,
   };
   lastWalks = answer;
+  // DSP-185: DSPATCH_REVIEW_SIM=crowded puts two places that each need their own explanation in
+  // one step with no reason, and answers the repair round the same way; crowded-once corrects it
+  // in the repair round.
+  const crowdedMode = process.env['DSPATCH_REVIEW_SIM'];
+  if (crowdedMode === 'crowded' || crowdedMode === 'crowded-once') {
+    const crowded = JSON.parse(JSON.stringify(answer)) as { walks: { steps: { title: string; body: string; places: { path?: string }[] }[] }[] };
+    const at = crowded.walks.flatMap((walk, walkIndex) => walk.steps.map((step, stepIndex) => ({ walkIndex, stepIndex, path: step.places[0]?.path ?? '' })));
+    const first = at[0];
+    const second = at.find((entry) => first !== undefined && entry.path !== first.path);
+    const into = first === undefined ? undefined : crowded.walks[first.walkIndex]?.steps[first.stepIndex];
+    const from = second === undefined ? undefined : crowded.walks[second.walkIndex]?.steps[second.stepIndex];
+    if (first !== undefined && second !== undefined && into !== undefined && from !== undefined) {
+      into.places = [...into.places, ...from.places];
+      into.title = `${into.title} and ${from.title}`;
+      into.body = `${into.body}\n\nSIMULATED: one shared text for two places.`;
+      crowded.walks[second.walkIndex]?.steps.splice(second.stepIndex, 1);
+      crowded.walks = crowded.walks.filter((walk) => walk.steps.length > 0);
+    }
+    if (crowdedMode === 'crowded') {
+      lastWalks = crowded;
+    }
+    return fence(crowded);
+  }
   if (process.env['DSPATCH_REVIEW_SIM'] === 'bad-ref-first' && walks[0] !== undefined) {
     const broken = JSON.parse(JSON.stringify(answer)) as { walks: { steps: { places: unknown[] }[] }[] };
     const firstPlace = (broken.walks[0]?.steps[0]?.places[0] ?? {}) as { path?: string };
@@ -975,11 +1092,54 @@ function presentationAnswer(prompt: string, question: string): string | null {
 
 let regenerations = 0;
 
+/**
+ * DSP-185, SIMULATED: from the walk's outline in the prompt, a reference to a neighbouring step
+ * by its id, and a reference to lines of the step's own file that no step of the walk shows
+ * (in the diff, outside the walk). Nothing when the outline carries no ids.
+ */
+function walkLinks(prompt: string, focus: { readonly path: string; readonly side: 'base' | 'target'; readonly end: number } | null): unknown[] {
+  const section = /^## Where this step is in the walk\n([\s\S]*?)(?:\n## |(?![\s\S]))/m.exec(prompt)?.[1] ?? '';
+  const steps = [...section.matchAll(/^(\d+)\. \[([^\]]+)\] (.*?)(?: \(code: (.*)\))?(  <- this step)?$/gm)];
+  const here = steps.findIndex((match) => match[5] !== undefined);
+  if (here < 0) {
+    return [];
+  }
+  const links: unknown[] = [];
+  const other = steps[here + 1] ?? steps[here - 1];
+  if (other !== undefined) {
+    links.push({ label: here + 1 < steps.length ? 'What the next step shows' : 'What the previous step showed', step: other[2] ?? '' });
+  }
+  // A step of another walk of the review, when the outline names one.
+  const elsewhere = /^Other walks of this review:\n- [^\n]*?\[([^\]]+)\]/m.exec(section)?.[1];
+  if (elsewhere !== undefined) {
+    links.push({ label: 'Where another walk explains a related part', step: elsewhere });
+  }
+  if (focus !== null) {
+    const shown = steps.flatMap((match) =>
+      [...(match[4] ?? '').matchAll(/(\S+) (\d+)(?:–(\d+))? \((From|To)\)/g)].map((place) => ({
+        path: place[1] ?? '',
+        side: place[4] === 'From' ? 'base' : 'target',
+        start: Number(place[2] ?? '0'),
+        end: Number(place[3] ?? place[2] ?? '0'),
+      })),
+    );
+    for (let line = 1; line <= focus.end; line += 1) {
+      if (!shown.some((place) => place.path === focus.path && place.side === focus.side && line >= place.start && line <= place.end)) {
+        links.push({ label: 'The surrounding code, outside the walk', path: focus.path, side: focus.side, start: line, end: line });
+        break;
+      }
+    }
+  }
+  return links;
+}
+
 function presentationAnswerText(prompt: string, question: string): string | null {
   const step = /^Step: (.*)$/m.exec(prompt)?.[1]?.trim() ?? 'this step';
   const focus = /^### focus · (.+?) lines (\d+)(?:–(\d+))? · (base|target) @/m.exec(prompt);
-  const references =
+  const references: unknown[] =
     focus === null ? [] : [{ label: `The code of ${step}`, path: focus[1] ?? '', side: focus[4] === 'base' ? 'base' : 'target', start: Number(focus[2] ?? '1'), end: Number(focus[3] ?? focus[2] ?? '1') }];
+  // DSP-185: one step reference and one reference into the diff outside the walk, so a trial can follow both.
+  references.push(...walkLinks(prompt, focus === null ? null : { path: focus[1] ?? '', side: focus[4] === 'base' ? 'base' : 'target', end: Number(focus[3] ?? focus[2] ?? '1') }));
   const refs = `\n\n\`\`\`dspatch-references\n${JSON.stringify({ references, insufficient: false })}\n\`\`\``;
   const where = focus === null ? 'the code of this step' : `\`${focus[1] ?? ''}\` lines ${focus[2] ?? ''}–${focus[3] ?? focus[2] ?? ''}`;
   // DSP-181: the three public profiles, each in its own shape and length, over one neutral

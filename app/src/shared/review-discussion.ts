@@ -53,6 +53,35 @@ export interface CheckedReference {
 }
 
 /**
+ * DSP-185: an answer's pointer to another step of the walk, by the step's id, instead of its
+ * file and lines. Kept as written: the window resolves it against the walk it shows, and an id
+ * that walk does not have is shown as not found, never as a link.
+ */
+export interface StepReference {
+  readonly label: string;
+  readonly step: string;
+}
+
+/** A step id as a reference may name it: a walk or reading id and a step number (`W1.3`, `R2.1`). */
+export const STEP_REFERENCE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,15}\.\d{1,4}$/;
+
+/** The step references of an answer's block or a stored record, bounded; anything else dropped. */
+export function stepReferencesFrom(raw: unknown): readonly StepReference[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: StepReference[] = [];
+  for (const entry of raw.slice(0, 40)) {
+    if (!isRecord(entry) || typeof entry['step'] !== 'string' || !STEP_REFERENCE_ID.test(entry['step'].trim())) {
+      continue;
+    }
+    const step = entry['step'].trim();
+    out.push({ label: typeof entry['label'] === 'string' && entry['label'].trim() !== '' ? entry['label'].trim().slice(0, 200) : step, step });
+  }
+  return out;
+}
+
+/**
  * A place in another repository of the workspace an answer rests on, checked at the commit
  * recorded for it (DSP-175): the shape of `ContextReference` in `review-pair.ts`. Context is
  * never reviewed, approved or covered; it opens with `readContextFile`.
@@ -846,6 +875,8 @@ export interface DiscussionMessage {
   readonly references?: readonly CheckedReference[];
   /** DSP-175: places in other repositories of the workspace, read as context and checked at their recorded commit. */
   readonly contextReferences?: readonly CheckedContextReference[];
+  /** DSP-185: pointers to other steps of the walk, by id; resolved by the window against its walk. */
+  readonly stepReferences?: readonly StepReference[];
   /** For an answer with code access: the agent said the code it could read does not settle it. */
   readonly insufficient?: boolean;
   /** For an answer with code access: what DSpatch left out of it, in plain words. */
@@ -1211,6 +1242,10 @@ function adoptMessages(value: unknown): DiscussionMessage[] {
       if (context.length > 0) {
         message.contextReferences = context;
       }
+    }
+    const stepReferences = stepReferencesFrom(entry['stepReferences']);
+    if (stepReferences.length > 0) {
+      message.stepReferences = stepReferences;
     }
     if (entry['insufficient'] === true) {
       message.insufficient = true;

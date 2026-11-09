@@ -124,7 +124,7 @@ const AREAS = {
   },
   review: {
     what: 'the review surface: the real diff, prepared walks, coverage and the reviewer record',
-    files: ['review-model.test.ts', 'delegated-review-view.test.ts', 'review-threads.test.ts', 'review-check-threads.test.ts', 'review-discussion.test.ts', 'presentation-profiles.test.ts', 'presentation-chain.test.ts', 'presentation-walks.test.ts', 'example-review.test.ts', 'review-host-boundary.test.ts', { file: 'review-service.test.ts', heavy: true },
+    files: ['review-model.test.ts', 'delegated-review-view.test.ts', 'review-threads.test.ts', 'review-check-threads.test.ts', 'review-discussion.test.ts', 'presentation-profiles.test.ts', 'presentation-chain.test.ts', 'presentation-walks.test.ts', 'walk-places-and-links.test.ts', 'example-review.test.ts', 'review-host-boundary.test.ts', { file: 'review-service.test.ts', heavy: true },
       { file: 'review-host.test.ts', heavy: true },
       { file: 'review-pairs.test.ts', heavy: true },
       { file: 'review-instances.test.ts', heavy: true },
@@ -132,6 +132,8 @@ const AREAS = {
       { file: 'review-analysis.test.ts', heavy: true },
       { file: 'review-context.test.ts', heavy: true },
       { file: 'review-walk-context.test.ts', heavy: true },
+      { file: 'explain-prompts.test.ts', heavy: true },
+      { file: 'synthetic-walks.test.ts', heavy: true },
       { file: 'review-discussion-service.test.ts', heavy: true },
       'review-pair-discussion.test.ts',
       { file: 'review-discussion-provider.test.ts', heavy: true },

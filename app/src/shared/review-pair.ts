@@ -12,6 +12,7 @@
  */
 
 import { isProfile, type PresentationProfile } from './presentation-profiles';
+import { stepReferencesFrom, type StepReference } from './review-discussion';
 
 import { diffChars } from 'diff';
 
@@ -791,6 +792,8 @@ export interface StepAnswer {
    * recorded commit (DSP-175). Never reviewed, approved or covered. Absent when there are none.
    */
   readonly contextReferences?: readonly ContextReference[];
+  /** DSP-185: pointers to other steps of the walk, by id, resolved by the window. Absent when there are none. */
+  readonly stepReferences?: readonly StepReference[];
   /** The agent could not establish an answer from the code it could read. */
   readonly insufficient: boolean;
   /** What DSpatch left out of the answer, in plain words. */
@@ -1069,6 +1072,10 @@ function answerFrom(raw: unknown): StepAnswer | null {
         return range === null ? [] : [{ label: typeof entry['label'] === 'string' ? entry['label'] : '', range }];
       });
       return context.length === 0 ? {} : { contextReferences: context };
+    })(),
+    ...((): Partial<StepAnswer> => {
+      const steps = stepReferencesFrom(raw['stepReferences']);
+      return steps.length === 0 ? {} : { stepReferences: steps };
     })(),
     insufficient: raw['insufficient'] === true,
     adjustments: stringsFrom(raw['adjustments']),

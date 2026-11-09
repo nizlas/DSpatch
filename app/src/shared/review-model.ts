@@ -136,6 +136,13 @@ export interface WalkStep {
   readonly why: LocalText;
   /** DSP-181: the deepening behind Show more, when the generator wrote one. Absent in older definitions. */
   readonly details?: LocalText;
+  /**
+   * DSP-185: why the step shows several places together, as the justified exception to one
+   * place per step. Absent in older definitions and in steps that show one place.
+   */
+  readonly together?: LocalText;
+  /** DSP-185: what is new to see at a place an earlier step showed. Absent in older definitions. */
+  readonly revisit?: LocalText;
   readonly places: readonly Place[];
   readonly evidence: readonly StepEvidence[];
   readonly evidenceRefs: readonly CodeReference[];
@@ -780,6 +787,14 @@ function parseStepV2(raw: Record<string, unknown>, stepId: string, where: string
       const details = text('details', false);
       return details.sv === '' && details.en === '' ? {} : { details };
     })(),
+    ...((): { together?: LocalText } => {
+      const together = text('together', false);
+      return together.sv === '' && together.en === '' ? {} : { together };
+    })(),
+    ...((): { revisit?: LocalText } => {
+      const revisit = text('revisit', false);
+      return revisit.sv === '' && revisit.en === '' ? {} : { revisit };
+    })(),
     places,
     evidence: parseEvidence(raw['evidence'], `${stepId}.evidence`, problems, true),
     evidenceRefs,
@@ -1380,6 +1395,9 @@ export function stepContentHash(step: WalkStep): string {
       body: step.body,
       why: step.why,
       ...(step.details === undefined ? {} : { details: step.details }),
+      // Only where there is one, so steps without it keep their hash (DSP-185).
+      ...(step.together === undefined ? {} : { together: step.together }),
+      ...(step.revisit === undefined ? {} : { revisit: step.revisit }),
       evidence: step.evidence,
       evidenceRefs: step.evidenceRefs,
       places: step.places.map((place) => ({

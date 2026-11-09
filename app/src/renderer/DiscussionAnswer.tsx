@@ -4,7 +4,8 @@ import type { JSX, ReactNode } from 'react';
 
 import { splitCodeAnswer, splitDetails, type CheckedContextReference, type DiscussionMessage } from '../shared/review-discussion';
 import type { ContextFileView } from '../shared/review-pair';
-import type { CodeLocation } from '../shared/review-model';
+import type { CodeLocation, Lang } from '../shared/review-model';
+import { resolveLineReference, resolveStepReference, type ReferenceScope, type ReferenceTarget } from '../shared/reference-links';
 import { Markdown } from './Markdown';
 
 /**
@@ -99,6 +100,83 @@ export function PendingLine({ questionId, pending }: { readonly questionId: stri
   return pending ? <p className="rv-sub">…</p> : null;
 }
 
+/**
+ * DSP-185: the walk an answer's references are resolved against, and how to go to a step. Given
+ * by the walk window and its panel; absent where no walk is open, where a code reference opens
+ * the code as before and a step reference is shown as not found.
+ */
+export interface ReferenceLinks {
+  readonly scope: ReferenceScope;
+  readonly lang: Lang;
+  readonly goToStep: (stepId: string, placeIndex: number) => void;
+}
+
+export const ReferenceLinksContext = createContext<ReferenceLinks | null>(null);
+
+/** One reference as a link to where it leads, or as text when it leads nowhere (DSP-185). */
+function ReferenceItem({
+  label,
+  target,
+  dataRef,
+  onShow,
+}: {
+  readonly label: string;
+  readonly target: ReferenceTarget;
+  readonly dataRef?: string;
+  readonly onShow: (location: CodeLocation) => void;
+}): JSX.Element {
+  const links = useContext(ReferenceLinksContext);
+  const where = (start: number, end: number): string => (start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`);
+  if (target.kind === 'step') {
+    const title = links === null ? '' : target.stepTitle[links.lang] || target.stepTitle.en || target.stepTitle.sv;
+    return (
+      <li>
+        <button
+          type="button"
+          className="rv-pair-link"
+          data-ev="answer-step-ref"
+          data-step={target.stepId}
+          data-place={String(target.placeIndex)}
+          {...(dataRef === undefined ? {} : { 'data-ref': dataRef })}
+          title="Go to this step of the walk and its explanation"
+          onClick={() => links?.goToStep(target.stepId, target.placeIndex)}
+        >
+          {target.here ? `This step, ${target.stepId}` : `Step ${target.stepId}`}
+          {title === '' ? '' : `: ${title}`}
+        </button>{' '}
+        <span className="rv-sub">{label}</span>
+      </li>
+    );
+  }
+  if (target.kind === 'unresolved') {
+    return (
+      <li data-ev="answer-ref-unresolved">
+        <span>{label}</span> <span className="rv-sub">· {target.reason}</span>
+      </li>
+    );
+  }
+  const location = target.location;
+  return (
+    <li>
+      <button
+        type="button"
+        className="rv-pair-link"
+        data-ev="answer-ref"
+        data-ref={dataRef ?? `${location.side}:${location.path}:${String(location.start)}-${String(location.end)}`}
+        data-kind={target.kind}
+        title={target.kind === 'diff' ? 'Open these lines in the diff, marked' : 'Open these lines of the unchanged file, marked'}
+        onClick={() => onShow(location)}
+      >
+        {label}
+      </button>{' '}
+      <span className="rv-sub">
+        {location.path} {where(location.start, location.end)} ({location.side === 'base' ? 'From' : 'To'})
+        {target.kind === 'unchanged' ? ' · not in this diff: unchanged code at this revision' : ''}
+      </span>
+    </li>
+  );
+}
+
 /** The revision pair the window is over, for opening context citations (DSP-175). */
 export const PairKeyContext = createContext<string | null>(null);
 
@@ -186,7 +264,12 @@ export function DiscussionAnswer({
   const shown = parts.short;
   const references = answer.references ?? [];
   const contextReferences = answer.contextReferences ?? [];
-  const where = (start: number, end: number): string => (start === end ? `line ${String(start)}` : `lines ${String(start)}–${String(end)}`);
+  const stepReferences = answer.stepReferences ?? [];
+  const links = useContext(ReferenceLinksContext);
+  // DSP-185: where each reference leads. Without a walk, code opens as before and a step id finds nothing.
+  const noWalk: ReferenceLinks['scope'] = { walks: [], changedPaths: new Set(), currentStepId: null };
+  const lineTarget = (range: { readonly path: string; readonly side: 'base' | 'target'; readonly start: number; readonly end: number }): ReferenceTarget =>
+    links === null ? { kind: 'diff', location: { path: range.path, side: range.side, start: range.start, end: range.end } } : resolveLineReference(range, links.scope);
   return (
     <div className="rv-answer rv-reading" data-ev="discussion-answer-body" data-quote-source="answer">
       {answer.insufficient === true && <p className="rv-agent-insufficient">The agent could not settle this from the code it could read.</p>}
@@ -205,28 +288,22 @@ export function DiscussionAnswer({
             ) : undefined
           }
           rests={
-            references.length === 0 && contextReferences.length === 0 ? undefined : (
+            references.length === 0 && contextReferences.length === 0 && stepReferences.length === 0 ? undefined : (
               <ul>
+                {stepReferences.map((reference, index) => (
+                  <ReferenceItem key={`step-${String(index)}`} label={reference.label} target={resolveStepReference(reference.step, links?.scope ?? noWalk)} onShow={onShow} />
+                ))}
                 {contextReferences.map((reference, index) => (
                   <ContextCitation key={`context-${String(index)}`} reference={reference} />
                 ))}
                 {references.map((reference, index) => (
-                  <li key={index}>
-                    <button
-                      type="button"
-                      className="rv-pair-link"
-                      data-ev="answer-ref"
-                      data-ref={`${reference.range.side}:${reference.range.path}:${String(reference.range.start)}-${String(reference.range.end)}`}
-                      onClick={() =>
-                        onShow({ path: reference.range.path, side: reference.range.side, start: reference.range.start, end: reference.range.end })
-                      }
-                    >
-                      {reference.label}
-                    </button>{' '}
-                    <span className="rv-sub">
-                      {reference.range.path} {where(reference.range.start, reference.range.end)} ({reference.range.side === 'base' ? 'From' : 'To'})
-                    </span>
-                  </li>
+                  <ReferenceItem
+                    key={index}
+                    label={reference.label}
+                    target={lineTarget(reference.range)}
+                    dataRef={`${reference.range.side}:${reference.range.path}:${String(reference.range.start)}-${String(reference.range.end)}`}
+                    onShow={onShow}
+                  />
                 ))}
               </ul>
             )

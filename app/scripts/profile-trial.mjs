@@ -1051,7 +1051,7 @@ async function main() {
   check('while Essentials is written, the original explanation stays with a quiet indicator', now.state === 'pending' && now.prepared && now.profileShown === '', JSON.stringify(now));
   await w_shot(pc, '41-essentials-pending');
   const first = presents().find((m) => m.profile === 'essens');
-  check('one request, for the current step only, in Essentials, from its version, with the policy once and the walk\'s outline', first.stepId === S1 && typeof first.basis === 'string' && /## How to present \(Essentials\)/.test(first.prompt) && first.prompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.prompt) && /## Where this step is in the walk\n/.test(first.prompt) && /<- this step/.test(first.prompt) && /Instruction version: 4/.test(first.prompt), JSON.stringify({ stepId: first.stepId, basis: first.basis }));
+  check('one request, for the current step only, in Essentials, from its version, with the policy once and the walk\'s outline', first.stepId === S1 && typeof first.basis === 'string' && /## How to present \(Essentials\)/.test(first.prompt) && first.prompt.split('<!-- dspatch:details -->').length === 2 && /^Language: English\./m.test(first.prompt) && /## Where this step is in the walk\n/.test(first.prompt) && /<- this step/.test(first.prompt) && /Instruction version: 5/.test(first.prompt), JSON.stringify({ stepId: first.stepId, basis: first.basis }));
   check('the profile explanation is no discussion entry', questions().length === 0, String(questions().length));
   await poll('the Essentials explanation', async () => (await shown()).profileShown === 'essens', 60_000);
   now = await shown();
@@ -1190,6 +1190,56 @@ async function main() {
   await osClickAt(pc, '[data-ev="profile-retry"]');
   await poll('S4 in Essentials', async () => (await shown()).profileShown === 'essens', 60_000);
   check('Try again writes it', (await shown()).altStep === S4);
+
+  // DSP-185: a reference to code the walk shows leads to its step; other code of the diff opens marked in the walk window.
+  // Done here, at S4 in Essentials, so the steps the stages above arrive at fresh are not visited before them.
+  stage = 'references in an explanation lead to the walk step or to the diff lines, marked';
+  const refsOpen = async () => {
+    if ((await read(pc, `document.querySelector('[data-ev="profile-explanation"] [data-ev="answer-refs"]')?.hidden ?? null`)) === true) {
+      await osClickAt(pc, '[data-ev="profile-explanation"] [data-ev="answer-show-code"]');
+    }
+  };
+  await refsOpen();
+  const links = JSON.parse(
+    await read(pc, `JSON.stringify({steps:[...document.querySelectorAll('[data-ev="profile-explanation"] [data-ev="answer-step-ref"]')].map((b)=>({step:b.dataset.step,place:b.dataset.place,text:b.textContent})),code:[...document.querySelectorAll('[data-ev="profile-explanation"] [data-ev="answer-ref"]')].map((b)=>({ref:b.dataset.ref,kind:b.dataset.kind,text:b.parentElement.textContent})),unresolved:document.querySelectorAll('[data-ev="profile-explanation"] [data-ev="answer-ref-unresolved"]').length})`),
+  );
+  const diffLink = links.code.find((entry) => entry.kind === 'diff');
+  const otherStep = links.steps.find((entry) => entry.step !== S4);
+  check(
+    'the explanation\'s references: its own code as "This step", another step as a step link, other code of the diff as a code link',
+    links.steps.some((entry) => entry.step === S4 && /^This step/.test(entry.text)) && otherStep !== undefined && /^Step W1\.\d+: /.test(otherStep.text) && diffLink !== undefined && links.unresolved === 0,
+    JSON.stringify(links),
+  );
+  await w_shot(pc, '47b-explanation-references');
+  await osClickAt(pc, `[data-ev="profile-explanation"] [data-ev="answer-step-ref"][data-step="${otherStep.step}"]`);
+  await poll('the linked step', async () => (await shown()).step === otherStep.step, 15_000);
+  const linkedPane = await walk.ev(`document.querySelector('section.rv-pane-active [data-ev="pane-focus-identity"]')?.textContent ?? ''`);
+  check('a step link goes to that step: Step shows it and the walk window marks its place', (await shown()).step === otherStep.step && linkedPane.includes(otherStep.step), JSON.stringify({ step: (await shown()).step, linkedPane }));
+  await w_shot(wc, '47c-step-link-followed');
+  check('the way back to the step it was followed from is offered', (await read(pc, `document.querySelector('[data-ev="step-link-back"]')?.textContent ?? ''`)).includes(`Back to ${S4}`));
+  // The linked step is explained in Essentials on arrival; let it finish so the stages below count calls as before.
+  await poll('the linked step in Essentials', async () => doneFor(otherStep.step, 'essens'), 60_000);
+  await osClickAt(pc, '[data-ev="step-link-back"]');
+  await poll('back at the step', async () => (await shown()).step === S4, 15_000);
+  check('Back returns to the step the link was followed from, its explanation as it was', (await shown()).step === S4 && (await shown()).profileShown === 'essens');
+  await refsOpen();
+  const [, diffPath, diffLines] = /^(?:base|target):(.+):(\d+-\d+)$/.exec(diffLink.ref) ?? [];
+  await osClickAt(pc, `[data-ev="profile-explanation"] [data-ev="answer-ref"][data-ref="${diffLink.ref}"]`);
+  await walk.until('the referenced lines opened', `document.querySelector('[data-ev="away-back"]')!==null && document.querySelectorAll('.rv-code-pane .rv-ref-mark').length > 0`, 15_000);
+  const opened = JSON.parse(
+    await walk.ev(`JSON.stringify({path:document.querySelector('.rv-code-pane .rv-path')?.title??'',marked:[...document.querySelectorAll('.rv-code-pane .rv-ref-mark')].map((r)=>({line:Number(r.dataset.selLine),side:r.dataset.selSide,path:r.dataset.selPath}))})`),
+  );
+  const [from, to] = (diffLines ?? '0-0').split('-').map(Number);
+  check(
+    'a reference to other code of the diff opens that file in the walk window with exactly its lines marked',
+    opened.path === diffPath && opened.marked.length === to - from + 1 && opened.marked.every((row) => row.path === diffPath && row.line >= from && row.line <= to),
+    JSON.stringify({ ref: diffLink.ref, opened }),
+  );
+  await w_shot(wc, '47d-diff-reference-opened');
+  await osClickAt(wc, '[data-ev="away-back"]');
+  await walk.until('back in the walk', `document.querySelector('[data-ev="away-back"]')===null`, 15_000);
+  check('Back from the code returns to the step', (await shown()).step === S4);
+
 
   stage = 'a thread question keeps its thread';
   let threadId = null;

@@ -50,9 +50,12 @@ test('a binary file is never shared', () => {
   assert.deepEqual(panesOf([at('x.png', 'target', 1), at('x.png', 'base', 1)], binary).map((pane) => [...pane.stations]), [[0], [1]]);
 });
 
-test('a focus spanning two changes joins both, and the places on either side with it', () => {
-  // The second hunk of a.ts removes line 200; a target focus over 12–200 touches both.
-  assert.deepEqual(groups([at('a.ts', 'target', 11), at('a.ts', 'target', 12, 200), at('a.ts', 'base', 200)]), [[0, 1, 2]]);
+test('DSP-185: one pane per place: close places at the same side of one file are panes of their own', () => {
+  // Before DSP-185 these shared a pane, which scrolled between them while stepping.
+  assert.deepEqual(groups([at('a.ts', 'target', 10), at('a.ts', 'target', 13, 14)]), [[0], [1]]);
+  // Only the other side of the same change joins, once: a pane is one place, before and after.
+  assert.deepEqual(groups([at('a.ts', 'target', 11), at('a.ts', 'target', 12, 200), at('a.ts', 'base', 200)]), [[0], [1, 2]]);
+  assert.deepEqual(groups([at('a.ts', 'base', 10, 12), at('a.ts', 'target', 11, 14), at('a.ts', 'base', 11)]), [[0, 1], [2]]);
 });
 
 test('only neighbours in walk order share: a later return to the change gets a pane further right', () => {

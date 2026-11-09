@@ -150,6 +150,10 @@ export interface ReviewWords {
   readonly walkedNote: string;
   readonly outsideWalk: string;
   readonly backTo: (stepId: string) => string;
+  /** DSP-185: before why a step's several places are shown together. */
+  readonly shownTogether: string;
+  /** DSP-185: before what is new to see at a place shown again. */
+  readonly shownAgain: string;
   readonly backToCode: string;
   readonly view: {
     readonly before: string;
@@ -442,6 +446,8 @@ const sv: ReviewWords = {
   walkedNote: 'Genomgånget är din egen markering av framsteg. Det godkänner ingen kod.',
   outsideWalk: 'Utanför walken',
   backTo: (stepId) => `Tillbaka till ${stepId}`,
+  shownTogether: 'Visas tillsammans',
+  shownAgain: 'Visas igen',
   backToCode: 'Tillbaka till koden',
   view: {
     before: 'Före',
@@ -754,6 +760,8 @@ const en: ReviewWords = {
   walkedNote: 'Walked through is your own mark of progress. It approves no code.',
   outsideWalk: 'Outside the walk',
   backTo: (stepId) => `Back to ${stepId}`,
+  shownTogether: 'Shown together',
+  shownAgain: 'Shown again',
   backToCode: 'Back to the code',
   view: {
     before: 'Before',

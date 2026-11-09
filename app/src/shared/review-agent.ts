@@ -42,6 +42,7 @@ import {
 
 import { GROUNDING_RULES, walkExplanationSection, type PresentationProfile, type PublicProfile } from './presentation-profiles';
 import { TASK_HEADER } from './review-task';
+import { stepReferencesFrom, type StepReference } from './review-discussion';
 
 export { TASK_HEADER };
 
@@ -262,6 +263,33 @@ export const FORM_RULES = [
 ] as const;
 
 /**
+ * A walk as a coherent path through the change's important connections (Niclas's decision of
+ * 9 November 2026, DSP-185): which called implementation gets a step, which a reference, and
+ * what is checked in the code rather than assumed.
+ */
+export const PATH_RULES = [
+  'A code walk is a coherent path through the important connections of what it explains. For each new or substantially changed function the path calls, judge whether it is central: if understanding the main course needs its implementation, give it a step of its own at the point in the reasoning where the reader needs it; if it is a relevant side deepening, point at it with a reference the reader can follow.',
+  'Choose by what the reader needs to understand the behaviour and its risks, not by call order, and do not follow every call mechanically. A self-explanatory name is not a reason to leave out an important new implementation.',
+  'That a function is explained in another walk is no reason to leave out an explanation this walk needs: give it a focused step here, or point at that walk\'s step when that is the right deepening.',
+  'Check facts in the code rather than assuming them from names: for example, that a start function returned does not mean the service it starts is connected or initialised; read what it does.',
+  'Do not add a step that shows the same caller code again only to travel between two functions it calls: the caller\'s step stays as orientation, and the next step\'s explanation makes the short transition ("after starting the worker, the caller subscribes…"). Show a place again only with a new purpose, and then say what is new to see there in the step\'s "revisit" field.',
+] as const;
+
+/**
+ * One code place per step (Niclas's decision of 9 November 2026, DSP-185): each step shows one
+ * place with its own explanation, and the walk's order carries the reasoning. Several places in
+ * one step are a justified teaching exception, named in the step's `together` field. The same
+ * rule is said in the repair round, and {@link crowdedStepProblems} checks it.
+ */
+export const PLACE_RULES = [
+  'Each step normally shows **one code place**, with an explanation written for that place. The order of the steps carries the reasoning: a later step builds on the earlier ones ("in the previous step…", "as we saw earlier").',
+  'Places that each need their own explanation and are visited in turn are separate steps. For example, declaring an option, passing it on and using it are three steps, each explaining its own place, not one step with three places and one shared text.',
+  'The old and the new lines of the same change, From and To, are one place, not two.',
+  'Put several places in one step only as an exception, when seeing them side by side is what helps the reader understand, for example to compare two implementations of the same thing. Then give the step a "together" field: one short sentence on why seeing these places together helps. A step with several places and no "together" is asked to be split.',
+  'A place is not treated because it is in a step or because its function is named. Every central mechanism a step shows (what is protected and by what, who owns what and for how long, what is handed to whom and when, what has happened and what has only been requested) is explained in that step at the reader\'s level. When one step would have to treat several such places in passing, they are separate steps.',
+] as const;
+
+/**
  * Ask for code walks and readings over the pair. With a profile (DSP-181), the steps'
  * explanations are written in it, so the walk reads in that profile with no further call.
  */
@@ -280,6 +308,12 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     '',
     '## Code walks and readings',
     ...FORM_RULES.map((rule) => `- ${rule}`),
+    '',
+    '## One place per step',
+    ...PLACE_RULES.map((rule) => `- ${rule}`),
+    '',
+    '## A coherent path',
+    ...PATH_RULES.map((rule) => `- ${rule}`),
     '',
     '## About the change',
     '- "summary": two or three short sentences a person reads first: what the change does and why.',
@@ -320,6 +354,8 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
                     from: { label: 'Optional: the call that leads here', path: 'src/caller.ts', side: 'target', start: 40, end: 40 },
                   },
                 ],
+                together: 'Only for a step with several places: one short sentence on why seeing them side by side helps. Leave it out otherwise.',
+                revisit: 'Only for a step that shows a place an earlier step of the walk already showed: what is new to see there now. Leave it out otherwise.',
               },
             ],
           },
@@ -345,6 +381,19 @@ export function repairPrompt(problems: readonly string[]): string {
     '',
     'DSpatch checked your walks against the two commits and found these problems:',
     ...problems.slice(0, 40).map((problem) => `- ${problem}`),
+    '',
+    ...(problems.some((problem) => problem.includes(REPEATED_MARK))
+      ? [
+          '',
+          'A step that shows the same place as an earlier step only to travel between two other places is to be left out: the earlier step stays as orientation and the next step\'s explanation makes the short transition. Keep a revisit only with a new purpose, said in its "revisit" field. Keep every other place.',
+        ]
+      : []),
+    ...(problems.some((problem) => problem.includes(CROWDED_MARK))
+      ? [
+          '',
+          'A step that shows several places and does not say why they belong together is to be split: one step per place, each with its own explanation, in the order that carries the reasoning, the later ones building on the earlier. Keep several places in one step only where seeing them side by side helps the reader compare them, and then say why in its "together" field. Keep every place: splitting a step must not drop code it covered.',
+        ]
+      : []),
     '',
     'Check the places in the folder if you need to, then answer again with the complete corrected JSON object in a ```json fence, in the same format. Keep every place that was right.',
   ].join('\n');
@@ -872,6 +921,13 @@ export interface ProposedStep {
   readonly places: readonly ProposedPlace[];
   /** DSP-175: places in context repositories, apart from `places`. Absent when there are none. */
   readonly contextPlaces?: readonly ProposedContextPlace[];
+  /**
+   * DSP-185: why the step shows several places together, when it does as the justified
+   * exception. Absent when the agent gave no reason.
+   */
+  readonly together?: string;
+  /** DSP-185: what is new to see at a place an earlier step of the walk already showed. */
+  readonly revisit?: string;
 }
 
 export interface ProposedWalk {
@@ -976,7 +1032,19 @@ export function readWalksAnswer(raw: unknown): { readonly walks: ProposedWalks |
             : `${stepWhere} has only places in context repositories; a step also needs a place in base/ or target/.`,
         );
       }
-      steps.push({ title, summary: text(stepRaw['summary']), body, why: text(stepRaw['why']), details: text(stepRaw['details']), places, ...(contextPlaces.length === 0 ? {} : { contextPlaces }) });
+      const together = text(stepRaw['together']);
+      const revisit = text(stepRaw['revisit']);
+      steps.push({
+        title,
+        summary: text(stepRaw['summary']),
+        body,
+        why: text(stepRaw['why']),
+        details: text(stepRaw['details']),
+        places,
+        ...(contextPlaces.length === 0 ? {} : { contextPlaces }),
+        ...(together === '' ? {} : { together }),
+        ...(revisit === '' ? {} : { revisit }),
+      });
     });
     if (steps.length === 0) {
       problems.push(`${where} has no steps.`);
@@ -1171,6 +1239,82 @@ export function withoutInvalidPlaces(walks: ProposedWalks, invalid: ReadonlyMap<
   };
 }
 
+/** What marks a crowded-step problem, so the repair round can say how to split it. */
+const CROWDED_MARK = 'shows several places and does not say why';
+
+/**
+ * How many places a step shows, for the one-place rule (DSP-185): the From and To lines of the
+ * same file are one place, the old and new sides of one change; context places are not counted.
+ */
+export function distinctPlaceCount(places: readonly { readonly range: LineRange }[]): number {
+  const byPath = new Map<string, { base: number; target: number }>();
+  for (const place of places) {
+    const count = byPath.get(place.range.path) ?? { base: 0, target: 0 };
+    count[place.range.side] += 1;
+    byPath.set(place.range.path, count);
+  }
+  let total = 0;
+  for (const count of byPath.values()) {
+    total += Math.max(count.base, count.target);
+  }
+  return total;
+}
+
+/**
+ * Every step that shows several places without saying why seeing them together helps
+ * (DSP-185), keyed by walk/step index, as a problem for the one repair round. Structural only:
+ * it reads no code and judges no reason, only whether one was given.
+ */
+export function crowdedStepProblems(walks: ProposedWalks): Map<string, string> {
+  const problems = new Map<string, string>();
+  walks.walks.forEach((walk, walkIndex) => {
+    walk.steps.forEach((step, stepIndex) => {
+      const count = distinctPlaceCount(step.places);
+      if (count > 1 && (step.together ?? '').trim() === '') {
+        problems.set(
+          `${String(walkIndex)}.${String(stepIndex)}`,
+          `walk ${String(walkIndex + 1)}, step ${String(stepIndex + 1)} ("${step.title.slice(0, 60)}") ${CROWDED_MARK} seeing its ${String(count)} places together helps: split it into one step per place, each with its own explanation, or give the reason in "together".`,
+        );
+      }
+    });
+  });
+  return problems;
+}
+
+/** What marks a repeated-place problem. */
+const REPEATED_MARK = 'shows exactly the place an earlier step of the walk showed';
+
+/**
+ * Every step whose places exactly repeat an earlier step's places in the same walk, with no
+ * "revisit" saying what is new to see there (DSP-185): a transport step between two visits, or
+ * a revisit without a purpose. Structural only, for the one repair round.
+ */
+export function repeatedStepProblems(walks: ProposedWalks): Map<string, string> {
+  const problems = new Map<string, string>();
+  const key = (step: ProposedStep): string =>
+    step.places
+      .map((place) => `${place.range.side}:${place.range.path}:${String(place.range.start)}-${String(place.range.end)}`)
+      .sort()
+      .join('|');
+  walks.walks.forEach((walk, walkIndex) => {
+    const seen = new Map<string, number>();
+    walk.steps.forEach((step, stepIndex) => {
+      const at = key(step);
+      const earlier = seen.get(at);
+      if (at !== '' && earlier !== undefined && (step.revisit ?? '').trim() === '') {
+        problems.set(
+          `${String(walkIndex)}.${String(stepIndex)}`,
+          `walk ${String(walkIndex + 1)}, step ${String(stepIndex + 1)} ("${step.title.slice(0, 60)}") ${REPEATED_MARK} (step ${String(earlier + 1)}) and does not say what is new to see there: leave it out and let the next step's explanation make the transition, or say in "revisit" what this visit adds.`,
+        );
+      }
+      if (!seen.has(at)) {
+        seen.set(at, stepIndex);
+      }
+    });
+  });
+  return problems;
+}
+
 /** The changed lines no walk's places cover. Shared lines count once. */
 export function uncoveredBy(walks: ProposedWalks, files: readonly PairFile[]): readonly LineRange[] {
   const covered = new Set<string>();
@@ -1282,6 +1426,9 @@ export function definitionFrom(
           body: lang2(step.body),
           ...(step.why === '' ? {} : { why: lang2(step.why) }),
           ...(step.details === '' ? {} : { details: lang2(step.details) }),
+          // DSP-185: why several places are shown together, when the step is that exception.
+          ...(step.together === undefined || step.together === '' ? {} : { together: lang2(step.together) }),
+          ...(step.revisit === undefined || step.revisit === '' ? {} : { revisit: lang2(step.revisit) }),
           places: step.places.map((place, placeIndex) => ({
             id: `P${String(placeIndex + 1)}`,
             label: lang2(place.label),
@@ -1450,7 +1597,18 @@ export async function readStepAnswer(raw: unknown, read: LineReader, context: Co
   const adjustments: string[] = [];
   const references: AnswerReference[] = [];
   const contextReferences: ContextReference[] = [];
+  const stepReferences: StepReference[] = [];
   for (const entry of Array.isArray(raw['references']) ? raw['references'] : []) {
+    // DSP-185: a pointer to another step of the walk, by its id; the window resolves it against its walk.
+    if (isObject(entry) && entry['step'] !== undefined && entry['path'] === undefined) {
+      const found = stepReferencesFrom([entry]);
+      if (found.length === 0) {
+        adjustments.push('A step reference that did not name a step id such as "W1.2" was left out.');
+      } else {
+        stepReferences.push(...found);
+      }
+      continue;
+    }
     if (isObject(entry) && isContextEntry(entry)) {
       const checked = await checkedContextRange(entry, context);
       if ('problem' in checked) {
@@ -1478,7 +1636,15 @@ export async function readStepAnswer(raw: unknown, read: LineReader, context: Co
     adjustments.push('The answer had no text.');
   }
   const details = text(raw['details']);
-  return { answer, ...(details === '' ? {} : { details }), references, ...(contextReferences.length === 0 ? {} : { contextReferences }), insufficient, adjustments };
+  return {
+    answer,
+    ...(details === '' ? {} : { details }),
+    references,
+    ...(contextReferences.length === 0 ? {} : { contextReferences }),
+    ...(stepReferences.length === 0 ? {} : { stepReferences }),
+    insufficient,
+    adjustments,
+  };
 }
 
 /**

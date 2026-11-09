@@ -43,7 +43,9 @@ import {
   checkDefinition,
   checksFileOf,
   checksPrompt,
+  crowdedStepProblems,
   definitionFrom,
+  repeatedStepProblems,
   discussionFolderSection,
   followUpWords,
   linesAround,
@@ -253,6 +255,16 @@ function changedPaths(material: AnalysisMaterial): { readonly base: Set<string>;
     base: new Set(material.files.flatMap((file) => (file.oldPath === null ? [] : [file.oldPath]))),
     target: new Set(material.files.flatMap((file) => (file.newPath === null ? [] : [file.newPath]))),
   };
+}
+
+/** DSP-185: what is said of steps that still show several places with no reason after the repair round. */
+export function crowdedNote(count: number): string {
+  return `${String(count)} step(s) show several places without saying why seeing them together helps, even when asked once to split them; they were kept as written, so no place or covered line was lost.`;
+}
+
+/** DSP-185: what is said of steps that still repeat an earlier place with no purpose after the repair round. */
+export function repeatedNote(count: number): string {
+  return `${String(count)} step(s) show a place an earlier step already showed without saying what is new there; they were kept as written.`;
 }
 
 function providerName(provider: AgentProvider): string {
@@ -1157,10 +1169,12 @@ export class ReviewAgentJobs {
     this.setActivity(live, 'Checking every place against the commits');
     let parsed = readWalksAnswer(answerJson(first.text));
     let invalid = parsed.walks === null ? new Map<string, string>() : await walkPlaceProblems(parsed.walks, read, live.context);
+    // DSP-185: a step with several places and no reason why they belong together goes into the same round.
+    const crowded = parsed.walks === null ? new Map<string, string>() : new Map([...crowdedStepProblems(parsed.walks), ...[...repeatedStepProblems(parsed.walks)].map(([at, problem]) => [`r${at}`, problem] as const)]);
     // One repair round, naming what was wrong. Never a loop.
-    if (parsed.walks === null || parsed.problems.length > 0 || invalid.size > 0) {
-      this.setActivity(live, `Asking the agent to correct ${String(parsed.problems.length + invalid.size)} problem(s) DSpatch found`);
-      const second = await this.turn(live, repairPrompt([...parsed.problems, ...invalid.values()]));
+    if (parsed.walks === null || parsed.problems.length > 0 || invalid.size > 0 || crowded.size > 0) {
+      this.setActivity(live, `Asking the agent to correct ${String(parsed.problems.length + invalid.size + crowded.size)} problem(s) DSpatch found`);
+      const second = await this.turn(live, repairPrompt([...parsed.problems, ...invalid.values(), ...crowded.values()]));
       if (this.endedEarly(live, second)) {
         return;
       }
@@ -1182,6 +1196,9 @@ export class ReviewAgentJobs {
       this.finish(live, 'failed', 'None of the proposed walks had a place that exists at these commits, so none was kept.');
       return;
     }
+    // DSP-185: still crowded after the one round: kept as written (no place or coverage is lost), and said.
+    const stillCrowded = crowdedStepProblems(walks).size;
+    const stillRepeated = repeatedStepProblems(walks).size;
     const opened = this.options.pairs.opened(live.key);
     const files = opened?.files ?? [];
     const uncovered = uncoveredBy(walks, files);
@@ -1197,6 +1214,8 @@ export class ReviewAgentJobs {
       'It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
       (job.presentation === undefined ? '' : ` The step explanations are written in the ${PROFILE_PROMPT_NAMES[job.presentation.profile]} profile (instruction version ${String(job.presentation.version)}).`) +
       (invalid.size + checked.left > 0 ? ` ${String(invalid.size + checked.left)} place(s) that did not exist at their commit were left out.` : '') +
+      (stillCrowded > 0 ? ` ${crowdedNote(stillCrowded)}` : '') +
+      (stillRepeated > 0 ? ` ${repeatedNote(stillRepeated)}` : '') +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     if (!this.accepts(live)) {
       // DSP-186: the review was deleted, or the job is no longer its; the answer is dropped unwritten.
@@ -1216,6 +1235,8 @@ export class ReviewAgentJobs {
         (uncoveredLines === 0 ? ' Every changed line is in one of them.' : ` ${String(uncoveredLines)} changed line(s) are in none of them.`) +
         (contextPlaces > 0 ? ` ${String(contextPlaces)} place(s) show code from other repositories of the workspace, read as context; they cover nothing.` : '') +
         (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : '') +
+        (stillCrowded > 0 ? ` ${crowdedNote(stillCrowded)}` : '') +
+        (stillRepeated > 0 ? ` ${repeatedNote(stillRepeated)}` : '') +
         (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read.` : ''),
       { definitionPath, uncovered },
     );

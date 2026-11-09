@@ -238,9 +238,23 @@ function walkScript(shop: string): ReadingScript {
                 title: 'total() asks pricing for the discount',
                 summary: 'The changed total() calls findDiscount().',
                 body: 'total() now takes a code and multiplies by the remaining share.',
+                places: [{ label: 'total()', path: 'src/checkout.ts', side: 'target', start: 1, end: 6 }],
+              },
+              // DSP-185: one place per step; the definition the call reaches is the next step.
+              {
+                title: 'findDiscount() gives the percentage',
+                summary: 'The unchanged definition the previous step calls.',
+                body: 'In the previous step total() calls findDiscount(); here it looks the code up.',
                 places: [
-                  { label: 'total()', path: 'src/checkout.ts', side: 'target', start: 1, end: 6 },
-                  { label: 'findDiscount()', path: 'src/pricing.ts', side: 'target', start: line, end: line + 5, anchor: 'findDiscount' },
+                  {
+                    label: 'findDiscount()',
+                    path: 'src/pricing.ts',
+                    side: 'target',
+                    start: line,
+                    end: line + 5,
+                    anchor: 'findDiscount',
+                    from: { label: 'The call in total()', path: 'src/checkout.ts', side: 'target', start: 1, end: 6 },
+                  },
                 ],
               },
               {
@@ -253,10 +267,13 @@ function walkScript(shop: string): ReadingScript {
                 title: 'Before',
                 summary: 'The old total().',
                 body: 'Before, no code.',
-                places: [
-                  { label: 'old total()', path: 'src/checkout.ts', side: 'base', start: 1, end: 4 },
-                  { label: 'old README', path: 'README.md', side: 'base', start: 3, end: 3 },
-                ],
+                places: [{ label: 'old total()', path: 'src/checkout.ts', side: 'base', start: 1, end: 4 }],
+              },
+              {
+                title: 'The old README',
+                summary: 'What the README said before.',
+                body: 'Before, the README did not mention a code.',
+                places: [{ label: 'old README', path: 'README.md', side: 'base', start: 3, end: 3 }],
               },
             ],
           },
@@ -338,8 +355,8 @@ describe('a walk preparation with Claude (substituted SDK, real adapter)', () =>
     assert.ok(job.definitionPath !== null);
     const definition = parseReviewDefinition(JSON.parse(fs.readFileSync(job.definitionPath, 'utf8')) as unknown);
     assert.deepEqual(definition.problems, []);
-    const places = definition.definition?.walks[0]?.steps[0]?.places ?? [];
-    assert.deepEqual(places.map((place) => [place.focus.path, place.focus.start]), [['src/checkout.ts', 1], ['src/pricing.ts', DEFINITION_LINE]]);
+    const places = (definition.definition?.walks[0]?.steps.slice(0, 2) ?? []).map((step) => step.places);
+    assert.deepEqual(places.map((stepPlaces) => stepPlaces.map((place) => [place.focus.path, place.focus.start])), [[['src/checkout.ts', 1]], [['src/pricing.ts', DEFINITION_LINE]]]);
 
     // Gone when the job ended; nothing in the person's repository changed.
     await snapshots.settled();

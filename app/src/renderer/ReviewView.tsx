@@ -48,7 +48,7 @@ import {
   type WalkStep,
 } from '../shared/review-model';
 import { stepContentHash } from '../shared/review-model';
-import { PRESENTATION_INSTRUCTION_VERSION, PUBLIC_PROFILES, isPublicProfile, type PresentationProfile, type PublicProfile, type WalkOutline } from '../shared/presentation-profiles';
+import { PRESENTATION_INSTRUCTION_VERSION, PUBLIC_PROFILES, isPublicProfile, walkOutlineOf, type PresentationProfile, type PublicProfile, type WalkOutline } from '../shared/presentation-profiles';
 import {
   WALK_TEXT,
   historyOf,
@@ -67,7 +67,7 @@ import { quoteRanges, readQuote } from './walk-selection';
 import { generationStale, isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
-import { PairKeyContext } from './DiscussionAnswer';
+import { PairKeyContext, ReferenceLinksContext, type ReferenceLinks } from './DiscussionAnswer';
 import { WalkContextPlaces } from './WalkContextPlaces';
 import { STATUS_MARK, ThreadCard, ThreadContext, exchangesByThread, replyCountOf, type ThreadActions } from './ReviewThreads';
 
@@ -968,6 +968,30 @@ function OpenReview({
     [bundle, update],
   );
 
+  /*
+   * DSP-185: a reference to code the walk shows leads to its step. The step it was followed from
+   * is kept, so the person can go back to it; any other move lets it go.
+   */
+  const [stepLinkBack, setStepLinkBack] = useState<{ readonly stepId: string; readonly refIndex: number; readonly to: string } | null>(null);
+  const followStepLink = useCallback(
+    (stepId: string, placeIndex: number) => {
+      const here = latest.current.position;
+      setStepLinkBack(here.away === null && here.stepId !== null && here.stepId !== stepId ? { stepId: here.stepId, refIndex: here.refIndex, to: stepId } : null);
+      goToStep(stepId, placeIndex);
+      setNavRequest((count) => count + 1);
+    },
+    [goToStep],
+  );
+  const referenceLinks: ReferenceLinks = useMemo(
+    () => ({
+      scope: { walks: bundle.definition.walks, changedPaths: new Set(bundle.files.map((file) => file.path)), currentStepId: current?.step.id ?? null },
+      lang,
+      goToStep: followStepLink,
+    }),
+    [bundle, current?.step.id, lang, followStepLink],
+  );
+  const stepLinkBackHere = stepLinkBack !== null && current?.step.id === stepLinkBack.to && state.position.away === null ? stepLinkBack : null;
+
   // Lent to the scenario hook in `ReviewView`; gone with this review.
   useEffect(() => {
     openReviewHooks.goToStep = (stepId) => {
@@ -1467,15 +1491,10 @@ function OpenReview({
   const [explanationError, setExplanationError] = useState<{ readonly key: string; readonly error: string } | null>(null);
   const slotOf = useCallback((walkId: string, step: WalkStep, asProfile: PublicProfile): ExplanationSlot => ({ walkId, stepId: step.id, basis: stepContentHash(step), profile: asProfile }), []);
   const outlineOf = useCallback(
-    (walk: Walk, stepId: string): WalkOutline => ({
-      walkTitle: pick(walk.title, lang),
-      steps: walk.steps.map((entry) => ({
-        title: pick(entry.title, lang),
-        places: entry.places.map((at) => `${at.focus.path} ${rangeText(at.focus)} (${at.focus.side === 'base' ? 'From' : 'To'})`),
-      })),
-      current: Math.max(0, walk.steps.findIndex((entry) => entry.id === stepId)),
-    }),
-    [lang],
+    (walk: Walk, stepId: string): WalkOutline =>
+      // DSP-185: one builder, with the review's other walks, so an explanation can point at their steps.
+      walkOutlineOf(bundle.definition.walks, walk.id, stepId, lang) ?? walkOutlineOf([walk], walk.id, stepId, lang) ?? { walkTitle: pick(walk.title, lang), steps: [], current: 0 },
+    [bundle, lang],
   );
 
   /** Ask for a step explanation in its own channel. */
@@ -1655,12 +1674,16 @@ function OpenReview({
 
   /** Explain exactly this selection: the one just read, or the one kept. */
   const explainQuote = useCallback(
-    (selected: SelectionQuote | null = quote) => {
+    (selected: SelectionQuote | null = quote): boolean => {
       setQuoteOffer(null);
       // DSP-184: at a step it is the step's explanation, in Step; elsewhere a question in the discussion.
-      if (selected !== null && !explainInStep(selected.text, selected)) {
+      if (selected !== null && explainInStep(selected.text, selected)) {
+        return true;
+      }
+      if (selected !== null) {
         void deepen({ action: 'explain', text: selected.text.slice(0, 2000) }, false, selected);
       }
+      return false;
     },
     [deepen, quote, explainInStep],
   );
@@ -2031,6 +2054,22 @@ function OpenReview({
                   }}
                 />
               )}
+              {stepLinkBackHere !== null && current !== null && away === null && (
+                <div className="rv-step-link-back">
+                  <button
+                    type="button"
+                    className="rv-link rv-quiet-link"
+                    data-ev="step-link-back"
+                    onClick={() => {
+                      setStepLinkBack(null);
+                      goToStep(stepLinkBackHere.stepId, stepLinkBackHere.refIndex);
+                      setNavRequest((count) => count + 1);
+                    }}
+                  >
+                    ← {words.backTo(stepLinkBackHere.stepId)}
+                  </button>
+                </div>
+              )}
               {current !== null && away === null && place !== null && (
                 <StepPanel
                   codeQuestion={
@@ -2159,8 +2198,13 @@ function OpenReview({
             // Not a focus change: the selection stays as it is.
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
-              explainQuote();
-              showPanel(false);
+              // The panel is shown where the explanation goes: Step for a step's explanation (it
+              // showed Discussion, where nothing of it is), the discussion otherwise.
+              if (explainQuote()) {
+                void window.dspatchReviewPanel?.show(null, false, 'step');
+              } else {
+                showPanel(false);
+              }
             }}
           >
             Explain this
@@ -2210,6 +2254,7 @@ function OpenReview({
   if (PANEL_MODE) {
     return (
       <PairKeyContext.Provider value={pair?.key ?? null}>
+      <ReferenceLinksContext.Provider value={referenceLinks}>
       <ThreadContext.Provider value={threadActions}>
       <DiscussionActivity.Provider value={discussionActivity}>
         <div className="rv rv-panel-only" ref={viewRoot} {...rootHandlers}>
@@ -2219,12 +2264,14 @@ function OpenReview({
         </div>
       </DiscussionActivity.Provider>
       </ThreadContext.Provider>
+      </ReferenceLinksContext.Provider>
       </PairKeyContext.Provider>
     );
   }
 
   return (
     <PairKeyContext.Provider value={pair?.key ?? null}>
+      <ReferenceLinksContext.Provider value={referenceLinks}>
       <ThreadContext.Provider value={threadActions}>
     <DiscussionActivity.Provider value={discussionActivity}>
     <div className="rv" ref={viewRoot} {...rootHandlers}    >
@@ -2522,6 +2569,7 @@ function OpenReview({
     </div>
     </DiscussionActivity.Provider>
     </ThreadContext.Provider>
+      </ReferenceLinksContext.Provider>
       </PairKeyContext.Provider>
   );
 }
@@ -3320,6 +3368,9 @@ function asAnswer(entry: StepExplanation): DiscussionMessage {
     status: entry.status === 'sending' ? 'streaming' : entry.status,
     ...(entry.references === undefined ? {} : { references: entry.references }),
     ...(entry.contextReferences === undefined ? {} : { contextReferences: entry.contextReferences }),
+    ...(entry.stepReferences === undefined ? {} : { stepReferences: entry.stepReferences }),
+    // DSP-185: what DSpatch could not check is said in Step too, as text, never as a link.
+    ...(entry.adjustments === undefined || entry.adjustments.length === 0 ? {} : { adjustments: entry.adjustments }),
     ...(entry.insufficient === true ? { insufficient: true } : {}),
   };
 }
@@ -3625,6 +3676,17 @@ function StepPanel({
       </div>
       <ExplanationBar view={explanation} stepId={step.id} words={words} />
 
+      {/* DSP-185: a step with several places says why they are shown together. */}
+      {step.places.length > 1 && step.together !== undefined && pick(step.together, lang) !== '' && (
+        <p className="rv-sub rv-step-together" data-ev="step-together">
+          {words.shownTogether}: <Inline text={pick(step.together, lang)} />
+        </p>
+      )}
+      {step.revisit !== undefined && pick(step.revisit, lang) !== '' && (
+        <p className="rv-sub rv-step-together" data-ev="step-revisit">
+          {words.shownAgain}: <Inline text={pick(step.revisit, lang)} />
+        </p>
+      )}
       {stops.length > 1 && (
         <div className="rv-places" data-ev="step-places">
           <div className="rv-section-title">{words.places}</div>

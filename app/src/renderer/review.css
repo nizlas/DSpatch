@@ -4214,3 +4214,13 @@
 .rv-prepared .markdown__p {
   white-space: pre-line;
 }
+
+/* DSP-185: the way back to the step a step link in an explanation was followed from. */
+.rv-step-link-back {
+  margin: 0 0 6px;
+}
+
+/* DSP-185: why a step's several places are shown together. */
+.rv-step-together {
+  margin: 0 0 6px;
+}

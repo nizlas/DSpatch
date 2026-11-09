@@ -45,7 +45,7 @@ export const DEFAULT_PROFILE: PublicProfile = 'standard';
 /** The prepared explanation of an older walk, as the walk generator wrote it. */
 export const LEGACY_PROFILE: PresentationProfile = 'original';
 /** Raised when profile instructions change in meaning; stored with every step explanation and walk. */
-export const PRESENTATION_INSTRUCTION_VERSION = 4;
+export const PRESENTATION_INSTRUCTION_VERSION = 5;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -127,6 +127,18 @@ export const EXPLANATORY_VALUE_RULES = [
 ] as const;
 
 /**
+ * DSP-185 (Niclas's quality correction of 9 November 2026): code is not treated because it is
+ * shown or named; every central mechanism is explained at the profile's level, from code that
+ * was read, and what cannot be established is said apart from the general concepts. Said in
+ * every generation path: walk generation, present, regenerate, more, simpler and explain.
+ */
+export const MECHANISM_RULES = [
+  'Code is not explained because it is in the step or because its function is named. Explain every central mechanism the step shows at this profile\'s level: what state it touches and what protects it, who owns what and for how long, what is handed on and how the receiver learns of it, and what has actually happened when the code returns as opposed to what has only been requested or reused. A shorter profile says less about each, never nothing about one that matters.',
+  'Before you write, read what the explanation depends on at the review\'s revision where you can read the code: the types involved, the callers, the other code that reads or writes the same state, and the code that waits for or carries out what this code requests. Do not infer the architecture from names.',
+  'When relevant code really is not available to you, still explain the general concepts the reader needs, and say plainly what cannot be established about this implementation. Missing code is neither a reason to invent a connection nor a reason to leave a concept out.',
+] as const;
+
+/**
  * Length is a guideline for a normal step, said once with what it is not, so that no profile
  * pads or truncates to hit a number (DSP-181).
  */
@@ -149,6 +161,14 @@ export const WALK_WRITING_RULES = [
   'Write relative to the walk: say "here" for the code of this step, and "in the next step", "in a later step" or "as we saw earlier" only where the walk\'s order makes it true.',
   'Explain this step. Do not explain in advance what a later step covers; at most say that a later step shows it.',
 ] as const;
+
+/**
+ * DSP-185: how an explanation points at another step of the walk: by its id in the references
+ * block, so the person is taken to that step and its explanation rather than to file and lines.
+ * Said only when the outline carries the steps' ids.
+ */
+export const STEP_REFERENCE_RULE =
+  'When a references block is asked for and you point the reader at another step of this walk or of another walk of this review, put an entry with only its id in the references block, for example {"label": "Where the option is declared", "step": "W1.2"}, instead of naming its file and lines; use the ids in brackets above. Use file and line references for code no step shows.';
 
 export interface ProfileDefinition {
   readonly id: PresentationProfile;
@@ -198,11 +218,13 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     promptName: 'Teacher',
     manner: [
       'Build the concepts the reader needs for this step first: the tool, pattern or idea that would otherwise make the step hard to follow, briefly and only those this step needs.',
+      'Find those concepts by what a reviewer must understand to judge this code, asking of it: which shared state it touches, which other paths or threads touch the same state, and what protects it and for how long; which operations must happen together and why; who owns each object, how long it lives, and what that ownership does and does not guarantee (shared ownership keeps an object alive; it does not make its contents safe to use concurrently); where a request or data is handed to another part, how that part learns of it and what it does then; and what is true when the code returns — an object reused, a request made, or the work actually done.',
+      'Explain those concepts as they apply here, in connected reasoning about purpose and interplay: not a line-by-line paraphrase, and not a general lesson on the language.',
       'Explain the reasoning step by step: why the code is shaped this way and what would go wrong otherwise.',
       'Use a concrete example, or an analogy that holds for the code, where it actually helps.',
       'Then connect it to the concrete code: the real names, what changes there, and its consequence.',
     ],
-    guideline: 'About ten sentences for a normal step: what building the needed concepts and the reasoning takes. Do not shorten it to resemble the other profiles.',
+    guideline: 'About ten sentences for a normal step: what building the needed concepts and the reasoning takes. A step with several interacting mechanisms takes the room understanding them needs. Do not shorten it to resemble the other profiles.',
     simpler: ['Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.'],
   },
 };
@@ -273,13 +295,50 @@ export function presentationFrom(raw: unknown): PresentationRequest | null {
  */
 export interface WalkOutline {
   readonly walkTitle: string;
-  readonly steps: readonly { readonly title: string; readonly places: readonly string[] }[];
+  /** `id`: the step's id (`W1.3`), so an explanation can point at another step by it (DSP-185). */
+  readonly steps: readonly { readonly id?: string; readonly title: string; readonly places: readonly string[] }[];
   /** The index of the step being explained in {@link steps}. */
   readonly current: number;
+  /**
+   * DSP-185: the review's other walks, by title and step ids, so an explanation can point at a
+   * step there instead of explaining it again. Absent when there are none or none were sent.
+   */
+  readonly otherWalks?: readonly { readonly title: string; readonly steps: readonly { readonly id: string; readonly title: string }[] }[];
 }
 
 /** Bounds on an outline as sent: a walk is short, and a forged one cannot grow a prompt. */
-export const OUTLINE_LIMITS = { steps: 40, places: 8, chars: 160 } as const;
+export const OUTLINE_LIMITS = { steps: 40, places: 8, chars: 160, otherWalks: 12 } as const;
+
+const STEP_ID = /^[A-Za-z][A-Za-z0-9_-]{0,15}\.\d{1,4}$/;
+
+/**
+ * DSP-185: the outline of a walk as the window sends it with a step explanation: the walk's
+ * steps with their ids, titles and code, and the review's other walks by title and step ids.
+ * One builder for the window and for anything that must build the same prompt.
+ */
+export function walkOutlineOf(
+  walks: readonly { readonly id: string; readonly title: { readonly sv: string; readonly en: string }; readonly steps: readonly { readonly id: string; readonly title: { readonly sv: string; readonly en: string }; readonly places: readonly { readonly focus: { readonly path: string; readonly side: 'base' | 'target'; readonly start: number; readonly end: number } }[] }[] }[],
+  walkId: string,
+  stepId: string,
+  lang: 'sv' | 'en',
+): WalkOutline | null {
+  const walk = walks.find((entry) => entry.id === walkId);
+  if (walk === undefined) {
+    return null;
+  }
+  const lines = (focus: { readonly start: number; readonly end: number }): string => (focus.start === focus.end ? String(focus.start) : `${String(focus.start)}–${String(focus.end)}`);
+  const others = walks.filter((entry) => entry.id !== walkId);
+  return {
+    walkTitle: walk.title[lang],
+    steps: walk.steps.map((entry) => ({
+      id: entry.id,
+      title: entry.title[lang],
+      places: entry.places.map((at) => `${at.focus.path} ${lines(at.focus)} (${at.focus.side === 'base' ? 'From' : 'To'})`),
+    })),
+    current: Math.max(0, walk.steps.findIndex((entry) => entry.id === stepId)),
+    ...(others.length === 0 ? {} : { otherWalks: others.map((other) => ({ title: other.title[lang], steps: other.steps.map((entry) => ({ id: entry.id, title: entry.title[lang] })) })) }),
+  };
+}
 
 const clipLine = (text: string, max: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -300,9 +359,22 @@ export function outlineFrom(raw: unknown): WalkOutline | null {
   const read = steps.slice(0, OUTLINE_LIMITS.steps).map((entry) => {
     const step = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
     const places = Array.isArray(step['places']) ? step['places'].filter((place): place is string => typeof place === 'string').slice(0, OUTLINE_LIMITS.places) : [];
-    return { title: clipLine(typeof step['title'] === 'string' ? step['title'] : '', OUTLINE_LIMITS.chars), places: places.map((place) => clipLine(place, OUTLINE_LIMITS.chars)) };
+    const id = typeof step['id'] === 'string' && STEP_ID.test(step['id']) ? step['id'] : undefined;
+    return {
+      ...(id === undefined ? {} : { id }),
+      title: clipLine(typeof step['title'] === 'string' ? step['title'] : '', OUTLINE_LIMITS.chars),
+      places: places.map((place) => clipLine(place, OUTLINE_LIMITS.chars)),
+    };
   });
-  return { walkTitle: clipLine(typeof value['walkTitle'] === 'string' ? value['walkTitle'] : '', OUTLINE_LIMITS.chars), steps: read, current };
+  const otherWalks = (Array.isArray(value['otherWalks']) ? value['otherWalks'] : []).slice(0, OUTLINE_LIMITS.otherWalks).flatMap((entry) => {
+    const other = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
+    const steps = (Array.isArray(other['steps']) ? other['steps'] : []).slice(0, OUTLINE_LIMITS.steps).flatMap((stepRaw) => {
+      const step = (typeof stepRaw === 'object' && stepRaw !== null ? stepRaw : {}) as Record<string, unknown>;
+      return typeof step['id'] === 'string' && STEP_ID.test(step['id']) ? [{ id: step['id'], title: clipLine(typeof step['title'] === 'string' ? step['title'] : '', OUTLINE_LIMITS.chars) }] : [];
+    });
+    return steps.length === 0 ? [] : [{ title: clipLine(typeof other['title'] === 'string' ? other['title'] : '', OUTLINE_LIMITS.chars), steps }];
+  });
+  return { walkTitle: clipLine(typeof value['walkTitle'] === 'string' ? value['walkTitle'] : '', OUTLINE_LIMITS.chars), steps: read, current, ...(otherWalks.length === 0 ? {} : { otherWalks }) };
 }
 
 /** The walk's outline and the walk-relative rules, as a prompt section. */
@@ -312,11 +384,22 @@ export function walkOutlineSection(outline: WalkOutline | null): string {
     lines.push(`Walk: ${outline.walkTitle === '' ? '(untitled)' : outline.walkTitle}`);
     outline.steps.forEach((step, index) => {
       const code = step.places.length === 0 ? '' : ` (code: ${step.places.join('; ')})`;
-      lines.push(`${String(index + 1)}. ${step.title === '' ? '(untitled)' : step.title}${code}${index === outline.current ? '  <- this step' : ''}`);
+      const id = step.id === undefined ? '' : `[${step.id}] `;
+      lines.push(`${String(index + 1)}. ${id}${step.title === '' ? '(untitled)' : step.title}${code}${index === outline.current ? '  <- this step' : ''}`);
     });
     lines.push('');
+    if ((outline.otherWalks ?? []).length > 0) {
+      lines.push('Other walks of this review:');
+      for (const other of outline.otherWalks ?? []) {
+        lines.push(`- ${other.title === '' ? '(untitled)' : other.title}: ${other.steps.map((step) => `[${step.id}] ${step.title}`).join('; ')}`);
+      }
+      lines.push('');
+    }
   }
   lines.push(...bullets(WALK_WRITING_RULES));
+  if (outline !== null && outline.steps.some((step) => step.id !== undefined)) {
+    lines.push(`- ${STEP_REFERENCE_RULE}`);
+  }
   return lines.join('\n');
 }
 
@@ -346,7 +429,7 @@ const bullets = (rules: readonly string[]): string[] => rules.map((rule) => `- $
 
 /** The line that names the reader's profile to the agent, in every mode but `present`. */
 function readerLine(profile: ProfileDefinition): string[] {
-  return profile.id === 'original' ? [] : [`- The reader's profile: ${profile.promptName}. Its manner: ${profile.manner.join(' ')}`, ...bullets(EXPLANATORY_VALUE_RULES)];
+  return profile.id === 'original' ? [] : [`- The reader's profile: ${profile.promptName}. Its manner: ${profile.manner.join(' ')}`, ...bullets(EXPLANATORY_VALUE_RULES), ...bullets(MECHANISM_RULES)];
 }
 
 /** The rules of a base text in a profile: the same for walk generation, an explanation and a regeneration. */
@@ -355,6 +438,7 @@ function baseTextRules(profile: ProfileDefinition): string[] {
     'The first part, in every profile:',
     ...bullets(GROUNDING_RULES),
     ...bullets(EXPLANATORY_VALUE_RULES),
+    ...bullets(MECHANISM_RULES),
     '',
     `${profile.promptName}:`,
     ...bullets(profile.manner),

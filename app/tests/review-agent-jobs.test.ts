@@ -175,6 +175,56 @@ describe('preparing code walks', () => {
     assert.ok(isPairError(jobs().start(open.key, { kind: 'checks', provider: 'cursor', model: 'sim-model', definitionPath: path.join(records, 'nothing.review.json') })));
   });
 
+  // DSP-185: one place per step. A step with several places and no reason goes into the one repair round.
+  const placeCounts = (definitionPath: string): number[] => {
+    const parsed = parseReviewDefinition(JSON.parse(fs.readFileSync(definitionPath, 'utf8')) as unknown);
+    assert.deepEqual(parsed.problems, []);
+    return (parsed.definition?.walks ?? []).flatMap((walk) => walk.steps.map((step) => new Set(step.places.map((place) => place.focus.path)).size));
+  };
+  const coveredLines = (definitionPath: string): string[] => {
+    const parsed = parseReviewDefinition(JSON.parse(fs.readFileSync(definitionPath, 'utf8')) as unknown);
+    return [...new Set((parsed.definition?.walks ?? []).flatMap((walk) => walk.steps.flatMap((step) => step.places.map((place) => `${place.focus.side}:${place.focus.path}:${String(place.focus.start)}-${String(place.focus.end)}`))))].sort();
+  };
+
+  it('asks once to split a step with several places and no reason, and takes the split walk', async () => {
+    process.env['DSPATCH_REVIEW_SIM'] = 'crowded-once';
+    sent = [];
+    const started = jobs().start(open.key, { kind: 'walks', provider: 'cursor', model: 'sim-model' });
+    assert.ok(!isPairError(started));
+    const job = await settled(open.key, started.id);
+    delete process.env['DSPATCH_REVIEW_SIM'];
+    assert.equal(job.state, 'done', job.note);
+    assert.match(sent[0] ?? '', /## One place per step/);
+    assert.equal(sent.length, 2, 'one preparation and exactly one repair round');
+    assert.match(sent[1] ?? '', /shows several places and does not say why/);
+    assert.match(sent[1] ?? '', /one step per place, each with its own explanation/);
+    assert.ok(job.definitionPath !== null);
+    assert.ok(placeCounts(job.definitionPath).every((count) => count === 1), JSON.stringify(placeCounts(job.definitionPath)));
+    assert.doesNotMatch(job.note, /without saying why/);
+  });
+
+  it('keeps a step still crowded after the repair round as written, says so, and asks no more', async () => {
+    process.env['DSPATCH_REVIEW_SIM'] = 'crowded-once';
+    sent = [];
+    const fixed = await settled(open.key, (jobs().start(open.key, { kind: 'walks', provider: 'cursor', model: 'sim-model' }) as AgentJob).id);
+    process.env['DSPATCH_REVIEW_SIM'] = 'crowded';
+    sent = [];
+    const started = jobs().start(open.key, { kind: 'walks', provider: 'cursor', model: 'sim-model' });
+    assert.ok(!isPairError(started));
+    const job = await settled(open.key, started.id);
+    delete process.env['DSPATCH_REVIEW_SIM'];
+    assert.equal(job.state, 'done', job.note);
+    assert.equal(sent.length, 2, 'never a second repair round');
+    assert.match(job.note, /1 step\(s\) show several places without saying why seeing them together helps, even when asked once to split them; they were kept as written/);
+    assert.ok(job.definitionPath !== null && fixed.definitionPath !== null);
+    assert.ok(placeCounts(job.definitionPath).some((count) => count === 2));
+    // Nothing is lost by keeping it: the same places, so the same coverage, as the split walk.
+    assert.deepEqual(coveredLines(job.definitionPath), coveredLines(fixed.definitionPath));
+    assert.deepEqual(job.uncovered, fixed.uncovered);
+    const provenance = (JSON.parse(fs.readFileSync(job.definitionPath, 'utf8')) as { provenance: { en: string } }).provenance.en;
+    assert.match(provenance, /kept as written, so no place or covered line was lost/);
+  });
+
   it('refuses a second preparation while one runs', () => {
     const service = jobs({ deltaMs: 200 });
     const first = service.start(open.key, { kind: 'walks', provider: 'cursor', model: 'sim-model' });

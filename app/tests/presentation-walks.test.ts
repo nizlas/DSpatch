@@ -12,8 +12,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { simulatedReviewTask } from '../src/main/presentation-review-tasks';
-import { GROUNDING_RULES, PRESENTATION_INSTRUCTION_VERSION, PROFILES, PROFILE_PROMPT_NAMES, PUBLIC_PROFILES, WALK_DETAILS_RULE, walkExplanationSection, type PublicProfile } from '../src/shared/presentation-profiles';
-import { answerJson, definitionFrom, readWalksAnswer, type ProposedWalks } from '../src/shared/review-agent';
+import { GROUNDING_RULES, walkOutlineSection, PRESENTATION_INSTRUCTION_VERSION, PROFILES, PROFILE_PROMPT_NAMES, PUBLIC_PROFILES, WALK_DETAILS_RULE, walkExplanationSection, type PublicProfile } from '../src/shared/presentation-profiles';
+import { answerJson, crowdedStepProblems, definitionFrom, readWalksAnswer, type ProposedWalks } from '../src/shared/review-agent';
 import { parseReviewDefinition, stepContentHash } from '../src/shared/review-model';
 import { jobFrom } from '../src/shared/review-pair';
 import { TASK_HEADER } from '../src/shared/review-task';
@@ -186,5 +186,71 @@ describe('a walk is read in its own profile without a call (DSP-181)', () => {
     assert.equal(wantsExplanation('essens', 'essens', nothing), false, 'the walk\'s own profile');
     assert.equal(wantsExplanation('standard', 'essens', nothing), true, 'another profile with nothing yet');
     assert.equal(wantsExplanation(null, 'standard', nothing), true, 'an older walk (Original) has no profile of its own');
+  });
+});
+
+describe('one place per step in the simulated walks (DSP-185, SIMULATED)', () => {
+  it('a called definition is a step of its own after the call, and exactly one step compares two places, saying why', () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-185-walks-'));
+    try {
+      fs.mkdirSync(path.join(folder, 'target', 'src'), { recursive: true });
+      const app = ["import { lookup } from './table';", '', 'export function first() {', '  return lookup(1);', '}', ...Array.from({ length: 20 }, (_, index) => `// ${String(index)}`), 'export const second = 2;'];
+      fs.writeFileSync(path.join(folder, 'target', 'src', 'app.ts'), app.join('\n'));
+      fs.writeFileSync(path.join(folder, 'target', 'src', 'table.ts'), 'export function lookup(key) {\n  return null;\n}\n');
+      const prompt = [
+        `${TASK_HEADER} prepare-walks`,
+        '',
+        '## Changed lines (machine-readable)',
+        '```json',
+        JSON.stringify([
+          { path: 'src/app.ts', side: 'target', start: 4, end: 4 },
+          { path: 'src/app.ts', side: 'target', start: 26, end: 26 },
+        ]),
+        '```',
+        '',
+      ].join('\n');
+      const answered = simulatedReviewTask(prompt, folder);
+      assert.ok(answered !== null);
+      const read = readWalksAnswer(answerJson(answered.answer));
+      assert.ok(read.walks !== null, read.problems.join('; '));
+      const steps = read.walks.walks.flatMap((walk) => walk.steps);
+      assert.deepEqual(
+        steps.map((step) => step.title),
+        ['Changed lines 4–4', 'Where lookup is defined', 'Changed lines 26–26', 'The two changes side by side'],
+      );
+      // The definition follows the call, reached from it, and builds on the step before.
+      assert.equal(steps[1]?.places.length, 1);
+      assert.equal(steps[1]?.places[0]?.range.path, 'src/table.ts');
+      assert.equal(steps[1]?.places[0]?.from?.range.start, 4);
+      assert.match(steps[1]?.body ?? '', /in the previous step/);
+      const together = steps.filter((step) => step.places.length > 1);
+      assert.equal(together.length, 1);
+      assert.match(together[0]?.together ?? '', /compare/);
+      assert.deepEqual(steps.filter((step) => step.places.length === 1).length, steps.length - 1);
+      assert.equal(crowdedStepProblems(read.walks).size, 0, 'nothing for the repair round');
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('simulated step explanations point at another step and at the diff (DSP-185, SIMULATED)', () => {
+  it('one step reference from the outline\'s ids and one reference to lines no step shows', () => {
+    const outline = walkOutlineSection({
+      walkTitle: 'What changes in app.js',
+      steps: [
+        { id: 'W1.1', title: 'Removed lines 2–3', places: ['src/app.js 2–3 (From)'] },
+        { id: 'W1.2', title: 'Changed lines 2–2', places: ['src/app.js 2 (To)'] },
+        { id: 'W1.3', title: 'Changed lines 35–35', places: ['src/app.js 35 (To)'] },
+      ],
+      current: 1,
+    });
+    const prompt = [`${TASK_HEADER} review-question`, '', '## How to present (Essentials)', '', 'Step: Changed lines 2–2', '### focus · src/app.js lines 2 · target @ abc', '', outline, '', '## Question', 'Explain this step.', ''].join('\n');
+    const answered = simulatedReviewTask(prompt, fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-185-refs-')));
+    assert.ok(answered !== null);
+    const block = /```dspatch-references\n([\s\S]*?)\n```/.exec(answered.answer)?.[1] ?? '{}';
+    const references = (JSON.parse(block) as { references: Record<string, unknown>[] }).references;
+    assert.deepEqual(references.find((entry) => entry['step'] !== undefined), { label: 'What the next step shows', step: 'W1.3' });
+    assert.deepEqual(references.find((entry) => entry['label'] === 'The surrounding code, outside the walk'), { label: 'The surrounding code, outside the walk', path: 'src/app.js', side: 'target', start: 1, end: 1 });
   });
 });

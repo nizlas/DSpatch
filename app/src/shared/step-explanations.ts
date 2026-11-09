@@ -13,7 +13,7 @@
  * identity key, so it follows the review wherever the discussion does.
  */
 import { PROFILE_PROMPT_NAMES, isPublicProfile, type PresentationProfile, type PublicProfile } from './presentation-profiles';
-import type { CheckedContextReference, CheckedReference, DiscussionIdentity, DiscussionProvider } from './review-discussion';
+import { stepReferencesFrom, type CheckedContextReference, type CheckedReference, type DiscussionIdentity, type DiscussionProvider, type StepReference } from './review-discussion';
 
 /** What asked for an explanation. */
 export type ExplanationAction = 'present' | 'regenerate' | 'more' | 'simpler' | 'explain';
@@ -44,6 +44,8 @@ export interface StepExplanation extends ExplanationSlot {
   readonly text: string;
   readonly references?: readonly CheckedReference[];
   readonly contextReferences?: readonly CheckedContextReference[];
+  /** DSP-185: pointers to other steps of the walk, by id; resolved by the window against its walk. */
+  readonly stepReferences?: readonly StepReference[];
   readonly adjustments?: readonly string[];
   readonly insufficient?: boolean;
   readonly status: ExplanationStatus;
@@ -123,6 +125,10 @@ function adoptEntry(raw: unknown): StepExplanation | null {
     ...optional('selection', str(raw['selection'])),
     ...optional('references', Array.isArray(raw['references']) ? (raw['references'] as CheckedReference[]) : undefined),
     ...optional('contextReferences', Array.isArray(raw['contextReferences']) ? (raw['contextReferences'] as CheckedContextReference[]) : undefined),
+    ...optional('stepReferences', ((): readonly StepReference[] | undefined => {
+      const steps = stepReferencesFrom(raw['stepReferences']);
+      return steps.length === 0 ? undefined : steps;
+    })()),
     ...optional('adjustments', Array.isArray(raw['adjustments']) ? raw['adjustments'].filter((entry): entry is string => typeof entry === 'string') : undefined),
     ...optional('insufficient', raw['insufficient'] === true ? true : undefined),
     ...optional('error', str(raw['error'])),

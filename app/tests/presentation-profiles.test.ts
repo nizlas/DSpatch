@@ -51,7 +51,7 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 4);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 5);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
