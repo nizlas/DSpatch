@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
-import { MECHANISM_RULES, PRESENTATION_INSTRUCTION_VERSION, PROFILES } from '../src/shared/presentation-profiles';
+import { EXPLANATION_TASK, PRESENTATION_INSTRUCTION_VERSION, PROFILES } from '../src/shared/presentation-profiles';
 import { buildExplanationPrompts, type BuiltPrompts } from './support/explain-prompts';
 
 let built: BuiltPrompts;
@@ -38,20 +38,22 @@ describe('the exact explanation prompts of the synthetic work-queue case (struct
     }
   });
 
-  it('every profile is told that code is treated only by explaining its mechanisms, from code it read, keeping what cannot be established apart', () => {
+  it('every profile is given the shared task: read the code it rests on, say what the reader needs to judge the step, keep what cannot be established apart', () => {
     for (const prompt of Object.values(built.prompts)) {
-      for (const rule of MECHANISM_RULES) {
+      for (const rule of EXPLANATION_TASK) {
         assert.ok(prompt.includes(rule));
       }
     }
   });
 
-  it('only Teacher is told how to find the concepts a reviewer needs; Essentials keeps its short guideline', () => {
+  it('only Teacher is asked to build the concepts the reader needs; no profile is given a sentence or identifier count (DSP-188)', () => {
     const teacher = built.prompts['Teacher'] ?? '';
-    for (const rule of PROFILES.pedagog.manner) {
+    for (const rule of PROFILES.pedagog.reader) {
       assert.ok(teacher.includes(rule));
     }
-    assert.ok(!(built.prompts['Essentials'] ?? '').includes(PROFILES.pedagog.manner[1] ?? '-'));
-    assert.match(built.prompts['Essentials'] ?? '', /Length: About two sentences for a normal step/);
+    assert.ok(!(built.prompts['Essentials'] ?? '').includes(PROFILES.pedagog.reader[0] ?? '-'));
+    for (const prompt of Object.values(built.prompts)) {
+      assert.ok(!/Length:|\b(two|four to six|ten) sentences\b|at most one or two identifiers/.test(prompt), 'no quota');
+    }
   });
 });

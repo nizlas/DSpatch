@@ -1,34 +1,37 @@
 /**
- * DSP-176, DSP-181, DSP-184: the presentation policy for the review agent's explanations.
+ * DSP-176, DSP-181, DSP-184, DSP-188: the presentation policy for the review agent's explanations.
  *
- * Everything DSpatch tells the agent about *how to present* a step's explanation is here, in
- * one place, so that it is easy to read, compare and iterate on. The instructions are not shown
- * in the review's reading flow (Niclas's decision of 9 November 2026, DSP-184): the person
- * chooses a profile and reads the explanation. That is a placement in the window: the
- * instructions stay explicit and inspectable (AGENT_BEHAVIOUR_AND_ORCHESTRATION.md, section 1)
- * through this file, their one definition, and through every stored step explanation, which
- * keeps the exact prompt it was sent with and the instruction version (`<key>.explanations.json`).
+ * Everything DSpatch tells the agent about explaining a step is here, in one place, derived from
+ * docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md (the reference Niclas adopted on 9 November 2026)
+ * at its level of abstraction, so that it is easy to read, compare and iterate on. The
+ * instructions are not shown in the review's reading flow (Niclas's decision of 9 November 2026,
+ * DSP-184): the person chooses a profile and reads the explanation. They stay explicit and
+ * inspectable (AGENT_BEHAVIOUR_AND_ORCHESTRATION.md, section 1) through this file, their one
+ * definition, and through every stored step explanation, which keeps the exact prompt it was
+ * sent with and the instruction version (`<key>.explanations.json`).
  *
- * A profile changes presentation only. It never changes how carefully the code is read, which
- * facts are stated, the findings, their recommendations or what is approved.
+ * Three parts, kept apart as the reference's section 6 asks:
+ * - the **shared task** ({@link EXPLANATION_TASK}): what every explanation of a step does, whatever
+ *   the profile: read the code it rests on, say what the reader needs to understand and judge the
+ *   step, add understanding beyond the lines, and let the scope follow the code and the reader.
+ *   No sentence count, no identifier count and no required form: DSP-188 withdrew the length
+ *   guideline of DSP-181 and DSP-184 and the lists of what a text must contain;
+ * - the **profile's addition** ({@link ProfileDefinition.reader}): whom the explanation helps and
+ *   what support that reader needs. Essentials orients an experienced developer; Standard makes
+ *   the central mechanism understandable for a developer new to this code; Teacher builds the
+ *   concepts and reasoning a reader unfamiliar with the language, library or mechanism needs;
+ * - the **technical contract**: the one marker line the window splits on ({@link DETAILS_MARKER},
+ *   {@link SHORT_PART_RULE}, {@link DETAILS_PART_RULE}), what goes after it ({@link DEEPENING_RULES}),
+ *   the walk's outline and how an explanation reads beside the walk ({@link WALK_READING_RULES}),
+ *   and the references block.
  *
- * One policy, three public profiles (Niclas's decisions of 8 and 9 November 2026):
- * - the **grounding** every base text has, whatever the profile ({@link GROUNDING_RULES});
- * - the **details contract**: what goes before and after the one marker line the window splits
- *   on ({@link DETAILS_MARKER}, {@link SHORT_PART_RULE}, {@link DETAILS_PART_RULE}), reused by the
- *   discussion's answer format and by the walk generator, so a prompt holds one wording of it;
- * - the **profiles**: Essentials says what the code does and the most important consequence;
- *   Standard adds how and why the relevant parts connect, for a developer who knows programming
- *   but not this code; Teacher builds the needed concepts and explains the reasoning, with
- *   examples where they help. Length is a guideline, never a quota ({@link LENGTH_GUIDELINE_RULES});
- * - the **walk-relative writing rules** ({@link WALK_WRITING_RULES}): an explanation is read
- *   beside the walk's code, in the walk's order;
- * - **Original** is an older walk's prepared explanation: kept and viewable, never asked for.
- *
- * The same rules reach walk generation ({@link walkExplanationSection}), a profile's
- * explanation, regeneration, Tell me more, Explain more simply and Explain this
- * ({@link presentationPromptSection}). The discussion carries no profile: a profile changes
- * the step's explanation, not the conversation (DSP-184).
+ * A profile changes presentation only ({@link SAME_FACTS_RULES}): never how carefully the code is
+ * read, which facts are stated, the findings, their recommendations or what is approved. The same
+ * parts reach walk generation ({@link walkExplanationSection}), a profile's explanation,
+ * regeneration, Tell me more, Explain more simply and Explain this ({@link presentationPromptSection}).
+ * The discussion carries no profile: a profile changes the step's explanation, not the
+ * conversation (DSP-184). **Original** is an older walk's prepared explanation: kept and viewable,
+ * never asked for.
  *
  * The ids are stable and never shown: the names the person reads come from the window's own
  * words in its language (`review-i18n.ts`); prompts use the English names.
@@ -45,7 +48,7 @@ export const DEFAULT_PROFILE: PublicProfile = 'standard';
 /** The prepared explanation of an older walk, as the walk generator wrote it. */
 export const LEGACY_PROFILE: PresentationProfile = 'original';
 /** Raised when profile instructions change in meaning; stored with every step explanation and walk. */
-export const PRESENTATION_INSTRUCTION_VERSION = 6;
+export const PRESENTATION_INSTRUCTION_VERSION = 7;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -91,80 +94,45 @@ export const DETAILS_PART_RULE =
   `When there is real depth to add (complementary mechanics, special cases, longer evidence, more code references), put it after the short part, below a line holding only ${DETAILS_MARKER}. ` +
   'The person opens it with Show more. Do not repeat the short part there, do not write "Show more" yourself, leave the line out when there is nothing to add, and do not pad either part.';
 
-// --- The shared policy --------------------------------------------------------------------------
+/// --- The shared task and the profiles -------------------------------------------------------------
 
 /**
- * What every base text rests on, whatever the profile: the same facts and the same scope. The
- * profile chooses what to say of them and how, never which they are.
+ * The boundary every presentation keeps (DSP-176, DSP-181): the facts of the code and the
+ * review's decisions are not the profile's to change.
  */
 export const SAME_FACTS_RULES = [
-  'This changes how the step is presented, not what is said about the code. Keep every fact, risk, uncertainty, finding and recommendation the code supports; add none the code does not support, and do not change what is reviewed or approved.',
-  'The code decides. Where the prepared explanation says more than the code supports (for example that a call wakes a worker when the code only sends a notification that may be lost), follow the code and say plainly what it does; that correction is part of presenting the step, not a new review.',
-  'Read the code again when you need to; do not present what you have not read.',
+  'A profile changes how the step is presented, not what is true of the code or what is reviewed or approved: keep every fact, risk, uncertainty, finding and recommendation the code supports, add none it does not, and change no decision of the review. A new observation of yours is an observation, not a verified fact.',
+  'Present this step; do not start a new broad review and do not retell the whole discussion or every finding of the review. An important objection may be summarised in one line that points to its thread.',
 ] as const;
 
 /**
- * What a base text (the short part) holds in every profile (DSP-181). Brevity selects among
- * these; it never replaces them with vaguer words.
+ * The one task every explanation of a step has, whatever the profile and whichever path asks
+ * for it (DSP-188; docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md, sections 1 to 3). Said once per
+ * prompt. The profile adds to it and does not replace it, and nothing here prescribes a length,
+ * a form or a list of things to mention.
  */
-export const GROUNDING_RULES = [
-  'When you name a function, setting, type or other part, use its real name; explain a term rather than replacing it with a vague word such as "the other mechanism" or "one of the options".',
-  'Say what changes and its most important consequence.',
-  'State a default value explicitly when it is decisive for what the step does.',
-  'Keep the conditions, fallback behaviour and uncertainties that are decisive for a correct understanding.',
-  'Present this step; do not start a new broad review. Do not retell the whole discussion or every finding of the review: an important objection may be summarised in one line that points to its thread. A new observation of yours is an observation, not a verified fact, and it changes no decision of the review.',
+export const EXPLANATION_TASK = [
+  'Explain this code to a person reviewing the change, who reads your text beside the code itself. Say what the code does here and why it matters for the change, how it connects to what the reader has seen and will see, and what the reader must understand to judge it: a condition that decides the outcome, a risk, work that is only requested or reused rather than done.',
+  'Read the code you rest on before you write: callers, types, the other code that reads or writes the same state, and what waits for or carries out what this code asks. Do not infer the architecture from names, and do not present what you have not read. The code decides, also where the prepared explanation or an earlier answer says more than the code supports; then say plainly what the code does.',
+  'Add understanding beyond what the lines and their comments already say: do not retell statements in prose, and keep what the code shows apart from an interpretation of why it is written so. Be exact about guarantees: a lock protects only the accesses under it, a notification is not a completed hand-over, a private method is not proof that nothing else calls it. When a part cannot be read, explain the general concept and say what cannot be established about this implementation.',
+  'Let the scope follow the code and the reader: a simple step is said in a few words in every profile, and a step where several mechanisms interact takes the room understanding needs. There is no length to hit and no required form; use a paragraph, a list or a small code excerpt where it helps, and let every sentence add understanding. Point at the code you rest on with references, so the person can open it.',
 ] as const;
 
-/**
- * DSP-184 (Niclas's correction of 9 November 2026): every profile adds understanding beyond
- * what the code and its comments already say, rather than retelling them in prose, and keeps
- * what the code shows apart from an interpretation of why it is written so. Ends with the
- * self-check every text is held to.
- */
-export const EXPLANATORY_VALUE_RULES = [
-  'Add understanding beyond what can be read directly in the code and its comments. Do not retell each statement, condition or comment in prose.',
-  'Do not invent intentions to make the text sound explanatory. Keep apart what the code shows and an interpretation of why it is written so, and mark an interpretation as one.',
-  'Before you answer, ask: what does this help the reader understand that is not already plain from the code or its comments? If the answer is only "the same details, said in sentences", rewrite it.',
-] as const;
-
-/**
- * DSP-185 (Niclas's quality correction of 9 November 2026): code is not treated because it is
- * shown or named; every central mechanism is explained at the profile's level, from code that
- * was read, and what cannot be established is said apart from the general concepts. Said in
- * every generation path: walk generation, present, regenerate, more, simpler and explain.
- */
-export const MECHANISM_RULES = [
-  'Code is not explained because it is in the step or because its function is named. Cover every central mechanism the step shows: what state it touches and what protects it, who owns what and for how long, what is handed on and how the receiver learns of it, and what has actually happened when the code returns as opposed to what has only been requested or reused. Where the code makes "the work" trivial, or different from what its names suggest, say what the work actually consists of.',
-  'Cover them at this profile\'s level. Essentials: its short part names the central mechanism and its consequence within its two sentences, and the explanation of the mechanisms goes after the marker. Standard: explain how the mechanisms connect and what follows from that. Teacher: build the concepts each mechanism rests on, then apply them to this code. A mechanism that matters is never left out of the explanation as a whole; a shorter profile says less about it in its short part, not less truly.',
-  'What you must investigate and what the reader needs to see are different. Read widely; put in the text what is needed to understand this step, not every path you read.',
-  'Before you write, read what the explanation depends on at the review\'s revision where you can read the code: the types involved, the callers, the other code that reads or writes the same state, and the code that waits for or carries out what this code requests. Do not infer the architecture from names.',
-  'When relevant code really is not available to you, still explain the general concepts the reader needs, and say plainly what cannot be established about this implementation. Missing code is neither a reason to invent a connection nor a reason to leave a concept out.',
-] as const;
-
-/**
- * Length is a guideline for a normal step, said once with what it is not, so that no profile
- * pads or truncates to hit a number (DSP-181).
- */
-export const LENGTH_GUIDELINE_RULES = [
-  'The length given for this profile is the order of magnitude for a normal step, not a count to hit, not a cap and not a reason to fill out a simple explanation. A simple change is explained briefly in every profile; a complex or wide change may take more room when the material calls for it. Every sentence must add understanding. Do not press the content of many sentences into a few long ones: a shorter profile says less, at a higher level, not the same in denser sentences.',
-] as const;
-
-/** The form of the details, in every profile. */
+/** What comes after the marker line, in every profile: the technical contract of Show more. */
 export const DEEPENING_RULES = [
-  'After the marker line: the deepening only, in the same manner as the first part, readable even when long: short paragraphs, lists where they help, small code excerpts where they carry the point.',
-  'Name the code you rest on with references, as for any answer, so the person can open it.',
-  'Write it at this profile\'s level, in its reasoning and with the prerequisites its reader needs, as its Show more line says. The same relevant facts may appear in every profile; do not make the content different only to differ.',
+  'After the marker line comes the deepening only, in the same manner and at the same level as the first part: the mechanisms behind what it says, special cases that change the outcome, longer evidence and more references, readable even when long. It continues the first part rather than restating it: nothing said above the line is said again below it, also not in other words or under a heading of its own, and the comparison with the earlier revision is made once. Leave the line out when there is nothing to add.',
 ] as const;
 
 /**
- * DSP-184: an explanation is read beside the walk's code, in the walk's order. Said in walk
+ * DSP-184, DSP-188: an explanation is read beside the walk's code, in the walk's order, and the
+ * walk's transitions are made comprehensible (the reference's section 1). Said in walk
  * generation and in every step explanation, with the walk's outline when the window sends it.
  */
-export const WALK_WRITING_RULES = [
-  'The walk shows the code of each step beside its explanation. In the prose, do not write file names, paths or line numbers for code the walk shows; name the functions, types, variables and settings instead. The references block, when one is asked for, still names files and lines.',
-  'Write relative to the walk: say "here" for the code of this step, and "in the next step", "in a later step" or "as we saw earlier" only where the walk\'s order makes it true.',
-  'Explain this step. Read and understand what later steps show where this step depends on it. A short orientation of what happens later is allowed and often needed (for example that a later step shows who picks the request up): normally one sentence and a reference to that step, also under Show more, and more only where this step\'s own argument depends on it; do not repeat that step\'s explanation here.',
-  'Write only from what the reader can see: do not refer to the prepared explanation, the instructions or other text given to you but not shown to the reader (no "the prepared summary says"); where the code contradicts it, simply say what the code does.',
+export const WALK_READING_RULES = [
+  'The walk shows the code of each step beside its explanation: in the prose, name functions, types, variables and settings rather than file names, paths or line numbers; the references block, when one is asked for, still names files and lines.',
+  'Write relative to the walk: "here" for this step\'s code, and "in the next step", "in a later step" or "as we saw earlier" only where the walk\'s order makes it true. A short orientation about what a later step shows is often needed, normally one sentence with a reference to that step; do not repeat that step\'s explanation here. What an earlier step established is recalled in a line with a reference to that step, not derived again: this step adds what is new here.',
+  'Make a transition comprehensible where it would otherwise be unclear: what this step is reached from and what the caller needs from it; on a return, where the caller continues and what is now known; for an alternative outcome, that the walk is back at the branch point and which condition applies now; for a worker or a callback, what starts or triggers it and which execution context is being followed. When the teaching order differs from the execution order, say so. What follows from the language\'s or the library\'s rules, such as a specified order or a type, is stated as a fact; what depends on timing, scheduling or callers outside the change is stated as what the code allows, never as something observed to run.',
+  'Write only from what the reader can see: do not refer to the prepared explanation, the instructions or other text given to you but not shown (no "the prepared summary says"); where the code contradicts it, simply say what the code does.',
 ] as const;
 
 /**
@@ -179,72 +147,45 @@ export interface ProfileDefinition {
   readonly id: PresentationProfile;
   /** The name prompts use; the window shows its own language's name. */
   readonly promptName: string;
-  /** What the profile selects and how it explains: the rules of the first part. */
-  readonly manner: readonly string[];
-  /** The order of magnitude for a normal step, read with {@link LENGTH_GUIDELINE_RULES}. */
-  readonly guideline: string;
+  /**
+   * Whom the explanation helps and what support that reader needs: the profile's whole addition
+   * to the shared task (docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md, section 4).
+   */
+  readonly reader: readonly string[];
   /** How this profile explains more simply. */
   readonly simpler: readonly string[];
-  /** What this profile's Show more (the part after the marker) adds, in its own manner and depth. */
-  readonly details: string;
 }
 
 export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> = {
   original: {
     id: 'original',
     promptName: 'Original',
-    manner: [],
-    guideline: '',
+    reader: [],
     simpler: [],
-    details: '',
   },
   essens: {
     id: 'essens',
     promptName: 'Essentials',
-    manner: [
-      'Give the purpose of the code and its most important events, at a level above the individual statements.',
-      'Include the conditions that are decisive, summarised so they are understood rather than listed.',
-      'Name concrete identifiers only where they help the reader connect the explanation to the code.',
-      'Leave out mechanical details (indexes, loop bounds, every single call) unless they are decisive; any further detail that is needed goes after the marker.',
-      'Of the uncertainties and risks, keep in the short part only the one that decides how the code must be judged, in a clause; the others go after the marker. State that risk precisely, what goes wrong and when, without overstating it; its details go after the marker.',
-      'The short part is two plain, natural sentences: not packed sentences held together with colons, and not lists of identifiers. Name at most one or two identifiers, and only where they help the reader find the code.',
-      'Lead with the purpose and the outcome in short, plain sentences; give a surprising risk its own sentence rather than a clause in a long one.',
+    reader: [
+      'The reader is an experienced developer who wants quick orientation: the purpose, the main course and the conditions that decide the outcome, at a level above the individual statements. Brevity comes from choosing the right level of abstraction and leaving out the obvious, not from compressing a line-by-line account or dropping a condition or risk without which the picture would mislead. Use concrete names where they orient; the mechanisms and the evidence go after the marker.',
     ],
-    guideline: 'About two sentences for a normal step.',
     simpler: ['Plainer language and less jargon: the same point, said more directly.'],
-    details: 'the key mechanism, briefly: how it works and why it matters here, not a full account.',
   },
   standard: {
     id: 'standard',
     promptName: 'Standard',
-    manner: [
-      'Write for a developer who knows programming but not this code. Say what the code is for and the consequences that matter, and develop the connections: why the conditions exist and how the parts work together.',
-      'Open with the connection that matters, not with a list of the parts in the order the code names them.',
-      'Not a line-by-line account. Go into detail only where the code is hard to read, the behaviour is surprising or a consequence is easy to miss, and then make exactly that clear.',
-      'Place a project-specific name briefly the first time it matters. Do not teach general programming concepts.',
-      'Mechanics the reader can see line by line get at most a clause. Leave out general good-practice remarks that are not a risk or a decision in this code.',
+    reader: [
+      'The reader knows programming but not this code: make the central mechanism understandable, how the parts work together and why their relationship matters, from a natural entry point into what makes the behaviour understandable rather than the parts in source order. Place a project-specific name the first time it matters, and explain a language detail where the reader needs it to interpret the code; you need not teach every concept, nor add facts to be longer.',
     ],
-    guideline: 'About four to six sentences for a normal step.',
     simpler: ['Break the difficult connection into its parts and explain the concepts that are needed to follow it, one at a time.'],
-    details: 'the connections and consequences developed further: how the mechanisms interact, the special cases that change the outcome, and what follows for the code that depends on this. Do not restate what the short part already said.',
   },
   pedagog: {
     id: 'pedagog',
     promptName: 'Teacher',
-    manner: [
-      'Build the concepts the reader needs for this step first: the tool, pattern or idea that would otherwise make the step hard to follow, briefly and only those this step needs.',
-      'Find those concepts by what a reviewer must understand to judge this code. Investigate widely, but write only what the reader needs to understand how the parts work together and why they are needed; this is not an inventory to fill in. Ask of the code: which shared state it touches, which other paths or threads take the same lock or touch the same state (read them all, setup and teardown included, and mention those that matter for understanding this step), what protects the state and for how long (a scoped lock\'s extent where it matters); which operations must happen together and why; who owns each object, how long it lives, and what that ownership does and does not guarantee (shared ownership keeps an object alive; it does not make its contents safe to use concurrently); where a request or data is handed to another part, how that part learns of it and what it does then; and what is true when the code returns — an object reused, a request made, or the work actually done.',
-      'Describe a concurrency fault precisely: unsynchronised concurrent access to a container or other shared structure, where one side writes, is a data race, undefined behaviour that can corrupt the structure, not merely a duplicate or a stale value.',
-      'Explain those concepts as they apply here, in connected reasoning about purpose and interplay: not a line-by-line paraphrase, and not a general lesson on the language.',
-      'Explain the reasoning step by step: why the code is shaped this way and what would go wrong otherwise.',
-      'Use a concrete example, or an analogy that holds for the code, where it actually helps.',
-      'Then connect it to the concrete code: the real names, what changes there, and its consequence.',
-      'Define every concept term the first time it appears in the text shown. When an argument depends on what a primitive guarantees (for example what a wait releases and takes back, or which waiting threads a notification reaches), state that guarantee before using it.',
-      'Include a special case only when it changes what the reader should conclude.',
+    reader: [
+      'The reader can program but may not know this language, library or mechanism: build the concepts and the intermediate reasoning this step needs and connect them to what the code does here, with a concrete example or comparison where it makes the reasoning easier to follow. State what a primitive guarantees before an argument rests on it, define a term the first time it appears, and name a fault for what it is: unsynchronised concurrent access with a writer is a data race, not a stale value. A local explanation beats a detached lesson, and the text may take the room understanding needs.',
     ],
-    guideline: 'No fixed length: often around ten sentences for a simple step, and as much as building the needed concepts and the reasoning takes when several mechanisms interact. The short part may be as long as understanding the step needs; longer evidence, special cases and further references go after the marker. Do not shorten it to resemble the other profiles.',
     simpler: ['Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.'],
-    details: 'the evidence in the code, the special cases, and the remaining concepts the short part did not need to build.',
   },
 };
 
@@ -415,7 +356,7 @@ export function walkOutlineSection(outline: WalkOutline | null): string {
       lines.push('');
     }
   }
-  lines.push(...bullets(WALK_WRITING_RULES));
+  lines.push(...bullets(WALK_READING_RULES));
   if (outline !== null && outline.steps.some((step) => step.id !== undefined)) {
     lines.push(`- ${STEP_REFERENCE_RULE}`);
   }
@@ -446,25 +387,14 @@ function clipped(text: string): string {
 
 const bullets = (rules: readonly string[]): string[] => rules.map((rule) => `- ${rule}`);
 
-/** The line that names the reader's profile to the agent, in every mode but `present`. */
+/** The reader's profile and the shared task, for a deepening, a simplification or a selection. */
 function readerLine(profile: ProfileDefinition): string[] {
-  return profile.id === 'original' ? [] : [`- The reader's profile: ${profile.promptName}. Its manner: ${profile.manner.join(' ')}`, ...bullets(EXPLANATORY_VALUE_RULES), ...bullets(MECHANISM_RULES)];
+  return profile.id === 'original' ? bullets(EXPLANATION_TASK) : [`- The reader's profile: ${profile.promptName}. ${profile.reader.join(' ')}`, ...bullets(EXPLANATION_TASK)];
 }
 
-/** The rules of a base text in a profile: the same for walk generation, an explanation and a regeneration. */
-function baseTextRules(profile: ProfileDefinition): string[] {
-  return [
-    'The first part, in every profile:',
-    ...bullets(GROUNDING_RULES),
-    ...bullets(EXPLANATORY_VALUE_RULES),
-    ...bullets(MECHANISM_RULES),
-    '',
-    `${profile.promptName}:`,
-    ...bullets(profile.manner),
-    `- Length: ${profile.guideline}`,
-    ...bullets(LENGTH_GUIDELINE_RULES),
-    ...(profile.details === '' ? [] : [`- Show more in ${profile.promptName}: ${profile.details}`]),
-  ];
+/** The task, the boundary and the profile's addition: the same for walk generation, an explanation and a regeneration. */
+function baseTextRules(profile: ProfileDefinition, withBoundary: boolean): string[] {
+  return ['Every explanation:', ...bullets(EXPLANATION_TASK), ...(withBoundary ? bullets(SAME_FACTS_RULES) : []), '', `${profile.promptName}:`, ...bullets(profile.reader)];
 }
 
 /**
@@ -482,12 +412,10 @@ export function presentationPromptSection(section: PresentationSection): string 
     }
     lines.push(
       `## How to present (${profile.promptName})`,
-      `Present this step for a reader who chose ${profile.promptName}. The first part is the short part the answer format below describes; the deepening goes after the marker line it names.`,
+      `Explain this step for a reader who chose ${profile.promptName}. The first part is the short part the answer format below describes; the deepening goes after the marker line it names.`,
       `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
       '',
-      ...bullets(SAME_FACTS_RULES),
-      '',
-      ...baseTextRules(profile),
+      ...baseTextRules(profile, true),
       '',
       'After the marker:',
       ...bullets(DEEPENING_RULES),
@@ -573,11 +501,10 @@ export function walkExplanationSection(profile: PublicProfile): string {
     `The person reads the walks in the ${definition.promptName} profile. Write each step's "summary", "body", "why" and "details" for that reader. This section decides how the steps are explained, nothing else: which walks, readings, steps and places you produce, their titles, questions and purposes, and the change's own summary and background follow the sections above and stay concise, whatever the profile.`,
     `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
     '',
-    "Every step's explanation:",
-    ...baseTextRules(definition).slice(1),
+    ...baseTextRules(definition, false),
     '',
     'Every step is read beside its code, in the walk\'s order:',
-    ...bullets(WALK_WRITING_RULES),
+    ...bullets(WALK_READING_RULES),
     '',
     `- ${WALK_DETAILS_RULE}`,
   ].join('\n');

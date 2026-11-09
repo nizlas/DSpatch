@@ -108,9 +108,9 @@ describe('the chain, with the simulated provider (DSP-181)', () => {
     const essentials = present('Return the greeting by name', 'essens');
     const standard = present('Return the greeting by name', 'standard');
     const teacher = present('Return the greeting by name', 'pedagog');
-    assert.ok(sentences(essentials.short) <= 3, `Essentials is about two sentences: ${String(sentences(essentials.short))}`);
-    assert.ok(sentences(standard.short) >= 4 && sentences(standard.short) <= 6, `Standard is about five: ${String(sentences(standard.short))}`);
-    assert.ok(sentences(teacher.short) >= 7, `Teacher is about ten: ${String(sentences(teacher.short))}`);
+    // DSP-188: the profiles differ in manner, not by a count; these texts are the simulated adapter's own.
+    assert.notEqual(essentials.short, standard.short);
+    assert.notEqual(standard.short, teacher.short);
     assert.match(teacher.short, /First the idea[\s\S]*Now the code/, 'Teacher builds the prerequisite first, then connects it to the code');
   });
 
@@ -139,8 +139,7 @@ describe('the chain, with the simulated provider (DSP-181)', () => {
 
   it('a step about an unfamiliar tool: the Teacher prompt asks for the prerequisite knowledge, and the answer builds it before the code', () => {
     const got = present('Declare the build option that switches the greeting on', 'pedagog');
-    assert.match(got.prompt, /Build the concepts the reader needs for this step first/);
-    assert.match(got.prompt, /only those this step needs/);
+    assert.match(got.prompt, /build the concepts and the intermediate reasoning this step needs/);
     assert.ok(!/build setting/.test(got.prompt), 'no hard-coded example (DSP-184)');
     assert.ok(got.short.indexOf('First the idea') < got.short.indexOf('Now the code'));
   });

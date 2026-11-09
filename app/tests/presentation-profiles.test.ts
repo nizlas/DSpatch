@@ -15,15 +15,14 @@ import {
   DEFAULT_PROFILE,
   DETAILS_MARKER,
   DETAILS_PART_RULE,
-  EXPLANATORY_VALUE_RULES,
-  GROUNDING_RULES,
-  LENGTH_GUIDELINE_RULES,
+  EXPLANATION_TASK,
   MORE_RULES,
   PRESENTATION_INSTRUCTION_VERSION,
   PRESENTATION_PROFILES,
   PROFILES,
   PROFILE_PROMPT_NAMES,
   PUBLIC_PROFILES,
+  SAME_FACTS_RULES,
   SHORT_PART_RULE,
   SIMPLER_AGAIN_RULES,
   SIMPLER_RULES,
@@ -31,7 +30,7 @@ import {
   isProfile,
   isPublicProfile,
   presentationFrom,
-  WALK_WRITING_RULES,
+  WALK_READING_RULES,
   outlineFrom,
   presentationPromptSection,
   readingContextSection,
@@ -51,7 +50,7 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 6);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 7);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
@@ -96,75 +95,49 @@ describe('the profiles (DSP-181)', () => {
 });
 
 describe('one policy in the prompt (DSP-181)', () => {
-  it('presenting a step says the grounding, the profile\'s manner and the length guideline with what it is not, once each', () => {
+  it('presenting a step says the shared task, the boundary and the profile\'s reader once each, with no length and no form to hit', () => {
     for (const id of PUBLIC_PROFILES) {
       const section = presentationPromptSection({ profile: id, mode: 'present', shown: [] }) ?? '';
       assert.match(section, new RegExp(`^## How to present \\(${PROFILE_PROMPT_NAMES[id]}\\)`));
       assert.match(section, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
-      for (const rule of GROUNDING_RULES) {
-        assert.equal(count(section, rule), 1, `grounding once: ${rule.slice(0, 40)}`);
+      for (const rule of [...EXPLANATION_TASK, ...SAME_FACTS_RULES, ...PROFILES[id].reader]) {
+        assert.equal(count(section, rule), 1, `once: ${rule.slice(0, 40)}`);
       }
-      for (const rule of PROFILES[id].manner) {
-        assert.equal(count(section, rule), 1);
-      }
-      assert.equal(count(section, PROFILES[id].guideline), 1);
-      assert.equal(count(section, LENGTH_GUIDELINE_RULES[0]), 1);
+      // DSP-188: no sentence count, no identifier count and no prescribed form (docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md, sections 4 and 6).
+      assert.ok(!/\b(two|three|four|five|six|ten) sentences\b/i.test(section), `${id}: no sentence count`);
+      assert.ok(!/Length:|sentence quota|at most one or two identifiers|word budget/i.test(section), `${id}: no quota`);
+      assert.ok(!/bullet points are welcome|mandatory heading/i.test(section), `${id}: no prescribed form`);
+      assert.match(section, /There is no length to hit and no required form/);
       // The contract of the marker is the answer format's business: said there, once, not here again.
       assert.ok(!section.includes(DETAILS_MARKER), 'the marker is named by the answer format, not twice');
       assert.ok(!/Then the line that starts Show more/.test(section), 'no instruction to write a "Show more" line');
-      assert.ok(!/Answer three things/.test(section) && !/60–100 words/.test(section), 'no three-part mandate, no word budget');
     }
     assert.equal(presentationPromptSection({ profile: 'original', mode: 'present', shown: [] }), null, 'Original is never asked for');
   });
 
-  it('the profiles differ in selection and manner, not in facts', () => {
+  it('the profiles differ in whom they help and what support that reader needs, not in facts (DSP-188)', () => {
     const essentials = presentationPromptSection({ profile: 'essens', mode: 'present', shown: [] }) ?? '';
     const standard = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [] }) ?? '';
     const teacher = presentationPromptSection({ profile: 'pedagog', mode: 'present', shown: [] }) ?? '';
-    // Essentials: the purpose and the most important events, above the statements; about two sentences.
-    assert.match(essentials, /purpose of the code and its most important events, at a level above the individual statements/);
-    assert.match(essentials, /concrete identifiers only where they help/);
-    assert.match(essentials, /Leave out mechanical details \(indexes, loop bounds, every single call\)/);
-    assert.match(essentials, /About two sentences for a normal step/);
-    // Standard: also how and why the parts connect, for a developer new to this code; understanding, not words.
+    assert.match(essentials, /experienced developer who wants quick orientation/);
+    assert.match(essentials, /not from compressing a line-by-line account/);
     assert.match(standard, /knows programming but not this code/);
-    assert.match(standard, /the consequences that matter, and develop the connections: why the conditions exist and how the parts work together/);
-    assert.match(standard, /Not a line-by-line account/);
-    assert.match(standard, /Do not teach general programming concepts/);
-    assert.match(standard, /About four to six sentences/);
-    // Teacher: concepts first, the reasoning, examples where they help; not shortened.
-    assert.match(teacher, /Build the concepts the reader needs/);
-    assert.match(teacher, /Explain the reasoning step by step/);
-    assert.match(teacher, /example, or an analogy/);
-    assert.match(teacher, /Do not shorten it to resemble the other profiles/);
-    // Mechanisms are covered at each profile's level, in one place: Essentials keeps its short form.
-    for (const section of [essentials, standard, teacher]) {
-      assert.match(section, /Essentials: its short part names the central mechanism and its consequence within its two sentences, and the explanation of the mechanisms goes after the marker/);
-      assert.ok(!/never nothing about one that matters/.test(section));
-    }
-    // Show more in each profile's own manner and depth; Essentials in plain sentences; Teacher's concurrency concepts.
-    assert.match(essentials, /- Show more in Essentials: the key mechanism, briefly/);
-    assert.match(standard, /- Show more in Standard: the connections and consequences developed further/);
-    assert.match(teacher, /- Show more in Teacher: the evidence in the code, the special cases, and the remaining concepts/);
-    assert.match(essentials, /two plain, natural sentences: not packed sentences held together with colons, and not lists of identifiers/);
-    assert.match(teacher, /setup and teardown included/);
-    assert.match(teacher, /this is not an inventory to fill in/);
-    assert.match(teacher, /undefined behaviour that can corrupt the structure, not merely a duplicate/);
-    assert.match(standard, /say what the work actually consists of/);
-    assert.match(essentials, /The code decides\. Where the prepared explanation says more than the code supports/);
+    assert.match(standard, /how the parts work together and why their relationship matters/);
+    assert.match(teacher, /may not know this language, library or mechanism/);
+    assert.match(teacher, /concrete example or comparison/);
+    assert.match(teacher, /data race, not a stale value/);
     // Generic: no hard-coded example of a particular kind of project.
     assert.ok(!/build setting|build system/.test(teacher));
     for (const section of [essentials, standard, teacher]) {
-      // Every profile: understanding beyond the code and its comments, no invented intentions, and the self-check.
-      for (const rule of EXPLANATORY_VALUE_RULES) {
-        assert.equal(count(section, rule), 1);
-      }
-      assert.match(section, /not already plain from the code or its comments/);
-      assert.match(section, /not what is said about the code/);
-      assert.match(section, /default value explicitly when it is decisive/);
-      assert.match(section, /not a count to hit, not a cap/);
+      // Every profile: the code decides, understanding beyond the lines, the boundary of facts and decisions, references.
+      assert.match(section, /The code decides/);
+      assert.match(section, /do not retell statements in prose/);
+      assert.match(section, /not what is true of the code or what is reviewed or approved/);
       assert.match(section, /do not start a new broad review/);
+      assert.match(section, /Point at the code you rest on with references/);
     }
+    assert.notEqual(essentials, standard);
+    assert.notEqual(standard, teacher);
   });
 
   it('the answer format says the short part and the marker in the policy\'s own words', () => {
@@ -205,7 +178,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     assert.match(more, /### The Standard explanation of the step\nThe base\./);
     // Nothing shown yet in the profile: the prepared explanation is deepened, with the profile's manner.
     const first = presentationPromptSection({ profile: 'essens', mode: 'more', shown: [] }) ?? '';
-    assert.match(first, /^## The reader's profile \(Essentials\)\nInstruction version: \d+\n- The reader's profile: Essentials\. Its manner:/);
+    assert.match(first, /^## The reader's profile \(Essentials\)\nInstruction version: \d+\n- The reader's profile: Essentials\. The reader is an experienced developer/);
     assert.ok(!first.includes('below'), 'nothing is said to be below when nothing is');
     assert.equal(presentationPromptSection({ profile: 'original', mode: 'more', shown: [] }), null);
   });
@@ -216,7 +189,7 @@ describe('one policy in the prompt (DSP-181)', () => {
       const present = presentationPromptSection({ profile: id, mode: 'present', shown: [], walk: null }) ?? '';
       const regenerate = presentationPromptSection({ profile: id, mode: 'regenerate', shown: [{ label: 'Before', text: 'A.' }], walk: null }) ?? '';
       for (const section of [walk, present, regenerate]) {
-        for (const rule of [...GROUNDING_RULES, ...EXPLANATORY_VALUE_RULES, ...PROFILES[id].manner, ...WALK_WRITING_RULES]) {
+        for (const rule of [...EXPLANATION_TASK, ...PROFILES[id].reader, ...WALK_READING_RULES]) {
           assert.equal(count(section, rule), 1, `${id}: ${rule.slice(0, 40)}`);
         }
         assert.match(section, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
@@ -224,9 +197,9 @@ describe('one policy in the prompt (DSP-181)', () => {
       assert.match(regenerate, /## Regenerating[\s\S]*### Before\nA\./);
       for (const mode of ['more', 'simpler', 'explain'] as const) {
         const section = presentationPromptSection({ profile: id, mode, shown: [{ label: 'Shown', text: 'A.' }], walk: null }) ?? '';
-        assert.ok(section.includes(PROFILES[id].manner[0] ?? '-'), `${mode} keeps the profile's manner`);
-        assert.ok(section.includes(EXPLANATORY_VALUE_RULES[2]), `${mode} keeps the self-check`);
-        for (const rule of WALK_WRITING_RULES) {
+        assert.ok(section.includes(PROFILES[id].reader[0] ?? '-'), `${mode} keeps the profile's reader`);
+        assert.ok(section.includes(EXPLANATION_TASK[2]), `${mode} keeps the shared task`);
+        for (const rule of WALK_READING_RULES) {
           assert.equal(count(section, rule), 1, `${mode}: the walk-relative rules`);
         }
       }
@@ -239,7 +212,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     const section = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [], walk: outline }) ?? '';
     assert.match(section, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)\n2\. Build the greeting \(code: src\/b\.ts 4–9 \(To\)\)  <- this step/);
     assert.match(section, /"in the next step"/);
-    assert.match(section, /A short orientation of what happens later is allowed/);
+    assert.match(section, /A short orientation about what a later step shows is often needed/);
     assert.equal(outlineFrom({ steps: [], current: 0 }), null);
     assert.equal(outlineFrom({ steps: [{ title: 'x' }], current: 3 }), null);
     assert.equal(outlineFrom({ steps: Array.from({ length: 100 }, () => ({ title: 'x'.repeat(500) })), current: 0 })?.steps.length, 40);
@@ -250,7 +223,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     assert.match(section, /^## The explanation of this step the person is reading/);
     assert.match(section, /It returns the greeting\./);
     for (const id of PUBLIC_PROFILES) {
-      assert.ok(!section.includes(PROFILES[id].manner[0] ?? '-'));
+      assert.ok(!section.includes(PROFILES[id].reader[0] ?? '-'));
     }
     assert.ok(!/Essentials|Teacher|profile/.test(section));
     assert.equal(readingContextSection(null), null);

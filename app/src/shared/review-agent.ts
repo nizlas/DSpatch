@@ -40,7 +40,7 @@ import {
   type StepQuestion,
 } from './review-pair';
 
-import { GROUNDING_RULES, walkExplanationSection, type PresentationProfile, type PublicProfile } from './presentation-profiles';
+import { walkExplanationSection, type PresentationProfile, type PublicProfile } from './presentation-profiles';
 import { TASK_HEADER } from './review-task';
 import { stepReferencesFrom, type StepReference } from './review-discussion';
 
@@ -230,9 +230,6 @@ export const WRITING_RULES = [
   "Keep apart what the code is meant to do, your own conclusions, and test results that were actually observed. You have observed no test run here: you can read code, not run it.",
   'No fixed length and no template of mandatory headings: be as short as understanding allows.',
   'Do not narrate your investigation ("I read…", "Then I searched…"). Give the explanation, and point at the code it rests on.',
-  // DSP-181: the grounding every explanation in the review has, the presentation profiles' included,
-  // so an alternative presentation rests on prepared text that already names what matters.
-  ...GROUNDING_RULES.slice(0, 4),
 ] as const;
 
 /**
@@ -255,6 +252,10 @@ export const FORM_RULES = [
   'Choose the form of each item from what changed. A change can get code walks, readings, or both.',
   'A **code walk** ("kind": "walk") follows a relevant execution path from a concrete entry point or event: a button press, a request, a call, a test. Go through calls, conditions and data roughly as the program runs. Include unchanged code where it is needed to understand the change. Show the relevant steps, not every call.',
   'At each hop of a code walk, say briefly how the step is connected to the one before (what calls it, what data it receives). When a place is reached from a call or reference you show elsewhere, give the call or reference as the `from` field of that place.',
+  // DSP-188 (docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md, section 1): branches, concurrent work and the teaching order.
+  'Where the path forks, each alternative is a path of its own: after following one outcome, return to the branch point and say which condition applies in the one you follow now. Never present alternatives as if they ran one after another in a single run.',
+  'Where work moves to another thread, a worker or a callback, say what starts or triggers it and which execution context the next step follows. That a step comes next in the walk does not mean its code is called from the step before, nor that the work only starts there.',
+  'Teaching order may differ from execution order: when you follow one path first and then switch to another, look at a failure path, or take a mechanism apart on its own, say so in the step\'s explanation. For configuration, data types and tests, a dependency or a use may be the natural route through the code; do not force a fictional execution sequence.',
   'A code walk describes code you read. You did not run it: never say a flow was executed, observed or verified unless a test result in the material shows it.',
   'A **reading** ("kind": "reading") is for documentation and other text where following execution means nothing. It takes one coherent change of text in its context: what changes, and what it means.',
   'One reading per coherent change, not one per paragraph or diff block. Independent changes of text are separate readings.',
@@ -286,7 +287,7 @@ export const PLACE_RULES = [
   'Places that each need their own explanation and are visited in turn are separate steps. For example, declaring an option, passing it on and using it are three steps, each explaining its own place, not one step with three places and one shared text.',
   'The old and the new lines of the same change, From and To, are one place, not two.',
   'Put several places in one step only as an exception, when seeing them side by side is what helps the reader understand, for example to compare two implementations of the same thing. Then give the step a "together" field: one short sentence on why seeing these places together helps. A step with several places and no "together" is asked to be split.',
-  'A place is not treated because it is in a step or because its function is named. Every central mechanism a step shows (what is protected and by what, who owns what and for how long, what is handed to whom and when, what has happened and what has only been requested) is explained in that step at the reader\'s level. When one step would have to treat several such places in passing, they are separate steps.',
+  'A place is not treated because it is in a step or because its function is named: every central mechanism a step shows is explained in that step, at the reader\'s level. When one step would have to treat several such places in passing, they are separate steps.',
 ] as const;
 
 /**
@@ -316,7 +317,7 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     ...PATH_RULES.map((rule) => `- ${rule}`),
     '',
     '## About the change',
-    '- "summary": two or three short sentences a person reads first: what the change does and why.',
+    '- "summary": a short paragraph a person reads first: what the change does and why.',
     '- "background": only when there is more worth knowing (context, history, consequences), in short Markdown paragraphs. Leave it empty rather than repeating the summary.',
     '',
     `## How to write (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
@@ -328,7 +329,7 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     '```json',
     JSON.stringify(
       {
-        summary: 'Two or three short sentences: what the change does and why.',
+        summary: 'A short paragraph: what the change does and why.',
         background: 'Optional: more context, in short Markdown paragraphs. Empty when the summary says it.',
         walks: [
           {
@@ -339,7 +340,7 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
             steps: [
               {
                 title: 'Short step title',
-                summary: 'One or two sentences: what happens here.',
+                summary: 'A short line: what happens here.',
                 body: 'The explanation in Markdown: what happens, why, what to notice in the code. Short paragraphs, bullets where they help.',
                 why: 'Optional: the consequence, if it needs saying apart from the body.',
                 details: 'Optional: the deepening the person opens with Show more, in Markdown. Empty when there is nothing to add.',
