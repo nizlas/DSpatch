@@ -81,7 +81,8 @@ export interface WalkLoopSummary {
 
 /** A walk loop's record as the window reads it on request (DSP-189): every exchange, and the journal. */
 export interface WalkLoopRecordView {
-  readonly summary: WalkLoopSummary;
+  /** `null` while the run goes (DSP-191): the summary is written with the end. */
+  readonly summary: WalkLoopSummary | null;
   readonly replies: readonly {
     readonly nodeId: string;
     readonly nodeLabel: string;

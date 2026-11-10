@@ -329,7 +329,7 @@ describe('the host\'s follow state over a scripted run', () => {
     assert.ok(!fs.existsSync(path.join(dir, WALK_LOOP_ACTIVITY_FILE)) && !fs.existsSync(path.join(dir, WALK_LOOP_GRAPH_FILE)), 'a run without a follow keeps no activity file and no drawing');
     const back = readWalkLoopFollow({ jobId: 'job-legacy', dir, summary: null, fallbackGraphText: graphText, resolveRole, provider: 'claude', model: 'scripted' });
     assert.ok(!('error' in back));
-    assert.ok(back.limitations.some((line) => line.includes('before its activity was kept')));
+    assert.ok(back.limitations.some((line) => line.includes('kept only its answers')));
     assert.ok(back.limitations.some((line) => line.includes('drawing was not kept')));
     assert.ok(back.view !== null && back.view.ended);
     const kinds = new Set(back.activity.map((item) => item.kind));

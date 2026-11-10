@@ -1036,27 +1036,12 @@ async function main() {
   }, 40_000);
   check('the run view shows the finished run: ended at delivered, every visited node finished, no correction round', followed.live === false && followed.terminal === 'delivered' && followed.nodes.plan === 'finished' && followed.nodes.review === 'finished' && followed.visits.length === 3 && followed.limitations.length === 0, JSON.stringify({ nodes: followed.nodes, visits: followed.visits.length, limitations: followed.limitations }));
   check('the drawing is the editor\'s own: six nodes, the delivered terminal ticked, no editor controls', (await followRead(`JSON.stringify({nodes:document.querySelectorAll('.fw-graph svg .node').length,tick:document.querySelector('[data-node-id="delivered"] .node-ending-tick')!==null,palette:document.querySelector('.editor-palette')!==null})`)) === '{"nodes":6,"tick":true,"palette":false}');
-  await followRead(`document.querySelector('[data-ev="follow-visit-review-1"]').click(); true`);
-  await poll('the reviewer\'s visit', async () => (await followCheck()).shown.nodeId === 'review', 5_000);
-  const verdictRow = await followRead(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] .fw-brief')?.textContent ?? ''`);
-  check('the reviewer\'s verdict is in its visit of the run view', /accept/.test(verdictRow), verdictRow);
-  await followRead(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] > summary').click(); true`);
-  check('the verdict\'s assessment is shown and named as an agent\'s', /SIMULATED review/.test(await followRead(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] .fw-body')?.textContent ?? ''`)) && /approves nothing of the code/.test(await followRead('document.body.textContent')));
-  await followRead(`document.querySelector('[data-ev="follow-record"] > summary').click(); true`);
-  await poll('the record read', async () => Number((await followRead(`document.querySelector('[data-ev="follow-replies"]')?.dataset.count ?? '0'`))) >= 4, 30_000);
-  const replies = JSON.parse(await followRead(`JSON.stringify([...document.querySelectorAll('.fw-reply > summary')].map((e)=>e.textContent))`));
-  check(
-    'every exchange is listed: the planner, each step the writer wrote, the reviewer',
-    replies.some((r) => /Plan the walks/.test(r)) && replies.filter((r) => /Write the steps/.test(r)).length >= 2 && replies.some((r) => /Review the walks/.test(r)),
-    JSON.stringify(replies),
-  );
-  await followRead(`document.querySelector('.fw-reply > summary').click(); true`);
-  const firstPrompt = await poll('the first exchange opened', async () => {
-    const state = JSON.parse(await followRead(`JSON.stringify({replies:document.querySelectorAll('.fw-reply').length,open:document.querySelector('.fw-reply')?.open ?? null,text:document.querySelector('.fw-reply .fw-text')?.textContent ?? ''})`));
-    if (state.open !== true) await followRead(`document.querySelector('.fw-reply > summary')?.click(); true`);
-    return state.text !== '' ? state.text : false;
-  }, 15_000);
-  check('the planner\'s prompt is readable whole: its task header and its role', firstPrompt.startsWith('DSPATCH-REVIEW-TASK: plan-walks') && /## Your role: walk-planner/.test(firstPrompt), firstPrompt.slice(0, 120));
+  await followRead(`document.querySelector('[data-ev="follow-liveness"]').click(); true`);
+  await poll('the live stream of the finished run', async () => (await followRead(`document.querySelector('[data-ev="follow-stream"]')!==null && document.querySelectorAll('[data-ev="follow-text"]').length > 0`)) === true, 15_000);
+  const streamText = await followRead(`document.querySelector('[data-ev="follow-stream"]').textContent`);
+  check('the stream holds the reviewer\'s verdict in its flow, named as an agent\'s', /SIMULATED review/.test(streamText) && /approves nothing of the code/.test(streamText));
+  check('the stream has dividers for the planner, the writer\'s steps and the reviewer, and the text open', (await followRead(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-divider"]')].map((e)=>e.textContent))`)).includes('Planner') && (await followRead(`document.querySelectorAll('[data-ev="follow-text"] details').length`)) === 0);
+  check('no prompt, token, version or record control is in the view', !/DSPATCH-REVIEW-TASK|tokens|instruction version|Every prompt and answer/.test(await followRead('document.body.textContent')) && (await followRead(`document.querySelector('[data-ev="follow-record"]')===null`)) === true);
   await client.main.size(followWindow.id, 1500, 940);
   await delay(500);
   await shotWindow(await windowById(followWindow.id), '03-follow-run');

@@ -1,22 +1,26 @@
 /**
- * Follow preparation (DSP-190): the window that follows one walk preparation of a review through
- * the planner, writer and reviewer loop, while it runs and afterwards.
+ * Code walk generation, followed (DSP-190, reshaped by DSP-191 for Niclas's demo): the window that
+ * follows one walk preparation of a review through the planner, writer and reviewer loop, while it
+ * runs and afterwards.
  *
- * Two panes. On the left the loop's drawing, drawn by the graph editor's own canvas in its view
- * mode — the same node shapes, run states, ending marks and motion as the editor, read from the
- * same run view (`shared/loop-run-view.ts`) folded from the engine's own journal; no palette, no
- * inspector, nothing to save. On the right the run's activity: what the provider and DSpatch
- * actually reported, each entry bound to its node visit and provider turn, following the active
- * visit by default and letting the person read an earlier one while the run goes on.
+ * Left, top to bottom: the heading, the liveness line (what the agent is doing now, in the words the
+ * job itself reports, with the spinner the other agent calls use) and the loop's drawing, drawn by the
+ * graph editor's own canvas in its view mode — the same shapes, run states, ending marks and motion,
+ * read from the same run view folded from the engine's journal; no palette, no inspector, nothing to
+ * save. Right, when the liveness line is clicked: the live stream, one chronological flow of what
+ * the provider and DSpatch actually reported — the agent's exposed reasoning and reply text open
+ * and growing as fragments arrive, short lines for tool activity, commands with large results
+ * collapsed, the reviewer's findings, a plain sentence for a turn that failed — with one scroll
+ * that follows the foot until the person scrolls up and again once they are back at the foot.
+ *
+ * **No debug information in this view**, by Niclas's explicit decision: no token events, cache
+ * values, internal states, graph ids, instruction versions, raw events, prompts or protocol dumps,
+ * and none of it behind any control. All of that stays in the run's files for troubleshooting.
  *
  * **Looking is not doing.** Opening this window asks the host for the run as it stands and then
- * listens; it starts no call and repeats none. Closing it stops nothing. The one control that
- * acts is Stop, which is the job's own cancel, the same the diff window offers. There is no
- * field to type into: nothing here is a way to instruct a running preparation.
- *
- * **Nothing is invented.** A quiet turn shows no activity. Reasoning text is shown only where the
- * provider exposes it and is labelled as exposed reasoning, never as the model's whole thinking.
- * Usage is summed only where the readings' meaning allows it, and silence is said as unknown.
+ * listens; it starts no call and repeats none. Closing it, or the stream, stops nothing. The one
+ * control that acts is Stop, the job's own cancel. There is no field to type into. **Nothing is
+ * invented**: a quiet turn shows nothing, and silence stays silence.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,22 +29,15 @@ import type { JSX, MouseEvent as ReactMouseEvent } from 'react';
 import { resolverFromEntries } from '../shared/loop-graph-editing';
 import { loadLoopGraph } from '../shared/loop-graph-load';
 import type { LoopGraph, LoopNode, ResolvedRole } from '../shared/loop-graph';
-import { edgesTakenIn, finishedRunMarksFrom, markedNodes, nodeIsWorking, runViewState, type NodeRunState } from '../shared/loop-run-view';
-import { PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES } from '../shared/presentation-profiles';
+import { edgesTakenIn, finishedRunMarksFrom, markedNodes, nodeIsWorking, type NodeRunState } from '../shared/loop-run-view';
 import { isPairError, type AgentJob, type PairWindowStart, type ReviewPairBridge } from '../shared/review-pair';
-import { activityOfTurn, foldWalkLoopActivity, formatCount, summariseUsage, type WalkLoopActivity, type WalkLoopUsage, type WalkLoopVisitView, type WalkReview } from '../shared/walk-method';
-import type { WalkLoopRecordView } from '../shared/walk-method';
-import { applyWalkLoopRunEvent, followStateFrom, runEventBelongsTo, type WalkLoopFollowState, type WalkLoopRunEvent, type WalkLoopRunSnapshot } from '../shared/walk-loop-view';
+import type { WalkLoopActivity, WalkReview } from '../shared/walk-method';
+import { applyWalkLoopRunEvent, followStateFrom, runEventBelongsTo, type WalkLoopFollowState, type WalkLoopRunEvent } from '../shared/walk-loop-view';
 import { GraphCanvas, type GraphSelection } from './GraphCanvas';
 import { isRunning, requestFailure } from './PairReview';
-import { isFollowingLatest } from './scroll-follow';
+import { followAfterScrollEvent } from './scroll-follow';
 
 type FollowStart = Extract<PairWindowStart, { readonly kind: 'follow' }>;
-
-interface VisitKey {
-  readonly nodeId: string;
-  readonly occurrence: number;
-}
 
 declare global {
   interface Window {
@@ -52,6 +49,9 @@ declare global {
 }
 
 const NO_ACTIVITY: readonly WalkLoopActivity[] = [];
+
+/** The role's name as a person reads it; the node's label when the role is not one of the three. */
+const ROLE_NAMES: Readonly<Record<string, string>> = { 'walk-planner': 'Planner', 'walk-writer': 'Writer', 'walk-reviewer': 'Reviewer' };
 
 export function WalkLoopFollow(): JSX.Element {
   const bridge = window.dspatchReviewPair;
@@ -76,11 +76,130 @@ export function WalkLoopFollow(): JSX.Element {
   if (bridge === undefined || start === null) {
     return (
       <div className="fw-window">
-        <p className="fw-muted">{problem ?? 'Opening…'}</p>
+        <p className="fw-muted fw-opening">{problem ?? 'Opening…'}</p>
       </div>
     );
   }
   return <FollowRun bridge={bridge} start={start} />;
+}
+
+// --- The stream as blocks -------------------------------------------------------------------
+
+type StreamBlock =
+  | { readonly kind: 'divider'; readonly key: string; readonly anchor: string; readonly who: string; readonly what: string; readonly atUtc: string }
+  | { readonly kind: 'text'; readonly key: string; readonly textKind: 'reply' | 'reasoning'; readonly text: string; readonly turn: number }
+  | { readonly kind: 'tool'; readonly key: string; readonly callId: string; readonly turn: number; readonly summary: string; readonly status: 'ok' | 'error' | null; readonly detail: string | null }
+  | { readonly kind: 'command'; readonly key: string; readonly line: string; readonly ending: string; readonly exitCode: number | null; readonly output: string; readonly truncated: boolean }
+  | { readonly kind: 'note'; readonly key: string; readonly text: string }
+  | { readonly kind: 'verdict'; readonly key: string; readonly review: WalkReview; readonly final: boolean }
+  | { readonly kind: 'ended'; readonly key: string; readonly status: string; readonly error: string | null };
+
+/**
+ * The activity as one flow: fragments of one text joined into the running block, a tool's end
+ * folded into its start, usage left out (it is for the files, not for the person), a finished turn
+ * closed by the next divider rather than by a line of its own.
+ */
+function blocksOf(activity: readonly WalkLoopActivity[], labelOf: (nodeId: string) => string): readonly StreamBlock[] {
+  const blocks: StreamBlock[] = [];
+  const who = (entry: Extract<WalkLoopActivity, { readonly kind: 'turn-started' }>): string => (entry.roleId === null ? labelOf(entry.nodeId) : (ROLE_NAMES[entry.roleId] ?? labelOf(entry.nodeId)));
+  for (const entry of activity) {
+    const key = `s${String(entry.seq)}`;
+    switch (entry.kind) {
+      case 'turn-started':
+        blocks.push({ kind: 'divider', key, anchor: `${entry.nodeId}#${String(entry.occurrence)}`, who: who(entry), what: entry.what, atUtc: entry.atUtc });
+        break;
+      case 'reply-text':
+      case 'reasoning-text': {
+        const textKind = entry.kind === 'reply-text' ? 'reply' : 'reasoning';
+        const last = blocks.at(-1);
+        if (last !== undefined && last.kind === 'text' && last.textKind === textKind && last.turn === entry.turn) {
+          blocks[blocks.length - 1] = { ...last, text: `${last.text}${entry.text}` };
+        } else {
+          blocks.push({ kind: 'text', key, textKind, text: entry.text, turn: entry.turn });
+        }
+        break;
+      }
+      case 'tool-started':
+        blocks.push({ kind: 'tool', key, callId: entry.callId, turn: entry.turn, summary: entry.summary, status: null, detail: null });
+        break;
+      case 'tool-finished': {
+        const at = blocks.findIndex((block) => block.kind === 'tool' && block.callId === entry.callId && block.turn === entry.turn);
+        if (at === -1) {
+          blocks.push({ kind: 'tool', key, callId: entry.callId, turn: entry.turn, summary: entry.summary, status: entry.status, detail: entry.detail });
+        } else {
+          const started = blocks[at] as Extract<StreamBlock, { readonly kind: 'tool' }>;
+          blocks[at] = { ...started, status: entry.status, detail: entry.detail };
+        }
+        break;
+      }
+      case 'command':
+        blocks.push({ kind: 'command', key, line: entry.line, ending: entry.ending, exitCode: entry.exitCode, output: entry.output, truncated: entry.truncated });
+        break;
+      case 'note':
+        blocks.push({ kind: 'note', key, text: entry.text });
+        break;
+      case 'verdict':
+        blocks.push({ kind: 'verdict', key, review: entry.review, final: entry.final });
+        break;
+      case 'turn-ended':
+        if (entry.status !== 'finished') {
+          blocks.push({ kind: 'ended', key, status: entry.status, error: entry.error });
+        }
+        break;
+      case 'usage':
+        // Reported usage is kept in the run's files; it is not part of what a person follows here.
+        break;
+    }
+  }
+  return blocks;
+}
+
+/** What the agent is doing now, from the last thing reported; never a guess. */
+function livenessOf(activity: readonly WalkLoopActivity[], labelOf: (nodeId: string) => string): string | null {
+  let turnWhat: string | null = null;
+  let who = '';
+  const openTools = new Map<string, string>();
+  let last: WalkLoopActivity | null = null;
+  for (const entry of activity) {
+    if (entry.kind === 'turn-started') {
+      turnWhat = entry.what;
+      who = entry.roleId === null ? labelOf(entry.nodeId) : (ROLE_NAMES[entry.roleId] ?? labelOf(entry.nodeId));
+      openTools.clear();
+    } else if (entry.kind === 'tool-started') {
+      openTools.set(entry.callId, entry.summary);
+    } else if (entry.kind === 'tool-finished') {
+      openTools.delete(entry.callId);
+    } else if (entry.kind === 'turn-ended') {
+      turnWhat = null;
+      openTools.clear();
+    }
+    if (entry.kind !== 'usage') {
+      last = entry;
+    }
+  }
+  if (last === null) {
+    return null;
+  }
+  const running = [...openTools.values()].at(-1);
+  if (running !== undefined) {
+    return `${who}: ${running}`;
+  }
+  switch (last.kind) {
+    case 'reply-text':
+      return turnWhat === null ? `${who}: writing` : `${who}: ${turnWhat} · writing`;
+    case 'reasoning-text':
+      return turnWhat === null ? `${who}: reasoning` : `${who}: ${turnWhat} · reasoning`;
+    case 'turn-started':
+      return `${who}: ${last.what}`;
+    case 'note':
+      return last.text;
+    case 'verdict':
+      return `${who}: ${last.final ? 'final assessment' : 'verdict'} ${last.review.verdict}`;
+    case 'turn-ended':
+      return last.status === 'finished' ? `${who}: finished a turn` : `${who}: the turn ended ${last.status}`;
+    default:
+      return turnWhat === null ? null : `${who}: ${turnWhat}`;
+  }
 }
 
 function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; readonly start: FollowStart }): JSX.Element {
@@ -88,12 +207,12 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
   const jobId = start.jobId;
   const [job, setJob] = useState<AgentJob | null>(null);
   const [state, setState] = useState<WalkLoopFollowState>({ view: null, activity: NO_ACTIVITY });
-  const [meta, setMeta] = useState<{ readonly live: boolean; readonly limitations: readonly string[]; readonly summary: WalkLoopRunSnapshot['summary'] } | null>(null);
+  const [meta, setMeta] = useState<{ readonly live: boolean; readonly limitations: readonly string[] } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [zoom, setZoom] = useState(0.85);
   const [selection, setSelection] = useState<GraphSelection>(null);
-  const [followLive, setFollowLive] = useState(true);
-  const [chosenVisit, setChosenVisit] = useState<VisitKey | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [scrollTo, setScrollTo] = useState<string | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   /** Run events that arrived before the opening read answered; dropped when it does. */
@@ -107,7 +226,7 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
     }
   }, []);
 
-  /** The run as it stands: a read, which starts nothing. Asked again once the job has ended, for the summary kept with it. */
+  /** The run as it stands: a read, which starts nothing. */
   const readRun = useCallback(
     (adopt: boolean): void => {
       void bridge
@@ -119,7 +238,7 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
             setProblem(answer.error);
             return;
           }
-          setMeta({ live: answer.live, limitations: answer.limitations, summary: answer.summary });
+          setMeta({ live: answer.live, limitations: answer.limitations });
           if (adopt) {
             // Everything sent before this answer is in it; what arrives after reaches `receive`.
             heldRef.current = null;
@@ -165,7 +284,7 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
     };
   }, [bridge, key, jobId, receive, readRun]);
 
-  // Once the job has ended, the summary kept with the run (usage, rounds, status) is read once.
+  // Once the job has ended, what the run's files hold (its limits) is read once more.
   const jobState = job?.state ?? null;
   const endedRead = useRef(false);
   useEffect(() => {
@@ -198,37 +317,42 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
     return working;
   }, [runStates]);
 
-  const visits = useMemo(() => foldWalkLoopActivity(state.activity), [state.activity]);
-  const activeVisit: WalkLoopVisitView | null = visits.at(-1) ?? null;
-  const shownVisit: WalkLoopVisitView | null = useMemo(() => {
-    if (followLive || chosenVisit === null) {
-      return activeVisit;
-    }
-    return visits.find((visit) => visit.nodeId === chosenVisit.nodeId && visit.occurrence === chosenVisit.occurrence) ?? activeVisit;
-  }, [followLive, chosenVisit, visits, activeVisit]);
-
   const labelOf = useCallback((nodeId: string): string => graph?.nodes.find((node) => node.id === nodeId)?.label ?? nodeId, [graph]);
-  const chooseVisit = (visit: VisitKey): void => {
-    setChosenVisit(visit);
-    setFollowLive(false);
-    setSelection({ kind: 'node', id: visit.nodeId });
-  };
-  const backToLive = (): void => {
-    setFollowLive(true);
-    setChosenVisit(null);
-    setSelection(null);
+  const blocks = useMemo(() => blocksOf(state.activity, labelOf), [state.activity, labelOf]);
+  const running = job !== null && isRunning(job);
+
+  // The liveness line: the last thing reported, or the job's own sentence, or how it ended.
+  const liveness = useMemo((): string => {
+    if (job !== null && !isRunning(job)) {
+      if (job.state === 'done') {
+        return job.note === '' ? 'Done.' : job.note;
+      }
+      const ending = job.state === 'cancelled' ? 'Stopped.' : job.state === 'failed' ? 'The preparation failed.' : 'How this ended is unknown.';
+      return `${ending} ${job.note === '' ? '' : `${job.note} `}You can prepare the walks again from the review.`.trim();
+    }
+    if (job?.state === 'cancelling') {
+      return 'Stopping…';
+    }
+    const fromStream = livenessOf(state.activity, labelOf);
+    if (fromStream !== null) {
+      return fromStream;
+    }
+    if (job !== null && job.activity !== undefined && job.activity !== '') {
+      return job.activity;
+    }
+    return view === null ? 'Preparing the two revisions for the agent…' : 'Waiting for the agent…';
+  }, [job, state.activity, labelOf, view]);
+
+  const openStreamAt = (anchor: string | null): void => {
+    setPanelOpen(true);
+    setScrollTo(anchor);
   };
   const onNodeMouseDown = (event: ReactMouseEvent, node: LoopNode): void => {
     event.stopPropagation();
-    const latest = [...visits].reverse().find((visit) => visit.nodeId === node.id);
-    if (latest === undefined) {
-      setSelection({ kind: 'node', id: node.id });
-      return;
-    }
-    chooseVisit({ nodeId: latest.nodeId, occurrence: latest.occurrence });
+    setSelection({ kind: 'node', id: node.id });
+    const latest = [...blocks].reverse().find((block) => block.kind === 'divider' && block.anchor.startsWith(`${node.id}#`));
+    openStreamAt(latest !== undefined && latest.kind === 'divider' ? latest.anchor : null);
   };
-
-  const running = job !== null && isRunning(job);
   const stop = (): void => {
     void bridge
       .cancelJob(key, jobId)
@@ -239,45 +363,6 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
         }
       });
   };
-
-  // What is happening now, from the last thing reported: never a guess.
-  const progress = useMemo(() => {
-    if (view === null) {
-      return job === null ? 'Opening…' : running ? (job.activity ?? 'Preparing the revision folder…') : 'The run has not announced itself; nothing of it was recorded.';
-    }
-    const lastStart = [...state.activity].reverse().find((entry) => entry.kind === 'turn-started');
-    const open = activeVisit !== null && activeVisit.open;
-    if (!view.ended && open && lastStart !== undefined && lastStart.kind === 'turn-started') {
-      return `${labelOf(lastStart.nodeId)}: ${lastStart.what}`;
-    }
-    if (!view.ended) {
-      // Between turns: the last thing DSpatch said, or the node the journal says was entered.
-      const lastNote = [...state.activity].reverse().find((entry) => entry.kind === 'note');
-      if (lastNote !== undefined && lastNote.kind === 'note' && lastStart !== undefined && lastNote.seq > lastStart.seq) {
-        return `${labelOf(lastNote.nodeId)}: ${lastNote.text}`;
-      }
-      const entered = [...runStates].find(([, nodeState]) => nodeState === 'active');
-      return entered === undefined ? runViewState(view) : `${labelOf(entered[0])}: entered, no turn sent yet`;
-    }
-    return `Ended${view.status === null ? '' : ` (${view.status})`}${view.note === '' ? '' : `: ${view.note}`}`;
-  }, [view, job, running, state.activity, activeVisit, labelOf, runStates]);
-
-  // The summary strip: time, turns and what the provider reported, with nothing made up.
-  const turns = state.activity.filter((entry) => entry.kind === 'turn-started').length;
-  const [nowMs, setNowMs] = useState(Date.now());
-  useEffect(() => {
-    if (view === null || view.ended) {
-      return;
-    }
-    const timer = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [view]);
-  const durationMs = meta?.summary?.durationMs ?? (view === null ? 0 : Math.max(0, (view.ended ? Date.parse(state.activity.at(-1)?.atUtc ?? view.run.startedAtUtc) : nowMs) - Date.parse(view.run.startedAtUtc)));
-  const usageReadings: readonly WalkLoopUsage[] = useMemo(
-    () => (meta?.summary !== null && meta?.summary !== undefined && meta.summary.usage !== 'unknown' ? meta.summary.usage : state.activity.flatMap((entry) => (entry.kind === 'usage' ? entry.readings : []))),
-    [meta?.summary, state.activity],
-  );
-  const usage = useMemo(() => summariseUsage(usageReadings.length === 0 ? 'unknown' : usageReadings), [usageReadings]);
 
   useEffect(() => {
     window.__dspatchFollowCheck = {
@@ -293,18 +378,15 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
         nodes: Object.fromEntries(runStates),
         working: [...workingNodes],
         edgesTaken: [...edgesTaken],
-        journal: view?.entries.length ?? 0,
         activity: state.activity.length,
         seqMonotonic: state.activity.every((entry, index) => index === 0 || entry.seq > (state.activity[index - 1]?.seq ?? 0)),
         turnNumbers: state.activity.filter((entry) => entry.kind === 'turn-started').map((entry) => entry.turn),
         kinds: state.activity.reduce<Record<string, number>>((counts, entry) => ({ ...counts, [entry.kind]: (counts[entry.kind] ?? 0) + 1 }), {}),
-        visits: visits.map((visit) => ({ nodeId: visit.nodeId, occurrence: visit.occurrence, turns: visit.turns, entries: visit.entries.length, open: visit.open })),
-        shown: shownVisit === null ? null : { nodeId: shownVisit.nodeId, occurrence: shownVisit.occurrence },
-        followLive,
-        progress,
-        turns,
-        usage: usage.text,
-        usageLines: usage.lines.length,
+        panelOpen,
+        liveness,
+        blocks: blocks.reduce<Record<string, number>>((counts, block) => ({ ...counts, [block.kind]: (counts[block.kind] ?? 0) + 1 }), {}),
+        textLength: blocks.reduce((sum, block) => sum + (block.kind === 'text' ? block.text.length : 0), 0),
+        dividers: blocks.flatMap((block) => (block.kind === 'divider' ? [`${block.who} · ${block.what}`] : [])),
         limitations: meta?.limitations ?? [],
         graphDrawn: document.querySelectorAll('.fw-graph svg .node').length,
         editorControls: document.querySelector('.editor-palette, .editor-inspector, [data-ev="editor-save"]') !== null,
@@ -316,65 +398,50 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
     };
   });
 
-  const label = start.label === '' ? `${start.pair.repository} ${start.pair.base.slice(0, 7)}→${start.pair.target.slice(0, 7)}` : start.label;
-  const provenance =
-    job === null
-      ? ''
-      : `${job.provider === 'claude' ? 'Claude' : job.provider === 'copilot' ? 'Copilot' : 'Cursor'} (${job.model})${job.presentation === undefined ? '' : `, explained in the ${PROFILE_PROMPT_NAMES[job.presentation.profile]} profile, instruction version ${String(job.presentation.version)}${job.presentation.version === PRESENTATION_INSTRUCTION_VERSION ? '' : ` (now ${String(PRESENTATION_INSTRUCTION_VERSION)})`}`}, started ${formatTime(job.startedAt)}`;
-
   return (
-    <div className="fw-window" data-ev="follow-window" data-live={meta?.live === true ? 'true' : 'false'} data-ended={view?.ended === true ? 'true' : 'false'}>
-      <header className="fw-header">
-        <div className="fw-title">
-          <h1>Follow preparation</h1>
-          <span className="fw-muted" data-ev="follow-label">
-            {label}
-          </span>
-        </div>
-        <div className="fw-status" data-ev="follow-progress" aria-live="polite">
+    <div className={`fw-window${panelOpen ? ' fw-with-stream' : ''}`} data-ev="follow-window" data-live={meta?.live === true ? 'true' : 'false'} data-ended={view?.ended === true ? 'true' : 'false'}>
+      <div className="fw-left">
+        <header className="fw-header">
+          <h1>Code walk generation</h1>
+          <div className="fw-controls">
+            {running && job.state === 'running' && (
+              <button type="button" data-ev="follow-stop" onClick={stop}>
+                Stop
+              </button>
+            )}
+            <span className="fw-zoom">
+              <button type="button" data-ev="follow-zoom-out" onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))} title="Smaller">
+                −
+              </button>
+              {String(Math.round(zoom * 100))}%
+              <button type="button" data-ev="follow-zoom-in" onClick={() => setZoom((z) => Math.min(1.6, z + 0.1))} title="Larger">
+                +
+              </button>
+            </span>
+          </div>
+        </header>
+        {/* The liveness line: what the agent does now, as the job reports it. A click opens the stream beside the graph. */}
+        <button
+          type="button"
+          className={`fw-liveness rv-agent-line rv-agent-line-${job?.state ?? 'running'}`}
+          data-ev="follow-liveness"
+          aria-pressed={panelOpen}
+          aria-live="polite"
+          title={panelOpen ? 'Close the live stream' : 'Open the live stream of this run'}
+          onClick={() => (panelOpen ? setPanelOpen(false) : openStreamAt(null))}
+        >
           {running && <span className="rv-agent-spinner" aria-hidden="true" />}
-          <span>{progress}</span>
-        </div>
-        <div className="fw-controls">
-          {running && job.state === 'running' && (
-            <button type="button" data-ev="follow-stop" onClick={stop}>
-              Stop
-            </button>
-          )}
-          {job?.state === 'cancelling' && <span className="fw-muted">Stopping…</span>}
-          <span className="fw-zoom">
-            <button type="button" data-ev="follow-zoom-out" onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))} title="Smaller">
-              −
-            </button>
-            {String(Math.round(zoom * 100))}%
-            <button type="button" data-ev="follow-zoom-in" onClick={() => setZoom((z) => Math.min(1.6, z + 0.1))} title="Larger">
-              +
-            </button>
-          </span>
-        </div>
-      </header>
-      <p className="fw-provenance fw-muted" data-ev="follow-provenance">
-        {provenance}
-        {view !== null && ` · ${view.run.graphName} (${view.run.graphVersionId.slice(0, 12)})`}
-        {job?.state === 'failed' && ` · failed: ${job.note}`}
-        {job?.state === 'cancelled' && ` · stopped: ${job.note}`}
-      </p>
-      {problem !== null && (
-        <p className="fw-problem" data-ev="follow-problem">
-          {problem}
-        </p>
-      )}
-      {(meta?.limitations.length ?? 0) > 0 && (
-        <ul className="fw-limitations" data-ev="follow-limitations">
-          {meta?.limitations.map((limitation, index) => (
-            <li key={index}>{limitation}</li>
-          ))}
-        </ul>
-      )}
-      <main className="fw-main">
+          <span className="fw-liveness-text">{liveness}</span>
+          <span className="fw-liveness-hint">{panelOpen ? 'Hide the live stream' : 'Show the live stream'}</span>
+        </button>
+        {problem !== null && (
+          <p className="fw-problem" data-ev="follow-problem">
+            {problem}
+          </p>
+        )}
         <Pannable className="fw-graph editor-canvas" data-ev="follow-graph">
           {graph === null ? (
-            <p className="fw-muted fw-graph-empty">{view === null ? 'The drawing is shown once the run has started.' : 'The run\'s drawing could not be loaded.'}</p>
+            <p className="fw-muted fw-graph-empty">{view === null ? 'The loop is drawn once the run has started.' : 'The run\'s drawing could not be loaded.'}</p>
           ) : (
             <GraphCanvas
               graph={graph}
@@ -392,21 +459,17 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
             />
           )}
         </Pannable>
-        <ActivityPanel
-          bridge={bridge}
-          pairKey={key}
-          jobId={jobId}
-          visits={visits}
-          shownVisit={shownVisit}
-          activeVisit={activeVisit}
-          followLive={followLive}
-          labelOf={labelOf}
-          onChooseVisit={chooseVisit}
-          onBackToLive={backToLive}
-          ended={view?.ended ?? false}
-          summary={{ turns, durationMs, usage: usage.text, usageLines: usage.lines, rounds: meta?.summary?.rounds ?? null, status: meta?.summary?.status ?? null }}
+      </div>
+      {panelOpen && (
+        <StreamPanel
+          blocks={blocks}
+          running={running}
+          limitations={meta?.limitations ?? []}
+          scrollTo={scrollTo}
+          onScrolledTo={() => setScrollTo(null)}
+          onClose={() => setPanelOpen(false)}
         />
-      </main>
+      )}
     </div>
   );
 }
@@ -421,7 +484,6 @@ function Pannable({ className, children, ...rest }: { readonly className: string
       className={className}
       data-ev={rest['data-ev']}
       onMouseDown={(event) => {
-        // A press on the room itself, not on a node: nodes select their visit.
         if ((event.target as Element).closest('.node, .edge') !== null || ref.current === null) {
           return;
         }
@@ -447,341 +509,189 @@ function Pannable({ className, children, ...rest }: { readonly className: string
   );
 }
 
-interface SummaryStrip {
-  readonly turns: number;
-  readonly durationMs: number;
-  readonly usage: string;
-  readonly usageLines: ReturnType<typeof summariseUsage>['lines'];
-  readonly rounds: 0 | 1 | null;
-  readonly status: string | null;
-}
-
-function ActivityPanel({
-  bridge,
-  pairKey,
-  jobId,
-  visits,
-  shownVisit,
-  activeVisit,
-  followLive,
-  labelOf,
-  onChooseVisit,
-  onBackToLive,
-  ended,
-  summary,
+/**
+ * The live stream: one flow, one scroll.
+ *
+ * Following: the foot from the start; a scroll up by the person ends it, a scroll back to the foot
+ * resumes it. The window's own moves are told apart from the person's by the position they were
+ * applied at (`followAfterScrollEvent`, the chat's rule), so a reply that grows between two frames
+ * is never read as the person having scrolled away. Only new activity moves the stream; opening a
+ * collapsed result moves nothing.
+ */
+function StreamPanel({
+  blocks,
+  running,
+  limitations,
+  scrollTo,
+  onScrolledTo,
+  onClose,
 }: {
-  readonly bridge: ReviewPairBridge;
-  readonly pairKey: string;
-  readonly jobId: string;
-  readonly visits: readonly WalkLoopVisitView[];
-  readonly shownVisit: WalkLoopVisitView | null;
-  readonly activeVisit: WalkLoopVisitView | null;
-  readonly followLive: boolean;
-  readonly labelOf: (nodeId: string) => string;
-  readonly onChooseVisit: (visit: VisitKey) => void;
-  readonly onBackToLive: () => void;
-  readonly ended: boolean;
-  readonly summary: SummaryStrip;
+  readonly blocks: readonly StreamBlock[];
+  readonly running: boolean;
+  readonly limitations: readonly string[];
+  readonly scrollTo: string | null;
+  readonly onScrolledTo: () => void;
+  readonly onClose: () => void;
 }): JSX.Element {
   const scroller = useRef<HTMLDivElement | null>(null);
-  const [atBottom, setAtBottom] = useState(true);
-  const [unseen, setUnseen] = useState(false);
-  const shownKey = shownVisit === null ? '' : `${shownVisit.nodeId}#${String(shownVisit.occurrence)}`;
-  const entryCount = shownVisit?.entries.length ?? 0;
-  const lastAt = shownVisit?.lastAtUtc ?? '';
-  const announcedFor = useRef(shownKey);
-  // New activity moves the list only when the reader is at its foot; otherwise it is announced.
+  const [following, setFollowing] = useState(true);
+  const followingRef = useRef(true);
+  const appliedTop = useRef<number | null>(null);
+  const contentKey = `${String(blocks.length)}:${String(blocks.reduce((sum, block) => sum + (block.kind === 'text' ? block.text.length : 0), 0))}`;
   useEffect(() => {
+    const element = scroller.current;
+    if (element === null || !followingRef.current) {
+      return;
+    }
+    element.scrollTop = element.scrollHeight;
+    appliedTop.current = element.scrollTop;
+  }, [contentKey]);
+  useEffect(() => {
+    // Opened at a node's latest visit: the stream starts there and does not follow until the person is back at the foot.
     const element = scroller.current;
     if (element === null) {
       return;
     }
-    if (announcedFor.current !== shownKey) {
-      // A different visit on screen: its entries are what the person asked for, not news.
-      announcedFor.current = shownKey;
-      return;
-    }
-    if (atBottom) {
+    if (scrollTo === null) {
       element.scrollTop = element.scrollHeight;
-      setUnseen(false);
-    } else {
-      setUnseen(true);
-    }
-    // The count and the last time together say that something was added or grew.
-  }, [entryCount, lastAt, atBottom, shownKey]);
-  useEffect(() => {
-    // A different visit: start at its top when it is an earlier one, at the foot when live.
-    const element = scroller.current;
-    if (element === null) {
+      appliedTop.current = element.scrollTop;
+      followingRef.current = true;
+      setFollowing(true);
       return;
     }
-    element.scrollTop = followLive ? element.scrollHeight : 0;
-    setAtBottom(followLive);
-    setUnseen(false);
-  }, [shownKey, followLive]);
+    const target = element.querySelector<HTMLElement>(`[data-divider="${CSS.escape(scrollTo)}"]`);
+    if (target !== null) {
+      element.scrollTop = Math.max(0, target.offsetTop - element.offsetTop - 8);
+      appliedTop.current = element.scrollTop;
+      const atFoot = element.scrollHeight - element.scrollTop - element.clientHeight <= 64;
+      followingRef.current = atFoot;
+      setFollowing(atFoot);
+    }
+    onScrolledTo();
+    // Once, when the panel opens or a node is chosen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollTo]);
   const onScroll = (): void => {
     const element = scroller.current;
     if (element === null) {
       return;
     }
-    const following = isFollowingLatest({ scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight });
-    setAtBottom(following);
-    if (following) {
-      setUnseen(false);
+    const next = followAfterScrollEvent({
+      metrics: { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight },
+      appliedScrollTop: appliedTop.current,
+    });
+    appliedTop.current = null;
+    if (next !== followingRef.current) {
+      followingRef.current = next;
+      setFollowing(next);
     }
   };
   return (
-    <aside className="fw-activity" data-ev="follow-activity">
-      <div className="fw-summary" data-ev="follow-summary">
-        <span>
-          {String(summary.turns)} turn{summary.turns === 1 ? '' : 's'} · {minutesOf(summary.durationMs)}
-          {summary.rounds === null ? '' : summary.rounds === 0 ? ' · no correction round' : ' · one correction round'}
-          {summary.status === null ? '' : ` · ${summary.status}`}
-        </span>
-        <details className="fw-usage" data-ev="follow-usage">
-          <summary>Usage: {summary.usage}</summary>
-          {summary.usageLines.length === 0 ? (
-            <p className="fw-muted">The provider reported no usage readings.</p>
-          ) : (
-            <table className="fw-usage-table">
-              <tbody>
-                {summary.usageLines.map((line) => (
-                  <tr key={`${line.unit}:${line.scope}:${line.source}`}>
-                    <td>{line.label}</td>
-                    <td className="fw-number">{line.value === null ? 'unknown' : formatCount(line.value)}</td>
-                    <td className="fw-muted">
-                      {line.summed ? 'sum of ' : 'last of '}
-                      {String(line.readings)} reading{line.readings === 1 ? '' : 's'} ({line.scope}
-                      {line.unknown === 0 ? '' : `, ${String(line.unknown)} unknown`}); {line.source}
-                      {line.why === null ? '' : `; ${line.why}`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </details>
-      </div>
-      <div className="fw-visits" data-ev="follow-visits">
-        {visits.map((visit) => {
-          const shown = shownVisit !== null && shownVisit.nodeId === visit.nodeId && shownVisit.occurrence === visit.occurrence;
-          const active = activeVisit !== null && activeVisit.nodeId === visit.nodeId && activeVisit.occurrence === visit.occurrence;
-          return (
-            <button
-              key={`${visit.nodeId}#${String(visit.occurrence)}`}
-              type="button"
-              className={`fw-visit${shown ? ' fw-visit-shown' : ''}${active && visit.open ? ' fw-visit-open' : ''}`}
-              data-ev={`follow-visit-${visit.nodeId}-${String(visit.occurrence)}`}
-              aria-pressed={shown}
-              onClick={() => onChooseVisit({ nodeId: visit.nodeId, occurrence: visit.occurrence })}
-            >
-              {labelOf(visit.nodeId)} #{String(visit.occurrence)}
-              <span className="fw-muted"> · {String(visit.turns)} turn{visit.turns === 1 ? '' : 's'}</span>
-            </button>
-          );
-        })}
-        {!followLive && (
-          <button type="button" className="fw-live" data-ev="follow-back-to-live" onClick={onBackToLive}>
-            {ended ? 'Latest' : 'Back to live'}
-          </button>
-        )}
-        {followLive && visits.length > 0 && (
-          <span className="fw-muted fw-following" data-ev="follow-following">
-            {ended ? 'Showing the last visit' : 'Following the active node'}
-          </span>
-        )}
-      </div>
-      <div className="fw-entries" ref={scroller} onScroll={onScroll} data-ev="follow-entries" data-visit={shownKey}>
-        {shownVisit === null ? (
-          <p className="fw-muted">No activity has been reported yet.</p>
-        ) : (
-          <>
-            <h2 className="fw-visit-title">
-              {labelOf(shownVisit.nodeId)}, visit {String(shownVisit.occurrence)}
-              {shownVisit.roleId === null ? '' : ` · role ${shownVisit.roleId}`}
-            </h2>
-            {shownVisit.entries.map((entry) => (
-              <ActivityRow key={entry.seq} entry={entry} finished={entry.kind === 'tool-started' ? finishedCall(shownVisit.entries, entry.turn, entry.callId) : null} />
-            ))}
-            {shownVisit.open && !ended && <p className="fw-muted fw-open">A turn is running; what the provider reports appears here as it comes.</p>}
-          </>
-        )}
-      </div>
-      {unseen && (
-        <button
-          type="button"
-          className="fw-unseen"
-          data-ev="follow-unseen"
-          onClick={() => {
-            const element = scroller.current;
-            if (element !== null) {
-              element.scrollTop = element.scrollHeight;
-            }
-            setAtBottom(true);
-            setUnseen(false);
-          }}
-        >
-          New activity below ↓
+    <aside className="fw-stream" data-ev="follow-stream" data-following={following ? 'true' : 'false'}>
+      <header className="fw-stream-header">
+        <h2>Live stream</h2>
+        <span className="fw-muted fw-stream-standing">{running ? (following ? 'Following' : 'Scrolled up · new text waits below') : 'The run has ended'}</span>
+        <button type="button" className="fw-stream-close" data-ev="follow-stream-close" onClick={onClose} title="Close the live stream; the run goes on">
+          Close
         </button>
-      )}
-      <RecordOnRequest bridge={bridge} pairKey={pairKey} jobId={jobId} ended={ended} />
+      </header>
+      <div className="fw-stream-body" ref={scroller} onScroll={onScroll} data-ev="follow-entries">
+        {limitations.map((limitation, index) => (
+          <p key={index} className="fw-muted fw-limitation" data-ev="follow-limitation">
+            {limitation}
+          </p>
+        ))}
+        {blocks.length === 0 && <p className="fw-muted">Nothing has been reported yet.</p>}
+        {blocks.map((block) => (
+          <StreamBlockView key={block.key} block={block} />
+        ))}
+        {running && <p className="fw-muted fw-open">The run goes on; what the agent reports appears here as it comes.</p>}
+      </div>
     </aside>
   );
 }
 
-function finishedCall(entries: readonly WalkLoopActivity[], turn: number, callId: string): Extract<WalkLoopActivity, { readonly kind: 'tool-finished' }> | null {
-  for (const entry of activityOfTurn(entries, turn)) {
-    if (entry.kind === 'tool-finished' && entry.callId === callId) {
-      return entry;
-    }
-  }
-  return null;
-}
-
-/** One entry: a short row, and the whole of it when opened. The label says what the content is. */
-function ActivityRow({ entry, finished }: { readonly entry: WalkLoopActivity; readonly finished: Extract<WalkLoopActivity, { readonly kind: 'tool-finished' }> | null }): JSX.Element | null {
-  const at = new Date(entry.atUtc);
-  const time = Number.isNaN(at.getTime()) ? entry.atUtc : at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const row = (label: string, brief: string, body: React.ReactNode | null, className = ''): JSX.Element =>
-    body === null ? (
-      <div className={`fw-entry fw-entry-${entry.kind} ${className}`} data-ev="follow-entry" data-kind={entry.kind} data-turn={String(entry.turn)}>
-        <span className="fw-kind">{label}</span>
-        <span className="fw-brief">{brief}</span>
-        <time className="fw-time">{time}</time>
-      </div>
-    ) : (
-      <details className={`fw-entry fw-entry-${entry.kind} ${className}`} data-ev="follow-entry" data-kind={entry.kind} data-turn={String(entry.turn)}>
-        <summary>
-          <span className="fw-kind">{label}</span>
-          <span className="fw-brief">{brief}</span>
-          <time className="fw-time">{time}</time>
-        </summary>
-        <div className="fw-body">{body}</div>
-      </details>
-    );
-  switch (entry.kind) {
-    case 'turn-started':
-      return row(`Turn ${String(entry.turn)}`, `${entry.what}${entry.stepId === null ? '' : ` (${entry.stepId})`}`, null, 'fw-entry-head');
-    case 'reply-text':
-      return row('Reply text', briefOf(entry.text), <pre className="fw-text">{entry.text}</pre>);
-    case 'reasoning-text':
-      return row('Reasoning text (exposed by the provider)', briefOf(entry.text), <pre className="fw-text">{entry.text}</pre>);
-    case 'tool-started':
-      return row('Tool', `${entry.summary}${finished === null ? '' : finished.status === 'ok' ? ' · done' : ' · refused or failed'}`, null);
-    case 'tool-finished':
-      return entry.detail === null ? null : row('Tool result', briefOf(entry.detail), <pre className="fw-text">{entry.detail}</pre>);
-    case 'command':
-      return row(
-        'Command',
-        `${entry.line} · ${entry.ending}${entry.exitCode === null ? '' : ` ${String(entry.exitCode)}`}`,
-        <pre className="fw-text">{entry.output === '' ? '(no output was reported)' : entry.output}{entry.truncated ? '\n… (cut to the record\'s bound)' : ''}</pre>,
-      );
-    case 'usage':
-      return row('Usage reported', summariseUsage(entry.readings).text, null);
-    case 'turn-ended':
-      return row('Turn ended', `${entry.status}${entry.error === null ? '' : `: ${entry.error}`} · ${formatCount(entry.textLength)} characters of reply`, null, 'fw-entry-foot');
-    case 'note':
-      return row('DSpatch', entry.text, null);
-    case 'verdict':
-      return row(
-        entry.final ? 'Final assessment' : 'Reviewer\'s verdict',
-        `${entry.review.verdict}${entry.review.findings.length === 0 ? '' : ` · ${String(entry.review.findings.length)} finding${entry.review.findings.length === 1 ? '' : 's'}`}`,
-        <FindingsList review={entry.review} />,
-      );
-  }
-}
-
-function briefOf(text: string): string {
-  const line = text.replace(/\s+/g, ' ').trim();
-  return line.length <= 140 ? line : `${line.slice(0, 139)}…`;
-}
-
-function FindingsList({ review }: { readonly review: WalkReview }): JSX.Element {
-  return (
-    <div className="fw-findings">
-      {review.assessment !== '' && <p>{review.assessment}</p>}
-      {review.findings.length > 0 && (
-        <ul>
-          {review.findings.map((finding, index) => (
-            <li key={index}>
-              <strong>{finding.steps.length === 0 ? 'The walks' : finding.steps.join(', ')}</strong> ({finding.kind}): {finding.problem}
-              {finding.why === '' ? '' : ` ${finding.why}`}
-              {finding.evidence === '' ? '' : ` Evidence: ${finding.evidence}`}
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="fw-muted">The reviewer is an agent: its acceptance approves nothing of the code.</p>
-    </div>
-  );
-}
-
-/** Every prompt and answer of the run, read on request only (DSP-189's record, unchanged). */
-function RecordOnRequest({ bridge, pairKey, jobId, ended }: { readonly bridge: ReviewPairBridge; readonly pairKey: string; readonly jobId: string; readonly ended: boolean }): JSX.Element {
-  const [record, setRecord] = useState<WalkLoopRecordView | { readonly error: string } | null>(null);
-  const [wanted, setWanted] = useState(false);
-  useEffect(() => {
-    if (!wanted || record !== null) {
-      return;
-    }
-    let live = true;
-    void bridge
-      .walkLoopRecord(pairKey, jobId)
-      .catch((error: unknown) => ({ error: requestFailure(error) }))
-      .then((answer) => {
-        if (live) {
-          setRecord(answer);
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [wanted, record, bridge, pairKey, jobId]);
-  return (
-    <details
-      className="fw-record"
-      data-ev="follow-record"
-      onToggle={(event) => {
-        if ((event.currentTarget as HTMLDetailsElement).open) {
-          setRecord(null);
-          setWanted(true);
-        }
-      }}
-    >
-      <summary>Every prompt and answer of the run{ended ? '' : ' so far'}</summary>
-      {record === null && wanted && <p className="fw-muted">Reading the record…</p>}
-      {record !== null && isPairError(record) && <p className="fw-problem">{record.error}</p>}
-      {record !== null && !isPairError(record) && (
-        <div data-ev="follow-replies" data-count={record.replies.length}>
-          {record.error !== null && <p className="fw-problem">{record.error}</p>}
-          {record.replies.map((reply, index) => (
-            <details key={index} className="fw-reply">
-              <summary>
-                {reply.nodeLabel} (visit {String(reply.occurrence)}
-                {reply.roleId === null ? '' : `, ${reply.roleId}`}) · {reply.atUtc.slice(11, 19)} UTC
-              </summary>
-              <p className="fw-muted">Prompt</p>
-              <pre className="fw-text">{reply.prompt === '' ? '(not recorded)' : reply.prompt}</pre>
-              <p className="fw-muted">Answer</p>
-              <pre className="fw-text">{reply.text}</pre>
-            </details>
-          ))}
+function StreamBlockView({ block }: { readonly block: StreamBlock }): JSX.Element {
+  switch (block.kind) {
+    case 'divider':
+      return (
+        <div className="fw-divider" data-ev="follow-divider" data-divider={block.anchor}>
+          <span className="fw-divider-who">{block.who}</span>
+          <span className="fw-divider-what">{block.what}</span>
         </div>
-      )}
-    </details>
-  );
-}
-
-function minutesOf(ms: number): string {
-  if (ms < 60_000) {
-    return `${String(Math.round(ms / 1000))} s`;
+      );
+    case 'text':
+      return (
+        <div className={`fw-text-block fw-text-${block.textKind}`} data-ev="follow-text" data-text-kind={block.textKind}>
+          {block.textKind === 'reasoning' && <span className="fw-text-label">Reasoning, as the provider exposes it</span>}
+          <div className="fw-text-body">{block.text}</div>
+        </div>
+      );
+    case 'tool':
+      return (
+        <div className="fw-tool" data-ev="follow-tool" data-status={block.status ?? 'running'}>
+          <span className="fw-tool-line">
+            {block.summary}
+            {block.status === 'error' ? ' · did not run' : block.status === 'ok' ? '' : ' …'}
+          </span>
+          {block.detail !== null && (
+            <details className="fw-result">
+              <summary>Result</summary>
+              <pre className="fw-pre">{block.detail}</pre>
+            </details>
+          )}
+        </div>
+      );
+    case 'command':
+      return (
+        <div className="fw-tool fw-command" data-ev="follow-command">
+          <span className="fw-tool-line">
+            Ran <code>{block.line}</code>
+            {block.exitCode === null ? ` · ${block.ending}` : ` · exited ${String(block.exitCode)}`}
+          </span>
+          {block.output !== '' && (
+            <details className="fw-result">
+              <summary>Output</summary>
+              <pre className="fw-pre">
+                {block.output}
+                {block.truncated ? '\n… (the rest was not kept)' : ''}
+              </pre>
+            </details>
+          )}
+        </div>
+      );
+    case 'note':
+      return (
+        <p className="fw-note" data-ev="follow-note">
+          {block.text}
+        </p>
+      );
+    case 'verdict':
+      return (
+        <div className="fw-verdict" data-ev="follow-verdict" data-verdict={block.review.verdict}>
+          <span className="fw-verdict-head">
+            {block.final ? 'Final assessment' : 'The reviewer\'s verdict'}: {block.review.verdict}
+          </span>
+          {block.review.assessment !== '' && <p>{block.review.assessment}</p>}
+          {block.review.findings.length > 0 && (
+            <ul>
+              {block.review.findings.map((finding, index) => (
+                <li key={index}>
+                  <strong>{finding.steps.length === 0 ? 'The walks' : finding.steps.join(', ')}</strong>: {finding.problem}
+                  {finding.why === '' ? '' : ` ${finding.why}`}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="fw-muted">The reviewer is an agent: its acceptance approves nothing of the code.</p>
+        </div>
+      );
+    case 'ended':
+      return (
+        <p className="fw-ended" data-ev="follow-turn-ended">
+          {block.status === 'cancelled' ? 'This turn was stopped.' : block.status === 'unconfirmed' ? 'The provider did not confirm how this turn ended.' : 'The provider stopped this turn.'}
+          {block.error === null ? '' : ` ${block.error}`}
+        </p>
+      );
   }
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms - minutes * 60_000) / 1000);
-  return `${String(minutes)} min ${String(seconds)} s`;
-}
-
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

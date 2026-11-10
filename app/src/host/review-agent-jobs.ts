@@ -714,11 +714,12 @@ export class ReviewAgentJobs {
       return record;
     }
     const job = record.jobs.find((entry) => entry.id === jobId);
-    if (job === undefined || job.loop === undefined) {
-      return { error: 'That preparation has no loop record.' };
+    // DSP-191: a running loop job has a record on disk from its first turn; the summary comes with the end.
+    if (job === undefined || job.kind !== 'walks' || job.method !== 'loop') {
+      return { error: 'That preparation was not made by the planner, writer and reviewer loop.' };
     }
     const expected = path.join(this.options.recordsDir, 'generated', key, `${job.id}.walk-loop`, WALK_LOOP_RECORD_FILE);
-    if (path.resolve(job.loop.recordPath) !== path.resolve(expected)) {
+    if (job.loop !== undefined && path.resolve(job.loop.recordPath) !== path.resolve(expected)) {
       return { error: 'The record is not where this review keeps it, so it was not read.' };
     }
     let text: string;
@@ -729,7 +730,7 @@ export class ReviewAgentJobs {
     }
     const parsed = parseRunRecord(text);
     return {
-      summary: job.loop,
+      summary: job.loop ?? null,
       replies: parsed.replies.map((reply) => ({
         nodeId: reply.nodeId,
         nodeLabel: reply.nodeLabel,

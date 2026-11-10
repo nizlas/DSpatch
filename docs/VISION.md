@@ -575,6 +575,8 @@ After running the loop, Niclas asked for a coherent improvement of its user inte
 
 What DSP-190 implemented and verified is recorded in the task, never here.
 
+Later the same day, after using it, Niclas decided (DSP-191) what the person's view of a run holds and what it does not. It holds the heading, a liveness line with the agent's current activity in the words the job reports, the animated loop, and, on request beside the graph, one chronological live stream: the agent's exposed reasoning and reply text open and growing as they arrive, short understandable work lines, commands with large results collapsed, the reviewer's findings, plain sentences for failures; one scroll that follows the foot until the person scrolls up and again when they return. It holds **no debug information**: no token events, cache values, internal states, graph ids, instruction versions, raw events, prompts or protocol dumps, behind no control; that material is kept in the run's files for troubleshooting and for agents. The point above about a compact usage summary in the view is superseded by this; the measurement itself stays in the files.
+
 <a id="4-maestro-och-agentnätverket"></a>
 
 ## 4 Maestro and the agent network

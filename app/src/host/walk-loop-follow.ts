@@ -431,7 +431,7 @@ export function readWalkLoopFollow(input: ReadWalkLoopFollowInput): WalkLoopRunS
   }
   const replies = parsed.replies;
   if (!activityFileRead) {
-    limitations.push('This run was recorded before its activity was kept (DSpatch 0.1.14): its turns with every prompt and answer, its journal and its verdicts are shown; streamed text, tool calls and usage readings as they came are not available for it.');
+    limitations.push('This run was made by an earlier DSpatch, which kept only its answers: the live text, the reasoning and the tool activity were not recorded for it.');
     // The turns from the record alone: one started, one answer, one ended per reply.
     let turn = 0;
     kept = replies.flatMap((reply): WalkLoopActivity[] => {

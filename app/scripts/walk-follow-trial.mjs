@@ -1057,7 +1057,7 @@ async function main() {
   await diff.until('the job line names the loop', `(${q('agent-job-walks')}?.textContent ?? '').includes('planner, writer and reviewer')`, 20_000);
   check('the running job line offers Follow preparation beside Stop', (await diff.ev(`${q('agent-job-walks-follow')}!==null && ${q('agent-job-walks-stop')}!==null`)) === true);
 
-  stage = 'the run view opened while the planner works';
+  stage = 'the run view opened while the planner works: heading, liveness line, loop; no stream yet, no debug line';
   let { w: followWindow, page: follow } = await openFollow(diff, 'agent-job-walks-follow', 'follow');
   let reading = await poll('the run announced', async () => {
     const r = await followCheck(follow);
@@ -1066,77 +1066,80 @@ async function main() {
   check('the drawing shows the planner running, and nothing else reached', reading.nodes.plan === 'active' && reading.working.includes('plan') && Object.keys(reading.nodes).length === 1, JSON.stringify(reading.nodes));
   const planNode = JSON.parse(await follow.ev(`(()=>{const n=document.querySelector('[data-node-id="plan"]');return JSON.stringify({state:n?.dataset.runState,working:n?.dataset.runWorking,animations:n?n.getAnimations({subtree:true}).length:0,drawn:document.querySelectorAll('.fw-graph svg .node').length})})()`));
   check('the planner node carries the working state and its motion runs (the editor\'s own animations)', planNode.state === 'active' && planNode.working === 'true' && planNode.animations > 0 && planNode.drawn === 6, JSON.stringify(planNode));
-  reading = await poll('the progress line about the planner', async () => {
+  const left = JSON.parse(await follow.ev(`JSON.stringify({heading:document.querySelector('.fw-left h1')?.textContent ?? '',liveness:${q('follow-liveness')}?.textContent ?? '',stream:${q('follow-stream')}!==null,provenance:${q('follow-provenance')}!==null,record:${q('follow-record')}!==null,order:[...document.querySelectorAll('.fw-left > *')].map((e)=>e.className.split(' ')[0])})`));
+  check('left side, top to bottom: the heading, the liveness line, the loop; the stream closed; no metadata line', left.heading === 'Code walk generation' && left.order.join(',') === 'fw-header,fw-liveness,fw-graph' && left.stream === false && left.provenance === false && left.record === false, JSON.stringify(left));
+  reading = await poll('the liveness line about the planner', async () => {
     const r = await followCheck(follow);
-    return r !== null && /Plan/.test(r.progress) ? r : false;
+    return r !== null && /Plan/.test(r.liveness) ? r : false;
   }, 30_000);
-  check('the view is live and says what the planner does, from the journal or the turn sent', reading.live === true && /Plan/.test(reading.progress), reading.progress);
-  check('no editor controls are in the run view', reading.editorControls === false && (await follow.ev(`document.querySelector('.editor-palette, .editor-inspector')===null && document.querySelectorAll('button').length < 12`)) === true);
-  reading = await poll('the planner\'s visit in the activity panel', async () => {
-    const r = await followCheck(follow);
-    return r !== null && r.visits.length >= 1 ? r : false;
-  }, 30_000);
-  check('the activity panel lists the planner\'s visit, following live', reading.visits.length >= 1 && reading.visits[0].nodeId === 'plan' && reading.followLive === true, JSON.stringify(reading.visits));
+  check('the liveness line says what the planner does, in the job\'s own words', /Planner|Plan the walks/.test(reading.liveness) && reading.panelOpen === false, reading.liveness);
+  check('no editor controls are in the run view', reading.editorControls === false && (await follow.ev(`document.querySelector('.editor-palette, .editor-inspector')===null`)) === true);
+  const noDebug = (text) => !/tokens|cache|instruction version|graph-[0-9a-f]{6}|DSPATCH-REVIEW-TASK|seq\b|runId|rawProviderEvent/.test(text);
+  check('no token, cache, version, graph id or prompt text anywhere in the view', noDebug(await follow.ev('document.body.textContent')));
   await client.main.size(followWindow.id, 1500, 940);
   await delay(600);
   await shotWindow(await windowById(followWindow.id), '01-follow-planner');
 
-  stage = 'the writer followed with real stream events: text, exposed reasoning, tool calls and usage';
+  stage = 'the live stream opened from the liveness line: text grows without opening entries';
+  await follow.ev(`${q('follow-liveness')}.click(); true`);
+  await follow.until('the stream panel', `${q('follow-stream')}!==null`, 10_000);
+  const textLength = async () => Number(await follow.ev(`[...document.querySelectorAll('.fw-text-body')].reduce((n,e)=>n+e.textContent.length,0)`));
+  reading = await poll('text in the stream', async () => {
+    const r = await followCheck(follow);
+    return r !== null && r.panelOpen && r.textLength > 0 ? r : false;
+  }, 120_000);
+  const lengthA = await textLength();
+  const lengthB = await poll('the text growing', async () => {
+    const n = await textLength();
+    return n > lengthA ? n : false;
+  }, 120_000);
+  check('the agent\'s text is open and grows as it arrives, with no entry to open', lengthB > lengthA && (await follow.ev(`document.querySelectorAll('[data-ev="follow-text"] details').length`)) === 0 && (await follow.ev(`document.querySelectorAll('[data-ev="follow-text"]').length`)) > 0, JSON.stringify({ lengthA, lengthB }));
+  check('the stream has one vertical scroll and no scroll box inside a text block', (await follow.ev(`getComputedStyle(${q('follow-entries')}).overflowY`)) === 'auto' && (await follow.ev(`[...document.querySelectorAll('.fw-text-body')].every((e)=>['visible','clip'].includes(getComputedStyle(e).overflowY))`)) === true);
+  check('text keeps its line breaks', (await follow.ev(`getComputedStyle(document.querySelector('.fw-text-body')).whiteSpace`)) === 'pre-wrap');
+  check('the stream follows its foot from the start', (await follow.ev(`${q('follow-stream')}.dataset.following`)) === 'true' && (await follow.ev(`(()=>{const e=${q('follow-entries')};return e.scrollHeight-e.scrollTop-e.clientHeight})()`)) <= 64);
+
+  stage = 'the writer followed: role dividers, exposed reasoning, reply text, tool lines';
   reading = await poll('the writer at work', async () => {
     const r = await followCheck(follow);
-    return r !== null && r.visits.some((v) => v.nodeId === 'write' && v.turns >= 1) && /Writing step/.test(r.progress) ? r : false;
+    return r !== null && r.dividers.some((d) => /^Writer · Writing step/.test(d)) && /Writer/.test(r.liveness) ? r : false;
   }, 180_000);
-  check('the progress line names the step being written, from the turn DSpatch sent', /Writing step W\d+\.\d+ \(\d+ of \d+\)/.test(reading.progress), reading.progress);
+  check('the liveness line names the writer\'s step, from the turn DSpatch sent', /Writer: Writing step W\d+\.\d+ \(\d+ of \d+\)/.test(reading.liveness), reading.liveness);
   check('the writer is the active node and the planner is done', reading.nodes.write === 'active' && reading.nodes.plan === 'finished' && reading.edgesTaken.includes('e-planned'), JSON.stringify({ nodes: reading.nodes, edges: reading.edgesTaken }));
-  reading = await poll('stream events of the writer', async () => {
-    const r = await followCheck(follow);
-    return r !== null && r.kinds['reply-text'] > 0 && r.kinds['reasoning-text'] > 0 && r.kinds['tool-started'] > 0 && r.kinds['usage'] > 0 ? r : false;
-  }, 120_000);
-  check('reply text, exposed reasoning, tool calls and usage readings arrived as the provider reported them', reading.kinds['reply-text'] > 0 && reading.kinds['reasoning-text'] > 0 && reading.kinds['tool-started'] > 0 && reading.kinds['usage'] > 0, JSON.stringify(reading.kinds));
-  // The panel shows the writer's visit: its own rows arrive as the writer's turn goes on.
-  // (The simulated writer reads nothing; its tool rows are the planner's, read in its visit below.)
-  await follow.until('the writer\'s rows: text, reasoning and usage', `['reasoning-text','reply-text','usage'].every((k)=>document.querySelector('[data-ev="follow-entry"][data-kind="'+k+'"]')!==null)`, 120_000);
-  const labels = JSON.parse(await follow.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-entry"]')].map((e)=>e.querySelector('.fw-kind').textContent))`));
-  check('each row is labelled as what it is: reasoning as exposed by the provider, never as thinking', labels.includes('Reasoning text (exposed by the provider)') && labels.includes('Reply text') && labels.includes('Usage reported') && !labels.some((l) => /thought|thinking/i.test(l)), JSON.stringify([...new Set(labels)]));
-  const briefs = JSON.parse(await follow.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-entry"] summary, [data-ev="follow-entry"]:not(details)')].map((e)=>e.textContent.length))`));
-  check('rows stay short: no row carries a raw event list', briefs.every((n) => n < 260), JSON.stringify(briefs.slice(0, 20)));
-  await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="reasoning-text"] > summary').click(); true`);
-  await follow.until('the reasoning opened', `document.querySelector('[data-ev="follow-entry"][data-kind="reasoning-text"]').open === true`, 5_000);
-  const reasoningText = await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="reasoning-text"] .fw-body pre')?.textContent ?? ''`);
-  check('the reasoning text expands to the whole of what the provider exposed', /SIMULATED reasoning: reading the places/.test(reasoningText), reasoningText.slice(0, 120));
-  await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="reply-text"] > summary').click(); true`);
-  const replyText = await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="reply-text"] .fw-body pre')?.textContent ?? ''`);
-  check('the reply text expands with its formatting kept', /SIMULATED/.test(replyText) && (await follow.ev(`getComputedStyle(document.querySelector('[data-ev="follow-entry"][data-kind="reply-text"] .fw-body pre')).whiteSpace`)) === 'pre-wrap', replyText.slice(0, 120));
-  const usageRows = JSON.parse(await follow.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-entry"][data-kind="usage"]')].map((e)=>e.querySelector('.fw-brief').textContent))`));
-  check('usage rows say which field and that the figure is per model call', usageRows.every((t) => /input tokens \(SIMULATED\)/.test(t) && /per model call/.test(t)), JSON.stringify(usageRows.slice(0, 2)));
-  await shotWindow(await windowById(followWindow.id), '02-follow-writer');
+  await follow.until('reasoning and reply in the stream', `document.querySelector('[data-ev="follow-text"][data-text-kind="reasoning"]')!==null && document.querySelector('[data-ev="follow-text"][data-text-kind="reply"]')!==null`, 120_000);
+  const stream = JSON.parse(await follow.ev(`JSON.stringify({dividers:[...document.querySelectorAll('[data-ev="follow-divider"]')].map((e)=>e.textContent),reasoningLabel:document.querySelector('.fw-text-reasoning .fw-text-label')?.textContent ?? '',reasoning:document.querySelector('[data-ev="follow-text"][data-text-kind="reasoning"] .fw-text-body')?.textContent ?? '',reply:document.querySelector('[data-ev="follow-text"][data-text-kind="reply"] .fw-text-body')?.textContent ?? '',tools:[...document.querySelectorAll('[data-ev="follow-tool"] .fw-tool-line')].map((e)=>e.textContent),usageRows:document.querySelectorAll('[data-ev="follow-usage"], .fw-usage').length})`));
+  check('dividers name the role and the turn, discreetly', stream.dividers.some((d) => /^PlannerPlanning the walks/.test(d)) && stream.dividers.some((d) => /^WriterWriting step W1\.1/.test(d)), JSON.stringify(stream.dividers.slice(0, 3)));
+  check('the reasoning text is shown open, labelled as exposed by the provider, never as thinking', stream.reasoningLabel === 'Reasoning, as the provider exposes it' && /SIMULATED reasoning: reading the places/.test(stream.reasoning) && !/thought|thinking/i.test(stream.reasoningLabel), stream.reasoningLabel);
+  check('the reply text is shown open, whole, with its formatting', /SIMULATED/.test(stream.reply) && stream.reply.length > 100, stream.reply.slice(0, 80));
+  check('tool activity is a short readable line', stream.tools.some((t) => /^Reading .+\.ts/.test(t)), JSON.stringify(stream.tools.slice(0, 3)));
+  check('no usage or token rows in the stream', stream.usageRows === 0 && noDebug(await follow.ev('document.body.textContent')));
+  await shotWindow(await windowById(followWindow.id), '02-follow-stream');
 
-  stage = 'an earlier visit read while the run goes on, and back to live';
-  await follow.ev(`${q('follow-visit-plan-1')}.click(); true`);
-  reading = await poll('the planner\'s visit shown', async () => {
-    const r = await followCheck(follow);
-    return r !== null && r.shown.nodeId === 'plan' && r.followLive === false ? r : false;
-  }, 5_000);
-  const toolRows = JSON.parse(await follow.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-entry"][data-kind="tool-started"]')].map((e)=>e.querySelector('.fw-brief').textContent))`));
-  check('the planner\'s tool calls name what was read, with their result', toolRows.some((t) => /Reading .+ · done/.test(t)), JSON.stringify(toolRows.slice(0, 4)));
-  const scrolledTo = await follow.ev(`(()=>{const e=${q('follow-entries')};e.scrollTop=40;return e.scrollTop})()`);
-  const countBefore = reading.activity;
-  reading = await poll('new activity arriving meanwhile', async () => {
-    const r = await followCheck(follow);
-    return r !== null && r.activity > countBefore + 3 ? r : false;
-  }, 60_000);
-  const scrolledNow = await follow.ev(`${q('follow-entries')}.scrollTop`);
-  check('reading the planner\'s visit, new activity neither switches the visit nor moves the reader', reading.shown.nodeId === 'plan' && reading.followLive === false && scrolledNow === scrolledTo && (await follow.ev(`${q('follow-entries')}.dataset.visit`)) === 'plan#1', JSON.stringify({ scrolledTo, scrolledNow, shown: reading.shown }));
-  check('the visit list marks which visit is open and which is read', (await follow.ev(`${q('follow-visit-plan-1')}.getAttribute('aria-pressed')`)) === 'true' && (await follow.ev(`${q('follow-back-to-live')}!==null`)) === true);
-  await follow.ev(`${q('follow-back-to-live')}.click(); true`);
-  reading = await poll('back to live', async () => {
-    const r = await followCheck(follow);
-    return r !== null && r.followLive === true && r.shown.nodeId === r.visits[r.visits.length - 1].nodeId ? r : false;
-  }, 5_000);
-  check('Back to live follows the active visit again', reading.followLive && reading.shown.nodeId === reading.visits.at(-1).nodeId, JSON.stringify(reading.shown));
+  stage = 'scrolled up while text arrives: the reading position stays; back at the foot, following resumes';
+  await follow.ev(`(()=>{const e=${q('follow-entries')};e.scrollTop=0;e.dispatchEvent(new Event('scroll'));return e.scrollTop})()`);
+  await follow.until('following stopped', `${q('follow-stream')}.dataset.following === 'false'`, 5_000);
+  const upLength = await textLength();
+  await poll('more text arriving', async () => (await textLength()) > upLength, 120_000);
+  await delay(500);
+  const upTop = await follow.ev(`${q('follow-entries')}.scrollTop`);
+  check('scrolled up, new text does not pull the reader back', upTop === 0 && (await follow.ev(`${q('follow-stream')}.dataset.following`)) === 'false' && /new text waits below/.test(await follow.ev(`${q('follow-stream')}.textContent`)), JSON.stringify({ upTop }));
+  await follow.ev(`(()=>{const e=${q('follow-entries')};e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll'));return e.scrollTop})()`);
+  await follow.until('following resumed', `${q('follow-stream')}.dataset.following === 'true'`, 5_000);
+  const footLength = await textLength();
+  await poll('more text after resuming', async () => (await textLength()) > footLength, 120_000);
+  await delay(400);
+  check('back at the foot, the stream follows again', (await follow.ev(`(()=>{const e=${q('follow-entries')};return e.scrollHeight-e.scrollTop-e.clientHeight})()`)) <= 64);
 
-  stage = 'closed and reopened during the run: nothing stops, repeats or doubles';
+  stage = 'the stream closed and reopened, the window closed and reopened: nothing stops, doubles or repeats';
+  await follow.ev(`${q('follow-stream-close')}.click(); true`);
+  await follow.until('the stream closed', `${q('follow-stream')}===null`, 5_000);
+  const livenessA = await follow.ev(`${q('follow-liveness')}.textContent`);
+  await poll('the liveness line still updating with the stream closed', async () => (await follow.ev(`${q('follow-liveness')}.textContent`)) !== livenessA, 60_000);
+  check('closing the stream stops nothing and the liveness line goes on', (await diff.ev(`${q('agent-job-walks')}?.dataset.state`)) === 'running');
   const beforeClose = await followCheck(follow);
+  await follow.ev(`${q('follow-liveness')}.click(); true`);
+  await follow.until('the stream reopened', `${q('follow-stream')}!==null`, 5_000);
+  const reopenedDividers = Number(await follow.ev(`document.querySelectorAll('[data-ev="follow-divider"]').length`));
+  check('reopening the stream shows the same flow once: one divider per turn, no doubled text', reopenedDividers === beforeClose.turnNumbers.length && Number(await follow.ev(`(document.body.textContent.match(/SIMULATED Standard explanation of W1\\.1 /g) ?? []).length`)) <= 2, JSON.stringify({ reopenedDividers, turns: beforeClose.turnNumbers.length }));
   follow.close();
   await client.main.closeWindow(followWindow.id);
   await poll('the follow window gone', async () => !(await followWindows()).some((x) => x.id === followWindow.id), 15_000);
@@ -1148,27 +1151,22 @@ async function main() {
     return r !== null && r.announced && r.activity >= beforeClose.activity ? r : false;
   }, 30_000);
   const jobsNow = JSON.parse(await diff.ev(`window.dspatchReviewPair.state(${JSON.stringify(reviewKey)}).then((r)=>JSON.stringify(r.jobs.filter((j)=>j.kind==='walks').map((j)=>j.state)))`));
-  check('reopening starts no second preparation and no extra call: one job, the turns numbered on without a gap or a double', jobsNow.length === 1 && reading.seqMonotonic === true && reading.turnNumbers.every((n, i) => n === i + 1) && reading.turns >= beforeClose.turns, JSON.stringify({ jobsNow, turns: reading.turnNumbers }));
-  check('the reopened view is live and shows the same run', reading.live === true && reading.jobId === beforeClose.jobId && reading.activity >= beforeClose.activity, JSON.stringify({ before: beforeClose.activity, after: reading.activity }));
+  check('reopening the window starts no second preparation and no extra call: one job, the turns numbered on without a gap or a double', jobsNow.length === 1 && reading.seqMonotonic === true && reading.turnNumbers.every((n, i) => n === i + 1) && reading.turns === undefined, JSON.stringify({ jobsNow, turns: reading.turnNumbers }));
   await client.main.size(followWindow.id, 1500, 940);
+  await follow.ev(`${q('follow-liveness')}.click(); true`);
+  await follow.until('the stream in the reopened window', `${q('follow-stream')}!==null && document.querySelectorAll('[data-ev="follow-divider"]').length >= 2`, 15_000);
 
-  stage = 'the reviewer, the correction round and the final assessment';
+  stage = 'the reviewer, the correction round and the final assessment, in the same flow';
   reading = await poll('the correction round', async () => {
     const r = await followCheck(follow);
-    return r !== null && r.visits.some((v) => v.nodeId === 'write' && v.occurrence === 2) ? r : false;
+    return r !== null && r.dividers.some((d) => /^Writer · Writing again step/.test(d)) ? r : false;
   }, 240_000);
-  check('the reviewer asked for a correction and the writer was entered again: the actual path, on the drawing', reading.edgesTaken.includes('e-rework-text') && reading.visits.some((v) => v.nodeId === 'review' && v.occurrence === 1) && reading.kinds['verdict'] >= 1, JSON.stringify({ edges: reading.edgesTaken, visits: reading.visits.map((v) => `${v.nodeId}#${String(v.occurrence)}`) }));
+  check('the reviewer asked for a correction and the writer was entered again: the actual path on the drawing, the dividers in the stream', reading.edgesTaken.includes('e-rework-text') && reading.dividers.some((d) => /^Reviewer/.test(d)) && reading.blocks.verdict >= 1, JSON.stringify({ edges: reading.edgesTaken, dividers: reading.dividers.filter((d) => !/^Writer · Writing step/.test(d)) }));
+  const verdict = await follow.ev(`document.querySelector('[data-ev="follow-verdict"]')?.textContent ?? ''`);
+  check('the reviewer\'s verdict and its finding are in the flow, as a finding of the walk, not of the code', /verdict: rework/.test(verdict) && /W1\.1/.test(verdict) && /approves nothing of the code/.test(verdict), verdict.slice(0, 160));
   await shotWindow(await windowById(followWindow.id), '03-follow-correction');
-  await follow.ev(`${q('follow-visit-review-1')}.click(); true`);
-  await delay(300);
-  const verdictRow = await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] .fw-brief')?.textContent ?? ''`);
-  check('the reviewer\'s verdict and its findings are in its visit, as a finding of the walk, not of the code', /rework/.test(verdictRow) && /1 finding/.test(verdictRow), verdictRow);
-  await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] > summary').click(); true`);
-  const verdictBody = await follow.ev(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] .fw-body')?.textContent ?? ''`);
-  check('the finding names its step, and the panel says the reviewer approves nothing of the code', /W1\.1/.test(verdictBody) && /approves nothing of the code/.test(verdictBody), verdictBody.slice(0, 200));
-  await follow.ev(`${q('follow-back-to-live')}.click(); true`);
 
-  stage = 'the run ended: the ending on the drawing, the summary with usage, zoom';
+  stage = 'the run ended: the ending on the drawing, the liveness line with the outcome, the stream readable, zoom';
   reading = await poll('the run ended', async () => {
     const r = await followCheck(follow);
     return r !== null && r.ended === true && r.jobState !== 'running' ? r : false;
@@ -1176,14 +1174,13 @@ async function main() {
   check('the run ended at delivered-with-objections, every visited node finished', reading.status === 'completed' && reading.terminal === 'delivered-with-objections' && reading.nodes.plan === 'finished' && reading.nodes.write === 'finished' && reading.nodes.review === 'finished' && reading.working.length === 0, JSON.stringify(reading.nodes));
   const endingNode = JSON.parse(await follow.ev(`(()=>{const n=document.querySelector('[data-node-id="delivered-with-objections"]');return JSON.stringify({ending:n?.dataset.runEnding,tick:n?.querySelector('.node-ending-tick')!==null,animations:[...document.querySelectorAll('.fw-graph svg .node')].reduce((s,x)=>s+x.getAnimations({subtree:true}).length,0)})})()`));
   check('the terminal the drawing declares a success carries the tick, and no motion remains', endingNode.ending === 'success' && endingNode.tick === true && endingNode.animations === 0, JSON.stringify(endingNode));
-  check('the final assessment is on record with its objection', reading.kinds['verdict'] === 2 && reading.visits.some((v) => v.nodeId === 'review' && v.occurrence === 2));
-  // The round and the status come from the summary kept with the run, read once the job has ended.
-  const summaryText = await poll('the summary kept with the run', async () => {
-    const text = await follow.ev(`${q('follow-summary')}.textContent`);
-    return /correction round/.test(text) ? text : false;
-  }, 30_000);
-  check('the summary strip says the turns, the time, the round and the status', /\d+ turns/.test(summaryText) && /one correction round/.test(summaryText) && /delivered-with-objections/.test(summaryText), summaryText.slice(0, 200));
-  check('usage is summed per field and per model call, from readings the provider reported, and the details open apart', /input tokens \(SIMULATED\)/.test(summaryText) && /per model call/.test(summaryText) && /readings/.test(summaryText) && reading.usageLines === 2, summaryText.slice(0, 300));
+  reading = await poll('the liveness line with the outcome', async () => {
+    const r = await followCheck(follow);
+    return r !== null && /correction/.test(r.liveness) ? r : false;
+  }, 20_000);
+  check('the liveness line says how it ended, in the job\'s own sentence', /asked for one correction/.test(reading.liveness) && /objection/.test(reading.liveness), reading.liveness);
+  check('the final assessment is in the flow with its objection', reading.blocks.verdict === 2 && reading.dividers.some((d) => /^Reviewer · The reviewer gives its final assessment/.test(d)));
+  check('no token, usage, version, graph id, prompt or record control in the view, open or closed', noDebug(await follow.ev('document.body.textContent')) && (await follow.ev(`${q('follow-record')}===null && document.querySelectorAll('[data-ev="follow-usage"], .fw-usage, .fw-summary').length===0 && !/Every prompt and answer|usage/.test(document.body.textContent)`)) === true);
   check('no limitation is reported for a run followed from its start', reading.limitations.length === 0, JSON.stringify(reading.limitations));
   const widthBefore = await follow.ev(`document.querySelector('.fw-graph svg').getAttribute('width')`);
   await follow.ev(`${q('follow-zoom-in')}.click(); true`);
@@ -1213,16 +1210,10 @@ async function main() {
     const r = await followCheck(follow);
     return r !== null && r.announced && r.ended ? r : false;
   }, 30_000);
-  check('the finished run shows its history: the same visits, the text, the reasoning, the usage and the verdicts kept', history.live === false && history.visits.length === reading.visits.length && history.kinds['reply-text'] >= 6 && history.kinds['reasoning-text'] >= 6 && history.kinds['usage'] > 0 && history.kinds['verdict'] === 2 && history.terminal === 'delivered-with-objections', JSON.stringify({ visits: history.visits.length, kinds: history.kinds }));
-  check('the history shows the last visit, with no limitation', history.shown.nodeId === 'review' && history.shown.occurrence === 2 && history.limitations.length === 0, JSON.stringify(history.shown));
-  await follow.ev(`document.querySelector('[data-ev="follow-record"] > summary').click(); true`);
-  await follow.until('the record read on request', `${q('follow-replies')}!==null && Number(${q('follow-replies')}.dataset.count) >= 6`, 30_000);
-  const firstPrompt = await poll('the first exchange opened', async () => {
-    const state = JSON.parse(await follow.ev(`JSON.stringify({open:document.querySelector('.fw-reply')?.open ?? null,text:document.querySelector('.fw-reply .fw-text')?.textContent ?? ''})`));
-    if (state.open !== true) await follow.ev(`document.querySelector('.fw-reply > summary')?.click(); true`);
-    return state.text !== '' ? state.text : false;
-  }, 15_000);
-  check('every prompt and answer of the run is readable whole, on request', firstPrompt.startsWith('DSPATCH-REVIEW-TASK: plan-walks') && /## Your role: walk-planner/.test(firstPrompt), firstPrompt.slice(0, 80));
+  await follow.ev(`${q('follow-liveness')}.click(); true`);
+  await follow.until('the stream of the finished run', `${q('follow-stream')}!==null && document.querySelectorAll('[data-ev="follow-text"]').length > 0`, 15_000);
+  check('the finished run shows its whole flow from its files: every turn, the text, the reasoning, the verdicts', history.live === false && history.dividers.length === reading.dividers.length && history.blocks.verdict === 2 && history.textLength > 0 && history.kinds['reasoning-text'] >= 6 && history.terminal === 'delivered-with-objections', JSON.stringify({ dividers: history.dividers.length, blocks: history.blocks }));
+  check('the finished run\'s view has no limitation and no debug text', history.limitations.length === 0 && noDebug(await follow.ev('document.body.textContent')), JSON.stringify(history.limitations));
   await client.main.size(followWindow.id, 1500, 940);
   await delay(500);
   await shotWindow(await windowById(followWindow.id), '06-follow-history');
@@ -1317,7 +1308,7 @@ async function main() {
     const r = await followCheck(follow2);
     return r !== null && r.ended === true ? r : false;
   }, 30_000);
-  check('Stop in the run view stopped the actual job and the view says so', stopped.jobState === 'cancelled' && stopped.status !== 'completed' && /stopped/.test(await follow2.ev(`${q('follow-provenance')}.textContent`)), JSON.stringify({ state: stopped.jobState, status: stopped.status }));
+  check('Stop in the run view stopped the actual job and the view says so', stopped.jobState === 'cancelled' && stopped.status !== 'completed' && /Stopped/.test(await follow2.ev(`${q('follow-liveness')}.textContent`)), JSON.stringify({ state: stopped.jobState, status: stopped.status }));
   await client.main.size(followWindow2.id, 1500, 940);
   await delay(400);
   await shotWindow(await windowById(followWindow2.id), '08-follow-stopped');
@@ -1359,9 +1350,11 @@ async function main() {
   }, 120_000);
   const sentAfterFailure = fs.readFileSync(path.join(profile, 'reviews', 'generated', reviewKey3, fs.readdirSync(path.join(profile, 'reviews', 'generated', reviewKey3)).find((n) => n.endsWith('.walk-loop')), 'record.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const replies3 = sentAfterFailure.filter((l) => l.line === 'agent-reply');
-  check('the provider failure ended the job as failed, with the writer marked failed on the drawing and no resend of the turn', failed.nodes.write === 'failed' && failed.status !== 'completed' && replies3.length === 2 && replies3.at(-1).reply.terminalStatus === 'failed' && /failed:/.test(await follow3.ev(`${q('follow-provenance')}.textContent`)), JSON.stringify({ nodes: failed.nodes, replies: replies3.map((r) => r.reply.terminalStatus) }));
-  const endedRow = await follow3.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-entry"][data-kind="turn-ended"]')].map((e)=>e.querySelector('.fw-brief').textContent))`);
-  check('the failed turn is on record with the provider\'s own error', /failed: SIMULATED: the provider stopped this turn/.test(endedRow), endedRow);
+  check('the provider failure ended the job as failed, with the writer marked failed on the drawing and no resend of the turn', failed.nodes.write === 'failed' && failed.status !== 'completed' && replies3.length === 2 && replies3.at(-1).reply.terminalStatus === 'failed' && /failed/.test(await follow3.ev(`${q('follow-liveness')}.textContent`)), JSON.stringify({ nodes: failed.nodes, replies: replies3.map((r) => r.reply.terminalStatus) }));
+  await follow3.ev(`${q('follow-liveness')}.click(); true`);
+  await follow3.until('the stream of the failed run', `${q('follow-stream')}!==null`, 10_000);
+  const endedRow = await follow3.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="follow-turn-ended"]')].map((e)=>e.textContent))`);
+  check('the failed turn is said plainly in the stream, with the provider\'s own words, and the liveness line says what to do', /The provider stopped this turn\. SIMULATED: the provider stopped this turn/.test(endedRow) && /prepare the walks again/.test(await follow3.ev(`${q('follow-liveness')}.textContent`)), endedRow);
   await client.main.size(followWindow3.id, 1500, 940);
   await delay(400);
   await shotWindow(await windowById(followWindow3.id), '09-follow-failed');
