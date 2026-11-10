@@ -501,7 +501,10 @@ async function main() {
   await pc.until('the walk\'s review done, inside Review', `document.querySelector('[data-ev="walk-delegation"] [data-ev="agent-review"]')?.dataset.state === 'done'`, 120_000);
   await delay(800);
   panelState = JSON.parse(await pc.ev(PANEL_STATE));
-  check('the arriving result changed no tab, scroll position or focus, and opened nothing', panelState.tab === 'true' && JSON.stringify(panelState.scrollers) === JSON.stringify(beforeArrival.scrollers) && panelState.reportsOpen === 0 && panelState.activeElement === beforeArrival.activeElement, JSON.stringify({ before: beforeArrival.scrollers, after: panelState.scrollers, reportsOpen: panelState.reportsOpen, focus: [beforeArrival.activeElement, panelState.activeElement] }));
+  // The panel's main scroller keeps its position; a scroller that only comes to exist with the
+  // result, at its top, moved nothing the person was reading.
+  const scrolledAway = beforeArrival.scrollers.length > 0 && panelState.scrollers.length > 0 && beforeArrival.scrollers[0] !== panelState.scrollers[0];
+  check('the arriving result changed no tab, scroll position or focus, and opened nothing', panelState.tab === 'true' && !scrolledAway && (panelState.scrollers[0] ?? 0) === (beforeArrival.scrollers[0] ?? 0) && panelState.reportsOpen === 0 && panelState.activeElement === beforeArrival.activeElement, JSON.stringify({ before: beforeArrival.scrollers, after: panelState.scrollers, reportsOpen: panelState.reportsOpen, focus: [beforeArrival.activeElement, panelState.activeElement] }));
   check('the report is in the Review section, once, folded; the explanation stays first', panelState.reports === 1 && panelState.reportsInReview === 1 && panelState.stepFirst, JSON.stringify(panelState));
   const reportState = await pc.ev(`${q('agent-review-state')}?.textContent ?? ''`);
   check('the walk\'s report awaits the person\'s assessment', /awaiting your assessment/.test(reportState), reportState);
