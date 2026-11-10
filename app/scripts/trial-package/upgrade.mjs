@@ -234,7 +234,7 @@ async function openReview(win, port, label) {
   if ((await review.ev(`${q('pair-summary')}===null && ${q('pair-files')}!==null`)) === true) await review.click('pair-files');
   return review;
 }
-const reviewLine = (review) => review.ev(`JSON.stringify({summary:${q('pair-summary')}?.textContent ?? '',result:document.querySelector('[data-ev="agent-review"]')?.innerText.replace(/\\s+/g,' ').match(/\\d+\\/\\d+ changed lines[^.]*|approved[^.]*/)?.[0] ?? ''})`);
+const reviewLine = (review) => review.ev(`JSON.stringify({summary:${q('pair-summary')}?.textContent ?? '',decision:document.querySelector('[data-ev="agent-review"]')?.dataset.decision ?? '',result:document.querySelector('[data-ev="agent-review"]')?.innerText.replace(/\\s+/g,' ').match(/awaiting your assessment|not accepted by you|accepted by you|\\d+\\/\\d+ changed lines[^.]*|approved[^.]*/)?.[0] ?? ''})`);
 /** The review records on disk: the pair records and their discussions. */
 const reviewFiles = () => inside(USER, `find ${data}/reviews -maxdepth 2 \\( -path '*/pairs/*.json' -o -name '*.discussion.json' \\) -type f | sort`, true).split('\n').filter(Boolean);
 
@@ -390,7 +390,15 @@ async function main() {
   check('the review window opens at its saved zoom, and the zoom file is as it was', Math.abs((await zoomOf(secondReview)) - 1.2) < 0.01 && inside(USER, `cat ${data}/window-zoom.json`) === zoomFile, JSON.stringify({ review: await zoomOf(secondReview), file: inside(USER, `cat ${data}/window-zoom.json`) }));
   await secondReview.until('the delegated result', `document.querySelector('[data-ev="agent-review"]')!==null`, 60_000);
   const reviewAfter = JSON.parse(await reviewLine(secondReview));
-  check('the review and its delegated result are as the previous release left them', reviewAfter.summary === reviewBefore.summary && reviewAfter.result !== '' && reviewFilesBefore.every((file) => reviewFiles().includes(file)), JSON.stringify({ reviewBefore, reviewAfter }));
+  // DSP-193 (0.1.18): a delegated review is the agent's assessment until the person accepts it. A
+  // result recorded by an earlier release and never decided on reads as awaiting the person and
+  // counts nothing; the files and the result are kept as written, with the same totals.
+  const totals = (line) => line.replace(/\b\d+ of (\d+)/g, 'N of $1');
+  const reread =
+    reviewAfter.decision !== '' && reviewBefore.decision === ''
+      ? reviewAfter.decision === 'awaiting' && reviewAfter.result === 'awaiting your assessment' && totals(reviewAfter.summary) === totals(reviewBefore.summary)
+      : reviewAfter.summary === reviewBefore.summary && reviewAfter.result !== '';
+  check('the review and its delegated result are as the previous release left them (an earlier agent approval now awaits the person)', reread && reviewFilesBefore.every((file) => reviewFiles().includes(file)), JSON.stringify({ reviewBefore, reviewAfter }));
   await secondReview.shot('03b-upgraded-review');
   secondReview.close();
   check('the conversation, the agent choice, the project and the own loop are as they were', same(before.conversations, after.conversations) && after.agent === before.agent && same(before.folders, after.folders) && after.ownLoop === before.ownLoop, JSON.stringify({ before, after }));
