@@ -665,6 +665,95 @@ function prepareWalks(prompt: string, reader: Reader): string {
   return fence(answer);
 }
 
+/**
+ * DSP-189, SIMULATED: the planner's answer is the same walks the one call gives, without the
+ * explanation texts and with a brief per step; the repair round answers from it as before.
+ */
+function planWalks(prompt: string, reader: Reader): string {
+  const fenced = prepareWalks(prompt, reader);
+  const raw = /```json\s*\n([\s\S]*?)\n```/.exec(fenced)?.[1] ?? '{}';
+  let parsed: { summary?: string; background?: string; walks?: { steps?: Record<string, unknown>[] }[] };
+  try {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    parsed = {};
+  }
+  const walks = (parsed.walks ?? []).map((walk) => ({
+    ...walk,
+    steps: (walk.steps ?? []).map(({ body: _body, details: _details, ...step }) => ({
+      ...step,
+      brief: `SIMULATED brief: explain ${String(step['title'] ?? 'this step')} here, how it is reached and what the reader takes to the next step.`,
+    })),
+  }));
+  const plan = { summary: parsed.summary ?? '', background: parsed.background ?? '', walks };
+  lastWalks = plan;
+  return fence(plan);
+}
+
+/** The profile the writer was last told, since only its first turn in the session names it. */
+let lastWriteProfile: string | null = null;
+
+/** DSP-189, SIMULATED: the writer's text for one step, in the profile its session was given. */
+function writeStep(prompt: string): string {
+  const profile = /^## How to explain the step \((Essentials|Standard|Teacher)\)$/m.exec(prompt)?.[1] ?? null;
+  if (profile !== null) {
+    lastWriteProfile = profile;
+  }
+  const named = lastWriteProfile ?? 'Standard';
+  const step = /^## This step: (\S+) (.*)$/m.exec(prompt);
+  const id = step?.[1] ?? '?';
+  const title = step?.[2] ?? '';
+  const place = /^- [^:\n]+: (\S+) \((From|To)\) lines (\d+)–(\d+)/m.exec(prompt.slice(prompt.indexOf('## This step')));
+  const where = place === null ? 'the step\'s place' : `\`${place[1] ?? ''}\` lines ${place[3] ?? ''}–${place[4] ?? ''}`;
+  const rework = prompt.includes("## The reviewer's findings about this step");
+  const simFailAt = process.env['DSPATCH_REVIEW_SIM_FAIL_WRITE_STEP'];
+  if (simFailAt !== undefined && simFailAt === id) {
+    // Nothing readable: the executor records an empty answer and goes on.
+    return '';
+  }
+  return [
+    `SIMULATED ${named} explanation of ${id} ${title}${rework ? ' (written again from the reviewer\'s finding)' : ''}: what the code at ${where} does here and why it matters for the change, at the ${named} reader's level.`,
+    '',
+    DETAILS_MARKER_LINE,
+    `SIMULATED deepening (${named}) for ${id}: the mechanism behind the first part, and the special case that changes the outcome.`,
+  ].join('\n');
+}
+
+const DETAILS_MARKER_LINE = '<!-- dspatch:details -->';
+
+/**
+ * DSP-189, SIMULATED: the reviewer accepts, or with `DSPATCH_REVIEW_SIM=loop-rework` asks once
+ * for the first step's explanation to be written again and then leaves one objection on
+ * record; `loop-replan` sends a structural finding to the planner instead and then accepts.
+ */
+function reviewWalks(prompt: string): string {
+  const final = prompt.includes('## The final assessment');
+  const firstStep = /^#### (\S+) /m.exec(prompt)?.[1] ?? 'W1.1';
+  const variant = process.env['DSPATCH_REVIEW_SIM'];
+  if (variant === 'loop-rework' && !final) {
+    return fence({
+      assessment: 'SIMULATED: the walks follow the change, but the first step names its function without explaining what decides its outcome.',
+      verdict: 'rework',
+      findings: [{ kind: 'explanation', steps: [firstStep], problem: 'SIMULATED: the step does not say what decides the outcome at this place.', why: 'The reader cannot judge the change without it.', evidence: 'The lines the step shows.', reference: 'section 2' }],
+    });
+  }
+  if (variant === 'loop-rework' && final) {
+    return fence({
+      assessment: 'SIMULATED final assessment: the first step now says what decides its outcome; one objection remains.',
+      verdict: 'objections',
+      findings: [{ kind: 'explanation', steps: [firstStep], problem: 'SIMULATED remaining objection: the deepening still repeats the first part.', why: 'Show more should continue the first part.', evidence: '', reference: 'section 4' }],
+    });
+  }
+  if (variant === 'loop-replan' && !final) {
+    return fence({
+      assessment: 'SIMULATED: a central function is left behind its name.',
+      verdict: 'rework',
+      findings: [{ kind: 'structure', steps: [firstStep], problem: 'SIMULATED: the function this step calls is central and needs a step of its own.', why: 'Important new implementation must not disappear behind a name.', evidence: 'The call on the shown lines.', reference: 'section 2' }],
+    });
+  }
+  return fence({ assessment: `SIMULATED ${final ? 'final assessment' : 'review'}: the reader can follow the course and each shown place is explained.`, verdict: 'accept', findings: [] });
+}
+
 function delegatedReview(prompt: string, reader: Reader): string {
   const scope = rangesAfter(prompt, '## The scope (machine-readable)');
   const changed = rangesAfter(prompt, '## Changed lines (machine-readable)');
@@ -1397,6 +1486,12 @@ export function simulatedReviewTask(prompt: string, folder: string, asked: strin
     answer = prepareWalks(prompt, reader);
   } else if (task === 'repair-walks') {
     answer = fence(lastWalks ?? { summary: '', walks: [] });
+  } else if (task === 'plan-walks') {
+    answer = planWalks(prompt, reader);
+  } else if (task === 'write-step') {
+    answer = writeStep(prompt);
+  } else if (task === 'review-walks') {
+    answer = reviewWalks(prompt);
   } else if (task === 'delegated-review') {
     answer = delegatedReview(prompt, reader);
   } else if (task === 'step-question') {

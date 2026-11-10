@@ -138,7 +138,7 @@ export function changedRangesOf(files: readonly PairFile[]): readonly LineRange[
 }
 
 /** The folder section: where the revisions are, what the agent can do there, and what is missing. */
-function folderSection(material: AnalysisMaterial, folder: AgentMaterial): string {
+export function folderSection(material: AnalysisMaterial, folder: AgentMaterial): string {
   const lines = [
     '## The code, and how to read it',
     'Your working folder holds the two revisions as files, written by DSpatch from the repository\'s commits:',
@@ -178,7 +178,7 @@ export function discussionFolderSection(material: AnalysisMaterial, folder: Agen
   ].join('\n');
 }
 
-function changeSection(material: AnalysisMaterial): string {
+export function changeSection(material: AnalysisMaterial): string {
   const changed = changedRangesOf(material.files).map((range) => ({
     path: range.path,
     side: range.side,

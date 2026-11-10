@@ -26,7 +26,12 @@
  * touch a job; reopening reads the record.
  */
 
-import { PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES, isPublicProfile, type PublicProfile } from '../shared/presentation-profiles';
+import { DEFAULT_PROFILE, PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES, isPublicProfile, type PublicProfile } from '../shared/presentation-profiles';
+import { createFileRoleResolver } from '../main/loop-graph-roles';
+import { WALK_LOOP_GRAPH_REL, isWalkMethod, type WalkLoopUsage, type WalkMethod } from '../shared/walk-loop';
+import { WALK_LOOP_RECORD_FILE, runWalkLoop, type WalkLoopTurnResult } from './walk-loop-run';
+import { parseRunRecord } from '../shared/loop-record';
+import type { WalkLoopRecordView } from '../shared/walk-loop';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -174,6 +179,14 @@ export interface ReviewAgentJobsOptions {
     current(key: string, pair: RevisionPairIdentity): Promise<readonly ContextRepository[]>;
     given(key: string, pair: RevisionPairIdentity, holder: string, context: readonly ContextSnapshot[]): void;
   };
+  /**
+   * DSP-189: where DSpatch's own loop resources are (the repository root or the bundled copy),
+   * for the walk loop's drawing and roles under `docs/loop/`. Without it the loop method is
+   * refused with its reason; the one-call method is unaffected.
+   */
+  readonly loopResources?: string | null;
+  /** DSP-189: for the walk loop's run record. `unknown` when not given. */
+  readonly appVersion?: string;
 }
 
 interface Live {
@@ -206,6 +219,12 @@ interface Live {
   idleTimer: ReturnType<typeof setTimeout> | null;
   readonly kind: AgentJob['kind'];
   finished: ((status: 'finished' | 'failed' | 'cancelled' | 'unconfirmed', error: string | null) => void) | null;
+  /** DSP-189: stops the walk loop's engine at its next step; the active turn is cancelled through the adapter as before. */
+  readonly abort: AbortController;
+  /** DSP-189: the walk loop's session per role node, on the one adapter; `sessionId` is the active one. */
+  readonly sessions: Map<string, string>;
+  /** DSP-189: what the provider reported about usage since the executor last asked. */
+  usageSince: WalkLoopUsage[];
 }
 
 /** An explanation of selected code, checked against the commits before its job is registered. */
@@ -494,6 +513,15 @@ export class ReviewAgentJobs {
     const presentationRaw = request['presentation'];
     const asked = typeof presentationRaw === 'object' && presentationRaw !== null ? (presentationRaw as Record<string, unknown>)['profile'] : undefined;
     const explanationsIn: PublicProfile | null = kind === 'walks' && isPublicProfile(asked) ? asked : null;
+    // DSP-189, walks: one call (the default), or the planner, writer and reviewer loop.
+    const methodRaw = request['method'];
+    const method: WalkMethod | null = kind !== 'walks' ? null : isWalkMethod(methodRaw) ? methodRaw : methodRaw === undefined ? 'single' : null;
+    if (kind === 'walks' && method === null) {
+      return { error: 'Unknown way of preparing the walks.' };
+    }
+    if (method === 'loop' && (this.options.loopResources === undefined || this.options.loopResources === null)) {
+      return { error: 'The walk loop\'s drawing and roles are not available in this installation, so the loop cannot run. Prepare the walks with one call instead.' };
+    }
     let scope: DelegationScope | null = null;
     let question: StepQuestion | null = null;
     if (kind === 'explain' && prepared === null && (request['selection'] !== undefined || request['followUp'] !== undefined)) {
@@ -563,7 +591,9 @@ export class ReviewAgentJobs {
       endedAt: null,
       note:
         kind === 'walks'
-          ? 'Preparing code walks.'
+          ? method === 'loop'
+            ? 'Preparing code walks with the planner, writer and reviewer.'
+            : 'Preparing code walks.'
           : kind === 'checks'
             ? 'Looking for what is worth checking.'
             : kind === 'explain'
@@ -579,6 +609,7 @@ export class ReviewAgentJobs {
       definitionPath: checksOver,
       uncovered: [],
       ...(explanationsIn === null ? {} : { presentation: { profile: explanationsIn, version: PRESENTATION_INSTRUCTION_VERSION } }),
+      ...(method === null ? {} : { method }),
       ...(question === null ? {} : { question }),
       ...(prepared === null ? {} : { selection: prepared.selection }),
       ...(prepared?.followUp == null ? {} : { followUp: prepared.followUp }),
@@ -620,6 +651,9 @@ export class ReviewAgentJobs {
       activityTimer: null,
       idleTimer: null,
       kind,
+      abort: new AbortController(),
+      sessions: new Map(),
+      usageSince: [],
     };
     this.live.set(job.id, live);
     void this.run(live, job).finally(() => {
@@ -643,6 +677,8 @@ export class ReviewAgentJobs {
       return { note: 'Already asked to stop.' };
     }
     live.cancelRequested = true;
+    // DSP-189: the walk loop's engine starts no further step; its active turn is cancelled below.
+    live.abort.abort();
     this.setJob(live, { state: 'cancelling', note: 'Asked to stop. It counts as stopped only when the provider reports an end.' });
     if (live.adapter !== null && live.sessionId !== null && live.runId !== null) {
       try {
@@ -658,6 +694,52 @@ export class ReviewAgentJobs {
   }
 
   /**
+   * DSP-189: a walk loop's record, read on request from the folder this review keeps it in:
+   * every prompt and answer, and the engine's journal. Never shown unasked, and never another
+   * review's.
+   */
+  walkLoopRecord(key: unknown, jobId: unknown): PairAnswer<WalkLoopRecordView> {
+    if (typeof key !== 'string' || typeof jobId !== 'string') {
+      return { error: 'That review is not open.' };
+    }
+    const record = this.options.pairs.state(key);
+    if (isPairError(record)) {
+      return record;
+    }
+    const job = record.jobs.find((entry) => entry.id === jobId);
+    if (job === undefined || job.loop === undefined) {
+      return { error: 'That preparation has no loop record.' };
+    }
+    const expected = path.join(this.options.recordsDir, 'generated', key, `${job.id}.walk-loop`, WALK_LOOP_RECORD_FILE);
+    if (path.resolve(job.loop.recordPath) !== path.resolve(expected)) {
+      return { error: 'The record is not where this review keeps it, so it was not read.' };
+    }
+    let text: string;
+    try {
+      text = fs.readFileSync(expected, 'utf8');
+    } catch (error) {
+      return { error: `The record could not be read: ${describe(error)}` };
+    }
+    const parsed = parseRunRecord(text);
+    return {
+      summary: job.loop,
+      replies: parsed.replies.map((reply) => ({
+        nodeId: reply.nodeId,
+        nodeLabel: reply.nodeLabel,
+        occurrence: reply.occurrence,
+        atUtc: reply.atUtc,
+        prompt: reply.prompt ?? '',
+        text: reply.text,
+        roleId: reply.roleId ?? null,
+        sessionId: reply.sessionId ?? null,
+      })),
+      journal: parsed.journal.map((entry) => ({ seq: entry.seq, atIso: entry.atIso, kind: entry.kind, nodeId: entry.nodeId ?? null, detail: entry.detail })),
+      complete: parsed.completeness === 'complete',
+      error: parsed.error,
+    };
+  }
+
+  /**
    * A review is being deleted (DSP-186): its running work is asked to stop and its sessions
    * closed, and nothing any of it answers later is written: no record, no walks, no points.
    */
@@ -665,6 +747,7 @@ export class ReviewAgentJobs {
     for (const live of [...this.live.values()].filter((entry) => entry.key === key)) {
       live.dropped = true;
       live.cancelRequested = true;
+      live.abort.abort();
       this.quiet(live);
       if (live.adapter !== null && live.sessionId !== null && live.runId !== null) {
         await live.adapter.cancel(live.sessionId).catch(() => undefined);
@@ -949,6 +1032,11 @@ export class ReviewAgentJobs {
       if (event.text !== '') {
         this.setActivity(live, writingNow(live.kind, live.text));
       }
+    } else if (event.type === 'usage') {
+      // DSP-189: kept for the walk loop's record as the provider reported it; silence stays unknown.
+      for (const reading of event.readings) {
+        live.usageSince.push({ unit: reading.unit, scope: reading.scope, value: reading.value, source: reading.source });
+      }
     } else if (event.type === 'run.finished') {
       const status =
         event.status === 'finished' ? 'finished' : event.status === 'cancelled' ? (event.end === 'unconfirmed' ? 'unconfirmed' : 'cancelled') : 'failed';
@@ -1052,7 +1140,9 @@ export class ReviewAgentJobs {
         this.finish(live, 'cancelled', 'Stopped before anything was sent.');
         return;
       }
-      if (job.kind === 'walks') {
+      if (job.kind === 'walks' && job.method === 'loop') {
+        await this.prepareWalksByLoop(live, job, material, folder, language);
+      } else if (job.kind === 'walks') {
         await this.prepareWalks(live, job, walksPrompt(material, folder, language, isPublicProfile(job.presentation?.profile) ? job.presentation.profile : null), folder);
       } else if (job.kind === 'checks' && job.definitionPath !== null) {
         const outline = this.options.pairs.walksOf(live.key, job.definitionPath, language);
@@ -1199,12 +1289,29 @@ export class ReviewAgentJobs {
       this.finish(live, 'failed', 'The agent did not answer with walks DSpatch could read, even when asked again.');
       return;
     }
+    await this.deliverWalks(live, job, parsed.walks, invalid, folder, read, { repairNote, provenance: '', note: '', fields: {} });
+  }
+
+  /**
+   * The walks as a definition the review opens, from either preparation (DSP-189): the places
+   * that exist, the checks, the provenance, the file, and the job's end. One path, so a walk
+   * prepared by the loop opens and reads exactly as one prepared by one call.
+   */
+  private async deliverWalks(
+    live: Live,
+    job: AgentJob,
+    proposed: ProposedWalks,
+    invalid: ReadonlyMap<string, string>,
+    folder: AgentMaterial,
+    read: (side: 'base' | 'target', filePath: string) => Promise<readonly string[] | null>,
+    extra: { readonly repairNote: string | null; readonly provenance: string; readonly note: string; readonly fields: Partial<AgentJob> },
+  ): Promise<void> {
     // The points worth checking keep only the places that exist; their text stays.
     // DSP-175: context places carry the commit this analysis recorded for their repository.
-    const checked = await withCheckedChecks(await withContextCommits(withoutInvalidPlaces(parsed.walks, invalid), live.context), read);
+    const checked = await withCheckedChecks(await withContextCommits(withoutInvalidPlaces(proposed, invalid), live.context), read);
     const walks: ProposedWalks = checked.walks;
     if (walks.walks.length === 0) {
-      this.finish(live, 'failed', 'None of the proposed walks had a place that exists at these commits, so none was kept.');
+      this.finish(live, 'failed', 'None of the proposed walks had a place that exists at these commits, so none was kept.', extra.fields);
       return;
     }
     // DSP-185: still crowded after the one round: kept as written (no place or coverage is lost), and said.
@@ -1221,13 +1328,14 @@ export class ReviewAgentJobs {
     const heading = `${forms} · ${opened?.repositoryName ?? ''} ${opened?.pair.base.slice(0, 7) ?? ''}→${opened?.pair.target.slice(0, 7) ?? ''}`;
     // The first sentence names the preparation where several are offered; the rest is for Details.
     const provenance =
-      `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt.slice(0, 16).replace('T', ' ')} UTC. ` +
+      `Prepared by ${providerName(job.provider)} (${job.model}) on ${generatedAt.slice(0, 16).replace('T', ' ')} UTC${job.method === 'loop' ? ', through the planner, writer and reviewer loop' : ''}. ` +
       'It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing.' +
       (job.presentation === undefined ? '' : ` The step explanations are written in the ${PROFILE_PROMPT_NAMES[job.presentation.profile]} profile (instruction version ${String(job.presentation.version)}).`) +
+      (extra.provenance === '' ? '' : ` ${extra.provenance}`) +
       (invalid.size + checked.left > 0 ? ` ${String(invalid.size + checked.left)} place(s) that did not exist at their commit were left out.` : '') +
       (stillCrowded > 0 ? ` ${crowdedNote(stillCrowded)}` : '') +
       (stillRepeated > 0 ? ` ${repeatedNote(stillRepeated)}` : '') +
-      (repairNote === null ? '' : ` ${repairNote}`) +
+      (extra.repairNote === null ? '' : ` ${extra.repairNote}`) +
       (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) of the commits could not be given to the agent to read.` : '');
     if (!this.accepts(live)) {
       // DSP-186: the review was deleted, or the job is no longer its; the answer is dropped unwritten.
@@ -1249,9 +1357,141 @@ export class ReviewAgentJobs {
         (invalid.size > 0 ? ` ${String(invalid.size)} place(s) were left out because they do not exist at their commit.` : '') +
         (stillCrowded > 0 ? ` ${crowdedNote(stillCrowded)}` : '') +
         (stillRepeated > 0 ? ` ${repeatedNote(stillRepeated)}` : '') +
-        (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read.` : ''),
-      { definitionPath, uncovered },
+        (folder.skippedCount > 0 ? ` ${String(folder.skippedCount)} file(s) could not be given to the agent to read.` : '') +
+        (extra.note === '' ? '' : ` ${extra.note}`),
+      { ...extra.fields, definitionPath, uncovered },
     );
+  }
+
+  /**
+   * DSP-189: the walks through the planner, writer and reviewer loop. The engine walks the
+   * drawing; this service lends it one analysis session per role on the job's one adapter, the
+   * Git reader for the mechanical checks, and the job's cancel and activity. The outcome ends
+   * the job the way one call's does, and the definition is written by {@link deliverWalks}.
+   */
+  private async prepareWalksByLoop(live: Live, job: AgentJob, material: AnalysisMaterial, folder: AgentMaterial, language: 'sv' | 'en'): Promise<void> {
+    const resources = this.options.loopResources ?? null;
+    if (resources === null) {
+      this.finish(live, 'failed', 'The walk loop\'s drawing and roles are not available in this installation. Nothing was sent.');
+      return;
+    }
+    const graphPath = path.join(resources, WALK_LOOP_GRAPH_REL);
+    let graphText: string;
+    try {
+      graphText = fs.readFileSync(graphPath, 'utf8');
+    } catch (error) {
+      this.finish(live, 'failed', 'The walk loop\'s drawing could not be read. Nothing was sent.', { detail: describe(error) });
+      return;
+    }
+    const opened = this.options.pairs.opened(live.key);
+    const profile: PublicProfile = isPublicProfile(job.presentation?.profile) ? job.presentation.profile : DEFAULT_PROFILE;
+    const folderPath = live.folder ?? '';
+    const outcome = await runWalkLoop({
+      graphText,
+      graphPath: WALK_LOOP_GRAPH_REL,
+      resolveRole: createFileRoleResolver(resources),
+      material,
+      folder,
+      language,
+      profile,
+      files: opened?.files ?? [],
+      read: this.reader(live),
+      context: live.context,
+      sessions: {
+        open: (nodeId) => this.openRoleSession(live, job.provider, job.model, folderPath, nodeId),
+        turn: (nodeId, prompt) => this.turnIn(live, nodeId, prompt),
+        usageSinceLast: () => {
+          const readings = live.usageSince;
+          live.usageSince = [];
+          return readings;
+        },
+      },
+      recordDir: path.join(this.options.recordsDir, 'generated', live.key, `${job.id}.walk-loop`),
+      identity: {
+        projectPath: folderPath,
+        mandate: `Prepare code walks for ${opened?.repositoryName ?? material.repositoryName} ${material.pair.base.slice(0, 7)}→${material.pair.target.slice(0, 7)}, explained in the ${PROFILE_PROMPT_NAMES[profile]} profile.`,
+        modelRequested: job.model,
+        provider: job.provider,
+        appVersion: this.options.appVersion ?? 'unknown',
+      },
+      signal: live.abort.signal,
+      activity: (text) => this.setActivity(live, text),
+      log: (message) => this.options.log(`review agent ${live.jobId}: ${message}`),
+    });
+    if (outcome.kind === 'ended-early') {
+      this.endedEarly(live, outcome.turn);
+      // A turn that ended early and was not a stop: the job is over, with the run's summary kept.
+      this.setJob(live, { loop: outcome.summary });
+      return;
+    }
+    if (outcome.kind === 'failed') {
+      if (live.cancelRequested) {
+        // Stop pressed between two steps: the engine started no further step.
+        this.finish(live, 'cancelled', 'Stopped between steps. Nothing from it was used, and nothing was approved.', outcome.summary === null ? {} : { loop: outcome.summary });
+        return;
+      }
+      this.finish(live, 'failed', `${outcome.note} Nothing was approved.`, { detail: outcome.detail, ...(outcome.summary === null ? {} : { loop: outcome.summary }) });
+      return;
+    }
+    const summary = outcome.summary;
+    const findings = summary.first?.findings.length ?? 0;
+    const remaining = summary.final?.findings.length ?? 0;
+    const provenanceTail =
+      `The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code` +
+      (summary.rounds === 0
+        ? ' and accepted them without a correction round.'
+        : `; one correction round ${summary.replanned ? 'went to the planner and the writer' : 'went to the writer'} (${String(summary.rewritten.length)} step(s) written again), and the reviewer's final assessment ${summary.final?.verdict === 'accept' ? 'accepted the walks' : `left ${String(remaining)} objection(s) on record`}.`) +
+      ' The reviewer is an agent: its acceptance approves nothing of the code.';
+    const note =
+      summary.rounds === 0
+        ? 'The reviewer accepted the walks at once.'
+        : `The reviewer asked for one correction (${String(findings)} finding(s)); ${summary.final?.verdict === 'accept' ? 'it accepted the corrected walks' : `${String(remaining)} objection(s) remain on record`}.`;
+    await this.deliverWalks(live, job, outcome.walks, outcome.invalid, folder, this.reader(live), { repairNote: outcome.repairNote, provenance: provenanceTail, note, fields: { loop: summary } });
+  }
+
+  /**
+   * DSP-189: a session per role node on the job's one analysis adapter. The first opens the
+   * adapter exactly as {@link openSession} does, with the same policy check; the others start
+   * further sessions on it. Each is subscribed to the same event handler, which acts only on
+   * the active session's events.
+   */
+  private async openRoleSession(live: Live, provider: AgentProvider, model: string, workspacePath: string, nodeId: string): Promise<void> {
+    if (live.adapter === null) {
+      await this.openSession(live, provider, model, workspacePath);
+    }
+    if (live.sessions.size === 0 && live.sessionId !== null) {
+      // The session `run` opened for the job is the first role's.
+      live.sessions.set(nodeId, live.sessionId);
+      return;
+    }
+    const adapter = live.adapter;
+    if (adapter === null) {
+      throw new Error('No adapter for the walk loop\'s sessions.');
+    }
+    const handle = await adapter.startSession({ provider, modelRequested: model === 'default' ? '' : model, workspacePath });
+    live.sessions.set(nodeId, handle.dspatchSessionId);
+    const unsubscribe = adapter.subscribe(handle.dspatchSessionId, (event) => {
+      this.onEvent(live, event);
+    });
+    const earlier = live.unsubscribe;
+    live.unsubscribe = () => {
+      earlier?.();
+      unsubscribe();
+    };
+  }
+
+  /** DSP-189: one turn in the named role's session, which becomes the active one for cancel and events. */
+  private async turnIn(live: Live, nodeId: string, prompt: string): Promise<WalkLoopTurnResult> {
+    const sessionId = live.sessions.get(nodeId);
+    if (sessionId === undefined) {
+      return { status: 'failed', text: '', error: `No session for the "${nodeId}" step.`, sessionId: null };
+    }
+    live.sessionId = sessionId;
+    if (live.cancelRequested) {
+      return { status: 'cancelled', text: '', error: null, sessionId };
+    }
+    const result = await this.turn(live, prompt);
+    return { ...result, sessionId };
   }
 
   /**

@@ -278,6 +278,8 @@ Each finding carries a severity, a stable `code`, a `pointer` into the file, the
 
 A newer `formatVersion` is refused and **must not be saved by this build**: a newer DSpatch may have written fields this one would drop. That is the same rule the project store already follows for the user's own data.
 
+A node whose role must not write files (`no-file-writes`) is refused when its report is written by itself **and** the report is a Markdown file, which is the mistake of 15 September 2026. Since DSP-189 the same node may leave a `stored-result`: the runner binds the body the step returned into the run record and writes no file, so there is nothing the node would have had to write. The walk loop (`dspatch-walk-loop`) is drawn that way: three read-only roles, each leaving a stored result.
+
 <a id="vad-formatet-medvetet-inte-uttrycker"></a>
 
 ## What the format deliberately does not express

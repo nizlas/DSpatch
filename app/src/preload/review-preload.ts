@@ -132,6 +132,8 @@ const pairBridge: ReviewPairBridge = {
   thread: (key, request) => ipcRenderer.invoke('dspatch:review-pair-thread', key, request) as ReturnType<ReviewPairBridge['thread']>,
   cancelJob: (key, jobId) =>
     ipcRenderer.invoke('dspatch:review-pair-cancel-job', key, jobId) as ReturnType<ReviewPairBridge['cancelJob']>,
+  walkLoopRecord: (key, jobId) =>
+    ipcRenderer.invoke('dspatch:review-pair-walk-loop-record', key, jobId) as ReturnType<ReviewPairBridge['walkLoopRecord']>,
   onChanged: (listener) => {
     const handler = (_event: unknown, payload: PairChangedEvent): void => {
       listener(payload);

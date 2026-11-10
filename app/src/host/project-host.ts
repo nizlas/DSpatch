@@ -4142,6 +4142,7 @@ function registerReviewMethods(): void {
   });
   handle('reviewPair.thread', (_event, key: unknown, request: unknown) => requireReviewPairs().thread(key, request));
   handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
+  handle('reviewPair.walkLoopRecord', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().walkLoopRecord(key, jobId));
 
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>
     discussionOf(target).load(
@@ -4653,6 +4654,9 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
   reviewAgentJobs = new ReviewAgentJobs({
     contexts: reviewContexts,
     recordsDir: path.join(userDataDir(), 'reviews'),
+    // DSP-189: the walk loop's drawing and roles, from DSpatch's own resources (bundled or the repository).
+    loopResources: ownRepoRoot,
+    appVersion: config().appVersion,
     // The shared factory, for the analysis purpose only; the jobs check the policy themselves.
     createAdapter: (provider) => {
       log(`[review] building a ${provider} analysis adapter${presentationMode ? ' (presentation, simulated)' : ''}`);

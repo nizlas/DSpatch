@@ -1619,7 +1619,11 @@ function checkNodeRole(
   }
 
   const cannotWrite = effective.some((entry) => entry.requirement === 'no-file-writes');
-  if (cannotWrite) {
+  // DSP-189: a stored result is bound into the run record by the runner from the body the
+  // step returned (`fileResult`), so a node that cannot write files leaves one without writing
+  // anything. The mistake of 15 September 2026 was a Markdown file a read-only node was to
+  // write itself; that is the case refused here.
+  if (cannotWrite && node.produces?.form !== 'stored-result') {
     const writer = node.report?.writtenBy ?? REPORT_WRITTEN_BY_SELF;
     if (writer === REPORT_WRITTEN_BY_SELF) {
       findings.error(

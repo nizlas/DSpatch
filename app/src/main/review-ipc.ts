@@ -434,6 +434,10 @@ export function registerReviewIpc(
   ipcMain.handle(REVIEW_PAIR_CHANNELS.cancelJob, async (event, key: unknown, jobId: unknown) =>
     pairs.call('reviewPair.cancelJob', keyOf(entryOf(event), key), jobId),
   );
+  // DSP-189: a walk loop's record, on request only; the window's own review, like every job call.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.walkLoopRecord, async (event, key: unknown, jobId: unknown) =>
+    pairs.call('reviewPair.walkLoopRecord', keyOf(entryOf(event), key), jobId),
+  );
   ipcMain.handle(REVIEW_PAIR_CHANNELS.showInDiff, async (event, raw: unknown) => {
     const entry = entryOf(event);
     const location = locationFrom(raw);

@@ -25,6 +25,7 @@ import type { ModelListing } from '../shared/bridge';
 import { isProviderDefaultId, listedDefault, modelRows } from '../shared/model-rows';
 import { PUBLIC_PROFILES, isPublicProfile, type PublicProfile } from '../shared/presentation-profiles';
 import { isPairError, type ReviewAgents } from '../shared/review-pair';
+import { WALK_METHODS, isWalkMethod, type WalkMethod } from '../shared/walk-loop';
 import { WORDS } from './review-i18n';
 
 export interface AgentChoice {
@@ -44,6 +45,7 @@ export function AgentPicker({
   onCancel,
   testId,
   explanations,
+  method,
 }: {
   readonly pairKey: string;
   /** The button's words: "Prepare code walks", "Delegate". */
@@ -57,6 +59,11 @@ export function AgentPicker({
    * chosen here before anything is generated. The same choice the review's panel keeps.
    */
   readonly explanations?: { readonly profile: PublicProfile; readonly onChoose: (profile: PublicProfile) => void };
+  /**
+   * DSP-189, preparing walks: one call, or the planner, writer and reviewer loop as an evaluation
+   * mode. Chosen here before anything is generated; the computer's last choice.
+   */
+  readonly method?: { readonly method: WalkMethod; readonly onChoose: (method: WalkMethod) => void };
 }): JSX.Element {
   const [agents, setAgents] = useState<ReviewAgents | null>(null);
   const [readError, setReadError] = useState('');
@@ -216,6 +223,18 @@ export function AgentPicker({
             {PUBLIC_PROFILES.map((id) => (
               <option key={id} value={id} title={WORDS.en.profiles.description[id]}>
                 {WORDS.en.profiles.name[id]}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {method !== undefined && (
+        <label title={WORDS.en.profiles.methodDescription[method.method]}>
+          {WORDS.en.profiles.methodLabel}
+          <select data-ev={`${testId}-method`} value={method.method} onChange={(event) => method.onChoose(isWalkMethod(event.target.value) ? event.target.value : method.method)}>
+            {WALK_METHODS.map((id) => (
+              <option key={id} value={id} title={WORDS.en.profiles.methodDescription[id]}>
+                {WORDS.en.profiles.methodName[id]}
               </option>
             ))}
           </select>

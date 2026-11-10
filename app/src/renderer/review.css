@@ -4224,3 +4224,27 @@
 .rv-step-together {
   margin: 0 0 6px;
 }
+
+/* DSP-189: what the planner, writer and reviewer loop did, and its record on request. */
+.rv-walk-loop > summary {
+  cursor: pointer;
+}
+.rv-walk-loop ul,
+.rv-walk-loop ol {
+  margin: 0.25rem 0 0.5rem 1.25rem;
+  padding: 0;
+}
+.rv-walk-loop-journal li {
+  font-size: 0.9em;
+}
+.rv-walk-loop-reply {
+  margin: 0.25rem 0;
+}
+.rv-walk-loop-text {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 0.85em;
+  padding: 0.5rem;
+  border: 1px solid var(--rv-border, #ccc);
+}

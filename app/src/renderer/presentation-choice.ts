@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { effectiveProfile, isPublicProfile, type PresentationProfile, type PublicProfile } from '../shared/presentation-profiles';
 import type { StepExplanation } from '../shared/step-explanations';
+import { isWalkMethod, type WalkMethod } from '../shared/walk-loop';
 
 const DEFAULT_STORAGE_KEY = 'dspatch.review.presentationProfile.default';
 const WALK_STORAGE_PREFIX = 'dspatch.review.presentationProfile.walk:';
@@ -80,6 +81,42 @@ export function usePresentationProfile(scope: string, fallback: PresentationProf
  * The computer's last chosen profile, which a newly prepared walk's explanations are written in
  * (DSP-181), kept in sync between the review's windows through storage.
  */
+const WALK_METHOD_STORAGE_KEY = 'dspatch.review.walkMethod.default';
+
+/**
+ * DSP-189: how this computer last chose to prepare walks, one call or the planner, writer and
+ * reviewer loop, kept like the default profile. One call unless the loop was chosen.
+ */
+export function useDefaultWalkMethod(): readonly [WalkMethod, (method: WalkMethod) => void] {
+  const stored = (): WalkMethod => {
+    try {
+      const value = window.localStorage.getItem(WALK_METHOD_STORAGE_KEY);
+      return isWalkMethod(value) ? value : 'single';
+    } catch {
+      return 'single';
+    }
+  };
+  const [method, setState] = useState<WalkMethod>(stored);
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === WALK_METHOD_STORAGE_KEY) {
+        setState(stored());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const choose = useCallback((next: WalkMethod) => {
+    setState(next);
+    try {
+      window.localStorage.setItem(WALK_METHOD_STORAGE_KEY, next);
+    } catch {
+      // Not kept past this window; the choice still holds here.
+    }
+  }, []);
+  return [method, choose] as const;
+}
+
 export function useDefaultProfile(): readonly [PublicProfile, (profile: PublicProfile) => void] {
   const [profile, setState] = useState<PublicProfile>(() => effectiveProfile(stored(DEFAULT_STORAGE_KEY)));
   useEffect(() => {

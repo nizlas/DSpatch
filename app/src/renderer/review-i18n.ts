@@ -1,4 +1,5 @@
 import type { PublicProfile } from '../shared/presentation-profiles';
+import type { WalkMethod } from '../shared/walk-loop';
 import type { EvidenceLabel, Lang, LocalText, UnitKind } from '../shared/review-model';
 
 /**
@@ -80,6 +81,10 @@ export interface ProfileWords {
   /** A short tooltip per option, in plain words: how the profiles differ. Never the instructions. */
   readonly description: Record<PublicProfile, string>;
   readonly legacyName: string;
+  /** DSP-189: how the walks are prepared: one call, or the planner, writer and reviewer loop. */
+  readonly methodLabel: string;
+  readonly methodName: Record<WalkMethod, string>;
+  readonly methodDescription: Record<WalkMethod, string>;
   readonly writing: (name: string) => string;
   readonly failed: (what: string, reason: string) => string;
   readonly tryAgain: string;
@@ -370,6 +375,12 @@ const sv: ReviewWords = {
       pedagog: 'Bygger först upp begreppen som behövs och förklarar resonemanget, med exempel.',
     },
     legacyName: 'Original',
+    methodLabel: 'Förberedelse',
+    methodName: { single: 'Ett anrop', loop: 'Planerare, skrivare och granskare (utvärdering)' },
+    methodDescription: {
+      single: 'Dagens förberedelse: ett anrop skriver alla walks och förklaringar.',
+      loop: 'Utvärderingsläge: en planerare planerar, en skrivare förklarar varje steg i eget anrop och en granskare bedömer mot koden, med högst en rättningsrunda. Tar längre tid.',
+    },
     writing: (name) => `Skriver förklaringen i ${name}…`,
     failed: (what, reason) => `${what} kunde inte skrivas (${reason}).`,
     tryAgain: 'Försök igen',
@@ -684,6 +695,12 @@ const en: ReviewWords = {
       pedagog: 'Builds up the concepts you need first and explains the reasoning, with examples.',
     },
     legacyName: 'Original',
+    methodLabel: 'Preparation',
+    methodName: { single: 'One call', loop: 'Planner, writer and reviewer (evaluation)' },
+    methodDescription: {
+      single: 'The preparation as before: one call writes every walk and explanation.',
+      loop: 'Evaluation mode: a planner plans, a writer explains each step in a call of its own, and a reviewer judges them against the code, with at most one correction round. Takes longer.',
+    },
     writing: (name) => `Writing the ${name} explanation…`,
     failed: (what, reason) => `${what} could not be written (${reason}).`,
     tryAgain: 'Try again',

@@ -1,0 +1,121 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "dspatch-walk-loop",
+  "name": "Walk loop",
+  "purpose": "Prepare a review's code walks through three roles instead of one call (DSP-189, a first evaluation version). The planner reads the two revisions and plans the walks: purpose, steps, code places and transitions, with a brief per step. The writer explains each step in the chosen profile, one step per call in its own session, with the whole plan and its own reading of the code. The reviewer judges the finished walks against the code and the code-walk reference and either accepts them or names concrete shortcomings: structural ones go back to the planner, explanation ones to the writer. One correction round at most; the reviewer's second visit is the final assessment and starts no further round. Every role reads the revisions with read-only analysis tools through the provider and model the person chose for walk preparation. A walk is not a review and approves nothing; the reviewer's acceptance is the agent's, never the person's.",
+  "target": "claude-code",
+  "entry": "plan",
+  "onRuntimeFault": "stop-and-reconcile",
+  "notes": "The drawing says which role runs next and what it is handed; the roles in docs/loop/roles/review/ say how each works; DSpatch's executor for review work (src/host/walk-loop-run.ts) opens one analysis session per role in the revision folder and returns each node's declared outcome. Nothing is inferred from a role's name. The planner's answer is checked mechanically against the commits (places exist, one place per step) with one repair turn inside its own step, as today's single call is; that is not the reviewer's correction round. The reviewer's first verdict routes rework-plan or rework-text; its second visit, reached only after one such round, routes accepted or objections. maxReworkRounds 1 on the review node is the one-round bound: a second rework verdict is routed as limit-reached to delivered-with-objections, and the record says so. Results travel as stored results: the plan, the texts and the findings, each filed by the engine under the review's generated folder.",
+  "limits": {
+    "maxTasks": 1,
+    "maxCalls": 7,
+    "maxReworkRounds": 1,
+    "maxMinutes": 90,
+    "note": "Guesses, recorded as guesses. The longest walk is plan, write, review, plan, write, review: six calls, and the engine reads a bound as spent once the count reaches it, so 7 lets the sixth call route on its own verdict. The writer makes one provider turn per step inside its one call. 90 minutes allows a writer that explains a dozen steps with a slow model; nothing here is measured yet."
+  },
+  "archive": {
+    "path": "results/",
+    "entryPerNode": true,
+    "referenceReturned": true
+  },
+  "failureKinds": [
+    {
+      "id": "blocked",
+      "label": "could not plan",
+      "meaning": "The planner gave no plan DSpatch could read even when asked once to correct it, or could not read the revisions. The run stops; nothing is written."
+    },
+    {
+      "id": "limit-reached",
+      "label": "correction round spent",
+      "meaning": "The reviewer asked for a second correction after the one round this version allows. DSpatch routes this when the bound is reached; no step declares it. The walks are delivered with the reviewer's objections on record."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "plan",
+      "kind": "agent",
+      "label": "Plan the walks",
+      "purpose": "Read the two revisions and plan the walks: which behaviours or questions they follow, the steps and the one code place each shows, how each step is reached, and a brief per step for the writer. On a later visit you are given the reviewer's structural findings: change only what they concern.",
+      "role": { "id": "walk-planner", "source": { "kind": "role-source", "path": "docs/loop/roles/review/walk-planner.role.md" } },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 30 },
+      "outcomes": ["planned", "replanned"],
+      "whenUndeclared": "planned",
+      "declaredFailures": ["blocked"],
+      "notes": "planned on the first visit, replanned on a visit after the reviewer sent the plan back: the two differ only in what the edge to the writer delivers, since the first visit has no findings to hand on. The executor states the outcome from the visit; nothing is read from the planner's prose.",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": false, "form": "stored-result", "note": "The plan as JSON: walks, steps, places and briefs. The writer and the reviewer are given it as a stored result. Not required here, as in the chat loop: the writer's consumes enforces it on the one path that needs it, and the blocked route ends honestly at stopped instead of as a missing-result fault." },
+      "view": { "x": 120, "y": 60 }
+    },
+    {
+      "id": "write",
+      "kind": "agent",
+      "label": "Write the steps",
+      "purpose": "Explain each step of the plan in the chosen profile, beside its code, one step per call in your own session, with the whole plan and your own reading of the code. On a later visit you are given the reviewer's findings about the texts, or a changed plan: write again only the steps they concern.",
+      "role": { "id": "walk-writer", "source": { "kind": "role-source", "path": "docs/loop/roles/review/walk-writer.role.md" } },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 60 },
+      "outcomes": ["written"],
+      "whenUndeclared": "written",
+      "notes": "One call of the drawing, many provider turns: the executor sends one turn per step and keeps the session, so a later step is written knowing the earlier ones. A turn that fails ends the run as a runtime fault; nothing is resent.",
+      "report": { "writtenBy": "self" },
+      "consumes": ["plan"],
+      "produces": { "required": true, "form": "stored-result", "note": "Every step's text, by step id: the first part and the deepening after the marker." },
+      "view": { "x": 360, "y": 60 }
+    },
+    {
+      "id": "review",
+      "kind": "agent",
+      "label": "Review the walks",
+      "purpose": "Read the finished walks as the person will, check them against the code, and judge whether this reader can follow the course and understand what the steps show. Accept them, or name concrete shortcomings: structural ones for the planner, explanation ones for the writer. On your second visit, after the one correction round, give the final assessment and ask for nothing more.",
+      "role": { "id": "walk-reviewer", "source": { "kind": "role-source", "path": "docs/loop/roles/review/walk-reviewer.role.md" } },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 30, "maxReworkRounds": 1 },
+      "outcomes": ["accepted", "rework-plan", "rework-text", "objections"],
+      "whenUndeclared": "accepted",
+      "declaredFailures": ["limit-reached"],
+      "notes": "The outcome comes from the reviewer's JSON verdict and the kinds of its findings: any structural finding sends the plan back, otherwise the texts. On the second visit the executor asks for a final assessment and reads rework as objections; should the verdict still route a rework, maxReworkRounds 1 is spent and the engine routes limit-reached. whenUndeclared accepted: an unreadable answer is recorded as such in the result and does not start a round about nothing.",
+      "report": { "writtenBy": "self" },
+      "consumes": ["plan", "write"],
+      "produces": { "required": true, "form": "stored-result", "note": "The assessment, the verdict and the findings, each with its steps, what falls short, why it matters and what in the code shows it." },
+      "view": { "x": 600, "y": 60 }
+    },
+    {
+      "id": "delivered",
+      "kind": "terminal",
+      "label": "Walks delivered",
+      "purpose": "The reviewer accepted the walks, at first or after the correction round. DSpatch writes them as a walk definition; its provenance names this run. Accepted by an agent, which approves nothing of the code.",
+      "ending": "success",
+      "view": { "x": 480, "y": 260 }
+    },
+    {
+      "id": "delivered-with-objections",
+      "kind": "terminal",
+      "label": "Delivered with objections",
+      "purpose": "The walks are written as they are after the one correction round, and the reviewer's remaining objections are on record with the run, readable from the job. Nothing is corrected further by itself.",
+      "ending": "success",
+      "view": { "x": 720, "y": 260 }
+    },
+    {
+      "id": "stopped",
+      "kind": "terminal",
+      "label": "No walks",
+      "purpose": "The planner could not give a plan DSpatch could read. No definition is written; the job says why.",
+      "ending": "not-success",
+      "view": { "x": 120, "y": 260 }
+    }
+  ],
+  "edges": [
+    { "id": "e-planned", "from": "plan", "to": "write", "when": { "on": "outcome", "outcome": "planned" }, "label": "planned", "delivers": ["plan"] },
+    { "id": "e-replanned", "from": "plan", "to": "write", "when": { "on": "outcome", "outcome": "replanned" }, "label": "replanned after findings", "delivers": ["plan", "review"], "notes": "The writer is given the new plan and the findings that caused it, so it writes again only the steps that changed or were found wanting." },
+    { "id": "e-blocked", "from": "plan", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "could not plan" },
+    { "id": "e-written", "from": "write", "to": "review", "when": { "on": "outcome", "outcome": "written" }, "label": "written" },
+    { "id": "e-accepted", "from": "review", "to": "delivered", "when": { "on": "outcome", "outcome": "accepted" }, "label": "accepted" },
+    { "id": "e-objections", "from": "review", "to": "delivered-with-objections", "when": { "on": "outcome", "outcome": "objections" }, "label": "objections remain" },
+    { "id": "e-rework-plan", "from": "review", "to": "plan", "when": { "on": "outcome", "outcome": "rework-plan" }, "label": "structure: back to the planner", "delivers": ["review"], "notes": "Counted against maxReworkRounds." },
+    { "id": "e-rework-text", "from": "review", "to": "write", "when": { "on": "outcome", "outcome": "rework-text" }, "label": "explanations: back to the writer", "delivers": ["plan", "review"], "notes": "Counted against maxReworkRounds." },
+    { "id": "e-limit", "from": "review", "to": "delivered-with-objections", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "correction round spent" }
+  ]
+}

@@ -13,6 +13,7 @@
 
 import { isProfile, type PresentationProfile } from './presentation-profiles';
 import { stepReferencesFrom, type StepReference } from './review-discussion';
+import { isWalkMethod, walkLoopSummaryFrom, type WalkLoopRecordView, type WalkLoopSummary, type WalkMethod } from './walk-method';
 
 import { diffChars } from 'diff';
 
@@ -151,6 +152,11 @@ export interface AgentJobRequestInput {
   readonly definitionPath?: string;
   /** DSP-181, `walks`: the presentation profile the step explanations are written in. */
   readonly presentation?: { readonly profile: PresentationProfile };
+  /**
+   * DSP-189, `walks`: how the walks are prepared. `single` (the default) is today's one call;
+   * `loop` runs the planner, writer and reviewer through the run engine, as an evaluation mode.
+   */
+  readonly method?: WalkMethod;
 }
 
 /** What a window sends for a selection: where it is, and the text it saw there. */
@@ -850,6 +856,10 @@ export interface AgentJob {
   readonly uncovered: readonly LineRange[];
   /** DSP-181, for a walk preparation: the profile the explanations are written in, and the instruction version. */
   readonly presentation?: { readonly profile: PresentationProfile; readonly version: number };
+  /** DSP-189, for a walk preparation: how it was done. Absent on jobs before it, which were one call. */
+  readonly method?: WalkMethod;
+  /** DSP-189, for a walk preparation by the loop: what the run did, and where its record is. */
+  readonly loop?: WalkLoopSummary;
   /** For a step question: the question, and its checked answer once there is one. */
   readonly question?: StepQuestion;
   readonly answer?: StepAnswer;
@@ -912,6 +922,8 @@ export interface ReviewGeneration {
   readonly profile: PresentationProfile | null;
   /** `null` for walks prepared before instruction versions were recorded. */
   readonly instructionVersion: number | null;
+  /** DSP-189: one call or the loop. Absent on records before it. */
+  readonly method?: WalkMethod;
   readonly at: string;
 }
 
@@ -1241,6 +1253,12 @@ export function jobFrom(raw: unknown): AgentJob | null {
             ? { presentation: { profile: presentation['profile'], version: typeof presentation['version'] === 'number' && Number.isInteger(presentation['version']) ? presentation['version'] : 0 } }
             : {};
         })(),
+        // DSP-189: how the walks were prepared, and the loop's summary when they were prepared by it.
+        ...(isWalkMethod(raw['method']) ? { method: raw['method'] } : {}),
+        ...((): Partial<AgentJob> => {
+          const loop = walkLoopSummaryFrom(raw['loop']);
+          return loop === null ? {} : { loop };
+        })(),
       };
     })(),
   };
@@ -1386,6 +1404,7 @@ function generationFrom(raw: unknown): ReviewGeneration | null {
     model: typeof raw['model'] === 'string' ? raw['model'] : '',
     profile: isProfile(raw['profile']) ? raw['profile'] : null,
     instructionVersion: typeof version === 'number' && Number.isInteger(version) ? version : null,
+    ...(isWalkMethod(raw['method']) ? { method: raw['method'] } : {}),
     at: typeof raw['at'] === 'string' ? raw['at'] : '',
   };
 }
@@ -1402,6 +1421,7 @@ export function generationOfJob(job: AgentJob): ReviewGeneration {
     model: job.model,
     profile: job.presentation?.profile ?? null,
     instructionVersion: job.presentation?.version ?? null,
+    ...(job.method === undefined ? {} : { method: job.method }),
     at: job.startedAt,
   };
 }
@@ -2084,6 +2104,7 @@ export const REVIEW_PAIR_CHANNELS = {
   agents: 'dspatch:review-pair-agents',
   startJob: 'dspatch:review-pair-start-job',
   cancelJob: 'dspatch:review-pair-cancel-job',
+  walkLoopRecord: 'dspatch:review-pair-walk-loop-record',
   thread: 'dspatch:review-pair-thread',
 } as const;
 
@@ -2149,6 +2170,8 @@ export interface ReviewPairBridge {
   agents(key: string): Promise<PairAnswer<ReviewAgents>>;
   startJob(key: string, request: AgentJobRequestInput): Promise<PairAnswer<AgentJob>>;
   cancelJob(key: string, jobId: string): Promise<PairAnswer<{ readonly note: string }>>;
+  /** DSP-189: a walk loop's record, read on request: every prompt and answer, and the journal. */
+  walkLoopRecord(key: string, jobId: string): Promise<PairAnswer<WalkLoopRecordView>>;
   /**
    * DSP-175: a person's comment or decision in a review thread. It records what the person
    * did; it never runs anything, never approves lines and never changes an agent's result.

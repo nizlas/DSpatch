@@ -831,6 +831,34 @@ test('a step that must not write files cannot also file its own report', () => {
   assert.equal(finding?.severity, 'error');
 });
 
+test('a step that must not write files may leave a stored result: the runner binds it, no file is written (DSP-189)', () => {
+  const graph: LoopGraph = {
+    ...minimal(),
+    nodes: [
+      {
+        id: 'start',
+        kind: 'agent',
+        role: { id: 'r', source: { kind: 'role-source', path: 'roles/r.md' } },
+        requirements: ['no-file-writes'],
+        report: { writtenBy: 'self' },
+        produces: { required: true, form: 'stored-result' },
+      },
+      { id: 'done', kind: 'terminal' },
+    ],
+  };
+  const findings = checkLoopGraph(graph, {
+    resolveRole: () => ({
+      id: 'r',
+      sourcePath: 'roles/r.md',
+      targets: ['cursor'],
+      targetsDeclared: true,
+      requirements: [],
+      requirementsDeclared: true,
+    }),
+  });
+  assert.equal(findings.find((item) => item.code === 'report-written-by-a-node-that-cannot-write'), undefined);
+});
+
 // ---------------------------------------------------------------------------
 // The target lives in the file.
 // ---------------------------------------------------------------------------

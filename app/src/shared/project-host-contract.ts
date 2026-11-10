@@ -43,6 +43,7 @@ import type {
   ReviewRepository,
   RevisionPairIdentity,
 } from './review-pair';
+import type { WalkLoopRecordView } from './walk-loop';
 
 /*
  * The project host's methods (DSP-111): what the client may ask of the host, by name,
@@ -211,6 +212,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.agents': (key: unknown, opener: unknown) => PairAnswer<ReviewAgents>;
   readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
   readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
+  readonly 'reviewPair.walkLoopRecord': (key: unknown, jobId: unknown) => PairAnswer<WalkLoopRecordView>;
   readonly 'reviewPair.thread': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
   readonly 'discussion.load': (target: DiscussionTarget, request: unknown) => DiscussionLoadOutcome;
   readonly 'discussion.send': (target: DiscussionTarget, input: unknown) => DiscussionSendOutcome;
@@ -376,6 +378,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.agents': true,
   'reviewPair.startJob': true,
   'reviewPair.cancelJob': true,
+  'reviewPair.walkLoopRecord': true,
   'reviewPair.thread': true,
   'review.exampleDefinition': true,
   'discussion.load': true,

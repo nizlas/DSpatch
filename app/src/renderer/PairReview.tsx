@@ -64,7 +64,8 @@ import {
 } from '../shared/review-pair';
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
-import { useDefaultProfile } from './presentation-choice';
+import { useDefaultProfile, useDefaultWalkMethod } from './presentation-choice';
+import type { WalkLoopRecordView, WalkLoopSummary, WalkReview } from '../shared/walk-loop';
 import { PRESENTATION_INSTRUCTION_VERSION } from '../shared/presentation-profiles';
 import type { SelectionQuote } from '../shared/review-discussion';
 import type { PanelState } from '../shared/review-pair';
@@ -1029,6 +1030,9 @@ function DiffReview({
   };
   // DSP-181: the profile a prepared walk's explanations are written in: the computer's last choice, kept with the review's panel.
   const [explanationsIn, chooseExplanationsIn] = useDefaultProfile();
+  // DSP-189: one call, or the planner, writer and reviewer loop; the computer's last choice.
+  const [walkMethod, chooseWalkMethod] = useDefaultWalkMethod();
+  const loopJob = [...record.jobs].reverse().find((job) => job.kind === 'walks' && job.loop !== undefined) ?? null;
   const startJob = async (request: AgentJobRequestInput): Promise<boolean> => (await sendJob(request)) !== null;
   /** The one way this window starts agent work; a refusal or a failed request is said. */
   const sendJob = async (request: AgentJobRequestInput): Promise<AgentJob | null> => {
@@ -1438,11 +1442,12 @@ function DiffReview({
             busy={false}
             testId="pair-walks-agent"
             explanations={{ profile: explanationsIn, onChoose: chooseExplanationsIn }}
+            method={{ method: walkMethod, onChoose: chooseWalkMethod }}
             onCancel={() => setPreparing(false)}
             onStart={(choice) => {
               // DSP-181: the step explanations are written in the chosen profile, so the walk
-              // opens and is read in it with no further call.
-              void startJob({ kind: 'walks', ...choice, presentation: { profile: explanationsIn } }).then((ok) => {
+              // opens and is read in it with no further call. DSP-189: by one call or the loop.
+              void startJob({ kind: 'walks', ...choice, presentation: { profile: explanationsIn }, method: walkMethod }).then((ok) => {
                 if (ok) {
                   setPreparing(false);
                 }
@@ -1455,6 +1460,8 @@ function DiffReview({
       {walksJob !== null && (isRunning(walksJob) || (!preparing && (walksJob.state !== 'done' || walksJob.definitionPath === null))) && (
         <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} />
       )}
+      {/* DSP-189: what the loop did, and its record on request; never in the walk's reading flow. */}
+      {loopJob !== null && loopJob.loop !== undefined && !isRunning(loopJob) && <WalkLoopTrace pairKey={open.key} job={loopJob} summary={loopJob.loop} bridge={bridge} />}
       {walksNote !== '' && (
         <p className="rv-pair-error" data-ev="pair-walks-note">
           {walksNote}
@@ -1676,7 +1683,9 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
   const reachable = useHostReachable();
   const what =
     job.kind === 'walks'
-      ? 'Preparing code walks'
+      ? job.method === 'loop'
+        ? 'Preparing code walks with the planner, writer and reviewer'
+        : 'Preparing code walks'
       : job.kind === 'checks'
         ? 'Looking for what is worth checking'
         : job.kind === 'explain'
@@ -1713,6 +1722,125 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
         </>
       )}
     </div>
+  );
+}
+
+function minutesOf(ms: number): string {
+  return ms < 60_000 ? `${String(Math.round(ms / 1000))} s` : `${String(Math.round(ms / 6000) / 10)} min`;
+}
+
+function FindingsList({ review, testId }: { readonly review: WalkReview; readonly testId: string }): JSX.Element {
+  return (
+    <div data-ev={testId}>
+      {review.assessment !== '' && <p className="rv-pair-muted">{review.assessment}</p>}
+      {review.findings.length > 0 && (
+        <ul>
+          {review.findings.map((finding, index) => (
+            <li key={index}>
+              <strong>{finding.steps.length === 0 ? 'The walks' : finding.steps.join(', ')}</strong> ({finding.kind}): {finding.problem}
+              {finding.why === '' ? '' : ` ${finding.why}`}
+              {finding.evidence === '' ? '' : ` Evidence: ${finding.evidence}`}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * DSP-189: what the planner, writer and reviewer loop did for the last walks prepared that way,
+ * and its record on request: the reviewer's findings, the final assessment, the turns and their
+ * time, the usage the provider reported, and every prompt and answer under a control of its own.
+ * Shown here, in the diff window's preparation area, never in the walk's reading flow.
+ */
+export function WalkLoopTrace({ pairKey, job, summary, bridge }: { readonly pairKey: string; readonly job: AgentJob; readonly summary: WalkLoopSummary; readonly bridge: ReviewPairBridge }): JSX.Element {
+  const [record, setRecord] = useState<WalkLoopRecordView | { readonly error: string } | null>(null);
+  const [wanted, setWanted] = useState(false);
+  useEffect(() => {
+    if (!wanted || record !== null) {
+      return;
+    }
+    let live = true;
+    void bridge
+      .walkLoopRecord(pairKey, job.id)
+      .catch((error: unknown) => ({ error: requestFailure(error) }))
+      .then((answer) => {
+        if (live) {
+          setRecord(answer);
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [wanted, record, bridge, pairKey, job.id]);
+  const usage =
+    summary.usage === 'unknown'
+      ? 'usage not reported by the provider'
+      : summary.usage.map((reading) => `${reading.value === null ? 'unknown' : String(reading.value)} ${reading.unit} (${reading.scope})`).join(', ');
+  const verdict = summary.final ?? summary.first;
+  return (
+    <details className="rv-pair-hint rv-walk-loop" data-ev="pair-walk-loop" data-status={summary.status}>
+      <summary>
+        Prepared through the planner, writer and reviewer loop: {summary.status}
+        {summary.rounds === 0 ? ', no correction round' : `, one correction round (${summary.replanned ? 'planner and writer' : 'writer'}, ${String(summary.rewritten.length)} step(s) written again)`}; {String(summary.turns.length)} provider turn(s) in {minutesOf(summary.durationMs)}; {usage}.
+      </summary>
+      <p className="rv-pair-muted">
+        Graph {summary.graphId} ({summary.graphVersionId.slice(0, 12)}), roles {summary.roles.map((role) => role.id).join(', ')}; {job.provider}/{job.model}. The reviewer is an agent: its acceptance approves nothing of the code.
+      </p>
+      {summary.first !== null && (
+        <>
+          <p>
+            <strong>The reviewer's first verdict:</strong> {summary.first.verdict}
+          </p>
+          <FindingsList review={summary.first} testId="pair-walk-loop-first" />
+        </>
+      )}
+      {summary.final !== null && (
+        <>
+          <p>
+            <strong>Final assessment after the correction round:</strong> {summary.final.verdict}
+          </p>
+          <FindingsList review={summary.final} testId="pair-walk-loop-final" />
+        </>
+      )}
+      {verdict === null && <p className="rv-pair-muted">The reviewer gave no verdict in this run.</p>}
+      <details
+        data-ev="pair-walk-loop-record"
+        onToggle={(event) => {
+          if ((event.currentTarget as HTMLDetailsElement).open) {
+            setWanted(true);
+          }
+        }}
+      >
+        <summary>Every prompt and answer of the run</summary>
+        {record === null && wanted && <p className="rv-pair-muted">Reading the record…</p>}
+        {record !== null && isPairError(record) && <p className="rv-pair-error">{record.error}</p>}
+        {record !== null && !isPairError(record) && (
+          <div data-ev="pair-walk-loop-replies" data-count={record.replies.length}>
+            {record.error !== null && <p className="rv-pair-error">{record.error}</p>}
+            <ol className="rv-walk-loop-journal">
+              {record.journal.map((entry) => (
+                <li key={entry.seq}>
+                  <span className="rv-pair-muted">{entry.kind}</span> {entry.detail}
+                </li>
+              ))}
+            </ol>
+            {record.replies.map((reply, index) => (
+              <details key={index} className="rv-walk-loop-reply">
+                <summary>
+                  {reply.nodeLabel} (visit {String(reply.occurrence)}{reply.roleId === null ? '' : `, ${reply.roleId}`}) · {reply.atUtc.slice(11, 19)} UTC
+                </summary>
+                <p className="rv-pair-muted">Prompt</p>
+                <pre className="rv-walk-loop-text">{reply.prompt === '' ? '(not recorded)' : reply.prompt}</pre>
+                <p className="rv-pair-muted">Answer</p>
+                <pre className="rv-walk-loop-text">{reply.text}</pre>
+              </details>
+            ))}
+          </div>
+        )}
+      </details>
+    </details>
   );
 }
 
