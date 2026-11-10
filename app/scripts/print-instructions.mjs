@@ -1,7 +1,8 @@
+// @ts-nocheck: an evaluation harness over the product's prompt builders, run with the TypeScript loader; not part of the app.
 // Prints the instruction sections a writer and a step explanation receive, per profile, from the
 // current source, so the texts before and after a change can be kept side by side.
-import { PRESENTATION_INSTRUCTION_VERSION, PROFILES, PUBLIC_PROFILES, presentationPromptSection, walkExplanationSection } from '../src/shared/presentation-profiles.ts';
-import { readPlanAnswer, reviewPrompt, writeStepPrompt } from '../src/shared/walk-loop.ts';
+import { PRESENTATION_INSTRUCTION_VERSION, PROFILES, PUBLIC_PROFILES, presentationPromptSection, walkExplanationSection } from '../src/shared/presentation-profiles';
+import { readPlanAnswer, reviewPrompt, writeStepPrompt } from '../src/shared/walk-loop';
 import fs from 'node:fs';
 
 const out = [`# Instructions at version ${String(PRESENTATION_INSTRUCTION_VERSION)}`, ''];

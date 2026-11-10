@@ -1,3 +1,4 @@
+// @ts-nocheck: an evaluation harness over the product's prompt builders, run with the TypeScript loader; not part of the app.
 // DSP-192: the prompts for a comparison of the three profiles on one locked walk plan, revision and
 // steps, built by the product's own prompt builders (the loop writer's step prompt, and the step
 // explanation channel's prompt for a profile alternative made after the walk), so that a stand-in
@@ -9,13 +10,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { CONNECT_CASE, makeSyntheticRepo } from '../tests/support/synthetic-walks.ts';
-import { createFileRoleResolver } from '../src/main/loop-graph-roles.ts';
-import { stepExplanationPrompt } from '../src/main/step-explanation-channel.ts';
-import { loadLoopGraph } from '../src/shared/loop-graph-load.ts';
-import { PRESENTATION_INSTRUCTION_VERSION, PROFILES, SAME_FACTS_RULES, DEEPENING_RULES } from '../src/shared/presentation-profiles.ts';
-import { folderSection } from '../src/shared/review-agent.ts';
-import { WALK_LOOP_GRAPH_REL, readPlanAnswer, writeStepPrompt } from '../src/shared/walk-loop.ts';
+import { CONNECT_CASE, makeSyntheticRepo } from '../tests/support/synthetic-walks';
+import { createFileRoleResolver } from '../src/main/loop-graph-roles';
+import { stepExplanationPrompt } from '../src/main/step-explanation-channel';
+import { loadLoopGraph } from '../src/shared/loop-graph-load';
+import { PRESENTATION_INSTRUCTION_VERSION, PROFILES, SAME_FACTS_RULES, DEEPENING_RULES } from '../src/shared/presentation-profiles';
+import { folderSection } from '../src/shared/review-agent';
+import { WALK_LOOP_GRAPH_REL, readPlanAnswer, writeStepPrompt } from '../src/shared/walk-loop';
 
 const out = path.resolve(process.argv[2] ?? 'release/profile-compare');
 const baselineFile = process.argv[3] ?? null;
