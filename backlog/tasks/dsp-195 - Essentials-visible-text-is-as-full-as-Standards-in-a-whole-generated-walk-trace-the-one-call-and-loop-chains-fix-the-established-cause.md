@@ -3,10 +3,10 @@ id: DSP-195
 title: >-
   Essentials' visible text is as full as Standard's in a whole generated walk:
   trace the one-call and loop chains, fix the established cause
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-10 19:14'
-updated_date: '2026-11-10 20:30'
+updated_date: '2026-11-10 21:05'
 labels:
   - review
 dependencies:
@@ -33,7 +33,7 @@ Governing decisions: VISION.md section 3.4 (the profiles and the DSP-194 record:
 - [x] #2 The fix removes or rewords the conflicting requirements where they arise, adds no brevity rule, quota, identifier limit or clipping, keeps code access, the walk context, Standard's mechanism, Teacher's concepts, the walk structure and review decisions; the instruction version is raised; nothing is regenerated.
 - [x] #3 Before and after on one locked plan and revision content with the same models, for the writer and the profile switch, the reproduction step and a step of interacting mechanisms, Standard and Teacher as regression, and the one-call preparation sampled; the reported model is named; the visible text and the deepening are shown apart; the reviewer's first answer and rework are shown where it changed; the variation is reported.
 - [x] #4 Window trials show what the Step panel shows before and behind Show more, after the original generation and after a profile switch, with pictures.
-- [ ] #5 Checks, commit and push; CI green; the Linux pre-release with the .deb, host package, manifest and checksums; the published upgrade trial green.
+- [x] #5 Checks, commit and push; CI green; the Linux pre-release with the .deb, host package, manifest and checksums; the published upgrade trial green.
 - [ ] #6 Niclas judges Essentials' pedagogical quality in his own use (not accepted on green tests or on shorter text).
 <!-- AC:END -->
 
@@ -89,4 +89,8 @@ Uncertain or open: the observed run's provider and versions; whether Claude's Es
 ### Checks
 
 `npm run typecheck`; `npm run build`; the targeted prompt and walk tests (134 pass); the follow trial in real windows with the simulated provider (`walk-follow-trial.mjs`, 73 checks pass; its New response check now reads the current instruction version from the source instead of a pinned 9); the presentation group (317 pass), the loop group (675 pass); the review group 349 pass and 1 fail: `review-context.test.ts` "reads lib as context…" fails on Windows on HEAD before this change as well (it compares a read path with `path.join`'s backslashes against a forward-slash read), so it is not caused by DSP-195 and is not fixed here.
+
+### Release
+
+Commit 6c150a4 (the change, its tests, harnesses and evidence); linux-verify run 42894601852 green on it (dock, windows, provider tests, tests, profiles, governor). Release commit 70b5859, tag v0.1.20; package run 42896365181 published the pre-release with `dspatch_0.1.20_amd64.deb`, `dspatch-host-0.1.20-70b5859a516e-linux-x64.tar.gz`, `host-manifest.json` and `SHA256SUMS`; the release notes are `docs/releases/v0.1.20.md`. The published upgrade trial from v0.1.19 (run 42897381111) is green. In Review for Niclas's judgment of Essentials (AC #6).
 <!-- SECTION:NOTES:END -->
