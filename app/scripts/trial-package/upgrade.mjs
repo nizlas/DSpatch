@@ -291,7 +291,8 @@ async function main() {
   const firstReview = await openReview(first, 9391, 'previous review');
   await firstReview.click('pair-delegate-all');
   await firstReview.click('pair-delegate-all-agent-start');
-  await firstReview.until('the delegated review result', `document.querySelector('[data-ev="agent-review"]')!==null && /approved/i.test(document.querySelector('[data-ev="agent-review"]').innerText)`, 120_000);
+  // Up to 0.1.17 the report is open and says what was approved; from 0.1.18 (DSP-193) it is folded and its state is in data-state.
+  await firstReview.until('the delegated review result', `(()=>{const r=document.querySelector('[data-ev="agent-review"]');return r!==null && (r.dataset.state==='done' || /approved/i.test(r.innerText))})()`, 120_000);
   const reviewBefore = JSON.parse(await reviewLine(firstReview));
   const reviewFilesBefore = reviewFiles();
   check('a review with a delegated result is on disk from the previous release', reviewBefore.result !== '' && reviewFilesBefore.length >= 1, JSON.stringify({ reviewBefore, reviewFilesBefore }));
