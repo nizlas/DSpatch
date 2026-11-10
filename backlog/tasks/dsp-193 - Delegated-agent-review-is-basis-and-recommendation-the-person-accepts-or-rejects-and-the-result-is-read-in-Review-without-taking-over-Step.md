@@ -3,10 +3,10 @@ id: DSP-193
 title: >-
   Delegated agent review is basis and recommendation: the person accepts or
   rejects, and the result is read in Review without taking over Step
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-10 15:22'
-updated_date: '2026-11-10 15:55'
+updated_date: '2026-11-10 16:58'
 labels:
   - review
 dependencies: []
@@ -36,7 +36,7 @@ Niclas's assignment of 10 November 2026, after delegating a walk to the agent in
 - [x] #5 In Step and in the diff view, new findings are collapsed by default, open and close independently with one click affecting one finding, and are not reopened by updates; the same finding is one card per view with its discussion reachable from the report's line
 - [x] #6 In a narrow panel a finding's title is readable on its own line with the metadata on another; long file references wrap without widening the panel; collapsed findings are compact and opened ones readable with working code links
 - [x] #7 VISION.md section 3.4, REVIEW_COVERAGE_AND_CODE_WALKS.md and the delegated-review instruction say the same division: the agent gives basis and recommendation, the person decides; historical verification results are not rewritten
-- [ ] #8 Targeted tests cover the counting rule, older records and the report's wording; the window trials cover a narrow docked and a floating Step panel, the diff view, a result arriving while reading, independent folding, navigation without duplication, long titles, reachable discussions and code links, and an unchanged approval status; CI is green and a Linux pre-release is published
+- [x] #8 Targeted tests cover the counting rule, older records and the report's wording; the window trials cover a narrow docked and a floating Step panel, the diff view, a result arriving while reading, independent folding, navigation without duplication, long titles, reachable discussions and code links, and an unchanged approval status; CI is green and a Linux pre-release is published
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,4 +65,6 @@ Niclas's assignment of 10 November 2026, after delegating a walk to the agent in
 **Checks.** `npm run typecheck` clean. Tests: review-pairs, delegated-review-view, review-agent-jobs, review-threads, review-check-threads 109 of 109 (new cases: the counting rule with accept, reject, clear and an older record; a decision through the host's mark channel with its refusals; the view's state, examined and attention lines; the walk's hunk outcome); the review group 349 of 350, the one failure the known Windows path-separator case in `review-context.test.ts`. The delegation trial on Windows: 51 entries, all passed; screenshots and results in `docs/evaluations/dsp-193/`. Not run here: the thread trial and the scripted `code-walks` scenario (Linux and xdotool; the thread trial runs in CI's dock job).
 
 **Not established.** Anything with a real provider in this task; the panel docked in the diff window at a narrow width (the trial docks in the walk window and reads the floating panel narrow).
+
+**Release 0.1.18.** Commits 56af12f (the change), decdad5 (the trial reads the panel's one scroller; its first CI run failed on a scroller that appeared with the result at its top) and 0e6518e (the version), tag v0.1.18. `linux-verify` run 42851440035 green on all jobs, the delegation trial among them in the profiles job; its `governor` job failed twice on the runner's own disk pressure (PSI io full 37 and 48 per cent, read from the machine by a check that requires an idle machine) and passed on rerun; nothing of it touches this change. `package.yml` run 42853503376 published https://github.com/nizlas/DSpatch/releases/tag/v0.1.18 as a pre-release with `dspatch_0.1.18_amd64.deb` (288 127 064 bytes, sha256 1b00f89732cfd9433c7547bbaedb511e70deab3a16b2af17f067510989b1f16d), `dspatch-host-0.1.18-0e6518e24e72-linux-x64.tar.gz` (sha256 0470e3840d5940e562cca54915b5264602d3272d64d860e821aed35e2148253a), `host-manifest.json` and `SHA256SUMS`; the host contract is 466d3b1320a1b083, the same as 0.1.15 to 0.1.17, so a kept host of those versions goes through Restart host. The published-package trial against v0.1.17 (run 42857036851) first failed on exactly the intended change: a review delegated under 0.1.17 counted its two lines as handled, and 0.1.18 read the same result as the agent's assessment awaiting the person, 0 of 2 handled; the upgrade trial still asserted the old rule. Commit 14990fb makes it check the new reading (decision `awaiting`, the report saying "awaiting your assessment", the totals and the record files unchanged), and run 42858704123 passed all 30 checks, among them the install of 0.1.18 over 0.1.17, the kept host's Restart host and the remote host over SSH.
 <!-- SECTION:NOTES:END -->
