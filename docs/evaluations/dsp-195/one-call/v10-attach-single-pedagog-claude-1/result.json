@@ -1,0 +1,77 @@
+{
+  "which": "attach",
+  "method": "single",
+  "profile": "pedagog",
+  "provider": "claude",
+  "model": "opus",
+  "job": {
+    "id": "job-e06aa04b-244a-409b-9811-6bb726998191",
+    "kind": "walks",
+    "state": "done",
+    "provider": "claude",
+    "model": "opus",
+    "startedAt": "2026-11-10T19:50:16.285Z",
+    "endedAt": "2026-11-10T19:51:32.248Z",
+    "note": "2 walk(s) and 0 reading(s), 10 step(s). 9 changed line(s) are in none of them.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v10-attach-single-pedagog-claude-1\\records\\generated\\r-7ac223421d1ad19e075b4bd1\\job-e06aa04b-244a-409b-9811-6bb726998191.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 5,
+        "end": 5
+      },
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 7,
+        "end": 9
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 3
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 9,
+        "end": 10
+      }
+    ],
+    "material": {
+      "base": "2a89c464bf25fe052d06bdec5781f8844a0b6ae1",
+      "target": "6ebec30291726daf1f8c3872af16e533292da626",
+      "files": 9,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target/service/main.py",
+        "target/service/server.py",
+        "target/.vscode/launch.json",
+        "base/service/main.py",
+        "base/.vscode/launch.json"
+      ],
+      "searches": [
+        "Glob **/*"
+      ],
+      "refused": 0,
+      "refusedCalls": []
+    },
+    "presentation": {
+      "profile": "pedagog",
+      "version": 10
+    },
+    "method": "single"
+  }
+}

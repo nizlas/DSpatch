@@ -1,0 +1,1 @@
+`serve(port=8080)` creates a `ThreadingHTTPServer` bound to `0.0.0.0`, using `SimpleHTTPRequestHandler`, then serves until stopped. Binding to all container interfaces allows the host’s published port 8080 to reach the HTTP server; threading lets it handle requests concurrently.

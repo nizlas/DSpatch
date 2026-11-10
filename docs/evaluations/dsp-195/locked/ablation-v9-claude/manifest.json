@@ -1,0 +1,66 @@
+{
+  "phase": "ablation-195",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 9,
+  "base": "25372e595bdc82027438722221112c761cd91f5f",
+  "target": "afb1f1b6a9abc822fda4aae1aa0afb13c519a3b7",
+  "startedAt": "2026-11-10T19:27:25.779Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.1-v1",
+      "note": "the loop writer, Essentials, W1.1, without the writing rule's content line",
+      "status": "finished",
+      "error": null,
+      "seconds": 9,
+      "chars": 916,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-v2",
+      "note": "the loop writer, Essentials, W1.1, and the shared task and role purpose leaving the choice to the profile",
+      "status": "finished",
+      "error": null,
+      "seconds": 9,
+      "chars": 959,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-v1",
+      "note": "the loop writer, Essentials, W1.6, without the writing rule's content line",
+      "status": "finished",
+      "error": null,
+      "seconds": 20,
+      "chars": 2159,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.1-v2",
+      "note": "the loop writer, Standard, W1.1, under v2 (regression)",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1537,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-v2",
+      "note": "the loop writer, Essentials, W1.6, and the shared task and role purpose leaving the choice to the profile",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1573,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.6-v2",
+      "note": "the loop writer, Standard, W1.6, under v2 (regression)",
+      "status": "finished",
+      "error": null,
+      "seconds": 24,
+      "chars": 2908,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T19:28:09.623Z"
+}

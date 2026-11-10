@@ -1,0 +1,121 @@
+{
+  "provider": "claude",
+  "model": "opus",
+  "reference": "DSP-195 window trial on Niclas's go-ahead of 10 November 2026",
+  "project": {
+    "case": "attach",
+    "base": "f9fcf536b0b4ea2ab013465dd0312b0af4c6cef2",
+    "target": "ff82c31c68e061d2b53a7b70b1e0da58b05bd88e"
+  },
+  "method": "single",
+  "seen": [
+    {
+      "step": "W1.1",
+      "title": "",
+      "label": "essens-prepared",
+      "kind": "step-prepared-explanation",
+      "before": 500,
+      "hasMore": true,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 175
+    },
+    {
+      "step": "W1.1",
+      "title": "",
+      "label": "standard-alternative",
+      "kind": "profile-explanation",
+      "before": 1528,
+      "hasMore": true,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 1532
+    },
+    {
+      "step": "W1.7",
+      "title": "",
+      "label": "essens-prepared",
+      "kind": "step-prepared-explanation",
+      "before": 424,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    },
+    {
+      "step": "W1.7",
+      "title": "",
+      "label": "standard-alternative",
+      "kind": "profile-explanation",
+      "before": 1467,
+      "hasMore": true,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 1586
+    }
+  ],
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-6onwfP",
+  "chosenSteps": {
+    "simple": {
+      "id": "W1.1",
+      "title": "",
+      "places": [
+        {
+          "path": ".vscode/launch.json",
+          "side": "target",
+          "start": 5,
+          "end": 8
+        }
+      ]
+    },
+    "complex": {
+      "id": "W1.7",
+      "title": "",
+      "places": [
+        {
+          "path": ".vscode/launch.json",
+          "side": "target",
+          "start": 9,
+          "end": 9
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "profile": "essens",
+      "key": "r-978e86d0aa397f160184ad4d",
+      "jobId": "job-b78ae0d1-c452-4585-aef8-68d893b2838b",
+      "state": "done",
+      "startedAt": "2026-11-10T20:15:03.127Z",
+      "endedAt": "2026-11-10T20:15:53.814Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-6onwfP\\reviews\\generated\\r-978e86d0aa397f160184ad4d\\job-b78ae0d1-c452-4585-aef8-68d893b2838b.review.json"
+    }
+  ],
+  "switched": [
+    {
+      "stepId": "W1.1",
+      "profile": "standard",
+      "seconds": 24
+    },
+    {
+      "stepId": "W1.7",
+      "profile": "standard",
+      "seconds": 16
+    }
+  ],
+  "explanations": [
+    {
+      "stepId": "W1.1",
+      "profile": "standard",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.7",
+      "profile": "standard",
+      "action": "present",
+      "status": "done"
+    }
+  ]
+}

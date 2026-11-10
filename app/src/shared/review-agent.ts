@@ -226,12 +226,31 @@ export function changeSection(material: AnalysisMaterial): string {
  * The writing rules of the plan (section 2), as the agent is told them. The plan governs;
  * this is its instruction, not a template.
  */
-export const WRITING_RULES = [
+/**
+ * The writing rules that say who the reader is and what a step must contain (DSP-195), as opposed
+ * to its form. A walk explained in a profile gets the shared task and the profile's reader instead,
+ * which decide what this reader needs and at what level; sent to a profiled prompt as well, these
+ * stood beside the profile as a content list every profile met (a mechanism with cause and effect,
+ * the names explained), and for Essentials they asked for what the profile leaves to the code. The
+ * same principle as the profile switch's answer format (DSP-194): what belongs in an explanation is
+ * said once, in the profile's section. Without a profile they are the instruction, as before.
+ */
+export const WRITING_CONTENT_RULES = [
   'Write so that a developer who did not write this change understands it.',
   'Each step says what happens, why it happens or is needed, and what is worth noticing in the code. Give the needed context before the details.',
-  'Use concrete language and say who does what: the user, DSpatch, the provider, or a named component.',
   'Explain cause and effect. Do not write that something "appears" or "happens" without saying why.',
   'Keep the relevant class names, methods and established terms such as inheritance and subclass. Explain them when needed instead of replacing them with vague simplifications.',
+] as const;
+
+/** Whether a writing rule is one of the content rules a profile's section replaces. */
+export const isWritingContentRule = (rule: string): boolean => (WRITING_CONTENT_RULES as readonly string[]).includes(rule);
+
+export const WRITING_RULES = [
+  WRITING_CONTENT_RULES[0],
+  WRITING_CONTENT_RULES[1],
+  'Use concrete language and say who does what: the user, DSpatch, the provider, or a named component.',
+  WRITING_CONTENT_RULES[2],
+  WRITING_CONTENT_RULES[3],
   'Use short paragraphs. Use bullets for alternative cases and numbering for an actual order.',
   'Emphasise sparingly with **bold**: only the central connection or consequence.',
   'Prefer plain words to advanced ones, but keep the real names of classes, methods, files and objects.',
@@ -329,7 +348,8 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
     '- "background": only when there is more worth knowing (context, history, consequences), in short Markdown paragraphs. Leave it empty rather than repeating the summary.',
     '',
     `## How to write (language: ${language === 'sv' ? 'Swedish' : 'English'})`,
-    ...WRITING_RULES.map((rule) => `- ${rule}`),
+    // DSP-195: with a profile, the reader and what a step says are the profile section's; the rules here are the form.
+    ...WRITING_RULES.filter((rule) => profile === null || !isWritingContentRule(rule)).map((rule) => `- ${rule}`),
     ...(profile === null ? [] : ['', walkExplanationSection(profile)]),
     '',
     '## Answer format',
@@ -349,8 +369,9 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
               {
                 title: 'Short step title',
                 summary: 'A short line: what happens here.',
-                body: 'The explanation in Markdown: what happens, why, what to notice in the code. Short paragraphs, bullets where they help.',
-                why: 'Optional: the consequence, if it needs saying apart from the body.',
+                // DSP-195: with a profile, the fields are described by what they are, not by a content list of their own.
+                body: profile === null ? 'The explanation in Markdown: what happens, why, what to notice in the code. Short paragraphs, bullets where they help.' : 'The step\'s explanation in Markdown, for the reader named under "How to explain the steps".',
+                why: profile === null ? 'Optional: the consequence, if it needs saying apart from the body.' : 'Optional: a consequence this reader needs said apart from the body; usually empty.',
                 details: 'Optional: the deepening the person opens with Show more, in Markdown. Empty when there is nothing to add.',
                 places: [
                   {

@@ -1,0 +1,10 @@
+This is the editor's side of the connection. Nothing in the container calls VS Code. Once the pre-launch task from W1.2 has finished, VS Code itself opens a connection to `localhost` on `port` 5678. That is the host port Compose publishes for the debugpy listener started in W1.5. In the base revision, this configuration started `main.py` locally with `"request": "launch"`. Now it only attaches to a process that is already running in the container.
+
+`pathMappings` tells the debugger that the files it reports under `/app/service` in the container are the workspace's `service` folder. That location matches where the Dockerfile copies the source (W1.4). **Without this mapping, breakpoints set in the editor would not line up with the code running in the container.**
+
+One point affects whether attaching works on the first try. The task runs `docker compose up -d`, which returns as soon as the container has started. The task has no readiness check. So nothing makes VS Code wait until debugpy is actually listening on 5678 before it attaches. If the attach request arrives too early, it could fail.
+
+<!-- dspatch:details -->
+- **Port path:** The listener binds `0.0.0.0:5678` inside the container, and Compose maps host 5678 to container 5678. That is why `localhost` works from the editor's side.
+- **`justMyCode: false`:** The debugger can also step into library code, such as the standard library's HTTP server reached in W1.8, and not only the workspace files.
+- **Missing pieces:** The task in `.vscode/tasks.json` (target, lines 4–8) declares no `isBackground` and no `problemMatcher`, so it has nothing that could signal "listener ready". Whether the attach succeeds on the first try therefore depends on how quickly the container starts. I'm drawing that from the configuration; it isn't something I saw happen in a run.

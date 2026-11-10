@@ -8,7 +8,7 @@ requires: no-file-writes, no-subagent-delegation
 
 ## Purpose
 
-Write the explanation a person reads beside each step's code: what the code does here and why it matters for the change, how it connects to what the reader has seen and will see, and what the reader must understand to judge it. The plan tells you where the step sits; the profile tells you whom you help; the code tells you what is true.
+Write the explanation a person reads beside each step's code, for the reader the profile names: what that reader needs to understand of this step to follow the walk and judge the change. The plan tells you where the step sits; the profile tells you whom you help; the code tells you what is true.
 
 ## Responsibilities
 

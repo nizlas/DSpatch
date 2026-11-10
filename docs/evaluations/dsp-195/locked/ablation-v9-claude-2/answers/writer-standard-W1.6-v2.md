@@ -1,0 +1,15 @@
+Here the walk returns to the editor. The settings that matter now are the rest of the configuration from W1.1, after the pre-launch task has run. This step is not code that the service calls. It is VS Code's debugpy extension acting as a client: it opens a connection to a debugger that is already listening inside the container.
+
+**How the connection reaches the container.** `connect` points at `localhost` port `5678` on the host. As W1.3 and W1.5 showed, Compose publishes host port 5678 to container port 5678, and debugpy listens there on `0.0.0.0`. Binding to `0.0.0.0` matters because a listener bound only to the container's own loopback address could not be reached through the published port.
+
+**How breakpoints line up with files.** The debugger reports source locations as paths inside the container. The Dockerfile copied the service to `/app/service` (W1.4). The `pathMappings` entry maps `remoteRoot` `/app/service` to `localRoot` `${workspaceFolder}/service`, so a breakpoint set in the workspace file matches the container's copy. This only works if the two copies are identical. The image is rebuilt on each start because the task passes `--build`, but an edit made after the container starts is not in the running code.
+
+`justMyCode: false` lets the debugger stop in and step through library code as well, such as the standard library's HTTP server reached in W1.8.
+
+<!-- dspatch:details -->
+
+**Timing between the task and the attach.** VS Code runs the `preLaunchTask` before it attaches. This shell task runs `docker compose up -d --build service`. With `-d`, Compose returns once it has started the container; it does not wait for the Python process inside to begin listening. The task defines no readiness check or background-task matcher, so nothing in the configuration makes the attach wait for debugpy's listener. The code allows a race: if the attach request arrives before debugpy is listening, the connection can fail. Whether this happens in practice depends on startup timing, which cannot be determined from these files.
+
+**The service does not wait for the debugger.** The Compose command starts debugpy with `--listen` but without `--wait-for-client`, so `service.main` starts running right away (W1.7). The debugger attaches to a process that is already running. Breakpoints in code that runs before the attach, such as module import or the call to `serve`, can be missed. Code that handles requests, which runs later, is where breakpoints reliably take effect.
+
+**Compared with the earlier revision.** In base, the configuration was `"request": "launch"` with `program` set to the workspace's `service/main.py`, so VS Code ran the service locally in the integrated terminal. In target, nothing runs locally: the service runs in the container, and the editor only connects to it.

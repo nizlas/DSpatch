@@ -1,0 +1,6 @@
+This is where the change starts. Before the change, this configuration ("Run the service") used `"request": "launch"` with a `program`. VS Code then ran `service/main.py` itself on the host, under the debugger. Now the configuration uses **`"request": "attach"`, so VS Code no longer starts the Python program**. It expects a debugpy process that is already running and connects to it. That process is the one inside the container. The `type` is still `debugpy`, so the same Python debugger extension handles both modes.
+
+Because VS Code no longer starts the program, something else has to. The `preLaunchTask` setting, just below the shown lines, names the task "Start the service container". VS Code runs that task before it tries to attach. The next step (W1.2) follows that label into the task definition.
+
+<!-- dspatch:details -->
+The settings that say where to attach (`connect` to `localhost:5678`, and the `pathMappings` between `/app/service` and the workspace's `service` folder) are covered in W1.6. The old `"console": "integratedTerminal"` setting is gone too. In attach mode VS Code doesn't own the process, so the service's output goes to the container rather than to a VS Code terminal.

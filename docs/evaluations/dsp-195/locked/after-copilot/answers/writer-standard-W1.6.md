@@ -1,0 +1,4 @@
+The attach request connects VS Code to `localhost:5678`, the host port published for `debugpy` in the container (as shown in the previous step). `pathMappings` pairs the workspace’s `service` directory with `/app/service` in the container so the debugger can match container source paths to workspace files. This is an editor-side connection; it does not start the Python program. The next step follows that program into `service.main` ([`service/main.py`, target lines 4–8]).
+
+<!-- dspatch:details -->
+The `preLaunchTask` starts Compose in detached mode, and the task defines no readiness check. It therefore does not explicitly wait for `debugpy` to be ready before VS Code attempts the attach. `justMyCode: false` also configures the debugger not to restrict stepping to user code.

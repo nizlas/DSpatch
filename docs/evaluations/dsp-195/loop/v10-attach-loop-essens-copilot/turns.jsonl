@@ -1,0 +1,10 @@
+{"turn":"001","task":"plan-walks","status":"finished","chars":6054,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"002","task":"write-step","status":"finished","chars":369,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"003","task":"write-step","status":"finished","chars":299,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"004","task":"write-step","status":"finished","chars":370,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"005","task":"write-step","status":"finished","chars":237,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"006","task":"write-step","status":"finished","chars":217,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"007","task":"write-step","status":"finished","chars":266,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"008","task":"review-walks","status":"finished","chars":982,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"009","task":"write-step","status":"finished","chars":326,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"010","task":"review-walks","status":"finished","chars":348,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}

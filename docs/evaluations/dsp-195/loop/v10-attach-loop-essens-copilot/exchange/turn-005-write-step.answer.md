@@ -1,0 +1,1 @@
+Compose builds this image from the project directory. The image provides Python 3.12, installs debugpy, and copies `service` to `/app/service`, where the module command can find it. The next step follows that command into `service.main`.

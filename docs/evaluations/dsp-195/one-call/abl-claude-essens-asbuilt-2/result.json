@@ -1,0 +1,61 @@
+{
+  "which": "attach",
+  "method": "single",
+  "profile": "essens",
+  "provider": "claude",
+  "model": "opus",
+  "job": {
+    "id": "job-c36cc44a-2d10-4c14-a452-df4faa996610",
+    "kind": "walks",
+    "state": "done",
+    "provider": "claude",
+    "model": "opus",
+    "startedAt": "2026-11-10T19:20:45.778Z",
+    "endedAt": "2026-11-10T19:21:35.437Z",
+    "note": "1 walk(s) and 0 reading(s), 6 step(s). 5 changed line(s) are in none of them.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\abl-claude-essens-asbuilt-2\\records\\generated\\r-e4ae5b17dae43186948557c2\\job-c36cc44a-2d10-4c14-a452-df4faa996610.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 3
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 9,
+        "end": 10
+      }
+    ],
+    "material": {
+      "base": "15e3ccffe10bcd16a4abe2eebf4041c16257abc3",
+      "target": "6f8ee14d3a759f69aa1266526e1fc9797efa2375",
+      "files": 9,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target/service/main.py",
+        "target/service/server.py",
+        "target/.vscode/launch.json"
+      ],
+      "searches": [
+        "Glob **/*"
+      ],
+      "refused": 0,
+      "refusedCalls": []
+    },
+    "presentation": {
+      "profile": "essens",
+      "version": 9
+    },
+    "method": "single"
+  }
+}

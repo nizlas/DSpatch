@@ -1,0 +1,4 @@
+VS Code uses `request: "attach"` to connect to the running `debugpy` process at `localhost:5678`; it does not launch the service itself. Compose publishes that port from the container (target `compose.yaml`, lines 4–6). The `pathMappings` entry lets the debugger match files under `/app/service` in the container to the workspace’s `service` directory.
+
+<!-- dspatch:details -->
+The `preLaunchTask` runs the task whose command starts Compose in detached mode (target `.vscode/tasks.json`, lines 5–7). That task has no readiness check: its completion does not establish that `debugpy` is listening, so this configuration does not guarantee the attach will succeed immediately. `justMyCode: false` also allows debugging code beyond the workspace’s own files.

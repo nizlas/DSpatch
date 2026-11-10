@@ -1,0 +1,127 @@
+{
+  "provider": "copilot",
+  "model": "copilot-default",
+  "reference": "DSP-192 follow-up: the three profiles through the real provider flow, on the go-ahead of 10 November 2026",
+  "project": {
+    "case": "attach",
+    "base": "ced4407fb5e95539d2428a62b6fbcf9c4ec67245",
+    "target": "9f945bf6b13d9431f811ad40c45ae5de5843b1ee"
+  },
+  "method": "single",
+  "seen": [
+    {
+      "step": "W1.1",
+      "title": "",
+      "label": "standard-prepared",
+      "kind": "step-prepared-explanation",
+      "before": 516,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    },
+    {
+      "step": "W1.1",
+      "title": "",
+      "label": "essens-alternative",
+      "kind": "profile-explanation",
+      "before": 564,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    },
+    {
+      "step": "W1.3",
+      "title": "",
+      "label": "standard-prepared",
+      "kind": "step-prepared-explanation",
+      "before": 413,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    },
+    {
+      "step": "W1.3",
+      "title": "",
+      "label": "essens-alternative",
+      "kind": "profile-explanation",
+      "before": 371,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    }
+  ],
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-UXyizj",
+  "chosenSteps": {
+    "simple": {
+      "id": "W1.1",
+      "title": "",
+      "places": [
+        {
+          "path": ".vscode/launch.json",
+          "side": "base",
+          "start": 4,
+          "end": 9
+        },
+        {
+          "path": ".vscode/launch.json",
+          "side": "target",
+          "start": 4,
+          "end": 13
+        }
+      ]
+    },
+    "complex": {
+      "id": "W1.3",
+      "title": "",
+      "places": [
+        {
+          "path": "compose.yaml",
+          "side": "target",
+          "start": 1,
+          "end": 7
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "profile": "standard",
+      "key": "r-a9061e86540b0bfb20904d90",
+      "jobId": "job-181e9f40-3084-4910-8342-6bcb47de8da1",
+      "state": "done",
+      "startedAt": "2026-11-10T20:09:23.318Z",
+      "endedAt": "2026-11-10T20:10:13.153Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-UXyizj\\reviews\\generated\\r-a9061e86540b0bfb20904d90\\job-181e9f40-3084-4910-8342-6bcb47de8da1.review.json"
+    }
+  ],
+  "switched": [
+    {
+      "stepId": "W1.1",
+      "profile": "essens",
+      "seconds": 18
+    },
+    {
+      "stepId": "W1.3",
+      "profile": "essens",
+      "seconds": 14
+    }
+  ],
+  "explanations": [
+    {
+      "stepId": "W1.1",
+      "profile": "essens",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.3",
+      "profile": "essens",
+      "action": "present",
+      "status": "done"
+    }
+  ]
+}

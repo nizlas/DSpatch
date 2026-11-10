@@ -1,0 +1,935 @@
+{
+  "which": "attach",
+  "method": "loop",
+  "profile": "essens",
+  "provider": "copilot",
+  "model": "default",
+  "job": {
+    "id": "job-8f220179-9207-4eb7-9046-56192fb9eaf9",
+    "kind": "walks",
+    "state": "done",
+    "provider": "copilot",
+    "model": "default",
+    "startedAt": "2026-11-10T19:15:27.290Z",
+    "endedAt": "2026-11-10T19:18:15.474Z",
+    "note": "1 walk(s) and 0 reading(s), 8 step(s). 14 changed line(s) are in none of them. The reviewer asked for one correction (1 finding(s)); it accepted the corrected walks.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v9-attach-loop-essens\\records\\generated\\r-5691e411eab4640818a64472\\job-8f220179-9207-4eb7-9046-56192fb9eaf9.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 5,
+        "end": 5
+      },
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 7,
+        "end": 9
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/launch.json",
+        "start": 12,
+        "end": 13
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 4
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 8,
+        "end": 10
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "compose.yaml",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "material": {
+      "base": "6ae759337351676425f0d0fdcef25b6440c91d14",
+      "target": "4b214b1aacf5f19e7513f6d10389714482752a90",
+      "files": 9,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target/Dockerfile",
+        "target/compose.yaml",
+        "target/service/main.py",
+        "target/.vscode/launch.json",
+        "target/.vscode/tasks.json",
+        "base/.vscode/launch.json",
+        "base/service/main.py",
+        "base/service/server.py",
+        "target/service/server.py"
+      ],
+      "searches": [
+        "Glob base/**",
+        "Glob target/**",
+        "Glob **/*",
+        "Glob **/*",
+        "Glob **/CODE_WALK_UNDERSTANDING_AND_PROFILES.md"
+      ],
+      "refused": 2,
+      "refusedCalls": [
+        "Read target/docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md",
+        "rg"
+      ]
+    },
+    "presentation": {
+      "profile": "essens",
+      "version": 9
+    },
+    "method": "loop",
+    "loop": {
+      "runId": "walk-14d2e4d1-8323-44a5-9f40-7fb1b1dcb010",
+      "graphId": "dspatch-walk-loop",
+      "graphVersionId": "graph-8e84007492c1b56f",
+      "roles": [
+        {
+          "id": "walk-planner",
+          "sourcePath": "docs/loop/roles/review/walk-planner.role.md"
+        },
+        {
+          "id": "walk-writer",
+          "sourcePath": "docs/loop/roles/review/walk-writer.role.md"
+        },
+        {
+          "id": "walk-reviewer",
+          "sourcePath": "docs/loop/roles/review/walk-reviewer.role.md"
+        }
+      ],
+      "recordPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v9-attach-loop-essens\\records\\generated\\r-5691e411eab4640818a64472\\job-8f220179-9207-4eb7-9046-56192fb9eaf9.walk-loop\\record.jsonl",
+      "resultsDir": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v9-attach-loop-essens\\records\\generated\\r-5691e411eab4640818a64472\\job-8f220179-9207-4eb7-9046-56192fb9eaf9.walk-loop\\results",
+      "status": "delivered",
+      "path": [
+        "plan",
+        "write",
+        "review",
+        "write",
+        "review",
+        "delivered"
+      ],
+      "first": {
+        "assessment": "The setup-to-attach course is followable, and its claims about Compose, debugpy, and the application entry point match the target code. W1.8 leaves the service's actual request behavior unexplained, so the reader reaches the server without a clear picture of what it serves.",
+        "verdict": "rework",
+        "findings": [
+          {
+            "kind": "explanation",
+            "steps": [
+              "W1.8"
+            ],
+            "problem": "The step names SimpleHTTPRequestHandler but does not explain that it serves files from the process's working directory. Here, that directory is /app, set by the Dockerfile.",
+            "why": "The reader learns that the server handles HTTP requests, but not what this service does with them. That leaves the main behavior of the application unclear rather than giving the accurate high-level picture this profile needs.",
+            "evidence": "In target service/server.py lines 5–7, SimpleHTTPRequestHandler is passed to ThreadingHTTPServer. target Dockerfile line 2 sets WORKDIR /app, and there is no custom handler or route implementation.",
+            "reference": ""
+          }
+        ]
+      },
+      "final": {
+        "assessment": "W1.8 now explains that the service serves files from /app and has no custom routes, addressing the earlier omission. The steps form a coherent path from VS Code's attach configuration through container startup to the HTTP server, and the descriptions are consistent with the code.",
+        "verdict": "accept",
+        "findings": []
+      },
+      "rounds": 1,
+      "replanned": false,
+      "rewritten": [
+        "W1.8"
+      ],
+      "turns": [
+        {
+          "node": "plan",
+          "occurrence": 1,
+          "startedAt": "2026-11-10T19:15:28.388Z",
+          "endedAt": "2026-11-10T19:16:24.084Z",
+          "durationMs": 55696
+        },
+        {
+          "node": "plan",
+          "occurrence": 1,
+          "startedAt": "2026-11-10T19:16:24.577Z",
+          "endedAt": "2026-11-10T19:16:38.853Z",
+          "durationMs": 14276
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.1",
+          "startedAt": "2026-11-10T19:16:39.588Z",
+          "endedAt": "2026-11-10T19:16:54.727Z",
+          "durationMs": 15139
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.2",
+          "startedAt": "2026-11-10T19:16:54.742Z",
+          "endedAt": "2026-11-10T19:16:58.897Z",
+          "durationMs": 4155
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.3",
+          "startedAt": "2026-11-10T19:16:58.913Z",
+          "endedAt": "2026-11-10T19:17:03.085Z",
+          "durationMs": 4172
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.4",
+          "startedAt": "2026-11-10T19:17:03.100Z",
+          "endedAt": "2026-11-10T19:17:06.499Z",
+          "durationMs": 3399
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.5",
+          "startedAt": "2026-11-10T19:17:06.512Z",
+          "endedAt": "2026-11-10T19:17:10.944Z",
+          "durationMs": 4432
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.6",
+          "startedAt": "2026-11-10T19:17:10.958Z",
+          "endedAt": "2026-11-10T19:17:14.900Z",
+          "durationMs": 3942
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.7",
+          "startedAt": "2026-11-10T19:17:14.918Z",
+          "endedAt": "2026-11-10T19:17:19.150Z",
+          "durationMs": 4232
+        },
+        {
+          "node": "write",
+          "occurrence": 1,
+          "stepId": "W1.8",
+          "startedAt": "2026-11-10T19:17:19.165Z",
+          "endedAt": "2026-11-10T19:17:22.721Z",
+          "durationMs": 3556
+        },
+        {
+          "node": "review",
+          "occurrence": 1,
+          "startedAt": "2026-11-10T19:17:22.944Z",
+          "endedAt": "2026-11-10T19:18:04.936Z",
+          "durationMs": 41992
+        },
+        {
+          "node": "write",
+          "occurrence": 2,
+          "stepId": "W1.8",
+          "startedAt": "2026-11-10T19:18:04.976Z",
+          "endedAt": "2026-11-10T19:18:09.461Z",
+          "durationMs": 4486
+        },
+        {
+          "node": "review",
+          "occurrence": 2,
+          "startedAt": "2026-11-10T19:18:09.501Z",
+          "endedAt": "2026-11-10T19:18:15.416Z",
+          "durationMs": 5915
+        }
+      ],
+      "durationMs": 167099,
+      "usage": [
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 7351,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 207,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 0,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 7348,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8068,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 631,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 7348,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 717,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 9272,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 4905,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8065,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 1204,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 11160,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 2022,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 7348,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 3809,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 7482,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 226,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 1785,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 5694,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8251,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 151,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 7479,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 769,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8467,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 425,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8248,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 216,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8743,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 224,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8248,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 492,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 9224,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 47,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8740,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 481,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 9575,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 288,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 9221,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 351,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10067,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 84,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 9572,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 492,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10446,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 221,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10064,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 379,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10899,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 66,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10443,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 453,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 11284,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 289,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10896,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 385,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 11843,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 70,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 11281,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 559,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 12276,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 293,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 11840,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 433,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 12904,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 94,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 12273,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 628,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 13291,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 222,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 12901,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 387,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 13679,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 62,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 13288,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 388,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 14013,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 222,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 13676,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 334,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 14401,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 68,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 14010,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 388,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 6341,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 685,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 1785,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 4553,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8004,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 988,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 6338,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 1663,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 9248,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 2695,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 8001,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 1244,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 14970,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 288,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 14398,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 569,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 15462,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 79,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 14967,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 492,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10663,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 426,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 6338,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 4322,
+          "source": "assistant.usage.cacheWriteTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 11484,
+          "source": "assistant.usage.inputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 83,
+          "source": "assistant.usage.outputTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 10660,
+          "source": "assistant.usage.cacheReadTokens"
+        },
+        {
+          "unit": "tokens",
+          "scope": "call",
+          "value": 821,
+          "source": "assistant.usage.cacheWriteTokens"
+        }
+      ]
+    }
+  }
+}

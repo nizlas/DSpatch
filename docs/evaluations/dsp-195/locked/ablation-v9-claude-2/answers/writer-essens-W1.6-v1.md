@@ -1,0 +1,10 @@
+This is the other end of the debug connection. The service does not call VS Code. Once the pre-launch task returns, VS Code opens a client connection to `localhost:5678`. As we saw in W1.3 and W1.5, Compose maps that host port to the port where `debugpy` listens inside the container.
+
+`pathMappings` lets breakpoints work across the container boundary. The container runs the code under `/app/service`, because the Dockerfile copies it there (W1.4). The mapping tells the debugger that those files are the same as `${workspaceFolder}/service` in the workspace. Without it, breakpoints set in the editor would not match the files the container runs.
+
+**Nothing here guarantees that the listener is ready when VS Code connects.** The pre-launch task runs `docker compose up -d --build`. With `-d`, Compose starts the container and returns without waiting for the application inside it, and the task has no readiness check. So the attach can happen before `debugpy` is listening. Whether it fails or succeeds then depends on timing and on how the client retries, which this configuration does not set.
+
+<!-- dspatch:details -->
+The other direction has the same timing gap. The Compose `command` starts `debugpy` with `--listen` but not `--wait-for-client`, so `service.main` starts running without waiting for a debugger (W1.7 follows it). Code that runs before VS Code attaches, such as module import and the call to `serve`, can run before any breakpoint is in place. Breakpoints in request handling are hit once the debugger is attached.
+
+The earlier revision used `"request": "launch"` with `program` pointing to `service/main.py`. That ran the service directly on the host, so it needed neither the port nor the path mapping. Also in the target configuration, `justMyCode: false` lets the debugger step into library code as well as the service's own code. In this service, that includes the standard library's `http.server` module, which W1.8 uses.

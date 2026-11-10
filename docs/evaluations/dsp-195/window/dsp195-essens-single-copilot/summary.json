@@ -1,0 +1,121 @@
+{
+  "provider": "copilot",
+  "model": "copilot-default",
+  "reference": "DSP-192 follow-up: the three profiles through the real provider flow, on the go-ahead of 10 November 2026",
+  "project": {
+    "case": "attach",
+    "base": "4a682e8f6d178aad0668a92ed14fc57efe8e6f02",
+    "target": "5b5a45ae75627fce66063b51476fa41730adba0f"
+  },
+  "method": "single",
+  "seen": [
+    {
+      "step": "W1.1",
+      "title": "",
+      "label": "essens-prepared",
+      "kind": "step-prepared-explanation",
+      "before": 359,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    },
+    {
+      "step": "W1.1",
+      "title": "",
+      "label": "standard-alternative",
+      "kind": "profile-explanation",
+      "before": 552,
+      "hasMore": true,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 207
+    },
+    {
+      "step": "W1.3",
+      "title": "",
+      "label": "essens-prepared",
+      "kind": "step-prepared-explanation",
+      "before": 386,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    },
+    {
+      "step": "W1.3",
+      "title": "",
+      "label": "standard-alternative",
+      "kind": "profile-explanation",
+      "before": 600,
+      "hasMore": false,
+      "why": null,
+      "whyBeforeMore": null,
+      "behind": 0
+    }
+  ],
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-wK9BFD",
+  "chosenSteps": {
+    "simple": {
+      "id": "W1.1",
+      "title": "",
+      "places": [
+        {
+          "path": ".vscode/launch.json",
+          "side": "target",
+          "start": 3,
+          "end": 13
+        }
+      ]
+    },
+    "complex": {
+      "id": "W1.3",
+      "title": "",
+      "places": [
+        {
+          "path": "compose.yaml",
+          "side": "target",
+          "start": 1,
+          "end": 7
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "profile": "essens",
+      "key": "r-e5720bf6c862acb30020115b",
+      "jobId": "job-c09e2db1-f10a-42c4-8c3c-9b3f1fb736fa",
+      "state": "done",
+      "startedAt": "2026-11-10T20:07:27.233Z",
+      "endedAt": "2026-11-10T20:08:15.222Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-wK9BFD\\reviews\\generated\\r-e5720bf6c862acb30020115b\\job-c09e2db1-f10a-42c4-8c3c-9b3f1fb736fa.review.json"
+    }
+  ],
+  "switched": [
+    {
+      "stepId": "W1.1",
+      "profile": "standard",
+      "seconds": 22
+    },
+    {
+      "stepId": "W1.3",
+      "profile": "standard",
+      "seconds": 10
+    }
+  ],
+  "explanations": [
+    {
+      "stepId": "W1.1",
+      "profile": "standard",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.3",
+      "profile": "standard",
+      "action": "present",
+      "status": "done"
+    }
+  ]
+}

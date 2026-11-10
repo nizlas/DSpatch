@@ -26,11 +26,17 @@ import { Markdown } from './Markdown';
  */
 export function ShortThenMore({
   short,
+  base,
   details,
   rests,
   actions,
 }: {
   readonly short: string;
+  /**
+   * More of the base text, read with the short part before the Show more control (DSP-195): a
+   * prepared step's "Why it matters". Rendered after the control, it stood on both sides of it.
+   */
+  readonly base?: ReactNode;
   readonly details: string | null | undefined;
   /** The references as links, when there are any. Kept in the page while closed. */
   readonly rests?: ReactNode;
@@ -45,6 +51,7 @@ export function ShortThenMore({
   return (
     <>
       <Markdown text={short} />
+      {base}
       {open && more.trim() !== '' && (
         <div className="rv-answer-details" data-ev="answer-details">
           <Markdown text={more} />

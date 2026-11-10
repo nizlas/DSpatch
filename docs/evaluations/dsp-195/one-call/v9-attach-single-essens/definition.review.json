@@ -1,0 +1,314 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · attach 6ae7593→4b214b1",
+    "en": "Code walks · attach 6ae7593→4b214b1"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dsp195-U9bc35\\attach",
+  "base": "6ae759337351676425f0d0fdcef25b6440c91d14",
+  "target": "4b214b1aacf5f19e7513f6d10389714482752a90",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Copilot (default) on 2026-11-10 19:16 UTC. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 9).",
+    "en": "Prepared by Copilot (default) on 2026-11-10 19:16 UTC. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 9)."
+  },
+  "presentation": {
+    "profile": "essens",
+    "version": 9
+  },
+  "overviewSummary": {
+    "sv": "The VS Code debug configuration now attaches to the service running in Docker instead of launching Python locally. A pre-launch task builds and starts the container, which runs the service under debugpy with ports and source paths mapped for debugging.",
+    "en": "The VS Code debug configuration now attaches to the service running in Docker instead of launching Python locally. A pre-launch task builds and starts the container, which runs the service under debugpy with ports and source paths mapped for debugging."
+  },
+  "overview": {
+    "sv": "The VS Code debug configuration now attaches to the service running in Docker instead of launching Python locally. A pre-launch task builds and starts the container, which runs the service under debugpy with ports and source paths mapped for debugging.",
+    "en": "The VS Code debug configuration now attaches to the service running in Docker instead of launching Python locally. A pre-launch task builds and starts the container, which runs the service under debugpy with ports and source paths mapped for debugging."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "How does VS Code attach to the containerized service?",
+        "en": "How does VS Code attach to the containerized service?"
+      },
+      "purpose": {
+        "sv": "Follow the debug configuration from its pre-launch task through the container startup to the service entry point.",
+        "en": "Follow the debug configuration from its pre-launch task through the container startup to the service entry point."
+      },
+      "question": {
+        "sv": "What starts the service, and how does the debugger connect to its code?",
+        "en": "What starts the service, and how does the debugger connect to its code?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "Choose the attach configuration",
+            "en": "Choose the attach configuration"
+          },
+          "summary": {
+            "sv": "VS Code runs a startup task before attaching to debugpy.",
+            "en": "VS Code runs a startup task before attaching to debugpy."
+          },
+          "body": {
+            "sv": "When this configuration is selected, VS Code runs the task named in `preLaunchTask`, then connects to `localhost:5678`. The path mapping relates local files under `service` to `/app/service` in the container, so breakpoints can correspond to the code Python runs there. `justMyCode: false` allows stepping beyond user-code-only filtering.",
+            "en": "When this configuration is selected, VS Code runs the task named in `preLaunchTask`, then connects to `localhost:5678`. The path mapping relates local files under `service` to `/app/service` in the container, so breakpoints can correspond to the code Python runs there. `justMyCode: false` allows stepping beyond user-code-only filtering."
+          },
+          "why": {
+            "sv": "Unlike the previous launch configuration, this one expects the service to be started separately and waits for a debugger endpoint.",
+            "en": "Unlike the previous launch configuration, this one expects the service to be started separately and waits for a debugger endpoint."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "VS Code debug configuration",
+                "en": "VS Code debug configuration"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 4,
+                "end": 14,
+                "role": "walk",
+                "anchor": "\"request\": \"attach\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "Run the startup task",
+            "en": "Run the startup task"
+          },
+          "summary": {
+            "sv": "The task asks Docker Compose to build and start the service.",
+            "en": "The task asks Docker Compose to build and start the service."
+          },
+          "body": {
+            "sv": "The `preLaunchTask` name leads here: the shell task runs `docker compose up -d --build service`. Compose is asked to build the service image and start that service in detached mode. The task does not itself wait for a debugger connection.",
+            "en": "The `preLaunchTask` name leads here: the shell task runs `docker compose up -d --build service`. Compose is asked to build the service image and start that service in detached mode. The task does not itself wait for a debugger connection."
+          },
+          "why": {
+            "sv": "The attach configuration depends on this task to start the process that provides the debug endpoint.",
+            "en": "The attach configuration depends on this task to start the process that provides the debug endpoint."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "VS Code startup task",
+                "en": "VS Code startup task"
+              },
+              "focus": {
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 3,
+                "end": 8,
+                "role": "walk",
+                "anchor": "\"command\": \"docker compose up -d --build service\""
+              },
+              "from": {
+                "label": {
+                  "sv": "pre-launch task reference",
+                  "en": "pre-launch task reference"
+                },
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 8,
+                "end": 8
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "Configure the Compose service",
+            "en": "Configure the Compose service"
+          },
+          "summary": {
+            "sv": "Compose defines the image build, container command, and published ports.",
+            "en": "Compose defines the image build, container command, and published ports."
+          },
+          "body": {
+            "sv": "The task's `service` argument selects this Compose service. Compose builds from the repository root, starts Python with debugpy listening on port 5678 and running `service.main`, and publishes ports 5678 and 8080 to the host. There is no health check or explicit debugger-readiness wait here, so the attach connection depends on debugpy being ready when VS Code connects.",
+            "en": "The task's `service` argument selects this Compose service. Compose builds from the repository root, starts Python with debugpy listening on port 5678 and running `service.main`, and publishes ports 5678 and 8080 to the host. There is no health check or explicit debugger-readiness wait here, so the attach connection depends on debugpy being ready when VS Code connects."
+          },
+          "why": {
+            "sv": "This configuration connects the container's debugger and HTTP service to host ports.",
+            "en": "This configuration connects the container's debugger and HTTP service to host ports."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Compose service configuration",
+                "en": "Compose service configuration"
+              },
+              "focus": {
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 1,
+                "end": 7,
+                "role": "walk",
+                "anchor": "command: python -m debugpy --listen 0.0.0.0:5678 -m service.main"
+              },
+              "from": {
+                "label": {
+                  "sv": "Compose command",
+                  "en": "Compose command"
+                },
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 7,
+                "end": 7
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "Build the container image",
+            "en": "Build the container image"
+          },
+          "summary": {
+            "sv": "The Dockerfile supplies Python, debugpy, and the service source.",
+            "en": "The Dockerfile supplies Python, debugpy, and the service source."
+          },
+          "body": {
+            "sv": "Because Compose builds from the repository root, this Dockerfile provides the image: it uses Python 3.12, sets `/app` as the working directory, installs debugpy, and copies `service` into `/app/service`. The service command configured in Compose can then import `service.main` from that working directory.",
+            "en": "Because Compose builds from the repository root, this Dockerfile provides the image: it uses Python 3.12, sets `/app` as the working directory, installs debugpy, and copies `service` into `/app/service`. The service command configured in Compose can then import `service.main` from that working directory."
+          },
+          "why": {
+            "sv": "The image includes the debugger and source code needed by the container command.",
+            "en": "The image includes the debugger and source code needed by the container command."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Image build instructions",
+                "en": "Image build instructions"
+              },
+              "focus": {
+                "path": "Dockerfile",
+                "side": "target",
+                "start": 1,
+                "end": 4,
+                "role": "walk",
+                "anchor": "COPY service /app/service"
+              },
+              "from": {
+                "label": {
+                  "sv": "Compose build context",
+                  "en": "Compose build context"
+                },
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 2,
+                "end": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "Enter the service module",
+            "en": "Enter the service module"
+          },
+          "summary": {
+            "sv": "The Compose command runs `service.main` under debugpy.",
+            "en": "The Compose command runs `service.main` under debugpy."
+          },
+          "body": {
+            "sv": "After the image is built and the container starts, its configured command launches Python's module runner through debugpy. The `-m service.main` argument reaches `main()`; when the module is run as the program, its guard calls that function, which starts the HTTP server in the next step.",
+            "en": "After the image is built and the container starts, its configured command launches Python's module runner through debugpy. The `-m service.main` argument reaches `main()`; when the module is run as the program, its guard calls that function, which starts the HTTP server in the next step."
+          },
+          "why": {
+            "sv": "This is the transition from container startup to the application's normal entry point.",
+            "en": "This is the transition from container startup to the application's normal entry point."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Service entry point",
+                "en": "Service entry point"
+              },
+              "focus": {
+                "path": "service/main.py",
+                "side": "target",
+                "start": 1,
+                "end": 7,
+                "role": "walk",
+                "anchor": "serve(port=8080)"
+              },
+              "from": {
+                "label": {
+                  "sv": "Compose runtime command",
+                  "en": "Compose runtime command"
+                },
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 4,
+                "end": 4
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "Serve HTTP requests",
+            "en": "Serve HTTP requests"
+          },
+          "summary": {
+            "sv": "`main()` starts a threaded HTTP server on port 8080.",
+            "en": "`main()` starts a threaded HTTP server on port 8080."
+          },
+          "body": {
+            "sv": "Called by `main()`, `serve()` binds `ThreadingHTTPServer` to `0.0.0.0` on the supplied port and serves requests until the server loop ends. Here, `main()` supplies port 8080, matching the port Compose publishes to the host.",
+            "en": "Called by `main()`, `serve()` binds `ThreadingHTTPServer` to `0.0.0.0` on the supplied port and serves requests until the server loop ends. Here, `main()` supplies port 8080, matching the port Compose publishes to the host."
+          },
+          "why": {
+            "sv": "The debugger connection is on port 5678; the service's HTTP traffic uses the separate 8080 mapping.",
+            "en": "The debugger connection is on port 5678; the service's HTTP traffic uses the separate 8080 mapping."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "HTTP server implementation",
+                "en": "HTTP server implementation"
+              },
+              "focus": {
+                "path": "service/server.py",
+                "side": "target",
+                "start": 3,
+                "end": 6,
+                "role": "walk",
+                "anchor": "def serve(port: int) -> None:"
+              },
+              "from": {
+                "label": {
+                  "sv": "Call from main",
+                  "en": "Call from main"
+                },
+                "path": "service/main.py",
+                "side": "target",
+                "start": 3,
+                "end": 4
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

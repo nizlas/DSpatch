@@ -1,0 +1,1 @@
+Selecting **Attach to the service in the container** runs the `Start the service container` task before VS Code attaches debugpy to `localhost:5678`. The path mapping connects local files under `service` to `/app/service` in the container, so the debugger can match the service’s container paths to your workspace. In the next step, the named task starts the container.

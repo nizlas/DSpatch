@@ -57,8 +57,12 @@ export const LEGACY_PROFILE: PresentationProfile = 'original';
  * operations that achieve it; a profile explanation of a step gets an answer format without the
  * review question's content rules; the writer reads the planner's brief as orientation written
  * for every profile. Standard's and Teacher's readers unchanged.
+ * 10 (DSP-195, 10 November 2026): the shared task names what an explanation may cover and leaves the
+ * choice and level to the profile; a profiled walk prompt and the loop writer no longer get the
+ * writing rules' reader and content rules (only their form rules), and the one-call schema describes
+ * its fields without a content list; the loop reviewer's place check asks for the reader's level.
  */
-export const PRESENTATION_INSTRUCTION_VERSION = 9;
+export const PRESENTATION_INSTRUCTION_VERSION = 10;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -122,7 +126,7 @@ export const SAME_FACTS_RULES = [
  * a form or a list of things to mention.
  */
 export const EXPLANATION_TASK = [
-  'Explain this code to a person reviewing the change, who reads your text beside the code itself. Say what the code does here and why it matters for the change, how it connects to what the reader has seen and will see, and what the reader must understand to judge it: a condition that decides the outcome, a risk, work that is only requested or reused rather than done.',
+  'Explain this code to a person reviewing the change, who reads your text beside the code itself: what this reader needs in order to understand the step and judge the change. Which of what the code does here, why it matters for the change, how it connects to what the reader has seen and will see, and what decides the outcome (a condition, a risk, work only requested or reused) this reader needs, and at what level, the reader\'s profile decides.',
   'Read the code you rest on before you write: callers, types, the other code that reads or writes the same state, and what waits for or carries out what this code asks. Do not infer the architecture from names, and do not present what you have not read. The code decides, also where the prepared explanation or an earlier answer says more than the code supports; then say plainly what the code does.',
   'Add understanding beyond what the lines and their comments already say: do not retell statements in prose, and keep what the code shows apart from an interpretation of why it is written so. Be exact about guarantees: a lock protects only the accesses under it, a notification is not a completed hand-over, a private method is not proof that nothing else calls it. When a part cannot be read, explain the general concept and say what cannot be established about this implementation.',
   'Let the scope follow the code and the reader: a simple step is said in a few words in every profile, and a step where several mechanisms interact takes the room understanding needs. There is no length to hit and no required form; use a paragraph, a list or a small code excerpt where it helps, and let every sentence add understanding. Point at the code you rest on with references, so the person can open it.',

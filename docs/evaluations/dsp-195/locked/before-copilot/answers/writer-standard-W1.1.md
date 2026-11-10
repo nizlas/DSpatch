@@ -1,0 +1,1 @@
+This configuration uses a `debugpy` **attach** request, so VS Code connects to a Python process started outside the debugger rather than launching `service/main.py` itself. Before attaching, VS Code runs the task named by `preLaunchTask`, `Start the service container`; the next step follows that label to the task.

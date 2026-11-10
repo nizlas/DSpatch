@@ -1,0 +1,1 @@
+This configuration asks the `debugpy` adapter to attach to a running process rather than launch the Python program itself. VS Code first runs the pre-launch task, **“Start the service container”**; the next step shows what that task starts.

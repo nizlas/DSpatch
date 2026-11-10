@@ -1,0 +1,4 @@
+After the successful `connect` path calls `settle`, it takes the registered callback out of `onSettled` and clears the field. If there is a callback, `setTimeout` schedules it with the outcome; if not, `settle` does nothing further. This makes the registered callback one-shot, and it does not run inside `connect`.
+
+<!-- dspatch:details -->
+The timer callback closes over the saved callback and outcome, so clearing `onSettled` does not prevent the scheduled call. `connect` returns its outcome after `settle`; then `startSession` resumes from `await` as a promise continuation. JavaScript runs that continuation before moving on to the timer task, so `startSession` handles the returned outcome first. The next step follows what each of those two paths reports.

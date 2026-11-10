@@ -1,0 +1,1 @@
+This configuration asks the `debugpy` debugger to attach rather than launch a Python program. It also names **Start the service container** as the pre-launch task, handing startup to VS Code before the attach request; the next step follows that task to its Compose command (`.vscode/tasks.json`, target lines 5–7).

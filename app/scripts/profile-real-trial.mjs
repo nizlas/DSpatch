@@ -14,6 +14,11 @@
  * same pair prepared by the loop in Essentials, and another in Teacher. The texts, the records and
  * the explanations are copied as evidence; a second script lays them side by side.
  *
+ * DSP-195: `--case attach` uses the debug-attach case of tests/support/synthetic-attach.ts instead,
+ * `--method single` prepares the walks in one call (the product's default) instead of by the loop,
+ * and on each chosen step the Step panel is photographed and read as the person sees it: the
+ * prepared text before Show more, then with Show more open, and each profile alternative.
+ *
  *     node --import ./scripts/ts-resolve.mjs scripts/profile-real-trial.mjs [--provider claude] [--model opus]
  *         [--profiles standard,essens,pedagog] [--timeout-min 100] [--reference "<authorization reference>"]
  *         [--out <evidence folder>]
@@ -32,6 +37,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { CONNECT_CASE, makeSyntheticRepo } from '../tests/support/synthetic-walks';
+import { ATTACH_CASE } from '../tests/support/synthetic-attach';
 import { ProjectStore } from '../src/main/project-store';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -54,6 +60,11 @@ const evidence = path.resolve(arg('--out', path.join(appDir, 'release', 'trial-p
 const resumeProfile = arg('--resume', '');
 // `--switch-only`: the first loop and the profile switches on its walk, without the other loops.
 const switchOnly = process.argv.includes('--switch-only');
+// DSP-195: the case and the preparation method.
+const CASE = { connect: CONNECT_CASE, attach: ATTACH_CASE }[arg('--case', 'connect')];
+if (CASE === undefined) throw new Error('--case is connect or attach');
+const method = arg('--method', 'loop');
+if (method !== 'loop' && method !== 'single') throw new Error('--method is loop or single');
 
 const results = [];
 const pages = [];
@@ -240,6 +251,19 @@ class Main {
       return Promise.race([wc.executeJavaScript(${JSON.stringify(expression)}), new Promise((resolve) => setTimeout(() => resolve('no answer in 5 s'), 5000))]);
     })()`);
   }
+  /** A PNG of a web contents as it is drawn now (DSP-195). */
+  async shot(contentsId, file) {
+    // A picture is evidence, not a check: Chromium cannot draw one while the display is off
+    // ("UnknownVizError"), and the panel's text is still read.
+    let png = null;
+    try {
+      png = await this.ev(`(async () => { const { webContents } = process.mainModule.require('electron'); const wc = webContents.fromId(${String(contentsId)}); if (!wc || wc.isDestroyed()) return null; const image = await wc.capturePage(); return image.toPNG().toString('base64'); })()`);
+    } catch (error) {
+      note(`no picture of ${path.basename(file)}`, error instanceof Error ? error.message.slice(0, 160) : String(error));
+    }
+    if (typeof png === 'string') fs.writeFileSync(file, Buffer.from(png, 'base64'));
+    return typeof png === 'string';
+  }
   async size(windowId, width, height) {
     return this.ev(`(() => { const { BrowserWindow } = process.mainModule.require('electron'); const w = BrowserWindow.fromId(${String(windowId)}); w.setSize(${String(width)}, ${String(height)}); return JSON.stringify(w.getContentBounds()); })()`);
   }
@@ -361,6 +385,13 @@ const covers = (step, file, line) => step.places.some((place) => place.side !== 
 
 /** The simple step (the registration in startSession) and the complex one (settle), by their places. */
 function chooseSteps(steps) {
+  if (CASE === ATTACH_CASE) {
+    // DSP-195: the attach configuration (the observed step) and the step where VS Code connects to
+    // the listener the container starts, where several mechanisms meet.
+    const simple = steps.find((step) => covers(step, '.vscode/launch.json', 7)) ?? steps[0] ?? null;
+    const complex = steps.find((step) => covers(step, '.vscode/launch.json', 9) && step.id !== simple?.id) ?? steps.find((step) => covers(step, 'compose.yaml', 4) && step.id !== simple?.id) ?? steps.find((step) => step.id !== simple?.id) ?? null;
+    return { simple, complex };
+  }
   const simple = steps.find((step) => covers(step, 'src/session.ts', 4)) ?? steps[0] ?? null;
   const complex = steps.find((step) => covers(step, 'src/link.ts', 34) && step.id !== simple?.id) ?? steps.find((step) => covers(step, 'src/link.ts', 21) && step.id !== simple?.id) ?? steps.find((step) => step.id !== simple?.id) ?? null;
   return { simple, complex };
@@ -427,15 +458,15 @@ async function prepare(page, key, profileId) {
   note(`the model control is a ${listed === 'listed' ? 'select listing' : 'text input taking'} ${model}`);
   await page.ev(setControl('pair-walks-agent-model', model));
   await page.ev(setControl('pair-walks-agent-explanations', profileId));
-  await page.ev(setControl('pair-walks-agent-method', 'loop'));
+  await page.ev(setControl('pair-walks-agent-method', method));
   await delay(300);
   const chosen = JSON.parse(await page.ev(`JSON.stringify({provider:${q('pair-walks-agent-provider')}.value,model:${q('pair-walks-agent-model')}.value,explanations:${q('pair-walks-agent-explanations')}.value,method:${q('pair-walks-agent-method')}.value,note:${q('pair-walks-agent-note')}?.textContent??''})`));
-  check(`the picker holds ${provider}, ${model}, ${profileId}, loop`, chosen.provider === provider && chosen.model === model && chosen.explanations === profileId && chosen.method === 'loop', JSON.stringify(chosen));
+  check(`the picker holds ${provider}, ${model}, ${profileId}, ${method}`, chosen.provider === provider && chosen.model === model && chosen.explanations === profileId && chosen.method === method, JSON.stringify(chosen));
   const before = (await jobsOf(page, key)).length;
   await page.click('pair-walks-agent-start');
   await page.until('the job line', `${q('agent-job-walks')}!==null`, 60_000);
   const startedAt = Date.now();
-  note(`the loop started in ${profileId}`, await page.ev(`${q('agent-job-walks')}?.textContent ?? ''`));
+  note(`the ${method === 'loop' ? 'loop' : 'one-call preparation'} started in ${profileId}`, await page.ev(`${q('agent-job-walks')}?.textContent ?? ''`));
   let lastLine = '';
   // A finished job leaves the job line (the view shows the walk loop's one line instead), so
   // the job's own state, read from the review, is what settles the wait.
@@ -459,6 +490,46 @@ async function prepare(page, key, profileId) {
   return job;
 }
 
+/**
+ * What the Step panel shows of a step now, as the person sees it (DSP-195): a picture and the text
+ * before Show more; then Show more opened, a second picture and the text behind it, and closed
+ * again. For the prepared text it also records where "Why it matters" stands relative to the
+ * Show more control. Pictures and texts go to the evidence folder.
+ */
+const seen = [];
+async function seeStep(pc, step, label) {
+  const name = `step-${step.id}-${label}`;
+  const read1 = JSON.parse(await read(pc, `JSON.stringify((() => {
+    const box = document.querySelector('[data-ev="profile-explanation"]') ?? document.querySelector('[data-ev="step-prepared-explanation"]');
+    if (box === null) return null;
+    const clone = box.cloneNode(true);
+    clone.querySelectorAll('.rv-answer-details, .rv-answer-refs, .rv-answer-toggles').forEach((n) => n.remove());
+    const more = box.querySelector('[data-ev="answer-show-more"]');
+    const why = box.querySelector('[data-ev="step-why"]');
+    return {
+      kind: box.dataset.ev,
+      // Read laid out, so paragraphs keep their breaks: a detached clone's innerText has none.
+      before: (() => { const holder = document.createElement('div'); holder.style.cssText = 'position:absolute;left:-20000px;top:0;width:' + String(box.clientWidth) + 'px'; holder.appendChild(clone); document.body.appendChild(holder); const text = clone.innerText.trim(); holder.remove(); return text; })(),
+      hasMore: more !== null,
+      why: why === null ? null : why.innerText.trim(),
+      whyBeforeMore: why !== null && more !== null ? Boolean(why.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING) : null,
+    };
+  })())`) ?? 'null');
+  const shown = { step: step.id, title: step.title, label, ...(read1 ?? { kind: null }) };
+  await client.main.shot(pc, path.join(evidence, `${name}.png`));
+  if (read1?.hasMore === true) {
+    await read(pc, "(() => { const box = document.querySelector('[data-ev=\"profile-explanation\"]') ?? document.querySelector('[data-ev=\"step-prepared-explanation\"]'); box.querySelector('[data-ev=\"answer-show-more\"]').click(); return true; })()");
+    await delay(600);
+    shown.behind = await read(pc, "(() => { const box = document.querySelector('[data-ev=\"profile-explanation\"]') ?? document.querySelector('[data-ev=\"step-prepared-explanation\"]'); return box.querySelector('[data-ev=\"answer-details\"]')?.innerText.trim() ?? ''; })()");
+    await client.main.shot(pc, path.join(evidence, `${name}-show-more.png`));
+    await read(pc, "(() => { const box = document.querySelector('[data-ev=\"profile-explanation\"]') ?? document.querySelector('[data-ev=\"step-prepared-explanation\"]'); box.querySelector('[data-ev=\"answer-show-more\"]').click(); return true; })()");
+  }
+  fs.writeFileSync(path.join(evidence, `${name}.md`), `# ${step.id} ${step.title} (${label})\n\n## Before Show more\n\n${shown.before ?? '(not found)'}\n\n## Behind Show more\n\n${shown.behind ?? '(no Show more)'}\n`);
+  if (label.endsWith('-prepared') && shown.why !== null && shown.hasMore) check(`${step.id}: "Why it matters" stands before the Show more control`, shown.whyBeforeMore === true, JSON.stringify({ whyBeforeMore: shown.whyBeforeMore }));
+  check(`${step.id} (${label}): the Step panel shows the explanation`, read1 !== null && (read1.before ?? '') !== '', JSON.stringify({ kind: read1?.kind, chars: read1?.before?.length }));
+  seen.push({ ...shown, before: shown.before?.length ?? 0, behind: shown.behind?.length ?? 0 });
+}
+
 /** Copy the profile's review stores to the evidence folder under a name. */
 function keepReviews(name) {
   const from = path.join(profile, 'reviews');
@@ -473,9 +544,9 @@ async function main() {
   if (resumeProfile === '') {
     profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-profile-real-'));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-profile-real-project-'));
-    made = makeSyntheticRepo(scratch, CONNECT_CASE);
+    made = makeSyntheticRepo(scratch, CASE);
     project = made.repo;
-    note('the disposable project holds the connect case', JSON.stringify({ base: made.base, target: made.target }));
+    note(`the disposable project holds the ${CASE.name} case`, JSON.stringify({ base: made.base, target: made.target }));
     // The fresh profile knows only this project, the chosen agent and its model: the same choices
     // Niclas's own profile records, written here as configuration, with nothing copied from it.
     fs.writeFileSync(path.join(profile, 'dspatch-agent-choice.json'), `${JSON.stringify({ formatVersion: 1, agent: provider, chosenAtUtc: stamp() }, null, 2)}\n`);
@@ -567,6 +638,7 @@ async function main() {
     await poll(`step ${step.id} in the panel`, async () => (await read(pc, `document.querySelector('.rv-step-panel h2 .rv-step-id')?.textContent`)) === step.id, 30_000);
     await read(pc, "document.querySelector('[data-ev=\"right-tab-step\"]')?.click(); true");
     await delay(1000);
+    await seeStep(pc, step, `${first}-prepared`);
     for (const alternative of profiles.filter((entry) => entry !== first)) {
       const chosenProfile = await read(pc, `(()=>{const s=document.querySelector('[data-ev="presentation-profile"]');s.value=${JSON.stringify(alternative)};s.dispatchEvent(new Event('change',{bubbles:true}));return s.value})()`);
       check(`${alternative} is chosen for reading ${step.id}`, chosenProfile === alternative, String(chosenProfile));
@@ -575,6 +647,8 @@ async function main() {
       const entry = explanationEntries().find((e) => e.stepId === step.id && e.profile === alternative) ?? null;
       check(`the ${alternative} explanation of ${step.id} arrived (${Math.round((Date.now() - startedAt) / 1000)} s)`, ended === 'done', JSON.stringify(entry === null ? null : { status: entry.status, action: entry.action, error: entry.error ?? entry.failure ?? null }));
       switched.push({ stepId: step.id, profile: alternative, seconds: Math.round((Date.now() - startedAt) / 1000) });
+      await delay(1500);
+      await seeStep(pc, step, `${alternative}-alternative`);
       await read(pc, `(()=>{const s=document.querySelector('[data-ev="presentation-profile"]');s.value='standard';s.dispatchEvent(new Event('change',{bubbles:true}));return s.value})()`);
       await delay(1500);
     }
@@ -599,7 +673,9 @@ async function main() {
     provider,
     model,
     reference,
-    project: { case: CONNECT_CASE.name, base: made.base, target: made.target },
+    project: { case: CASE.name, base: made.base, target: made.target },
+    method,
+    seen,
     profile,
     chosenSteps: { simple, complex },
     runs: runs.map((run) => ({ profile: run.profile, key: run.key, jobId: run.job.id, state: run.job.state, startedAt: run.job.startedAt, endedAt: run.job.endedAt, definition: definitionOfJob(run.job.id) })),

@@ -1,0 +1,4 @@
+`settle` takes the registered callback out of `onSettled` before scheduling it, so that registration is consumed even if there is no callback to call. If one was registered, `setTimeout` queues it for later rather than running it inside `connect`; here, `connect` returns `'connected'` first. The next step follows that return to `startSession` and the later callback.
+
+<!-- dspatch:details -->
+Because `connect` is async, returning `'connected'` fulfills its promise, and `startSession` resumes after its `await` in a microtask. That continuation runs before the queued timer callback, so the callback can report only after `startSession` has handled the returned outcome. This is the order implied by the code, not an observed run.

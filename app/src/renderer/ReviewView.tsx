@@ -3516,6 +3516,19 @@ function ExplanationBar({ view, stepId, words }: { readonly view: StepExplanatio
   );
 }
 
+/** A prepared step's "Why it matters", when it says something; part of the step's base text (DSP-195). */
+function WhyItMatters({ why, title, origin }: { readonly why: string; readonly title: string; readonly origin: string }): JSX.Element | null {
+  if (why === '') return null;
+  return (
+    <>
+      <div className="rv-section-title">{title}</div>
+      <div className="rv-explanation rv-reading rv-prepared" data-ev="step-why" data-quote-source="explanation" data-quote-origin={origin}>
+        <Markdown text={why} />
+      </div>
+    </>
+  );
+}
+
 /** The deepening actions of the step's explanation, in the profile chosen; their results are in the history. */
 function ExplanationActions({ view, selectedText, words }: { readonly view: StepExplanationView; readonly selectedText: string; readonly words: ReviewWords }): JSX.Element {
   const waiting = view.history.pending !== null;
@@ -3804,20 +3817,22 @@ function StepPanel({
               <Inline text={pick(step.summary, lang)} />
             </p>
           )}
-          <div className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation" data-quote-origin={origin}>
-            {/* DSP-181: a walk prepared in a profile may carry a deepening, read behind Show more as an answer's is. */}
-            {step.details !== undefined && pick(step.details, lang) !== '' ? (
-              <ShortThenMore short={pick(step.body, lang)} details={pick(step.details, lang)} />
-            ) : (
-              <Markdown text={pick(step.body, lang)} />
-            )}
-          </div>
-          {pick(step.why, lang) !== '' && (
+          {/* DSP-181: a walk prepared in a profile may carry a deepening, read behind Show more as an answer's is.
+              DSP-195: "Why it matters" is base text, so it is read before the Show more control, not after it. */}
+          {step.details !== undefined && pick(step.details, lang) !== '' ? (
+            <div className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation" data-quote-origin={origin}>
+              <ShortThenMore
+                short={pick(step.body, lang)}
+                base={<WhyItMatters why={pick(step.why, lang)} title={words.whyItMatters} origin={origin} />}
+                details={pick(step.details, lang)}
+              />
+            </div>
+          ) : (
             <>
-              <div className="rv-section-title">{words.whyItMatters}</div>
               <div className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation" data-quote-origin={origin}>
-                <Markdown text={pick(step.why, lang)} />
+                <Markdown text={pick(step.body, lang)} />
               </div>
+              <WhyItMatters why={pick(step.why, lang)} title={words.whyItMatters} origin={origin} />
             </>
           )}
         </div>

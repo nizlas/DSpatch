@@ -1,0 +1,6 @@
+With `"request": "attach"`, VS Code no longer starts the service itself. **This configuration starts no Python process.** Instead, the debugpy extension connects to a debugger that is already running somewhere else. In the earlier revision, this configuration was a `"launch"` request that ran `main.py` directly on the host. That `program` setting is gone now. The service has to be started some other way, and the debugger has to be listening when the attach happens.
+
+That other way is the setting right after these lines: `preLaunchTask: "Start the service container"`. VS Code runs the task with that label before it attaches. The next step (W1.2) follows that label into the task definition. The rest of the attach settings (where VS Code connects and how file paths are mapped) are covered in W1.6.
+
+<!-- dspatch:details -->
+`preLaunchTask` makes VS Code run the task before the debug session starts. How long it waits depends on the task. For a plain shell task with no problem matcher, VS Code moves on when the command exits, not when the service is ready. W1.2 and W1.6 show whether anything makes the attach wait for the container's debug listener.

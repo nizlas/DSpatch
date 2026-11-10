@@ -34,6 +34,7 @@ const path = await import('node:path');
 const { providerAdapters } = await import('../src/main/provider-adapters');
 const { copilotRuntimeInstalled } = await import('../src/adapter/copilot-sdk-adapter');
 const { CONNECT_CASE, makeSyntheticRepo } = await import('../tests/support/synthetic-walks');
+const { ATTACH_CASE } = await import('../tests/support/synthetic-attach');
 const { createFileRoleResolver } = await import('../src/main/loop-graph-roles');
 const { stepExplanationPrompt } = await import('../src/main/step-explanation-channel');
 const { loadLoopGraph } = await import('../src/shared/loop-graph-load');
@@ -47,6 +48,10 @@ const arg = (name, fallback) => {
   return index >= 0 && index + 1 < process.argv.length ? process.argv[index + 1] : fallback;
 };
 const phase = arg('--phase', 'final');
+// DSP-195: another case, plan and steps (defaults: DSP-194's connect case, plan and steps).
+const CASE = { connect: CONNECT_CASE, attach: ATTACH_CASE }[arg('--case', 'connect')];
+const planRecordArg = arg('--plan-record', '');
+const stepsArg = arg('--steps', 'W1.1,W1.5');
 const provider = arg('--provider', 'copilot');
 const model = arg('--model', '');
 const concurrency = Number(arg('--concurrency', '3'));
@@ -58,9 +63,9 @@ fs.mkdirSync(path.join(out, 'answers'), { recursive: true });
 
 // --- The code and the revision folder ----------------------------------------------------------
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp194-'));
-const made = makeSyntheticRepo(scratch, CONNECT_CASE);
+const made = makeSyntheticRepo(scratch, CASE);
 const revisions = path.join(scratch, 'revisions');
-for (const [side, files] of [['base', CONNECT_CASE.base], ['target', CONNECT_CASE.target]]) {
+for (const [side, files] of [['base', CASE.base], ['target', CASE.target]]) {
   for (const [name, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(revisions, side, name)), { recursive: true });
     fs.writeFileSync(path.join(revisions, side, name), text);
@@ -76,7 +81,7 @@ if ('error' in material) throw new Error(material.error);
 const folder = { base: made.base, target: made.target, files: 4, skipped: [], skippedCount: 0 };
 
 // --- The locked plan ----------------------------------------------------------------------------
-const record = path.join(repoRoot, 'docs/evaluations/dsp-192/real/records/generated/r-ce710726fc90476faf1c3b02/job-a40a96cc-c07a-4c84-ac4d-71d171580436.walk-loop/record.jsonl');
+const record = planRecordArg !== '' ? path.resolve(planRecordArg) : path.join(repoRoot, 'docs/evaluations/dsp-192/real/records/generated/r-ce710726fc90476faf1c3b02/job-a40a96cc-c07a-4c84-ac4d-71d171580436.walk-loop/record.jsonl');
 const planReply = fs.readFileSync(record, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.line === 'agent-reply' && line.reply.nodeId === 'plan').reply.text;
 const planJson = JSON.parse(/```json\s*([\s\S]*?)```/.exec(planReply)?.[1] ?? planReply);
 const read = readPlanAnswer(planJson);
@@ -86,9 +91,10 @@ fs.writeFileSync(path.join(out, 'plan.json'), `${JSON.stringify(planJson, null, 
 const resolveRole = createFileRoleResolver(repoRoot);
 const loaded = loadLoopGraph(fs.readFileSync(path.join(repoRoot, WALK_LOOP_GRAPH_REL), 'utf8'), { resolveRole, connectedTargets: null });
 const role = resolveRole(loaded.graph.nodes.find((node) => node.id === 'write').role);
-const STEPS = ['W1.1', 'W1.5'];
+const STEPS = stepsArg.split(',');
+const walkOf = (stepId) => planJson.walks[Number(stepId.split('.')[0].slice(1)) - 1];
 const walkRaw = planJson.walks[0];
-const stepRaw = (stepId) => walkRaw.steps[Number(stepId.split('.')[1]) - 1];
+const stepRaw = (stepId) => walkOf(stepId).steps[Number(stepId.split('.')[1]) - 1];
 
 // --- The provider -------------------------------------------------------------------------------
 const factory = providerAdapters({
@@ -115,13 +121,16 @@ async function ask(name, prompt, note) {
       if (event.type === 'assistant.delta') text += event.text ?? '';
       if (event.type === 'assistant.message' && typeof event.text === 'string') text = event.text;
       if (event.model !== undefined && event.model !== null) reported = event.model;
+      if (typeof event.rawProviderEvent?.data?.model === 'string' && event.rawProviderEvent.data.model !== '') reported = event.rawProviderEvent.data.model;
       if (event.type === 'run.finished') resolve(event);
     });
   });
   await adapter.send(session.dspatchSessionId, prompt);
   const end = await Promise.race([finished, new Promise((resolve) => setTimeout(() => resolve({ status: 'timeout' }), 15 * 60_000))]);
   fs.writeFileSync(path.join(out, 'answers', `${name}.md`), text);
-  const entry = { name, note, status: end.status, error: end.error?.message ?? null, seconds: Math.round((Date.now() - startedAt) / 1000), chars: text.length, modelReported: reported };
+  // The Claude adapter keeps the model its SDK's init message reported (DSP-195).
+  if (reported === null && typeof adapter.modelReported === 'function') reported = adapter.modelReported(session.dspatchSessionId);
+  const entry = { name, note, status: end.status, error: end.error?.message ?? null, seconds: Math.round((Date.now() - startedAt) / 1000), chars: text.length, modelReported: reported ?? (typeof adapter.defaultSelected === 'string' ? `${adapter.defaultSelected} (the runtime's selected default)` : null) };
   runs.push(entry);
   console.log(JSON.stringify(entry));
   return text;
@@ -142,7 +151,7 @@ async function pool(tasks) {
 
 const writerPrompt = (profile, stepId) => writeStepPrompt({ role, plan, stepId, profile, language: 'en', material, folder, fresh: true, rework: null });
 const shortOf = (text) => text.split(DETAILS_MARKER)[0].trim();
-const targetLines = (p, start, end) => CONNECT_CASE.target[p].split('\n').slice(start - 1, end);
+const targetLines = (p, start, end) => CASE.target[p].split('\n').slice(start - 1, end);
 
 /** The step explanation channel's prompt for an alternative, with the envelope as the host fills it. */
 function presentPrompt(profile, stepId, standardShort) {
@@ -157,7 +166,7 @@ function presentPrompt(profile, stepId, standardShort) {
     selection: null,
     explanation: { walkNumber: 1, walkTitle: walkRaw.title, stepTitle: raw.title, summary: raw.summary ?? '', body: standardShort, why: '', placeLabel: focus.label, evidence: [] },
     overview: null,
-    ranges: places.map((place, index) => ({ role: index === 0 ? 'focus' : 'context', path: place.path, side: place.side, sha: place.side === 'base' ? made.base : made.target, start: place.start, end: place.end, lines: place.side === 'base' ? CONNECT_CASE.base[place.path].split('\n').slice(place.start - 1, place.end) : targetLines(place.path, place.start, place.end), omittedLines: 0, problem: null })),
+    ranges: places.map((place, index) => ({ role: index === 0 ? 'focus' : 'context', path: place.path, side: place.side, sha: place.side === 'base' ? made.base : made.target, start: place.start, end: place.end, lines: place.side === 'base' ? CASE.base[place.path].split('\n').slice(place.start - 1, place.end) : targetLines(place.path, place.start, place.end), omittedLines: 0, problem: null })),
     notes: [],
     providerContext: '',
     builtAt: new Date().toISOString(),
@@ -192,6 +201,42 @@ if (phase === 'ablation') {
     ...STEPS.map((stepId, index) => () => ask(`present-essens-${stepId}-noformat`, withoutAnswerContentRules(presentPrompt('essens', stepId, shortOf(standard[index]))), `Essentials after Standard, ${stepId}, with the answer format's content rules taken out`)),
     ...STEPS.map((stepId, index) => () => ask(`present-essens-${stepId}-notext`, withoutWalkText(presentPrompt('essens', stepId, shortOf(standard[index]))), `Essentials after Standard, ${stepId}, with the walk's own text taken out`)),
   ]);
+} else if (phase === 'ablation-195') {
+  // DSP-195, at instruction version 10 (an experiment on the built text, not product prompts). The
+  // earlier rounds of this phase (version 9: the writing rules' content line, the shared task and
+  // the role purpose, the reference's calibration) became version 10 or were left out; their
+  // prompts and answers are kept with the evidence. This round asks whether the profile-blind
+  // shared rules together act as a content list for Essentials: "noshared" takes out the shared
+  // rules on adding understanding and on scope, "noreading" the walk rules on orientation and
+  // transitions, "core" both; reading the code stays in every variant. Two samples each, for the
+  // loop writer and for the profile switch after this phase's own fixed Standard.
+  const { EXPLANATION_TASK, WALK_READING_RULES } = await import('../src/shared/presentation-profiles');
+  const without = (rules) => (prompt) => {
+    let changed = prompt;
+    for (const rule of rules) {
+      const line = `- ${rule}\n`;
+      if (!changed.includes(line)) throw new Error(`not in the prompt: ${rule.slice(0, 60)}`);
+      changed = changed.split(line).join('');
+    }
+    return changed;
+  };
+  const VARIANTS = {
+    asbuilt: (prompt) => prompt,
+    noshared: without([EXPLANATION_TASK[2], EXPLANATION_TASK[3]]),
+    noreading: without([WALK_READING_RULES[1], WALK_READING_RULES[2]]),
+    core: without([EXPLANATION_TASK[2], EXPLANATION_TASK[3], WALK_READING_RULES[1], WALK_READING_RULES[2]]),
+  };
+  const fixedStandard = (stepId) => shortOf(fs.readFileSync(path.join(path.dirname(out), arg('--standard-from', 'dsp195-after-attach-claude'), 'answers', `writer-standard-${stepId}.md`), 'utf8'));
+  await pool(
+    Object.entries(VARIANTS).flatMap(([variant, change]) =>
+      STEPS.flatMap((stepId) =>
+        [1, 2].flatMap((n) => [
+          () => ask(`writer-essens-${stepId}-${variant}-${String(n)}`, change(writerPrompt('essens', stepId)), `the loop writer, Essentials, ${stepId}, ${variant}, sample ${String(n)}`),
+          () => ask(`present-essens-${stepId}-${variant}-${String(n)}`, change(presentPrompt('essens', stepId, fixedStandard(stepId))), `Essentials after a fixed Standard, ${stepId}, ${variant}, sample ${String(n)}`),
+        ]),
+      ),
+    ),
+  );
 } else if (phase === 'v8-teacher') {
   // Teacher at version 8, for the before-picture: the version 9 prompts with the DSP-194 changes
   // turned back, exactly (the brief's label and the writer role's sentence; the profile section's
@@ -216,7 +261,7 @@ if (phase === 'ablation') {
   ]);
 } else {
   const written = await pool(['standard', 'essens', 'pedagog'].flatMap((profile) => STEPS.map((stepId) => () => ask(`writer-${profile}-${stepId}`, writerPrompt(profile, stepId), `the loop writer, ${PROFILES[profile].promptName}, ${stepId}`))));
-  const standard = { 'W1.1': written[0], 'W1.5': written[1] };
+  const standard = Object.fromEntries(STEPS.map((stepId, index) => [stepId, written[index]]));
   await pool(['essens', 'pedagog'].flatMap((profile) => STEPS.map((stepId) => () => ask(`present-${profile}-${stepId}`, presentPrompt(profile, stepId, shortOf(standard[stepId])), `${PROFILES[profile].promptName} as an alternative after this run's Standard, ${stepId}`))));
 }
 manifest.endedAt = new Date().toISOString();

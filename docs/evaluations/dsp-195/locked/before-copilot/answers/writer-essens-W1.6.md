@@ -1,0 +1,4 @@
+VS Code’s attach request connects to `localhost:5678`, the host port Compose publishes for the container’s debugpy listener (as shown earlier in `compose.yaml`, target lines 4–6). Its path mapping pairs `/app/service` in the container with the workspace’s `service` directory, so the debugger can associate container source paths with local files.
+
+<!-- dspatch:details -->
+The pre-launch task runs Compose in detached mode and defines no readiness check (`.vscode/tasks.json`, target lines 5–7). It therefore does not explicitly wait for the debugpy listener to be ready before VS Code attempts the attach.

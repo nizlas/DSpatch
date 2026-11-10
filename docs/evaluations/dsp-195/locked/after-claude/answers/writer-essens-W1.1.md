@@ -1,0 +1,6 @@
+This is where debugging begins. **The configuration no longer runs the program itself.** Its `request` is now `attach`: VS Code expects a debugpy process to be running already and connects to it. In the earlier revision, the `request` was `launch` and VS Code started `service/main.py` locally in the integrated terminal.
+
+Since VS Code no longer starts the service, something else has to. Just below the `request` line, `preLaunchTask` names a task, `"Start the service container"`, which VS Code runs before it tries to attach. The next step follows that label to the task that starts the container.
+
+<!-- dspatch:details -->
+With `launch`, the debugger owns the process: it starts it, and the process ends when the session ends. With `attach`, the debugger only connects to a process that is already running, so starting it and stopping it are now handled outside this configuration. The `connect` and `pathMappings` settings in this same configuration tell VS Code where to find that process and how to match its files to the workspace. A later step covers them.

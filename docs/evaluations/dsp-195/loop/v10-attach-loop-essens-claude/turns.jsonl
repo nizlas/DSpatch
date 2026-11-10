@@ -1,0 +1,11 @@
+{"turn":"001","task":"plan-walks","status":"finished","chars":11499,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"002","task":"write-step","status":"finished","chars":1195,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"003","task":"write-step","status":"finished","chars":1200,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"004","task":"write-step","status":"finished","chars":1083,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"005","task":"write-step","status":"finished","chars":1176,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"006","task":"write-step","status":"finished","chars":885,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"007","task":"write-step","status":"finished","chars":1093,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"008","task":"write-step","status":"finished","chars":1183,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"009","task":"write-step","status":"finished","chars":1474,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"010","task":"write-step","status":"finished","chars":1168,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"011","task":"review-walks","status":"finished","chars":1924,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}

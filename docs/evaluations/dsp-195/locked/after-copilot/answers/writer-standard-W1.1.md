@@ -1,0 +1,1 @@
+This configuration tells VS Code’s `debugpy` extension to attach to a Python process rather than launch one. Before making that attach request, VS Code runs the `preLaunchTask` labelled `Start the service container`; the next step shows what that task does.

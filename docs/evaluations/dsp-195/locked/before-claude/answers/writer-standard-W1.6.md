@@ -1,0 +1,17 @@
+Here VS Code connects to a debugger that is already running; it does not start the program. Because `request` is `"attach"`, VS Code first runs the `preLaunchTask` (W1.2). Once that task finishes, VS Code acts as a **client** and connects to the address in `connect`. Nothing in the service calls the editor. The connection goes from VS Code to the debugpy listener started in W1.5.
+
+Two settings make the connection work:
+
+- **`connect`: `localhost`, port `5678`.** VS Code runs on the host, so `localhost` is the host machine, not the container. The address leads to debugpy only because Compose publishes `5678:5678` and debugpy listens on `0.0.0.0` inside the container (W1.5). If either of those changes, this address points at nothing.
+- **`pathMappings`.** debugpy reports file paths as the container sees them. The Dockerfile copied the source to `/app/service` (W1.4). The mapping turns `/app/service/...` into `${workspaceFolder}/service/...` and back again, so a breakpoint set in the editor matches the file the container runs, and stopping at a breakpoint opens the right local file. The `remoteRoot` must match the `COPY` destination in the Dockerfile. If the two differ, VS Code can't match its breakpoints to the files that run.
+
+**The start-up is not synchronised in this code.** The task runs `docker compose up -d --build service`. With `-d`, Compose returns once the container has been started, not when debugpy is listening. The task defines no readiness check, so nothing here makes the attach wait for the listener. Whether the first connection attempt arrives early depends on timing, and this repository does not show how the debugpy extension retries.
+
+The compose command also does not pass `--wait-for-client` to debugpy. As written, `service.main` starts running straight away, without waiting for the editor to attach. Code that runs before the attach, such as the start of `serve` (W1.7, W1.8), may be past any breakpoint by the time the editor connects.
+
+<!-- dspatch:details -->
+**Compared with the earlier revision.** The earlier configuration used `"request": "launch"` with `program` set to `service/main.py`. VS Code then started Python on the host itself, so there was no separate process to reach and no path translation to do. The new configuration moves the process into the container, and that is why `connect` and `pathMappings` are now needed.
+
+The earlier setup also ran `main.py` as a script. That file starts with `from service.server import serve` (`service/main.py` target line 1). Run as a script, Python puts the `service/` folder on the import path, not its parent, so that import would normally fail. The container avoids this by running `python -m ... -m service.main` from `WORKDIR /app` (W1.5). This is a reading of how Python resolves imports, not an observed run.
+
+**What the mapping does not cover.** The mapping only covers the project's own `service` package. The configuration also sets `justMyCode` to `false` (just below this step's lines), which lets the debugger step into library code such as `http.server`, used by the server in W1.8. Those library files live at container paths that have no mapping. Stepping into them probably won't find a matching local file.

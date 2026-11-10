@@ -1,0 +1,6 @@
+This launch configuration now **attaches the debugger to a process that is already running instead of starting the service itself**. In the earlier revision, the configuration "Run the service" used `request: "launch"` and pointed `program` at the service's `main.py`, so VS Code started Python locally. Now `request` is `"attach"` and there is no `program`. VS Code no longer runs the service; it only connects the `debugpy` debugger to something that must already be listening.
+
+Something else therefore has to start the service first. The line right below this step's code does that: `preLaunchTask` names the task `"Start the service container"`, and VS Code runs that task before it tries to attach. That label is what leads into the task definition in the next step (W1.2), where the task runs Docker Compose to start the service in a container.
+
+<!-- dspatch:details -->
+The rest of this configuration says where to attach: `connect` points at `localhost:5678`, and `pathMappings` links the container's source paths to the workspace. Step W1.6 covers both, after the walk has shown how the container exposes that port. The earlier `console: "integratedTerminal"` setting is gone because no local process starts, so there is no terminal for it to use.

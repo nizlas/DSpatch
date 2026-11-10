@@ -1,0 +1,300 @@
+{
+  "phase": "ablation-195",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 10,
+  "base": "6179710fae82fa8ef2274d30dd3208e6a241c62f",
+  "target": "feb3b7098fd1a131bff0407ba516cdb342409e70",
+  "startedAt": "2026-11-10T19:41:23.187Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.1-asbuilt-1",
+      "note": "the loop writer, Essentials, W1.1, asbuilt, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1234,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-asbuilt-2",
+      "note": "the loop writer, Essentials, W1.1, asbuilt, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1351,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-asbuilt-2",
+      "note": "Essentials after a fixed Standard, W1.1, asbuilt, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 2500,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-asbuilt-1",
+      "note": "Essentials after a fixed Standard, W1.1, asbuilt, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 2488,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-asbuilt-1",
+      "note": "the loop writer, Essentials, W1.6, asbuilt, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1648,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-asbuilt-2",
+      "note": "the loop writer, Essentials, W1.6, asbuilt, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1775,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-noshared-1",
+      "note": "the loop writer, Essentials, W1.1, noshared, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1203,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-asbuilt-1",
+      "note": "Essentials after a fixed Standard, W1.6, asbuilt, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 25,
+      "chars": 3733,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-asbuilt-2",
+      "note": "Essentials after a fixed Standard, W1.6, asbuilt, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 24,
+      "chars": 3772,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-noshared-1",
+      "note": "Essentials after a fixed Standard, W1.1, noshared, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 2393,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-noshared-2",
+      "note": "the loop writer, Essentials, W1.1, noshared, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1205,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-noshared-2",
+      "note": "Essentials after a fixed Standard, W1.1, noshared, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 2502,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-noshared-1",
+      "note": "the loop writer, Essentials, W1.6, noshared, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1770,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-noshared-2",
+      "note": "the loop writer, Essentials, W1.6, noshared, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 1835,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-noshared-1",
+      "note": "Essentials after a fixed Standard, W1.6, noshared, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 3075,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-noreading-1",
+      "note": "the loop writer, Essentials, W1.1, noreading, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1111,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-noshared-2",
+      "note": "Essentials after a fixed Standard, W1.6, noshared, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2962,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-noreading-2",
+      "note": "the loop writer, Essentials, W1.1, noreading, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1187,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-noreading-1",
+      "note": "Essentials after a fixed Standard, W1.1, noreading, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 2398,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-noreading-2",
+      "note": "Essentials after a fixed Standard, W1.1, noreading, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 2771,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-noreading-1",
+      "note": "the loop writer, Essentials, W1.6, noreading, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2143,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-noreading-1",
+      "note": "Essentials after a fixed Standard, W1.6, noreading, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2952,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-noreading-2",
+      "note": "the loop writer, Essentials, W1.6, noreading, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1819,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-core-1",
+      "note": "the loop writer, Essentials, W1.1, core, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1004,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-noreading-2",
+      "note": "Essentials after a fixed Standard, W1.6, noreading, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2900,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-core-2",
+      "note": "the loop writer, Essentials, W1.1, core, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 9,
+      "chars": 863,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-core-1",
+      "note": "Essentials after a fixed Standard, W1.1, core, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 2691,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-core-2",
+      "note": "Essentials after a fixed Standard, W1.1, core, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 2810,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-core-1",
+      "note": "the loop writer, Essentials, W1.6, core, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1555,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-core-2",
+      "note": "the loop writer, Essentials, W1.6, core, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 2001,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-core-1",
+      "note": "Essentials after a fixed Standard, W1.6, core, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 23,
+      "chars": 3775,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6-core-2",
+      "note": "Essentials after a fixed Standard, W1.6, core, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 22,
+      "chars": 3933,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T19:43:32.776Z"
+}

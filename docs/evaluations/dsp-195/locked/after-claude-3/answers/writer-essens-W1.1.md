@@ -1,0 +1,6 @@
+This is where debugging begins. The configuration, "Attach to the service in the container", still uses the `debugpy` debugger type, but `request` is now `"attach"` instead of `"launch"`. **VS Code no longer starts the Python program. It connects to a debugger that is already running somewhere else**, and in this setup that place is the container.
+
+Since nothing in this configuration starts the service, it names a `preLaunchTask` that VS Code runs first: `"Start the service container"`. That label is the link to the next step (W1.2), where the task of that name runs Docker Compose.
+
+<!-- dspatch:details -->
+In the earlier revision this same configuration was called "Run the service". It used `"launch"` with `program` pointing at the workspace's `service/main.py` and `console` set to `integratedTerminal`, so VS Code ran the service locally as a child process. All of that is gone now. The fields that tell VS Code where to connect (`connect` to `localhost:5678`) and how to match container paths to workspace files (`pathMappings`) are covered in W1.6, after the walk has shown what listens on that port.

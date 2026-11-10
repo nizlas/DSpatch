@@ -1,0 +1,102 @@
+{
+  "phase": "final",
+  "provider": "copilot",
+  "model": "(the provider default)",
+  "instructionVersion": 10,
+  "base": "20fb61a34c34fcf076bff0f2df18eee540d83cd6",
+  "target": "50d03bf07f1a3a508638b4517e9651f62d6504c5",
+  "startedAt": "2026-11-10T19:47:06.196Z",
+  "runs": [
+    {
+      "name": "writer-standard-W1.1",
+      "note": "the loop writer, Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 9,
+      "chars": 257,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-essens-W1.1",
+      "note": "the loop writer, Essentials, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 274,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-standard-W1.6",
+      "note": "the loop writer, Standard, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 784,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-pedagog-W1.1",
+      "note": "the loop writer, Teacher, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 299,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-pedagog-W1.6",
+      "note": "the loop writer, Teacher, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 886,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-essens-W1.6",
+      "note": "the loop writer, Essentials, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 773,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-essens-W1.1",
+      "note": "Essentials as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1024,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-pedagog-W1.1",
+      "note": "Teacher as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 1102,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-essens-W1.6",
+      "note": "Essentials as an alternative after this run's Standard, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 771,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-pedagog-W1.6",
+      "note": "Teacher as an alternative after this run's Standard, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 1333,
+      "modelReported": "gpt-6-luna"
+    }
+  ],
+  "endedAt": "2026-11-10T19:48:06.453Z"
+}

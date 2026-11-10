@@ -1,0 +1,84 @@
+{
+  "which": "attach",
+  "method": "single",
+  "profile": "standard",
+  "provider": "copilot",
+  "model": "default",
+  "job": {
+    "id": "job-580ba6aa-d81a-49d0-a1d4-066352447431",
+    "kind": "walks",
+    "state": "done",
+    "provider": "copilot",
+    "model": "default",
+    "startedAt": "2026-11-10T19:50:16.285Z",
+    "endedAt": "2026-11-10T19:51:26.771Z",
+    "note": "1 walk(s) and 0 reading(s), 8 step(s). 9 changed line(s) are in none of them. 1 place(s) were left out because they do not exist at their commit.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v10-attach-single-standard-copilot-1\\records\\generated\\r-db1fbe490c9efc4357baf2f8\\job-580ba6aa-d81a-49d0-a1d4-066352447431.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 5,
+        "end": 5
+      },
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 7,
+        "end": 9
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 3
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 9,
+        "end": 10
+      }
+    ],
+    "material": {
+      "base": "2a89c464bf25fe052d06bdec5781f8844a0b6ae1",
+      "target": "6ebec30291726daf1f8c3872af16e533292da626",
+      "files": 9,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target/.vscode/tasks.json",
+        "target/Dockerfile",
+        "target/.vscode/launch.json",
+        "target/compose.yaml",
+        "base/.vscode/launch.json",
+        "target/service/main.py",
+        "base/service/main.py",
+        "base/service/server.py",
+        "target/service/server.py"
+      ],
+      "searches": [
+        "Glob **/*",
+        "Glob **/*"
+      ],
+      "refused": 1,
+      "refusedCalls": [
+        "rg"
+      ]
+    },
+    "presentation": {
+      "profile": "standard",
+      "version": 10
+    },
+    "method": "single"
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "phase": "final",
+  "provider": "copilot",
+  "model": "(the provider default)",
+  "instructionVersion": 10,
+  "base": "b0e05bb76c00646439db0a83e33aa01f212902de",
+  "target": "dde5b22ba89d8a7d4a4bb3dc2b687ff0f7b24c95",
+  "startedAt": "2026-11-10T19:48:13.397Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.1",
+      "note": "the loop writer, Essentials, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 260,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-standard-W1.5",
+      "note": "the loop writer, Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 733,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-standard-W1.1",
+      "note": "the loop writer, Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 341,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-essens-W1.5",
+      "note": "the loop writer, Essentials, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 539,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-pedagog-W1.5",
+      "note": "the loop writer, Teacher, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 763,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "writer-pedagog-W1.1",
+      "note": "the loop writer, Teacher, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 435,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-essens-W1.1",
+      "note": "Essentials as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 24,
+      "chars": 877,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-essens-W1.5",
+      "note": "Essentials as an alternative after this run's Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 26,
+      "chars": 1142,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-pedagog-W1.1",
+      "note": "Teacher as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 27,
+      "chars": 1295,
+      "modelReported": "gpt-6-luna"
+    },
+    {
+      "name": "present-pedagog-W1.5",
+      "note": "Teacher as an alternative after this run's Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 24,
+      "chars": 915,
+      "modelReported": "gpt-6-luna"
+    }
+  ],
+  "endedAt": "2026-11-10T19:49:26.280Z"
+}

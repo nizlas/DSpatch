@@ -1,0 +1,7 @@
+The configuration connects VS Code to the debug listener on `localhost:5678`; it does not launch Python through the attach request. The pre-launch task starts the container, whose command runs `debugpy` and the service module, and Compose publishes the listener’s port to the host. The connection therefore depends on that listener being available. Compared with the base configuration, which launches `service/main.py` locally, this target configuration attaches to the containerized process instead. (W1.2, W1.5)
+
+A debugger also needs to match source paths reported by the container to files in the workspace. Here, a remote path such as `/app/service/main.py` maps to `${workspaceFolder}/service/main.py`, allowing VS Code to locate the corresponding local source for debugging. In the next step, `service.main` is followed into the service. (W1.7)
+
+```dspatch-references
+{"references":[{"label":"Attach settings and path mapping","path":".vscode/launch.json","side":"target","start":5,"end":11},{"label":"Earlier local launch configuration","path":".vscode/launch.json","side":"base","start":4,"end":8},{"label":"The pre-launch task starts Compose","step":"W1.2"},{"label":"The container starts debugpy and the service module","step":"W1.5"},{"label":"The next step enters service.main","step":"W1.7"}],"insufficient":false}
+```

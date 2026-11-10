@@ -1,0 +1,1 @@
+VS Code reaches this shell task through the `Start the service container` label referenced by the attach configuration. `docker compose up -d --build service` builds the image if needed and starts the `service` Compose service in the background; the next step shows how Compose defines that service.

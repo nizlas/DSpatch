@@ -1,0 +1,6 @@
+This is the entry point: the debug configuration a developer picks in VS Code. In this change its `request` goes from `"launch"` to `"attach"`. Before, the `debugpy` debugger started `service/main.py` itself on the developer's machine. Now **VS Code no longer runs the service. It expects a process that is already running with a debugpy listener, and connects to it.**
+
+That process has to be started somewhere else. The line right after the shown range, `preLaunchTask: "Start the service container"`, names a task that VS Code runs before it tries to attach. Keep that label in mind: the next step resolves it to a task that brings up the container.
+
+<!-- dspatch:details -->
+Because the configuration no longer launches a program, it drops the old `program` and `console` settings. The settings an attach needs come next in the file: where to connect (`connect`) and how container paths map to workspace files (`pathMappings`). A later step in this walk covers them, once the container side is clear.

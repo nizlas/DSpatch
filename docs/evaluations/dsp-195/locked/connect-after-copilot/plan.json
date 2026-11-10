@@ -1,0 +1,277 @@
+{
+  "summary": "`Link.connect` now retries a failed `transport.open` up to `maxAttempts` times (3 by default). After each failed attempt it waits longer before the next one: 100 ms, then 200 ms, then 300 ms. It returns an `Outcome` string, `'connected'` or `'gave-up'`, where it used to return a boolean. A caller can also register a one-time callback with `whenSettled`. Link calls that callback through a `setTimeout(0)`, so it runs after `connect` has already returned. `startSession` takes a new `report` function and uses both channels: the callback reports 'session ready' or 'offline mode', and the returned outcome reports 'retrying later' when the link gives up.",
+  "background": "Before this change, `connect` passed `transport.open` straight through: one attempt, a boolean result, and no notification. `startSession` awaited it and ignored the result.\n\n`startSession` now needs a third parameter, `report`. The repository contains no caller of `startSession` and no tests, so any caller outside these two files has to be updated. Everything said about ordering and timing in these walks comes from reading the code. Nothing in the material shows it running.",
+  "walks": [
+    {
+      "kind": "walk",
+      "title": "Starting a session when the transport opens",
+      "question": "What happens, and in what order, when startSession connects successfully?",
+      "purpose": "Follow the success path from startSession through the retry loop to the deferred callback, and see when each report is made.",
+      "steps": [
+        {
+          "title": "startSession registers the settle callback",
+          "summary": "Before connecting, startSession registers a callback that turns the outcome into a report.",
+          "brief": "This is the entry point. Explain the new `report` parameter and the callback passed to `whenSettled`, which maps 'connected' to 'session ready' and anything else to 'offline mode'. The callback is only stored here and runs later. Then `connect` is awaited, which leads to the next step.",
+          "places": [
+            {
+              "label": "startSession signature and callback registration",
+              "path": "src/session.ts",
+              "side": "target",
+              "start": 3,
+              "end": 5,
+              "anchor": "link.whenSettled("
+            }
+          ]
+        },
+        {
+          "title": "whenSettled stores one callback",
+          "summary": "The callback goes into a single nullable field on the Link.",
+          "brief": "Reached from the `whenSettled` call in the previous step. Make clear that `onSettled` holds a single callback: a second registration replaces the first. Its initial value is null. The reader needs this field for the `settle` step.",
+          "places": [
+            {
+              "label": "onSettled field and whenSettled",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 8,
+              "end": 15,
+              "anchor": "this.onSettled = callback;",
+              "from": {
+                "label": "whenSettled call in startSession",
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 4
+              }
+            }
+          ]
+        },
+        {
+          "title": "connect makes an attempt",
+          "summary": "connect resets the attempt counter and enters the retry loop with a call to transport.open.",
+          "brief": "Reached from `await link.connect(address)` in startSession. Explain the reset of `attempts` and the loop condition, then the awaited `transport.open`. Its boolean is the branch point that the next step and the failure walk both start from. Compare briefly with the base version, which returned `transport.open` directly.",
+          "places": [
+            {
+              "label": "connect loop and attempt",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 17,
+              "end": 21,
+              "anchor": "const open = await this.transport.open(address);",
+              "from": {
+                "label": "connect call in startSession",
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 5,
+                "end": 5
+              }
+            }
+          ]
+        },
+        {
+          "title": "Success: settle and return 'connected'",
+          "summary": "When open is true, connect calls settle('connected') and returns 'connected'.",
+          "brief": "Follow the branch where `open` is true; the failure branch is in the next walk. Point out that `settle` is called before the return, and that the return ends the loop at once with no pause. The reader goes on to see what `settle` actually does with the callback.",
+          "places": [
+            {
+              "label": "success branch",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 22,
+              "end": 25,
+              "anchor": "this.settle('connected');"
+            }
+          ]
+        },
+        {
+          "title": "settle defers the callback to a timer",
+          "summary": "settle takes the callback, clears the field and schedules the call with setTimeout(0).",
+          "brief": "This is the central new mechanism. It makes the callback one-shot, because the field is cleared before scheduling, and safe when no callback is registered. It also hands the call to a timer task, so the callback does not run inside `connect`. It runs later, from the event loop. The reader should leave knowing that `connect` returns, and the awaiting caller resumes, before this timer fires.",
+          "places": [
+            {
+              "label": "settle",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 32,
+              "end": 38,
+              "anchor": "setTimeout(() => callback(outcome), 0);",
+              "from": {
+                "label": "settle call on success",
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 23,
+                "end": 23
+              }
+            }
+          ]
+        },
+        {
+          "title": "Back in startSession, then the timer reports 'session ready'",
+          "summary": "The await resumes with 'connected' and makes no report; afterwards the timer callback reports 'session ready'.",
+          "brief": "Execution goes back to startSession: the awaited promise resolves, so the continuation runs as a microtask. The `if` there does not apply to 'connected'. Only later, as a separate timer task, does the callback from step 1 run and report 'session ready'. Say that this order comes from reading the code, not from a run.",
+          "places": [
+            {
+              "label": "outcome handling and the registered callback",
+              "path": "src/session.ts",
+              "side": "target",
+              "start": 4,
+              "end": 8,
+              "anchor": "const outcome = await link.connect(address);"
+            }
+          ],
+          "revisit": "Step 1 showed the callback being registered. Here it actually runs, from the timer, after startSession's own code after the await has run."
+        }
+      ]
+    },
+    {
+      "kind": "walk",
+      "title": "When every attempt fails",
+      "question": "How does connect retry, when does it give up, and what does the session report?",
+      "purpose": "Understand the backoff, the attempt limit and the order of the two reports when the link gives up.",
+      "steps": [
+        {
+          "title": "Failure: pause before the next attempt",
+          "summary": "When open is false, connect waits attempts × 100 ms and loops again.",
+          "brief": "Start again at the branch point on `open` from the success walk; this is the case where `open` is false. Explain that the wait grows with the attempt number. Note that the pause also runs after the last failed attempt, before the loop condition is checked, so giving up comes 300 ms after the third failure.",
+          "places": [
+            {
+              "label": "failure path in the loop",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 21,
+              "end": 27,
+              "anchor": "await pause(this.attempts * 100);"
+            }
+          ]
+        },
+        {
+          "title": "pause wraps setTimeout in a promise",
+          "summary": "pause is a promise that a timer resolves after ms milliseconds.",
+          "brief": "Reached from the `await pause(...)` in the previous step. Explain that this new helper does not block anything: `connect` suspends here and the event loop runs other work in the meantime. Together the waits add up to 100 + 200 + 300 ms with the default limit.",
+          "places": [
+            {
+              "label": "pause helper",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 41,
+              "end": 43,
+              "anchor": "setTimeout(resolve, ms)",
+              "from": {
+                "label": "pause call",
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 26,
+                "end": 26
+              }
+            }
+          ]
+        },
+        {
+          "title": "The attempt limit",
+          "summary": "maxAttempts defaults to 3 in the constructor and bounds the loop.",
+          "brief": "This is a side trip from the loop to where its bound is set; it is not the next step in execution. Show the new constructor parameter with its default next to the loop condition that uses it. Also mention that `attempts` is per-Link state, reset on each call to `connect`.",
+          "places": [
+            {
+              "label": "constructor with maxAttempts",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 11,
+              "end": 11,
+              "anchor": "private readonly maxAttempts = 3"
+            },
+            {
+              "label": "loop condition",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 18,
+              "end": 20,
+              "anchor": "while (this.attempts < this.maxAttempts)"
+            }
+          ],
+          "together": "The default only makes sense next to the loop condition that reads it."
+        },
+        {
+          "title": "Giving up: settle('gave-up') and return",
+          "summary": "After the loop, connect settles with 'gave-up' and returns it.",
+          "brief": "Execution falls out of the loop once the limit is reached. As on the success path, `settle` (explained in the previous walk) schedules the callback on a timer, and then `connect` returns 'gave-up'. The reader takes both of these signals into the next step.",
+          "places": [
+            {
+              "label": "give-up exit",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 28,
+              "end": 29,
+              "anchor": "this.settle('gave-up');"
+            }
+          ]
+        },
+        {
+          "title": "Two reports, 'retrying later' before 'offline mode'",
+          "summary": "startSession reports 'retrying later' from the returned outcome; the timer callback then reports 'offline mode'.",
+          "brief": "Back in startSession after the await, where the 'gave-up' condition applies. Explain that the continuation after the await runs before the setTimeout(0) callback, so by reading the code the reports come in the order 'retrying later', then 'offline mode'. A reviewer should see that one failure gives two different messages from two channels. Do not claim this order was observed.",
+          "places": [
+            {
+              "label": "gave-up handling and callback",
+              "path": "src/session.ts",
+              "side": "target",
+              "start": 4,
+              "end": 8,
+              "anchor": "report('retrying later');",
+              "from": {
+                "label": "connect returns 'gave-up'",
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 29,
+                "end": 29
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "walk",
+      "title": "When transport.open rejects",
+      "question": "What happens if transport.open throws instead of returning false?",
+      "purpose": "See that a rejected open bypasses the retry loop and settle entirely.",
+      "steps": [
+        {
+          "title": "A rejection leaves the loop without settling",
+          "summary": "Nothing in connect catches a rejection from transport.open, so it propagates and settle is never called.",
+          "brief": "This is a separate outcome at the awaited `transport.open`, alongside true and false. Point out that there is no try/catch: a rejection ends `connect` without retrying and without `settle`, so `onSettled` stays registered and no callback is scheduled.",
+          "places": [
+            {
+              "label": "unguarded awaited open",
+              "path": "src/link.ts",
+              "side": "target",
+              "start": 17,
+              "end": 30,
+              "anchor": "await this.transport.open(address)"
+            }
+          ]
+        },
+        {
+          "title": "startSession rejects with no report",
+          "summary": "The rejection propagates out of startSession, and report is never called.",
+          "brief": "Reached when the awaited `connect` rejects. startSession does not catch the error either, so no report is made and the error goes to startSession's caller. The stale callback stays on the Link and would fire on a later settle. The writer presents this as read from the code.",
+          "places": [
+            {
+              "label": "awaited connect in startSession",
+              "path": "src/session.ts",
+              "side": "target",
+              "start": 5,
+              "end": 8,
+              "anchor": "await link.connect(address)",
+              "from": {
+                "label": "rejected open inside connect",
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 21,
+                "end": 21
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

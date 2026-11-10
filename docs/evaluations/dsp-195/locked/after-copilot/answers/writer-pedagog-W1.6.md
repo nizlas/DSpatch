@@ -1,0 +1,4 @@
+This configuration tells VS Code to **attach to an already-starting process**, rather than launch Python itself. VS Code first runs the “Start the service container” task, then connects to `localhost:5678`; Compose publishes that port from the container’s debug listener (target `compose.yaml`, lines 4–6). The task starts Compose in detached mode and defines no readiness check, so the configuration does not ensure the listener is ready before VS Code attempts to connect (target `.vscode/tasks.json`, lines 5–7).
+
+<!-- dspatch:details -->
+The path mapping pairs the service files in the workspace with their copies under `/app/service` in the container. This lets VS Code relate the paths used by the attached process to local files—for example, when resolving source locations for debugging. `justMyCode: false` also means the configuration does not restrict debugging to user code.

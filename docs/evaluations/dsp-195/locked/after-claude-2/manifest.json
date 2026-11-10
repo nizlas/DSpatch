@@ -1,0 +1,102 @@
+{
+  "phase": "final",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 10,
+  "base": "21dc283d4ad7782576e7edf67856c130be144872",
+  "target": "2dde3e642baf513cea6ad9fc81267babf9075087",
+  "startedAt": "2026-11-10T19:48:39.030Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.1",
+      "note": "the loop writer, Essentials, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1244,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.1",
+      "note": "the loop writer, Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 2044,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.6",
+      "note": "the loop writer, Standard, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 21,
+      "chars": 2913,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6",
+      "note": "the loop writer, Essentials, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 20,
+      "chars": 2129,
+      "modelReported": null
+    },
+    {
+      "name": "writer-pedagog-W1.1",
+      "note": "the loop writer, Teacher, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 2585,
+      "modelReported": null
+    },
+    {
+      "name": "writer-pedagog-W1.6",
+      "note": "the loop writer, Teacher, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 27,
+      "chars": 3880,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1",
+      "note": "Essentials as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 2212,
+      "modelReported": null
+    },
+    {
+      "name": "present-pedagog-W1.1",
+      "note": "Teacher as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 3652,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.6",
+      "note": "Essentials as an alternative after this run's Standard, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 22,
+      "chars": 3531,
+      "modelReported": null
+    },
+    {
+      "name": "present-pedagog-W1.6",
+      "note": "Teacher as an alternative after this run's Standard, W1.6",
+      "status": "finished",
+      "error": null,
+      "seconds": 29,
+      "chars": 5031,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T19:50:08.926Z"
+}

@@ -1,0 +1,1 @@
+After the image is prepared, Compose runs Python through `debugpy`, which listens on port 5678 and launches `service.main` as a module. This starts the application inside the container; Compose publishes the debugger and HTTP ports so they can be reached from the host. The next step follows VS Code’s separate attach configuration.

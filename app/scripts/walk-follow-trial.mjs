@@ -1282,7 +1282,9 @@ async function main() {
   await poll('the regenerated Essentials explanation', async () => explanationEntries().filter((e) => e.stepId === steps[0] && e.profile === 'essens' && e.status === 'done').length === 2, 60_000);
   const regenerated = explanationEntries().filter((e) => e.stepId === steps[0] && e.profile === 'essens');
   const last = regenerated.at(-1);
-  check('New response asks once, as a regeneration of the saved Essentials explanation, at version 9', regenerated.length === 2 && last.action === 'regenerate' && last.parent === regenerated[0].id && last.instructionVersion === 9, JSON.stringify(regenerated.map((e) => ({ action: e.action, parent: e.parent, version: e.instructionVersion }))));
+  // The current instruction version, read from its source (this script runs without the TypeScript loader).
+  const currentVersion = Number(/PRESENTATION_INSTRUCTION_VERSION = (\d+);/.exec(fs.readFileSync(path.join(appDir, 'src', 'shared', 'presentation-profiles.ts'), 'utf8'))?.[1] ?? NaN);
+  check(`New response asks once, as a regeneration of the saved Essentials explanation, at the current version ${String(currentVersion)}`, regenerated.length === 2 && last.action === 'regenerate' && last.parent === regenerated[0].id && last.instructionVersion === currentVersion, JSON.stringify(regenerated.map((e) => ({ action: e.action, parent: e.parent, version: e.instructionVersion }))));
   check('its prompt is the profile\'s, with the form of the answer only', /## Regenerating/.test(last.prompt ?? '') && !/Give the cause and effect behind the answer|Name what you could not read or find/.test(last.prompt ?? ''));
   await read(pc, `${q('explanation-back')}?.click(); true`);
   await delay(1500);

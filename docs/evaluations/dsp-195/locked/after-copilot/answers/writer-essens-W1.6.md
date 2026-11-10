@@ -1,0 +1,4 @@
+VS Code attaches to debugpy at `localhost:5678`, the host port published for the container’s listener (compose.yaml, target lines 4–6). This is a debugger connection, not a command to start the service; the container command starts it separately. The pre-launch task starts Compose in detached mode and configures no readiness check, so the launch configuration does not explicitly wait for the listener before attaching. Next, `service.main` leads into the application’s server call (service/main.py, target lines 4–8).
+
+<!-- dspatch:details -->
+`pathMappings` links the container’s `/app/service` source path to `${workspaceFolder}/service`, allowing VS Code to match debugged files to the workspace. `justMyCode: false` disables debugpy’s usual restriction to user code.

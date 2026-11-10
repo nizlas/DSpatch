@@ -1,0 +1,1 @@
+`serve(port=8080)` runs Python’s `SimpleHTTPRequestHandler`, so this is a static file server rather than an application API. Because the container’s working directory is `/app`, requests are served from there. The server binds to all container interfaces and serves continuously; Compose publishes port 8080 to host port 8080.

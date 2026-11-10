@@ -1,0 +1,4 @@
+This configuration tells VS Code to **attach to an existing debugpy process**, rather than launch the Python program itself. It connects to `localhost:5678`, the host port published for the container’s debug listener (see `compose.yaml`, target lines 4–6). The editor’s `pathMappings` pairs the container’s `/app/service` paths with the workspace’s `service` directory, so debugger paths can correspond to files open in VS Code. The next step follows the application code that the container starts.
+
+<!-- dspatch:details -->
+The attach request runs after the `preLaunchTask`, which invokes `docker compose up -d --build service` (see `.vscode/tasks.json`, target lines 5–7). Detached startup does not itself establish that debugpy is ready, and this task defines no readiness check; the configuration therefore does not explicitly wait for the listener before VS Code attempts to attach.

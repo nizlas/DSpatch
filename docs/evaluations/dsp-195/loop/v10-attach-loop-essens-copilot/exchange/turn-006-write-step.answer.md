@@ -1,0 +1,1 @@
+Once debugpy’s module command runs `service.main`, the `__name__ == "__main__"` guard calls `main()`, which delegates to `serve(port=8080)`. The next step follows `serve` to see how it binds and handles HTTP requests.

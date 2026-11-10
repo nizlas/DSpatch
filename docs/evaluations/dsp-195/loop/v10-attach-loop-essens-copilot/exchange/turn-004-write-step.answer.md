@@ -1,0 +1,1 @@
+Compose’s `service` definition ties the container image to the process it runs: it starts Python with debugpy listening on port 5678, then runs `service.main`. Publishing port 5678 makes that listener reachable for the attach configuration, while publishing 8080 exposes the HTTP service. The next step shows how the image supplies Python, debugpy, and the service code.

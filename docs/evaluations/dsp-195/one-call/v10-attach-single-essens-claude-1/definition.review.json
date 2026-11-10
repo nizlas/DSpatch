@@ -1,0 +1,383 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · attach 2a89c46→6ebec30",
+    "en": "Code walks · attach 2a89c46→6ebec30"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dsp195-qfdo0c\\attach",
+  "base": "2a89c464bf25fe052d06bdec5781f8844a0b6ae1",
+  "target": "6ebec30291726daf1f8c3872af16e533292da626",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Claude (opus) on 2026-11-10 19:51 UTC. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 10).",
+    "en": "Prepared by Claude (opus) on 2026-11-10 19:51 UTC. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 10)."
+  },
+  "presentation": {
+    "profile": "essens",
+    "version": 10
+  },
+  "overviewSummary": {
+    "sv": "The VS Code debug configuration changes from running the service locally to attaching to it inside a Docker container. Pressing F5 first runs a new task that builds and starts the container with `docker compose`. In the container, the service runs under debugpy, which listens on port 5678. VS Code then connects to that port and maps the local `service` folder to `/app/service` in the container, so breakpoints set in local files apply to the code in the container. The change adds a `Dockerfile`, a `compose.yaml` and a `.vscode/tasks.json`, and replaces the old `launch` configuration.",
+    "en": "The VS Code debug configuration changes from running the service locally to attaching to it inside a Docker container. Pressing F5 first runs a new task that builds and starts the container with `docker compose`. In the container, the service runs under debugpy, which listens on port 5678. VS Code then connects to that port and maps the local `service` folder to `/app/service` in the container, so breakpoints set in local files apply to the code in the container. The change adds a `Dockerfile`, a `compose.yaml` and a `.vscode/tasks.json`, and replaces the old `launch` configuration."
+  },
+  "overview": {
+    "sv": "The VS Code debug configuration changes from running the service locally to attaching to it inside a Docker container. Pressing F5 first runs a new task that builds and starts the container with `docker compose`. In the container, the service runs under debugpy, which listens on port 5678. VS Code then connects to that port and maps the local `service` folder to `/app/service` in the container, so breakpoints set in local files apply to the code in the container. The change adds a `Dockerfile`, a `compose.yaml` and a `.vscode/tasks.json`, and replaces the old `launch` configuration.\n\nBefore this change, the only debug configuration started `service/main.py` directly in the local Python interpreter. That configuration is replaced, not kept beside the new one, so debugging now always needs Docker.\n\nThe service is a plain `ThreadingHTTPServer` on port 8080 (`service/server.py`). The change does not touch it. Only the way it is started and debugged changes.",
+    "en": "The VS Code debug configuration changes from running the service locally to attaching to it inside a Docker container. Pressing F5 first runs a new task that builds and starts the container with `docker compose`. In the container, the service runs under debugpy, which listens on port 5678. VS Code then connects to that port and maps the local `service` folder to `/app/service` in the container, so breakpoints set in local files apply to the code in the container. The change adds a `Dockerfile`, a `compose.yaml` and a `.vscode/tasks.json`, and replaces the old `launch` configuration.\n\nBefore this change, the only debug configuration started `service/main.py` directly in the local Python interpreter. That configuration is replaced, not kept beside the new one, so debugging now always needs Docker.\n\nThe service is a plain `ThreadingHTTPServer` on port 8080 (`service/server.py`). The change does not touch it. Only the way it is started and debugged changes."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "What happens when the developer starts debugging",
+        "en": "What happens when the developer starts debugging"
+      },
+      "purpose": {
+        "sv": "Follow the chain from the debug configuration through the task, compose and the image to the running service and the debugger connection.",
+        "en": "Follow the chain from the debug configuration through the task, compose and the image to the running service and the debugger connection."
+      },
+      "question": {
+        "sv": "When the developer presses F5, how does VS Code end up attached to the service in the container?",
+        "en": "When the developer presses F5, how does VS Code end up attached to the service in the container?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "The debug configuration now attaches",
+            "en": "The debug configuration now attaches"
+          },
+          "summary": {
+            "sv": "F5 now attaches to a running debugpy instead of starting the program locally.",
+            "en": "F5 now attaches to a running debugpy instead of starting the program locally."
+          },
+          "body": {
+            "sv": "The old configuration used `request: launch`, so VS Code started `service/main.py` itself. The new one uses `request: attach`, so VS Code starts nothing. It connects to a debugpy server that something else must already have started.\n\nThat something is `preLaunchTask`. Before attaching, VS Code runs the task named \"Start the service container\" (next step). Only after that task ends does VS Code try `localhost:5678`.",
+            "en": "The old configuration used `request: launch`, so VS Code started `service/main.py` itself. The new one uses `request: attach`, so VS Code starts nothing. It connects to a debugpy server that something else must already have started.\n\nThat something is `preLaunchTask`. Before attaching, VS Code runs the task named \"Start the service container\" (next step). Only after that task ends does VS Code try `localhost:5678`."
+          },
+          "why": {
+            "sv": "**Attaching depends on debugpy already listening when the task ends.** Later steps show why that is not guaranteed.",
+            "en": "**Attaching depends on debugpy already listening when the task ends.** Later steps show why that is not guaranteed."
+          },
+          "together": {
+            "sv": "These are the From and To of the same configuration, so the switch from launch to attach is easiest to see side by side.",
+            "en": "These are the From and To of the same configuration, so the switch from launch to attach is easiest to see side by side."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Debug configuration, launch → attach",
+                "en": "Debug configuration, launch → attach"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "base",
+                "start": 5,
+                "end": 9,
+                "role": "walk",
+                "anchor": "\"request\": \"launch\""
+              }
+            },
+            {
+              "id": "P2",
+              "label": {
+                "sv": "New attach configuration",
+                "en": "New attach configuration"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 5,
+                "end": 9,
+                "role": "walk",
+                "anchor": "\"preLaunchTask\": \"Start the service container\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "The task builds and starts the container",
+            "en": "The task builds and starts the container"
+          },
+          "summary": {
+            "sv": "The task runs `docker compose up -d --build service` in a shell.",
+            "en": "The task runs `docker compose up -d --build service` in a shell."
+          },
+          "body": {
+            "sv": "The `label` must match the `preLaunchTask` name exactly. That is how the configuration from the previous step finds this task.\n\n- `--build` rebuilds the image on every F5. The code is copied into the image (shown in a later step), so this is how local edits reach the container.\n- `-d` makes the command return once the container has started, without waiting for the process inside it to be ready.\n\nThe task has no `isBackground` and no problem matcher. VS Code treats it as an ordinary task that is done when the shell command exits.",
+            "en": "The `label` must match the `preLaunchTask` name exactly. That is how the configuration from the previous step finds this task.\n\n- `--build` rebuilds the image on every F5. The code is copied into the image (shown in a later step), so this is how local edits reach the container.\n- `-d` makes the command return once the container has started, without waiting for the process inside it to be ready.\n\nThe task has no `isBackground` and no problem matcher. VS Code treats it as an ordinary task that is done when the shell command exits."
+          },
+          "why": {
+            "sv": "`-d` returns when the container is up, not when debugpy is listening. The attach that follows can therefore come before port 5678 accepts connections. Nothing in this configuration waits or retries.",
+            "en": "`-d` returns when the container is up, not when debugpy is listening. The attach that follows can therefore come before port 5678 accepts connections. Nothing in this configuration waits or retries."
+          },
+          "details": {
+            "sv": "Nothing stops the container again: there is no `postDebugTask`. When the debug session ends, the container keeps running and keeps ports 5678 and 8080 published. The next F5 rebuilds the image, and `compose up` recreates the container if the image changed.",
+            "en": "Nothing stops the container again: there is no `postDebugTask`. When the debug session ends, the container keeps running and keeps ports 5678 and 8080 published. The next F5 rebuilds the image, and `compose up` recreates the container if the image changed."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Start the service container task",
+                "en": "Start the service container task"
+              },
+              "focus": {
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 4,
+                "end": 8,
+                "role": "walk",
+                "anchor": "docker compose up -d --build service"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "Compose builds the image from the Dockerfile",
+            "en": "Compose builds the image from the Dockerfile"
+          },
+          "summary": {
+            "sv": "The `service` service is built from the repository root.",
+            "en": "The `service` service is built from the repository root."
+          },
+          "body": {
+            "sv": "`build: .` points compose at the repository root, so it uses the `Dockerfile` there. The image has three relevant parts:\n\n1. It starts from `python:3.12-slim`.\n2. It installs debugpy, the only extra package.\n3. It copies the local `service` folder to `/app/service`, with `/app` as the working directory.\n\nThe code is baked into the image, not mounted. The container always runs the code from the last build, which is why the task in the previous step passes `--build`.",
+            "en": "`build: .` points compose at the repository root, so it uses the `Dockerfile` there. The image has three relevant parts:\n\n1. It starts from `python:3.12-slim`.\n2. It installs debugpy, the only extra package.\n3. It copies the local `service` folder to `/app/service`, with `/app` as the working directory.\n\nThe code is baked into the image, not mounted. The container always runs the code from the last build, which is why the task in the previous step passes `--build`."
+          },
+          "details": {
+            "sv": "`service` has no `__init__.py`. It is still importable as `service` because `python -m` puts the working directory `/app` on `sys.path`, and Python 3 treats a folder without `__init__.py` as a namespace package. The `COPY` target and the `WORKDIR` together are what make `-m service.main` in the next step resolve.",
+            "en": "`service` has no `__init__.py`. It is still importable as `service` because `python -m` puts the working directory `/app` on `sys.path`, and Python 3 treats a folder without `__init__.py` as a namespace package. The `COPY` target and the `WORKDIR` together are what make `-m service.main` in the next step resolve."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Image definition",
+                "en": "Image definition"
+              },
+              "focus": {
+                "path": "Dockerfile",
+                "side": "target",
+                "start": 1,
+                "end": 4,
+                "role": "walk",
+                "anchor": "COPY service /app/service"
+              },
+              "from": {
+                "label": {
+                  "sv": "build: .",
+                  "en": "build: ."
+                },
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 3,
+                "end": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "The container runs the service under debugpy",
+            "en": "The container runs the service under debugpy"
+          },
+          "summary": {
+            "sv": "debugpy listens on 5678 and runs `service.main`. Both ports are published to the host.",
+            "en": "debugpy listens on 5678 and runs `service.main`. Both ports are published to the host."
+          },
+          "body": {
+            "sv": "`command` replaces the image's default command. debugpy opens a debug server on `0.0.0.0:5678` and then runs the module `service.main` right away.\n\nThere is no `--wait-for-client`, so the service does not wait for VS Code. It starts serving at once. Code that runs before the attach completes, such as startup in `main`, does not stop at breakpoints.\n\n`ports` publishes 5678 for the debugger and 8080 for the HTTP server. The short form `\"5678:5678\"` binds on all host interfaces, not only on localhost.",
+            "en": "`command` replaces the image's default command. debugpy opens a debug server on `0.0.0.0:5678` and then runs the module `service.main` right away.\n\nThere is no `--wait-for-client`, so the service does not wait for VS Code. It starts serving at once. Code that runs before the attach completes, such as startup in `main`, does not stop at breakpoints.\n\n`ports` publishes 5678 for the debugger and 8080 for the HTTP server. The short form `\"5678:5678\"` binds on all host interfaces, not only on localhost."
+          },
+          "why": {
+            "sv": "**The debug port is open to the network.** Anyone who can reach port 5678 on the host can attach debugpy, and debugpy lets a client run arbitrary code in the process. `\"127.0.0.1:5678:5678\"` would limit the port to the local machine.",
+            "en": "**The debug port is open to the network.** Anyone who can reach port 5678 on the host can attach debugpy, and debugpy lets a client run arbitrary code in the process. `\"127.0.0.1:5678:5678\"` would limit the port to the local machine."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Service command and published ports",
+                "en": "Service command and published ports"
+              },
+              "focus": {
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 4,
+                "end": 7,
+                "role": "walk",
+                "anchor": "python -m debugpy --listen 0.0.0.0:5678 -m service.main"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "The service itself is unchanged",
+            "en": "The service itself is unchanged"
+          },
+          "summary": {
+            "sv": "`main` starts the HTTP server on port 8080, which compose publishes.",
+            "en": "`main` starts the HTTP server on port 8080, which compose publishes."
+          },
+          "body": {
+            "sv": "debugpy runs this module like `python -m service.main` would, so `main()` calls `serve(port=8080)`. That port matches the second published port in the previous step.\n\nThe server binds to `0.0.0.0`, which is needed for it to be reachable from outside the container. The change does not touch it.",
+            "en": "debugpy runs this module like `python -m service.main` would, so `main()` calls `serve(port=8080)`. That port matches the second published port in the previous step.\n\nThe server binds to `0.0.0.0`, which is needed for it to be reachable from outside the container. The change does not touch it."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Service entry point",
+                "en": "Service entry point"
+              },
+              "focus": {
+                "path": "service/main.py",
+                "side": "target",
+                "start": 1,
+                "end": 9,
+                "role": "walk",
+                "anchor": "serve(port=8080)"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "VS Code connects to the published debug port",
+            "en": "VS Code connects to the published debug port"
+          },
+          "summary": {
+            "sv": "After the task ends, VS Code attaches to `localhost:5678`.",
+            "en": "After the task ends, VS Code attaches to `localhost:5678`."
+          },
+          "body": {
+            "sv": "The container's port 5678 is published to the host, so `localhost:5678` reaches the debugpy server from the previous steps.\n\nIf the attach comes before debugpy listens (the risk named in the task step), it fails and the developer has to press F5 again. The container is then already running, so the second try normally finds debugpy ready.",
+            "en": "The container's port 5678 is published to the host, so `localhost:5678` reaches the debugpy server from the previous steps.\n\nIf the attach comes before debugpy listens (the risk named in the task step), it fails and the developer has to press F5 again. The container is then already running, so the second try normally finds debugpy ready."
+          },
+          "revisit": {
+            "sv": "The first step showed that this configuration attaches. Here we see where it connects, now that the container and its ports are known.",
+            "en": "The first step showed that this configuration attaches. Here we see where it connects, now that the container and its ports are known."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Connection target",
+                "en": "Connection target"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 9,
+                "end": 9,
+                "role": "walk",
+                "anchor": "\"connect\": { \"host\": \"localhost\", \"port\": 5678 }"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "kind": "walk",
+      "title": {
+        "sv": "How local breakpoints reach the code in the container",
+        "en": "How local breakpoints reach the code in the container"
+      },
+      "purpose": {
+        "sv": "Understand how local and container paths are matched and what `justMyCode: false` changes.",
+        "en": "Understand how local and container paths are matched and what `justMyCode: false` changes."
+      },
+      "question": {
+        "sv": "How does a breakpoint set in a local file stop the code that runs in the container, and what happens outside the service's own code?",
+        "en": "How does a breakpoint set in a local file stop the code that runs in the container, and what happens outside the service's own code?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "Where the code lives in the container",
+            "en": "Where the code lives in the container"
+          },
+          "summary": {
+            "sv": "The local `service` folder becomes `/app/service` in the image.",
+            "en": "The local `service` folder becomes `/app/service` in the image."
+          },
+          "body": {
+            "sv": "This `COPY` decides the container path that the path mapping in the next step must name. If the target folder changes here, the mapping must change with it, or breakpoints stop binding.",
+            "en": "This `COPY` decides the container path that the path mapping in the next step must name. If the target folder changes here, the mapping must change with it, or breakpoints stop binding."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Code copied into the image",
+                "en": "Code copied into the image"
+              },
+              "focus": {
+                "path": "Dockerfile",
+                "side": "target",
+                "start": 2,
+                "end": 4,
+                "role": "walk",
+                "anchor": "COPY service /app/service"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "Path mapping and justMyCode",
+            "en": "Path mapping and justMyCode"
+          },
+          "summary": {
+            "sv": "Local `service/` maps to `/app/service`, and debugging is not limited to the service's own code.",
+            "en": "Local `service/` maps to `/app/service`, and debugging is not limited to the service's own code."
+          },
+          "body": {
+            "sv": "`pathMappings` lets VS Code and debugpy translate file paths in both directions:\n\n- A breakpoint in a local file under `service/` is sent as the matching path under `/app/service`, so debugpy can set it in the copy from the previous step.\n- A frame that debugpy reports under `/app/service` opens the local file.\n\n`justMyCode: false` lets the debugger step into, and stop in, code outside the service as well, such as the standard library's `http.server`. Those files have no local mapping: they exist only in the container's Python.",
+            "en": "`pathMappings` lets VS Code and debugpy translate file paths in both directions:\n\n- A breakpoint in a local file under `service/` is sent as the matching path under `/app/service`, so debugpy can set it in the copy from the previous step.\n- A frame that debugpy reports under `/app/service` opens the local file.\n\n`justMyCode: false` lets the debugger step into, and stop in, code outside the service as well, such as the standard library's `http.server`. Those files have no local mapping: they exist only in the container's Python."
+          },
+          "why": {
+            "sv": "**Breakpoints bind against the image built at the last F5, not against the editor's current text.** The mapping is correct only while the local file matches that copy. Edits made during a debug session are not in the container until the next rebuild.",
+            "en": "**Breakpoints bind against the image built at the last F5, not against the editor's current text.** The mapping is correct only while the local file matches that copy. Edits made during a debug session are not in the container until the next rebuild."
+          },
+          "details": {
+            "sv": "For frames outside the mapped folder, VS Code cannot open a local file and normally asks debugpy for the source instead. You can read that code, but breakpoints set in it are not tied to anything in the workspace.",
+            "en": "For frames outside the mapped folder, VS Code cannot open a local file and normally asks debugpy for the source instead. You can read that code, but breakpoints set in it are not tied to anything in the workspace."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Path mapping and justMyCode",
+                "en": "Path mapping and justMyCode"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 10,
+                "end": 13,
+                "role": "walk",
+                "anchor": "\"remoteRoot\": \"/app/service\""
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -20,7 +20,7 @@ import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { parseRunRecord } from '../src/shared/loop-record';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import { DETAILS_MARKER } from '../src/shared/presentation-profiles';
-import type { AnalysisMaterial } from '../src/shared/review-agent';
+import { WRITING_CONTENT_RULES, type AnalysisMaterial } from '../src/shared/review-agent';
 import type { AgentMaterial } from '../src/shared/review-pair';
 import {
   WALK_LOOP_GRAPH_REL,
@@ -194,6 +194,10 @@ describe('the prompts', () => {
     assert.ok(writer.includes('The step before: W1.1 Start'));
     assert.ok(!/\b(two|four to six|ten) sentences\b/i.test(writer), 'no sentence quota');
     assert.ok(!/at most (one|two) identifiers/i.test(writer), 'no identifier limit');
+    // DSP-195: the reader and what the step says are the profile's; the writing rules are the form.
+    for (const rule of WRITING_CONTENT_RULES) assert.ok(!writer.includes(rule), `no profile-blind content rule in the writer: ${rule.slice(0, 40)}`);
+    assert.ok(writer.includes('Use short paragraphs.'), 'the form rules remain');
+    assert.match(writer, /which of what the code does here, .* this reader needs, and at what level, the reader's profile decides/i, 'the shared task leaves the choice to the profile');
     const later = writeStepPrompt({ role: role('write'), plan, stepId: 'W1.1', profile: 'pedagog', language: 'en', material, folder, fresh: false, rework: null });
     assert.ok(!later.includes('## Your role'), 'a later turn in the same session repeats no role');
     assert.ok(later.includes('## This step: W1.1 Start'));
@@ -206,6 +210,9 @@ describe('the prompts', () => {
     assert.ok(reviewer.includes('#### W1.2 Connect'));
     assert.ok(reviewer.includes('Second.') && reviewer.includes('Show more:\nDeeper.'));
     assert.ok(reviewer.includes('never ask for a change on a matter of style'));
+    // DSP-195: the place check asks for the reader's level, not for a content list of its own.
+    assert.ok(reviewer.includes('at this reader\'s level, so that this reader understands what it contributes to the change'));
+    assert.ok(!reviewer.includes('what it does here, why it matters for the change, and what decides the outcome'));
     assert.ok(!reviewer.includes('## The final assessment'));
     const final = reviewPrompt({ role: role('review'), plan, texts, profile: 'essens', language: 'en', material, folder, final: true, earlier: { assessment: '', verdict: 'rework', findings: [{ kind: 'explanation', steps: ['W1.2'], problem: 'Thin.', why: '', evidence: '', reference: '' }] }, fresh: false });
     assert.ok(final.includes('## The final assessment') && final.includes('no further correction follows'));

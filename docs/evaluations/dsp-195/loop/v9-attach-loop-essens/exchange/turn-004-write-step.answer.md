@@ -1,0 +1,1 @@
+The `preLaunchTask` label in the attach configuration selects this shell task. Its command asks Docker Compose to build and start the `service` in detached mode; the next step shows how Compose defines that service.

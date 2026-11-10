@@ -1,0 +1,174 @@
+{
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the build is there",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-10T20:09:19.759Z"
+    },
+    {
+      "stage": "preflight",
+      "what": "the disposable project holds the attach case",
+      "ok": true,
+      "detail": "{\"base\":\"ced4407fb5e95539d2428a62b6fbcf9c4ec67245\",\"target\":\"9f945bf6b13d9431f811ad40c45ae5de5843b1ee\"}",
+      "at": "2026-11-10T20:09:20.235Z"
+    },
+    {
+      "stage": "preflight",
+      "what": "the profile lists the project",
+      "ok": true,
+      "detail": "null",
+      "at": "2026-11-10T20:09:20.243Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the start page shows the agent",
+      "ok": true,
+      "detail": "copilot",
+      "at": "2026-11-10T20:09:21.414Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the workspace opened on the project",
+      "ok": true,
+      "detail": "attach",
+      "at": "2026-11-10T20:09:22.110Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the review of the pair is open",
+      "ok": true,
+      "detail": "r-a9061e86540b0bfb20904d90",
+      "at": "2026-11-10T20:09:22.676Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "copilot can be chosen as the agent",
+      "ok": true,
+      "detail": "{\"disabled\":false,\"title\":\"\",\"text\":\"Copilot\"}",
+      "at": "2026-11-10T20:09:22.846Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "the model control is a select listing copilot-default",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-10T20:09:23.002Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "the picker holds copilot, copilot-default, standard, single",
+      "ok": true,
+      "detail": "{\"provider\":\"copilot\",\"model\":\"copilot-default\",\"explanations\":\"standard\",\"method\":\"single\",\"note\":\"\"}",
+      "at": "2026-11-10T20:09:23.312Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "the one-call preparation started in standard",
+      "ok": true,
+      "detail": "Preparing code walks with Copilot (copilot-default)…Stop",
+      "at": "2026-11-10T20:09:23.484Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "the standard loop ended as done (1 min)",
+      "ok": true,
+      "detail": "{\"settled\":\"done\",\"job\":{\"id\":\"job-181e9f40-3084-4910-8342-6bcb47de8da1\",\"state\":\"done\",\"note\":\"1 walk(s) and 0 reading(s), 6 step(s). Every changed line is in one of them.\",\"detail\":\"\",\"method\":\"single\",\"provider\":\"copilot\",\"model\":\"copilot-default\",\"presentation\":{\"profile\":\"standard\",\"version\":10}}}",
+      "at": "2026-11-10T20:10:14.610Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "the loop wrote the walk definition",
+      "ok": true,
+      "detail": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-UXyizj\\reviews\\generated\\r-a9061e86540b0bfb20904d90\\job-181e9f40-3084-4910-8342-6bcb47de8da1.review.json",
+      "at": "2026-11-10T20:10:14.620Z"
+    },
+    {
+      "stage": "the loop in standard",
+      "what": "a simple and a complex step were found by their places",
+      "ok": true,
+      "detail": "{\"simple\":{\"id\":\"W1.1\",\"title\":\"\",\"places\":[{\"path\":\".vscode/launch.json\",\"side\":\"base\",\"start\":4,\"end\":9},{\"path\":\".vscode/launch.json\",\"side\":\"target\",\"start\":4,\"end\":13}]},\"complex\":{\"id\":\"W1.3\",\"title\":\"\",\"places\":[{\"path\":\"compose.yaml\",\"side\":\"target\",\"start\":1,\"end\":7}]},\"all\":[\"W1.1 \",\"W1.2 \",\"W1.3 \",\"W1.4 \",\"W1.5 \",\"W1.6 \"]}",
+      "at": "2026-11-10T20:10:14.620Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.1 (standard-prepared): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"step-prepared-explanation\",\"chars\":516}",
+      "at": "2026-11-10T20:10:16.670Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "essens is chosen for reading W1.1",
+      "ok": true,
+      "detail": "essens",
+      "at": "2026-11-10T20:10:16.672Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "the essens explanation of W1.1 arrived (18 s)",
+      "ok": true,
+      "detail": "{\"status\":\"done\",\"action\":\"present\",\"error\":null}",
+      "at": "2026-11-10T20:10:34.770Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.1 (essens-alternative): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"profile-explanation\",\"chars\":564}",
+      "at": "2026-11-10T20:10:36.334Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.3 (standard-prepared): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"step-prepared-explanation\",\"chars\":413}",
+      "at": "2026-11-10T20:10:38.915Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "essens is chosen for reading W1.3",
+      "ok": true,
+      "detail": "essens",
+      "at": "2026-11-10T20:10:38.917Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "the essens explanation of W1.3 arrived (14 s)",
+      "ok": true,
+      "detail": "{\"status\":\"done\",\"action\":\"present\",\"error\":null}",
+      "at": "2026-11-10T20:10:53.006Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.3 (essens-alternative): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"profile-explanation\",\"chars\":371}",
+      "at": "2026-11-10T20:10:54.565Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "exactly the asked explanations were made: two steps, two profiles each",
+      "ok": true,
+      "detail": "[\"W1.1:essens:present:done\",\"W1.3:essens:present:done\"]",
+      "at": "2026-11-10T20:10:56.084Z"
+    },
+    {
+      "stage": "summary",
+      "what": "summary written",
+      "ok": true,
+      "detail": "<home>\\development\\DSpatch\\app\\release\\trial-profile-real\\dsp195-standard-single-copilot\\summary.json",
+      "at": "2026-11-10T20:10:56.108Z"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "22844"
+    }
+  ],
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-UXyizj",
+  "project": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-project-mYtVGV\\attach",
+  "evidence": "<home>\\development\\DSpatch\\app\\release\\trial-profile-real\\dsp195-standard-single-copilot"
+}

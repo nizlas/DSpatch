@@ -1,0 +1,1 @@
+The Compose command runs `service.main` as a module, so its `__main__` guard calls `main()`, which delegates to `serve(port=8080)`. That call starts the application’s server path; the next step shows how `serve` binds and handles requests.

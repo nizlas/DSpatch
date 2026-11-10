@@ -1,0 +1,1 @@
+The `build: .` setting uses this Dockerfile to prepare the image: it provides Python 3.12, installs `debugpy`, and copies `service` to `/app/service`. In the next step, Compose uses this runtime and source to run the debugpy command that starts `service.main`.

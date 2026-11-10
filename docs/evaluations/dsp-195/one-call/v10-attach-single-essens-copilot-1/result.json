@@ -1,0 +1,95 @@
+{
+  "which": "attach",
+  "method": "single",
+  "profile": "essens",
+  "provider": "copilot",
+  "model": "default",
+  "job": {
+    "id": "job-885ce915-c8f7-4107-a334-9e0efc8d664a",
+    "kind": "walks",
+    "state": "done",
+    "provider": "copilot",
+    "model": "default",
+    "startedAt": "2026-11-10T19:50:16.284Z",
+    "endedAt": "2026-11-10T19:51:21.872Z",
+    "note": "1 walk(s) and 0 reading(s), 6 step(s). 10 changed line(s) are in none of them.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v10-attach-single-essens-copilot-1\\records\\generated\\r-254ec84bf6e80761914e7518\\job-885ce915-c8f7-4107-a334-9e0efc8d664a.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 5,
+        "end": 5
+      },
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 7,
+        "end": 9
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/launch.json",
+        "start": 13,
+        "end": 13
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 2
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 9,
+        "end": 10
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "compose.yaml",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "material": {
+      "base": "2a89c464bf25fe052d06bdec5781f8844a0b6ae1",
+      "target": "6ebec30291726daf1f8c3872af16e533292da626",
+      "files": 9,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target/.vscode/launch.json",
+        "target/.vscode/tasks.json",
+        "target/Dockerfile",
+        "target/compose.yaml",
+        "base/.vscode/launch.json",
+        "target/service/main.py",
+        "target/service/server.py",
+        "base/service/main.py",
+        "base/service/server.py"
+      ],
+      "searches": [
+        "Glob **/* in base, "
+      ],
+      "refused": 0,
+      "refusedCalls": []
+    },
+    "presentation": {
+      "profile": "essens",
+      "version": 10
+    },
+    "method": "single"
+  }
+}

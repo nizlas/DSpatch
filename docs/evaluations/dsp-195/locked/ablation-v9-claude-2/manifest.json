@@ -1,0 +1,84 @@
+{
+  "phase": "ablation-195",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 9,
+  "base": "40d0eda7bcaf447ebf165ec2d6dc8801109186cd",
+  "target": "b6b4d4497f3e86f830f6ac4e683a060a89cbb5f0",
+  "startedAt": "2026-11-10T19:29:09.913Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.1-v2",
+      "note": "the loop writer, Essentials, W1.1, and the shared task and role purpose leaving the choice to the profile",
+      "status": "finished",
+      "error": null,
+      "seconds": 9,
+      "chars": 1085,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-v1",
+      "note": "the loop writer, Essentials, W1.1, without the writing rule's content line",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1160,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-v1",
+      "note": "the loop writer, Essentials, W1.6, without the writing rule's content line",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1951,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.1-v2",
+      "note": "the loop writer, Standard, W1.1, under v2 (regression)",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1159,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-v2",
+      "note": "the loop writer, Essentials, W1.6, and the shared task and role purpose leaving the choice to the profile",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1609,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-v2-nobrief",
+      "note": "the loop writer, Essentials, W1.1, under v2 and without the planner's briefs",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1373,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.6-v2",
+      "note": "the loop writer, Standard, W1.6, under v2 (regression)",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 2816,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.6-v2-nobrief",
+      "note": "the loop writer, Essentials, W1.6, under v2 and without the planner's briefs",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 2221,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T19:29:49.677Z"
+}

@@ -1,0 +1,84 @@
+{
+  "which": "attach",
+  "method": "single",
+  "profile": "essens",
+  "provider": "copilot",
+  "model": "default",
+  "job": {
+    "id": "job-bc6dff35-55ff-4c57-857a-7f427e2279f4",
+    "kind": "walks",
+    "state": "done",
+    "provider": "copilot",
+    "model": "default",
+    "startedAt": "2026-11-10T19:18:54.775Z",
+    "endedAt": "2026-11-10T19:19:56.624Z",
+    "note": "1 walk(s) and 0 reading(s), 6 step(s). 9 changed line(s) are in none of them.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\v9-attach-single-essens-2\\records\\generated\\r-ce6ac3a241ca76ecb4f78de1\\job-bc6dff35-55ff-4c57-857a-7f427e2279f4.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 5,
+        "end": 5
+      },
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 7,
+        "end": 9
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 3
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 9,
+        "end": 10
+      }
+    ],
+    "material": {
+      "base": "7f193abaf5bc1cdc2b5abc61dec51b33ca3b81ae",
+      "target": "8f57b33a5e8fcf1ea26d9f163817afa4d7441660",
+      "files": 9,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target",
+        "base",
+        "target/.vscode",
+        "target/compose.yaml",
+        "base/service",
+        "target/service",
+        "target/service/main.py",
+        "target/service/server.py",
+        "target/.vscode/tasks.json",
+        "target/.vscode/launch.json",
+        "target/Dockerfile",
+        "base/service/server.py",
+        "base/service/main.py",
+        "base/.vscode/launch.json"
+      ],
+      "searches": [],
+      "refused": 0,
+      "refusedCalls": []
+    },
+    "presentation": {
+      "profile": "essens",
+      "version": 9
+    },
+    "method": "single"
+  }
+}

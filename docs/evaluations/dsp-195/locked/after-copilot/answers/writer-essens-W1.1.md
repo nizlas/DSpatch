@@ -1,0 +1,1 @@
+VS Code uses `request: "attach"`, so this configuration connects the debugger rather than launching the Python program. Its `preLaunchTask` selects **Start the service container**; the next step follows that task into Docker Compose (`.vscode/tasks.json`, target lines 5–7).

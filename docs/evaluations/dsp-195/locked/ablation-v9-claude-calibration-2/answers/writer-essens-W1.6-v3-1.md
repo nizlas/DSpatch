@@ -1,0 +1,10 @@
+This is the editor side of the connection, separate from anything the service does. Once the pre-launch task has finished, VS Code's `debugpy` adapter makes an **attach** request (no new Python process is launched; see W1.1). It connects to `localhost:5678`, the host port that Compose maps to the debugpy listener inside the container (W1.5).
+
+`pathMappings` links the two file systems. The container runs the code from `/app/service`, which the Dockerfile copied there in W1.4, and the editor shows `${workspaceFolder}/service`. With this mapping, breakpoints you set in workspace files match the code running in the container, and stack frames open the right local files.
+
+**The editor does not explicitly wait for the debugger listener before attaching.** The task runs `docker compose up -d`, which returns as soon as the container is started, and it has no readiness check. So VS Code may try to attach before debugpy is listening. Nothing in this code retries or waits, so an early attach can fail.
+
+<!-- dspatch:details -->
+The service doesn't wait for the debugger either. In W1.5, the Compose command starts debugpy with `--listen` but without `--wait-for-client`, so `service.main` starts running at once. Code that runs before the attach completes, such as startup up to the call to `serve` (W1.7), runs without breakpoints taking effect. Breakpoints in request-handling code still work once the server is running.
+
+The mapping only works if the workspace `service` folder matches the image contents. The image gets a copy of the source at build time; the source isn't mounted. If you edit a file without rebuilding, the line numbers you see in the editor can drift from the code that is running. The task's `--build` rebuilds the image on each debug start, which keeps the two in sync for that run.

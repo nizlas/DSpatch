@@ -1,0 +1,1 @@
+`serve(port=8080)` uses `SimpleHTTPRequestHandler`, so this service responds to HTTP requests by serving files from the process’s working directory, `/app`; it defines no custom routes. It binds a `ThreadingHTTPServer` to `0.0.0.0` and serves until stopped, allowing Compose’s published port 8080 to reach it.

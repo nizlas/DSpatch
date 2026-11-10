@@ -30,6 +30,7 @@ import {
   WRITING_RULES,
   changeSection,
   folderSection,
+  isWritingContentRule,
   readWalksAnswer,
   type AnalysisMaterial,
   type ProposedStep,
@@ -480,7 +481,8 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     ...WALK_READING_RULES.map((rule) => `- ${rule}`),
     '',
     `## How to write (${languageLine(input.language)})`,
-    ...WRITING_RULES.filter((rule) => !rule.startsWith('No fixed length')).map((rule) => `- ${rule}`),
+    // DSP-195: the reader and what the step says are the profile's (the shared task and the reader above); the rules here are the form.
+    ...WRITING_RULES.filter((rule) => !rule.startsWith('No fixed length') && !isWritingContentRule(rule)).map((rule) => `- ${rule}`),
     '',
     '## Answer format',
     `Answer with the explanation of the step only, in Markdown: no JSON, no heading with the step\'s title or id, no restatement of the places. First the part the person reads at once. When there is real depth to add, put it after a line holding only ${DETAILS_MARKER}; the person opens it with Show more.`,
@@ -550,7 +552,8 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     '',
     '## What to judge',
     '- Can the reader follow the course: at each step, how it is reached and what the caller needs, what a return brings back, that an alternative outcome is back at the branch point, what starts a worker or callback and which context is followed, and when the teaching order differs from the execution order?',
-    '- Is every code place a step shows explained there, at this reader\'s level: what it does here, why it matters for the change, and what decides the outcome? Naming a function or showing its lines is not explaining it.',
+    // DSP-195: the check names no content list of its own; what this reader needs of a place is the profile's.
+    '- Is every code place a step shows explained there, at this reader\'s level, so that this reader understands what it contributes to the change? Naming a function or showing its lines is not explaining it.',
     '- Is what the text claims true of the code? Read the code behind each step with your tools before you judge; a confident sentence is not evidence.',
     '- Does the text give this reader the help the profile is for: for Essentials an accurate main picture at a higher level of abstraction, chosen rather than compressed; for Standard the mechanism made understandable; for Teacher the concepts and intermediate reasoning built where this step needs them? Do not ask Essentials for the mechanics it left out unless their absence makes the main picture misleading, and do not ask Teacher for more detail to make the text longer; an omission that misleads is a finding in any profile. Length and density are not the measure.',
     '- Is the part after Show more a deepening that continues the first part, not a repetition of it?',

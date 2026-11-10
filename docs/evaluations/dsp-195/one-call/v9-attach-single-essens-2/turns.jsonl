@@ -1,0 +1,2 @@
+{"turn":"001","task":"prepare-walks","status":"finished","chars":7045,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"002","task":"repair-walks","status":"finished","chars":7053,"modelReported":"gpt-6-luna","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}

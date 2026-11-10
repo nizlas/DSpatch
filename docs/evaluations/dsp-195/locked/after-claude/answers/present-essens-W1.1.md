@@ -1,0 +1,12 @@
+This is where the debug session begins, and the change turns it around. On the base revision, this entry was "Run the service" with `"request": "launch"` and a `program` pointing at `service/main.py`. VS Code started the service itself, as a Python process on the host. On the target revision, `"request": "attach"` means VS Code starts no Python process at all. It only connects to a debugpy listener that something else must already have running.
+
+So the configuration now depends on outside setup. That setup is the `preLaunchTask`, "Start the service container", on the line just after this excerpt. VS Code finds the task by its exact label, and the next step [W1.2] follows that label to the Compose command. Where VS Code connects, and how files on the host map to files in the container, comes in a later step [W1.6].
+
+<!-- dspatch:details -->
+The base revision had no `tasks.json`, Compose file or Dockerfile. The whole container path is new in this change, so attach mode only works together with the files the next steps show. The configuration was also renamed from "Run the service" to "Attach to the service in the container". Anyone who selected it by its old name has to pick it again.
+
+One thing to keep in mind as you follow the walk (my reading, not checked by running it): `attach` only succeeds if the listener is already accepting connections when VS Code tries. The task runs `docker compose up -d --build service`, and `-d` returns once the container has started, not once debugpy inside it is listening. Whether that gap matters depends on how long debugpy takes to start, and the configuration doesn't wait for it explicitly. The container also starts debugpy without `--wait-for-client` (compose.yaml line 4, target). So the service doesn't wait for the debugger: code that runs before VS Code attaches runs without it.
+
+```dspatch-references
+{"references": [{"label": "Attach configuration (target)", "path": ".vscode/launch.json", "side": "target", "start": 4, "end": 14}, {"label": "Previous launch configuration (base)", "path": ".vscode/launch.json", "side": "base", "start": 4, "end": 10}, {"label": "Pre-launch task", "step": "W1.2"}, {"label": "VS Code connects to the listener", "step": "W1.6"}, {"label": "Container starts debugpy without --wait-for-client", "path": "compose.yaml", "side": "target", "start": 4, "end": 4}], "insufficient": false}
+```

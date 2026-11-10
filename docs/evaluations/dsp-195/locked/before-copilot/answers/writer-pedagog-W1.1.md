@@ -1,0 +1,1 @@
+`request: "attach"` tells VS Code to connect its debugger to a Python process that is started separately; unlike a launch request, this configuration does not start the service program itself. The `preLaunchTask` label tells VS Code to run **Start the service container** first, handing startup to the task explained next.

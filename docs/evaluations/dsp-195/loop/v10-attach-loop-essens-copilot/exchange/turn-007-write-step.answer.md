@@ -1,0 +1,1 @@
+`serve(port=8080)` binds a `ThreadingHTTPServer` to `0.0.0.0`, making it listen on all container interfaces, then keeps serving requests with `serve_forever()`. Compose publishes container port 8080 as host port 8080, making the HTTP service reachable from the host.

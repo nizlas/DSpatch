@@ -55,7 +55,10 @@ describe('one reading typography (DSP-181)', () => {
     // DSP-184: the walk's own text (summary, body, why) is one block, in the same place as a profile's explanation.
     assert.match(view, /className="rv-walk-explanation" data-ev="step-prepared-explanation"/, 'the walk\'s own text');
     assert.match(view, /className="rv-explanation rv-reading rv-prepared" data-quote-source="explanation"/, 'the prepared body');
-    assert.equal((view.match(/rv-explanation rv-reading rv-prepared/g) ?? []).length, 2, 'the prepared body and its why');
+    assert.equal((view.match(/rv-explanation rv-reading rv-prepared/g) ?? []).length, 3, 'the prepared body (with or without a deepening) and its why');
+    // DSP-195: "Why it matters" is base text, read before the Show more control, not after it.
+    assert.match(view, /<ShortThenMore\s+short=\{pick\(step\.body, lang\)\}\s+base=\{<WhyItMatters /, 'the why is passed as base text, before the control');
+    assert.match(answer, /<Markdown text=\{short\} \/>\s*\{base\}\s*\{open && /, 'the base text sits between the short part and the details and toggles');
     assert.ok(!/rv-profile-explanation[^"]*rv-prepared/.test(view), 'an alternative never keeps hard line breaks');
     assert.match(answer, /className="rv-answer rv-reading"/, 'every discussion answer, under a step or in the thread');
   });
