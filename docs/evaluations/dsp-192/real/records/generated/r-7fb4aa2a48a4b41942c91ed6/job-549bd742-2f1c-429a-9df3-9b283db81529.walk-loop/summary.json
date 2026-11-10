@@ -1,0 +1,520 @@
+{
+  "runId": "walk-4a9534c2-507a-4592-b4e0-ce6e804900a8",
+  "graphId": "dspatch-walk-loop",
+  "graphVersionId": "graph-8e84007492c1b56f",
+  "roles": [
+    {
+      "id": "walk-planner",
+      "sourcePath": "docs/loop/roles/review/walk-planner.role.md"
+    },
+    {
+      "id": "walk-writer",
+      "sourcePath": "docs/loop/roles/review/walk-writer.role.md"
+    },
+    {
+      "id": "walk-reviewer",
+      "sourcePath": "docs/loop/roles/review/walk-reviewer.role.md"
+    }
+  ],
+  "recordPath": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-7fb4aa2a48a4b41942c91ed6\\job-549bd742-2f1c-429a-9df3-9b283db81529.walk-loop\\record.jsonl",
+  "resultsDir": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-7fb4aa2a48a4b41942c91ed6\\job-549bd742-2f1c-429a-9df3-9b283db81529.walk-loop\\results",
+  "status": "delivered",
+  "path": [
+    "plan",
+    "write",
+    "review",
+    "delivered"
+  ],
+  "first": {
+    "assessment": "I checked every step against src/link.ts and src/session.ts on both sides. A Teacher reader can follow all three walks. Each walk shows how execution reaches every place. The success, failure and rejection outcomes are presented as alternatives that return to the same branch at target link.ts line 21–22, not as one run. The text says where teaching order differs from execution order: the timer callback in W1.6 and W2.5 is started by the event loop after startSession has resolved. Each step builds the concepts it needs, right where it needs them: callbacks and closures, async/await suspension, microtasks versus timer tasks and why that order is guaranteed, the promise executor in pause, and await on a rejected promise acting as a throw. Later steps refer back to these explanations instead of deriving them again. The claims are true of the code. The single callback slot is replaced on each whenSettled call (line 14). settle empties the slot before it schedules the callback (lines 33–36). The linear waits of 100, 200 and 300 ms include a wait after the final attempt, 600 ms in total (lines 19–27). The order 'retrying later' then 'offline mode' follows from the microtask and timer ordering. A rejection skips settle, leaves the callback registered and makes startSession reject. The comparisons with base are also correct: base connect returned transport.open's boolean, and base startSession took no report. The single-threaded overlap of connect calls is correctly described as interleaving, not a data race. Each Show more part goes deeper than the first part instead of repeating it. Nothing false or significantly missing affects understanding, so I accept the walks.",
+    "verdict": "accept",
+    "findings": []
+  },
+  "final": null,
+  "rounds": 0,
+  "replanned": false,
+  "rewritten": [],
+  "turns": [
+    {
+      "node": "plan",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T15:06:32.301Z",
+      "endedAt": "2026-11-10T15:07:22.363Z",
+      "durationMs": 50062
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.1",
+      "startedAt": "2026-11-10T15:07:22.985Z",
+      "endedAt": "2026-11-10T15:07:37.770Z",
+      "durationMs": 14785
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.2",
+      "startedAt": "2026-11-10T15:07:37.780Z",
+      "endedAt": "2026-11-10T15:07:48.565Z",
+      "durationMs": 10785
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.3",
+      "startedAt": "2026-11-10T15:07:48.576Z",
+      "endedAt": "2026-11-10T15:07:58.490Z",
+      "durationMs": 9914
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.4",
+      "startedAt": "2026-11-10T15:07:58.501Z",
+      "endedAt": "2026-11-10T15:08:11.855Z",
+      "durationMs": 13354
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.5",
+      "startedAt": "2026-11-10T15:08:11.866Z",
+      "endedAt": "2026-11-10T15:08:16.776Z",
+      "durationMs": 4910
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.6",
+      "startedAt": "2026-11-10T15:08:16.784Z",
+      "endedAt": "2026-11-10T15:08:24.888Z",
+      "durationMs": 8104
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.1",
+      "startedAt": "2026-11-10T15:08:24.899Z",
+      "endedAt": "2026-11-10T15:08:32.765Z",
+      "durationMs": 7866
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.2",
+      "startedAt": "2026-11-10T15:08:32.777Z",
+      "endedAt": "2026-11-10T15:08:38.957Z",
+      "durationMs": 6180
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.3",
+      "startedAt": "2026-11-10T15:08:38.972Z",
+      "endedAt": "2026-11-10T15:08:45.047Z",
+      "durationMs": 6075
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.4",
+      "startedAt": "2026-11-10T15:08:45.058Z",
+      "endedAt": "2026-11-10T15:08:51.590Z",
+      "durationMs": 6532
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.5",
+      "startedAt": "2026-11-10T15:08:51.602Z",
+      "endedAt": "2026-11-10T15:08:56.760Z",
+      "durationMs": 5158
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W3.1",
+      "startedAt": "2026-11-10T15:08:56.773Z",
+      "endedAt": "2026-11-10T15:09:05.306Z",
+      "durationMs": 8533
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W3.2",
+      "startedAt": "2026-11-10T15:09:05.318Z",
+      "endedAt": "2026-11-10T15:09:13.920Z",
+      "durationMs": 8602
+    },
+    {
+      "node": "review",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T15:09:13.957Z",
+      "endedAt": "2026-11-10T15:09:34.169Z",
+      "durationMs": 20212
+    }
+  ],
+  "durationMs": 181938,
+  "usage": [
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 5551,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 15958,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1373,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1277,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 23089,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 8467,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 943,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 23326,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1442,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 849,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 12513,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1247,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1188,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 13760,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1285,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 316,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 15045,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1586,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 643,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 16631,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 737,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 685,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 17368,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1047,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 441,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 18415,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1081,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 478,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 19496,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 832,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 458,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 20328,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 966,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 407,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 21294,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 829,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 689,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22123,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 754,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 614,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22877,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1052,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1990,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 30660,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 12445,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    }
+  ]
+}

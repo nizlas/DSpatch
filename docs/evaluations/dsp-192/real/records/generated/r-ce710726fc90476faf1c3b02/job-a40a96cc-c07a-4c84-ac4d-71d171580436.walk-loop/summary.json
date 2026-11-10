@@ -1,0 +1,602 @@
+{
+  "runId": "walk-fc3826b5-77d8-49a5-9fae-a97c0ec09227",
+  "graphId": "dspatch-walk-loop",
+  "graphVersionId": "graph-8e84007492c1b56f",
+  "roles": [
+    {
+      "id": "walk-planner",
+      "sourcePath": "docs/loop/roles/review/walk-planner.role.md"
+    },
+    {
+      "id": "walk-writer",
+      "sourcePath": "docs/loop/roles/review/walk-writer.role.md"
+    },
+    {
+      "id": "walk-reviewer",
+      "sourcePath": "docs/loop/roles/review/walk-reviewer.role.md"
+    }
+  ],
+  "recordPath": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-ce710726fc90476faf1c3b02\\job-a40a96cc-c07a-4c84-ac4d-71d171580436.walk-loop\\record.jsonl",
+  "resultsDir": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-ce710726fc90476faf1c3b02\\job-a40a96cc-c07a-4c84-ac4d-71d171580436.walk-loop\\results",
+  "status": "delivered",
+  "path": [
+    "plan",
+    "write",
+    "review",
+    "write",
+    "review",
+    "delivered"
+  ],
+  "first": {
+    "assessment": "I checked the walks against target/src/link.ts, target/src/session.ts and the base versions. A Standard reader can follow them. W1 goes through startSession, whenSettled, the connect loop, settle and the deferred callback. W2 covers the backoff, the attempt limit and the order of the two reports. W3 shows how a rejection skips the retries and settle. The explanations are accurate in nearly every detail. The microtask-before-timer ordering, the one-shot capture of the callback in settle, the pause after the last failure (600 ms of waits in total), the fractional and zero values of maxAttempts, the callback left stored after a rejection, and the two different ways report can fail all match the code. The Show more parts take the main text further rather than repeating it. One statement is not true of the code: W1.3's Show more says that overlapping connect calls would each cut the other's attempts short. Because the counter is reset when a call starts, an overlapping call can also give another call more attempts than maxAttempts. Since the reader checks the code through these texts, this one false statement means rework. Nothing else needs changing.",
+    "verdict": "rework",
+    "findings": [
+      {
+        "kind": "explanation",
+        "steps": [
+          "W1.3"
+        ],
+        "problem": "The Show more says that two overlapping connect calls on one Link 'would reset and increment the same counter, and each would cut short the other's attempts.' That is only half right. When one call resets the shared counter to 0, the other call's count drops too, so the other call can make more attempts than maxAttempts. The correct reading is that the shared counter makes the number of attempts per call unreliable: a call can end up with fewer attempts or with more.",
+        "why": "The step is there to warn about the shared counter. If the reader is told the only risk is fewer attempts, they will not expect a connect call to make extra transport.open calls, and they could reason wrongly about how many times open runs or how long it takes before 'gave-up'.",
+        "evidence": "target src/link.ts 18–20 and 26: `this.attempts = 0` at the start of every connect, the check `while (this.attempts < this.maxAttempts)`, then `this.attempts += 1`, and `await pause(...)` gives way to other code. Example: call A has failed its third attempt and is in its 300 ms pause, with attempts = 3. Call B starts and resets attempts to 0, then raises it to 1. When A resumes, it checks 1 < 3 and makes a fourth attempt.",
+        "reference": ""
+      }
+    ]
+  },
+  "final": {
+    "assessment": "The one finding from the first visit has been put right. W1.3's main text now says the limit of three holds for 'a single connect call running on its own'. Its Show more now explains that overlapping calls make the number of attempts per call unreliable, in either direction. Both of its examples hold up against target src/link.ts lines 18–26. In the 'more' case, a reset during A's final pause gives A a fourth call to open. In the 'fewer' case, B's increments can make A's check `attempts < maxAttempts` false after only two attempts of its own. The rest of the walks were already accurate and are unchanged. The reader can still follow the success path, the backoff and give-up path with the order of its two reports, and the rejection path that leaves the callback stored on the Link, and each step explains the code it shows. Nothing false or significantly missing remains.",
+    "verdict": "accept",
+    "findings": []
+  },
+  "rounds": 1,
+  "replanned": false,
+  "rewritten": [
+    "W1.3"
+  ],
+  "turns": [
+    {
+      "node": "plan",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T14:55:35.968Z",
+      "endedAt": "2026-11-10T14:56:30.206Z",
+      "durationMs": 54238
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.1",
+      "startedAt": "2026-11-10T14:56:30.801Z",
+      "endedAt": "2026-11-10T14:56:43.458Z",
+      "durationMs": 12657
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.2",
+      "startedAt": "2026-11-10T14:56:43.473Z",
+      "endedAt": "2026-11-10T14:56:51.951Z",
+      "durationMs": 8478
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.3",
+      "startedAt": "2026-11-10T14:56:51.966Z",
+      "endedAt": "2026-11-10T14:57:02.938Z",
+      "durationMs": 10972
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.4",
+      "startedAt": "2026-11-10T14:57:02.949Z",
+      "endedAt": "2026-11-10T14:57:08.579Z",
+      "durationMs": 5630
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.5",
+      "startedAt": "2026-11-10T14:57:08.591Z",
+      "endedAt": "2026-11-10T14:57:22.677Z",
+      "durationMs": 14086
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.6",
+      "startedAt": "2026-11-10T14:57:22.689Z",
+      "endedAt": "2026-11-10T14:57:28.652Z",
+      "durationMs": 5963
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.1",
+      "startedAt": "2026-11-10T14:57:28.663Z",
+      "endedAt": "2026-11-10T14:57:34.848Z",
+      "durationMs": 6185
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.2",
+      "startedAt": "2026-11-10T14:57:34.859Z",
+      "endedAt": "2026-11-10T14:57:41.387Z",
+      "durationMs": 6528
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.3",
+      "startedAt": "2026-11-10T14:57:41.400Z",
+      "endedAt": "2026-11-10T14:57:48.360Z",
+      "durationMs": 6960
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.4",
+      "startedAt": "2026-11-10T14:57:48.373Z",
+      "endedAt": "2026-11-10T14:57:53.543Z",
+      "durationMs": 5170
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.5",
+      "startedAt": "2026-11-10T14:57:53.557Z",
+      "endedAt": "2026-11-10T14:58:01.903Z",
+      "durationMs": 8346
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W3.1",
+      "startedAt": "2026-11-10T14:58:01.916Z",
+      "endedAt": "2026-11-10T14:58:09.882Z",
+      "durationMs": 7966
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W3.2",
+      "startedAt": "2026-11-10T14:58:09.895Z",
+      "endedAt": "2026-11-10T14:58:17.435Z",
+      "durationMs": 7540
+    },
+    {
+      "node": "review",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T14:58:17.483Z",
+      "endedAt": "2026-11-10T14:58:48.532Z",
+      "durationMs": 31049
+    },
+    {
+      "node": "write",
+      "occurrence": 2,
+      "stepId": "W1.3",
+      "startedAt": "2026-11-10T14:58:48.585Z",
+      "endedAt": "2026-11-10T14:58:59.478Z",
+      "durationMs": 10893
+    },
+    {
+      "node": "review",
+      "occurrence": 2,
+      "startedAt": "2026-11-10T14:58:59.521Z",
+      "endedAt": "2026-11-10T14:59:06.406Z",
+      "durationMs": 6885
+    }
+  ],
+  "durationMs": 210505,
+  "usage": [
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6010,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 10774,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6673,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1153,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22549,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 8317,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 591,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22860,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1300,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 875,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 25286,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1152,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 381,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 13373,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1064,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1177,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 14437,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 840,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 422,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 15277,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1602,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 482,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 16879,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 760,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 416,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 17639,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 874,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 540,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 18513,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 838,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 326,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 19351,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 931,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 663,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 20282,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 739,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 639,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 21021,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 989,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 594,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22010,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 989,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 3142,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 28660,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 11440,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1130,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22999,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 2101,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 538,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 14044,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 11212,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    }
+  ]
+}

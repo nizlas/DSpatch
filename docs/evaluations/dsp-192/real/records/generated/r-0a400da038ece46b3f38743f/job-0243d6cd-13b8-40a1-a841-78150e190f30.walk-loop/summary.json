@@ -1,0 +1,456 @@
+{
+  "runId": "walk-d87cf2b7-2244-4403-bcac-f30d2abf4f46",
+  "graphId": "dspatch-walk-loop",
+  "graphVersionId": "graph-8e84007492c1b56f",
+  "roles": [
+    {
+      "id": "walk-planner",
+      "sourcePath": "docs/loop/roles/review/walk-planner.role.md"
+    },
+    {
+      "id": "walk-writer",
+      "sourcePath": "docs/loop/roles/review/walk-writer.role.md"
+    },
+    {
+      "id": "walk-reviewer",
+      "sourcePath": "docs/loop/roles/review/walk-reviewer.role.md"
+    }
+  ],
+  "recordPath": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-0a400da038ece46b3f38743f\\job-0243d6cd-13b8-40a1-a841-78150e190f30.walk-loop\\record.jsonl",
+  "resultsDir": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-0a400da038ece46b3f38743f\\job-0243d6cd-13b8-40a1-a841-78150e190f30.walk-loop\\results",
+  "status": "delivered",
+  "path": [
+    "plan",
+    "write",
+    "review",
+    "delivered"
+  ],
+  "first": {
+    "assessment": "I checked every claim against src/link.ts and src/session.ts on both sides, and they hold. The base Link had only `transport` and a pass-through `connect`. The base startSession ignored the boolean and had no other caller. The target `whenSettled` keeps a single slot. `attempts` is per instance and reset on every `connect`. If `open` rejects, `settle` is skipped and the callback stays registered. `settle` clears the slot and queues the callback with `setTimeout(..., 0)`. The backoff waits 100, 200 and 300 ms, including the pause after the last failure. A `maxAttempts` of 0 or less gives up without trying. The awaited `'gave-up'` path reports 'retrying later' in a microtask, before the timer reports 'offline mode'. The reader can follow the course. The walks say when a callback is only registered and when it runs, say when the teaching order differs from execution order (W1.6 and W2.5 come back to line 4), and handle the return into startSession and the failure branch as alternatives at the `if (open)` branch, not as one run. For Essentials, the walks bring out what matters: two paths reach `report`, the readiness report comes after `startSession` resolves, the message order on failure is fixed, and nothing actually retries. The instance-state and timer-exception points are consequences that bear on review, and most of the extra mechanics come after Show more, where they continue the first part rather than repeat it. Nothing is false and nothing significant is missing, so I accept.",
+    "verdict": "accept",
+    "findings": []
+  },
+  "final": null,
+  "rounds": 0,
+  "replanned": false,
+  "rewritten": [],
+  "turns": [
+    {
+      "node": "plan",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T15:03:20.652Z",
+      "endedAt": "2026-11-10T15:04:13.587Z",
+      "durationMs": 52935
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.1",
+      "startedAt": "2026-11-10T15:04:14.123Z",
+      "endedAt": "2026-11-10T15:04:26.208Z",
+      "durationMs": 12085
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.2",
+      "startedAt": "2026-11-10T15:04:26.222Z",
+      "endedAt": "2026-11-10T15:04:39.012Z",
+      "durationMs": 12790
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.3",
+      "startedAt": "2026-11-10T15:04:39.025Z",
+      "endedAt": "2026-11-10T15:04:46.706Z",
+      "durationMs": 7681
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.4",
+      "startedAt": "2026-11-10T15:04:46.719Z",
+      "endedAt": "2026-11-10T15:04:53.844Z",
+      "durationMs": 7125
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.5",
+      "startedAt": "2026-11-10T15:04:53.858Z",
+      "endedAt": "2026-11-10T15:04:57.796Z",
+      "durationMs": 3938
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.6",
+      "startedAt": "2026-11-10T15:04:57.808Z",
+      "endedAt": "2026-11-10T15:05:04.373Z",
+      "durationMs": 6565
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.1",
+      "startedAt": "2026-11-10T15:05:04.384Z",
+      "endedAt": "2026-11-10T15:05:09.943Z",
+      "durationMs": 5559
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.2",
+      "startedAt": "2026-11-10T15:05:09.957Z",
+      "endedAt": "2026-11-10T15:05:14.144Z",
+      "durationMs": 4187
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.3",
+      "startedAt": "2026-11-10T15:05:14.158Z",
+      "endedAt": "2026-11-10T15:05:19.107Z",
+      "durationMs": 4949
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.4",
+      "startedAt": "2026-11-10T15:05:19.119Z",
+      "endedAt": "2026-11-10T15:05:25.680Z",
+      "durationMs": 6561
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.5",
+      "startedAt": "2026-11-10T15:05:25.690Z",
+      "endedAt": "2026-11-10T15:05:30.207Z",
+      "durationMs": 4517
+    },
+    {
+      "node": "review",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T15:05:30.245Z",
+      "endedAt": "2026-11-10T15:05:49.390Z",
+      "durationMs": 19145
+    }
+  ],
+  "durationMs": 148829,
+  "usage": [
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 5718,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 25317,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 2067,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1036,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 22318,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 8237,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 8,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 850,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 34605,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1578,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 543,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 12419,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1092,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 525,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 13511,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1014,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 194,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 14525,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 917,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 427,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 15442,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 627,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 308,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 16069,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 772,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 184,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 16841,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 705,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 264,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 17546,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 588,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 350,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 36917,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 832,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 4,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 226,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 18966,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 611,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 6,
+      "source": "SDKResultMessage.usage.input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 1641,
+      "source": "SDKResultMessage.usage.output_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 23251,
+      "source": "SDKResultMessage.usage.cache_read_input_tokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "turn",
+      "value": 8540,
+      "source": "SDKResultMessage.usage.cache_creation_input_tokens"
+    }
+  ]
+}

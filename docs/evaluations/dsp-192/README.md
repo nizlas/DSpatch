@@ -15,6 +15,7 @@ Material for [DSP-192](../../../backlog/tasks/dsp-192%20-%20Clarify-the-explanat
 | `run/prompts/*.md` | The nine prompts, verbatim as the product's builders made them at instruction version 8. |
 | `run/answers/*.md` | The nine answers, verbatim as the stand-in wrote them. |
 | `run/JUDGMENT.md` | The judgment: correctness against the code, the help for each profile's reader, Path A against Path B, version 7 against 8, what the comparison cannot show, the fault fixed once, remaining weaknesses. |
+| `real/` | The follow-up of the same day through the real provider flow with Claude (`opus`): three loop runs, one per profile, and the Essentials and Teacher alternatives made after the Standard walk, with the records and its own judgment. See `real/README.md`. |
 
 ## The nine prompts
 

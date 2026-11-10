@@ -1,0 +1,612 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · connect 0ca6043→a586f10",
+    "en": "Code walks · connect 0ca6043→a586f10"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-project-WAsiv6\\connect",
+  "base": "0ca604322f5e4a5e2dd4aa17121b0144e572dd91",
+  "target": "a586f10d8c3b805a255891d5d3f70798021c454e",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Claude (opus) on 2026-11-10 15:09 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Teacher profile (instruction version 8). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code and accepted them without a correction round. The reviewer is an agent: its acceptance approves nothing of the code.",
+    "en": "Prepared by Claude (opus) on 2026-11-10 15:09 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Teacher profile (instruction version 8). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code and accepted them without a correction round. The reviewer is an agent: its acceptance approves nothing of the code."
+  },
+  "presentation": {
+    "profile": "pedagog",
+    "version": 8
+  },
+  "overviewSummary": {
+    "sv": "Before this change, `Link.connect` made one call to `transport.open` and returned the boolean it got. Now it tries up to `maxAttempts` times (default 3) and waits a little longer after each failed attempt. It returns an `Outcome` of `'connected'` or `'gave-up'`. It also tells a single registered callback the outcome, through `setTimeout(…, 0)`. `startSession` now takes a `report` function. It registers a callback that reports `'session ready'` or `'offline mode'`, and it also reports `'retrying later'` itself when the outcome is `'gave-up'`.",
+    "en": "Before this change, `Link.connect` made one call to `transport.open` and returned the boolean it got. Now it tries up to `maxAttempts` times (default 3) and waits a little longer after each failed attempt. It returns an `Outcome` of `'connected'` or `'gave-up'`. It also tells a single registered callback the outcome, through `setTimeout(…, 0)`. `startSession` now takes a `report` function. It registers a callback that reports `'session ready'` or `'offline mode'`, and it also reports `'retrying later'` itself when the outcome is `'gave-up'`."
+  },
+  "overview": {
+    "sv": "Before this change, `Link.connect` made one call to `transport.open` and returned the boolean it got. Now it tries up to `maxAttempts` times (default 3) and waits a little longer after each failed attempt. It returns an `Outcome` of `'connected'` or `'gave-up'`. It also tells a single registered callback the outcome, through `setTimeout(…, 0)`. `startSession` now takes a `report` function. It registers a callback that reports `'session ready'` or `'offline mode'`, and it also reports `'retrying later'` itself when the outcome is `'gave-up'`.\n\nThe outcome reaches the session in two ways. One is the awaited return value of `connect`, which resumes `startSession` in a microtask. The other is the `whenSettled` callback, which `settle` puts on a macrotask timer. So the two reports come in a fixed order that the code doesn't state anywhere: the callback runs only after `startSession` has resumed from `connect` and run to the end.\n\nThe callback is one-shot: `settle` clears it, and a later `whenSettled` call replaces any earlier one. `transport.open` is not wrapped in a try/catch, so a rejection skips `settle` completely.\n\n`startSession` now has a third required parameter. These revisions contain no other callers or tests.",
+    "en": "Before this change, `Link.connect` made one call to `transport.open` and returned the boolean it got. Now it tries up to `maxAttempts` times (default 3) and waits a little longer after each failed attempt. It returns an `Outcome` of `'connected'` or `'gave-up'`. It also tells a single registered callback the outcome, through `setTimeout(…, 0)`. `startSession` now takes a `report` function. It registers a callback that reports `'session ready'` or `'offline mode'`, and it also reports `'retrying later'` itself when the outcome is `'gave-up'`.\n\nThe outcome reaches the session in two ways. One is the awaited return value of `connect`, which resumes `startSession` in a microtask. The other is the `whenSettled` callback, which `settle` puts on a macrotask timer. So the two reports come in a fixed order that the code doesn't state anywhere: the callback runs only after `startSession` has resumed from `connect` and run to the end.\n\nThe callback is one-shot: `settle` clears it, and a later `whenSettled` call replaces any earlier one. `transport.open` is not wrapped in a try/catch, so a rejection skips `settle` completely.\n\n`startSession` now has a third required parameter. These revisions contain no other callers or tests."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "Starting a session when the link connects",
+        "en": "Starting a session when the link connects"
+      },
+      "purpose": {
+        "sv": "Shows how `startSession` registers its callback, how `connect` gets to `'connected'`, and why `'session ready'` is reported only after `startSession` has finished.",
+        "en": "Shows how `startSession` registers its callback, how `connect` gets to `'connected'`, and why `'session ready'` is reported only after `startSession` has finished."
+      },
+      "question": {
+        "sv": "What happens, and in what order, when a session starts and the transport opens?",
+        "en": "What happens, and in what order, when a session starts and the transport opens?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "startSession registers a settle callback",
+            "en": "startSession registers a settle callback"
+          },
+          "summary": {
+            "sv": "The session hands Link a callback that turns the outcome into a report, then awaits connect.",
+            "en": "The session hands Link a callback that turns the outcome into a report, then awaits connect."
+          },
+          "body": {
+            "sv": "This is where a session begins. In the earlier revision, `startSession` only awaited `link.connect(address)` and reported nothing. Now it takes a third parameter, `report`, which is a function that accepts a piece of text. The session uses it to tell its caller how the connection turned out. `startSession` doesn't decide what happens to that text, whether it's logged or shown to a user. It only calls `report`. No caller of `startSession` exists in this code, so it can't be seen what any real caller passes as `report`.\n\n**First line: a callback is registered.** The argument given to `link.whenSettled` is an arrow function. In TypeScript, `(outcome) => ...` creates a function value without running it. `startSession` hands this function to the `Link` so that the `Link` can call it later, once the connection attempt has *settled*, meaning it has a final outcome. This is what \"callback\" means here. The function's body maps the outcome to a message:\n\n- `'connected'` becomes `'session ready'`\n- anything else becomes `'offline mode'`\n\n`Outcome` is declared in `link.ts` as `'connected' | 'gave-up'`, so \"anything else\" can only be `'gave-up'`.\n\n**Registering doesn't report anything.** When this line finishes, `report` hasn't been called. The `Link` has only stored the function. The next step shows how `whenSettled` keeps it.\n\n**Second line: `connect` is awaited.** Because `startSession` is an `async` function, `await link.connect(address)` suspends `startSession` until the promise from `connect` resolves. Then the function continues with the result in `outcome`. The walk follows that call into `connect` in a later step.\n\nThis means the session has two separate ways to report:\n\n1. the registered callback, which the `Link` decides when to call\n2. the direct `report('retrying later')` that comes after the await\n\nTo judge this change you need to know in what order these two paths run. This walk and the next one work that out.",
+            "en": "This is where a session begins. In the earlier revision, `startSession` only awaited `link.connect(address)` and reported nothing. Now it takes a third parameter, `report`, which is a function that accepts a piece of text. The session uses it to tell its caller how the connection turned out. `startSession` doesn't decide what happens to that text, whether it's logged or shown to a user. It only calls `report`. No caller of `startSession` exists in this code, so it can't be seen what any real caller passes as `report`.\n\n**First line: a callback is registered.** The argument given to `link.whenSettled` is an arrow function. In TypeScript, `(outcome) => ...` creates a function value without running it. `startSession` hands this function to the `Link` so that the `Link` can call it later, once the connection attempt has *settled*, meaning it has a final outcome. This is what \"callback\" means here. The function's body maps the outcome to a message:\n\n- `'connected'` becomes `'session ready'`\n- anything else becomes `'offline mode'`\n\n`Outcome` is declared in `link.ts` as `'connected' | 'gave-up'`, so \"anything else\" can only be `'gave-up'`.\n\n**Registering doesn't report anything.** When this line finishes, `report` hasn't been called. The `Link` has only stored the function. The next step shows how `whenSettled` keeps it.\n\n**Second line: `connect` is awaited.** Because `startSession` is an `async` function, `await link.connect(address)` suspends `startSession` until the promise from `connect` resolves. Then the function continues with the result in `outcome`. The walk follows that call into `connect` in a later step.\n\nThis means the session has two separate ways to report:\n\n1. the registered callback, which the `Link` decides when to call\n2. the direct `report('retrying later')` that comes after the await\n\nTo judge this change you need to know in what order these two paths run. This walk and the next one work that out."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "startSession registers the callback",
+                "en": "startSession registers the callback"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 3,
+                "end": 5,
+                "role": "walk",
+                "anchor": "link.whenSettled("
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "whenSettled stores one callback",
+            "en": "whenSettled stores one callback"
+          },
+          "summary": {
+            "sv": "Link keeps a single nullable callback field, and each call overwrites it.",
+            "en": "Link keeps a single nullable callback field, and each call overwrites it."
+          },
+          "body": {
+            "sv": "The `whenSettled` call from the previous step (W1.1) lands here. In the earlier revision, `Link` had no state of its own: it held a `transport` and passed `connect` straight through to it. With this change, a `Link` object now remembers two things between calls.\n\n**`onSettled` is a single slot for one callback.** Its type, `((outcome: Outcome) => void) | null`, means the field holds either a function that takes an `Outcome`, or `null` when nothing is registered. It starts as `null`. `whenSettled` assigns the given callback to this field and does nothing else. It doesn't call the callback, check what's already there, or queue anything.\n\nBecause there is only one slot, **a second `whenSettled` call replaces the first callback, and nothing tells the first registrant that its callback was dropped**. For example, if two pieces of code shared one `Link` and each called `startSession`, only the callback registered last would be stored. Whether callers ever share a `Link` like this can't be seen in this code, because nothing in the repository calls `startSession`. The only places that read or clear `onSettled` are `settle` and this assignment. Step W1.4 shows `settle` taking the callback out of the slot.\n\n**`attempts` and `maxAttempts` hold the retry state.** `attempts` is a counter stored on the object and starts at 0. `maxAttempts` is a constructor parameter that defaults to 3. In TypeScript, writing `private readonly` before a constructor parameter makes that parameter a field automatically. So `new Link(transport)` gives a limit of 3, and `new Link(transport, 5)` gives 5. Existing code that calls `new Link(transport)` still compiles. In the next step (W1.3), `connect` resets `attempts` and counts it up to `maxAttempts`.",
+            "en": "The `whenSettled` call from the previous step (W1.1) lands here. In the earlier revision, `Link` had no state of its own: it held a `transport` and passed `connect` straight through to it. With this change, a `Link` object now remembers two things between calls.\n\n**`onSettled` is a single slot for one callback.** Its type, `((outcome: Outcome) => void) | null`, means the field holds either a function that takes an `Outcome`, or `null` when nothing is registered. It starts as `null`. `whenSettled` assigns the given callback to this field and does nothing else. It doesn't call the callback, check what's already there, or queue anything.\n\nBecause there is only one slot, **a second `whenSettled` call replaces the first callback, and nothing tells the first registrant that its callback was dropped**. For example, if two pieces of code shared one `Link` and each called `startSession`, only the callback registered last would be stored. Whether callers ever share a `Link` like this can't be seen in this code, because nothing in the repository calls `startSession`. The only places that read or clear `onSettled` are `settle` and this assignment. Step W1.4 shows `settle` taking the callback out of the slot.\n\n**`attempts` and `maxAttempts` hold the retry state.** `attempts` is a counter stored on the object and starts at 0. `maxAttempts` is a constructor parameter that defaults to 3. In TypeScript, writing `private readonly` before a constructor parameter makes that parameter a field automatically. So `new Link(transport)` gives a limit of 3, and `new Link(transport, 5)` gives 5. Existing code that calls `new Link(transport)` still compiles. In the next step (W1.3), `connect` resets `attempts` and counts it up to `maxAttempts`."
+          },
+          "details": {
+            "sv": "`attempts` lives on the `Link` object rather than as a local variable inside `connect`. As a result, every `connect` call on the same `Link` shares one counter. The next step shows `connect` setting it back to 0 at the start of each call. Nothing in `connect` prevents two calls from overlapping on the same `Link`. If they did overlap, both would read and write the same counter. In JavaScript this isn't a data race, because the code runs on one thread and never in parallel. But the two calls would take turns at each `await` and change each other's count. The code allows this; whether any caller actually does it can't be established here.",
+            "en": "`attempts` lives on the `Link` object rather than as a local variable inside `connect`. As a result, every `connect` call on the same `Link` shares one counter. The next step shows `connect` setting it back to 0 at the start of each call. Nothing in `connect` prevents two calls from overlapping on the same `Link`. If they did overlap, both would read and write the same counter. In JavaScript this isn't a data race, because the code runs on one thread and never in parallel. But the two calls would take turns at each `await` and change each other's count. The code allows this; whether any caller actually does it can't be established here."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "State, constructor and whenSettled",
+                "en": "State, constructor and whenSettled"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 8,
+                "end": 15,
+                "role": "walk",
+                "anchor": "this.onSettled = callback;"
+              },
+              "from": {
+                "label": {
+                  "sv": "startSession calls whenSettled",
+                  "en": "startSession calls whenSettled"
+                },
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 4
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "connect tries the transport in a loop",
+            "en": "connect tries the transport in a loop"
+          },
+          "summary": {
+            "sv": "connect resets the attempt count, then awaits transport.open on each pass of the loop.",
+            "en": "connect resets the attempt count, then awaits transport.open on each pass of the loop."
+          },
+          "body": {
+            "sv": "This is the code that runs when `startSession` (W1.1) executes `await link.connect(address)`. In the earlier revision, `connect` was a single line, `return this.transport.open(address)`. It made one attempt and passed back the transport's `boolean` unchanged. Now `connect` retries, and it returns an `Outcome`, either `'connected'` or `'gave-up'`, instead of a `boolean`. Because the return type changed, any other caller that used the old `true`/`false` result would have to change too. In this code, `startSession` is the only caller.\n\nWhat happens on each call:\n\n1. **Reset.** `attempts` is set to 0. As described in W1.2, the counter belongs to the `Link` object, so every `connect` call starts counting again from zero.\n2. **Loop bound.** The `while` loop runs as long as `attempts < maxAttempts`. `attempts` is increased at the start of each pass, so with the default `maxAttempts` of 3 the transport is tried at most three times.\n3. **Awaited open.** `transport.open(address)` returns a `Promise<boolean>`. The `await` pauses `connect` until that promise resolves, and `open` then holds the result. While `connect` is paused, nothing in this function runs. JavaScript can do other work in the meantime, and `startSession` stays suspended at its own `await`.\n\n**In this walk, `open` is `true`.** `connect` calls `this.settle('connected')` and then returns `'connected'`. The order matters. `settle` runs completely before the `return`. Returning from an `async` function is what resolves the promise `startSession` is waiting on. The next step (W1.4) shows that `settle` doesn't call the registered callback at this point. It only schedules it.\n\nWhen `open` is `false`, the code takes the other path: it pauses and tries again. Walk W2 comes back to this point to follow that case.",
+            "en": "This is the code that runs when `startSession` (W1.1) executes `await link.connect(address)`. In the earlier revision, `connect` was a single line, `return this.transport.open(address)`. It made one attempt and passed back the transport's `boolean` unchanged. Now `connect` retries, and it returns an `Outcome`, either `'connected'` or `'gave-up'`, instead of a `boolean`. Because the return type changed, any other caller that used the old `true`/`false` result would have to change too. In this code, `startSession` is the only caller.\n\nWhat happens on each call:\n\n1. **Reset.** `attempts` is set to 0. As described in W1.2, the counter belongs to the `Link` object, so every `connect` call starts counting again from zero.\n2. **Loop bound.** The `while` loop runs as long as `attempts < maxAttempts`. `attempts` is increased at the start of each pass, so with the default `maxAttempts` of 3 the transport is tried at most three times.\n3. **Awaited open.** `transport.open(address)` returns a `Promise<boolean>`. The `await` pauses `connect` until that promise resolves, and `open` then holds the result. While `connect` is paused, nothing in this function runs. JavaScript can do other work in the meantime, and `startSession` stays suspended at its own `await`.\n\n**In this walk, `open` is `true`.** `connect` calls `this.settle('connected')` and then returns `'connected'`. The order matters. `settle` runs completely before the `return`. Returning from an `async` function is what resolves the promise `startSession` is waiting on. The next step (W1.4) shows that `settle` doesn't call the registered callback at this point. It only schedules it.\n\nWhen `open` is `false`, the code takes the other path: it pauses and tries again. Walk W2 comes back to this point to follow that case."
+          },
+          "details": {
+            "sv": "`this.transport.open(address)` is only awaited. Nothing here catches an error from it. If the promise rejects instead of resolving to `true` or `false`, `connect` stops at this `await` and never reaches a `settle` call. Walk W3 follows that third outcome.",
+            "en": "`this.transport.open(address)` is only awaited. Nothing here catches an error from it. If the promise rejects instead of resolving to `true` or `false`, `connect` stops at this `await` and never reaches a `settle` call. Walk W3 follows that third outcome."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "connect loop and success branch",
+                "en": "connect loop and success branch"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 17,
+                "end": 25,
+                "role": "walk",
+                "anchor": "const open = await this.transport.open(address);"
+              },
+              "from": {
+                "label": {
+                  "sv": "startSession awaits connect",
+                  "en": "startSession awaits connect"
+                },
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 5,
+                "end": 5
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "settle defers the callback to a timer",
+            "en": "settle defers the callback to a timer"
+          },
+          "summary": {
+            "sv": "settle clears the stored callback and schedules it with setTimeout(…, 0).",
+            "en": "settle clears the stored callback and schedules it with setTimeout(…, 0)."
+          },
+          "body": {
+            "sv": "`connect` calls this method on its success branch, just before it returns `'connected'` (W1.3). `settle` is a normal synchronous method. It finishes before `connect` moves on to its `return`. It does two things:\n\n1. **It empties the slot first.** It copies the stored callback into the local variable `callback` and then sets `onSettled` to `null`. Each registered callback can therefore be scheduled at most once. A later `settle`, for example from another `connect` call, finds `null` and does nothing, unless `whenSettled` has registered a new callback in the meantime (W1.2). If nothing was registered at all, `settle` schedules nothing.\n2. **It schedules the callback instead of calling it.** `setTimeout(() => callback(outcome), 0)` puts a timer task on JavaScript's event loop, and `settle` returns straight away. The callback hasn't run when `settle` returns.\n\nThe delay of `0` doesn't mean \"now\". The JavaScript runtime finishes the code it is currently running, plus all **microtasks** queued during that run, before it starts any timer task. A microtask is short follow-up work queued by promises. The continuation after an `await` is one. The language and the event-loop rules guarantee this order. It doesn't depend on how fast the machine is.\n\nWhat follows for this walk: after `settle` returns, `connect` returns `'connected'`. That resolves the promise `startSession` is awaiting, so the continuation of `startSession` is queued as a microtask. **That microtask runs before the timer that `settle` just created**. So `startSession` resumes and finishes (W1.5) before the callback reports `'session ready'` (W1.6).",
+            "en": "`connect` calls this method on its success branch, just before it returns `'connected'` (W1.3). `settle` is a normal synchronous method. It finishes before `connect` moves on to its `return`. It does two things:\n\n1. **It empties the slot first.** It copies the stored callback into the local variable `callback` and then sets `onSettled` to `null`. Each registered callback can therefore be scheduled at most once. A later `settle`, for example from another `connect` call, finds `null` and does nothing, unless `whenSettled` has registered a new callback in the meantime (W1.2). If nothing was registered at all, `settle` schedules nothing.\n2. **It schedules the callback instead of calling it.** `setTimeout(() => callback(outcome), 0)` puts a timer task on JavaScript's event loop, and `settle` returns straight away. The callback hasn't run when `settle` returns.\n\nThe delay of `0` doesn't mean \"now\". The JavaScript runtime finishes the code it is currently running, plus all **microtasks** queued during that run, before it starts any timer task. A microtask is short follow-up work queued by promises. The continuation after an `await` is one. The language and the event-loop rules guarantee this order. It doesn't depend on how fast the machine is.\n\nWhat follows for this walk: after `settle` returns, `connect` returns `'connected'`. That resolves the promise `startSession` is awaiting, so the continuation of `startSession` is queued as a microtask. **That microtask runs before the timer that `settle` just created**. So `startSession` resumes and finishes (W1.5) before the callback reports `'session ready'` (W1.6)."
+          },
+          "details": {
+            "sv": "The arrow function given to `setTimeout` is a closure. It captures the local `callback` and `outcome`, not the field `onSettled`. A `whenSettled` call made after `settle` but before the timer fires therefore doesn't change or cancel the callback already queued. It only fills the now-empty slot for a later `settle`. Nothing in `Link` keeps the timer's handle, so a queued callback can't be cancelled.\n\nThe same ordering also covers code that awaits `startSession`. Those continuations are microtasks too, so they run before the timer as long as they only wait on promises that are already resolved. If such a caller awaits something that needs a new timer or I/O, the code allows the callback to run first. That depends on the caller, and no caller exists in this code.",
+            "en": "The arrow function given to `setTimeout` is a closure. It captures the local `callback` and `outcome`, not the field `onSettled`. A `whenSettled` call made after `settle` but before the timer fires therefore doesn't change or cancel the callback already queued. It only fills the now-empty slot for a later `settle`. Nothing in `Link` keeps the timer's handle, so a queued callback can't be cancelled.\n\nThe same ordering also covers code that awaits `startSession`. Those continuations are microtasks too, so they run before the timer as long as they only wait on promises that are already resolved. If such a caller awaits something that needs a new timer or I/O, the code allows the callback to run first. That depends on the caller, and no caller exists in this code."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "settle",
+                "en": "settle"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 32,
+                "end": 38,
+                "role": "walk",
+                "anchor": "setTimeout(() => callback(outcome), 0);"
+              },
+              "from": {
+                "label": {
+                  "sv": "connect settles on success",
+                  "en": "connect settles on success"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 23,
+                "end": 23
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "startSession resumes and finishes",
+            "en": "startSession resumes and finishes"
+          },
+          "summary": {
+            "sv": "With 'connected', startSession reports nothing itself and resolves.",
+            "en": "With 'connected', startSession reports nothing itself and resolves."
+          },
+          "body": {
+            "sv": "Execution is back in `startSession`, at the `await link.connect(address)` it was paused on (W1.1). `connect` returned `'connected'`, so `outcome` is `'connected'`. As W1.4 explained, this continuation runs as a microtask, before the timer that `settle` queued.\n\nThe check `outcome === 'gave-up'` is false, so `startSession` skips `report('retrying later')` and reaches its end. When an `async` function reaches its end, the promise it returned resolves with `undefined`, which is what its `Promise<void>` type says.\n\n**At this point `report` hasn't been called once.** A caller that runs `await startSession(...)` continues now. It knows the session started, but `'session ready'` hasn't been reported yet. That report is still waiting in the timer `settle` queued.\n\nThe next step leaves this call chain and follows that timer task.",
+            "en": "Execution is back in `startSession`, at the `await link.connect(address)` it was paused on (W1.1). `connect` returned `'connected'`, so `outcome` is `'connected'`. As W1.4 explained, this continuation runs as a microtask, before the timer that `settle` queued.\n\nThe check `outcome === 'gave-up'` is false, so `startSession` skips `report('retrying later')` and reaches its end. When an `async` function reaches its end, the promise it returned resolves with `undefined`, which is what its `Promise<void>` type says.\n\n**At this point `report` hasn't been called once.** A caller that runs `await startSession(...)` continues now. It knows the session started, but `'session ready'` hasn't been reported yet. That report is still waiting in the timer `settle` queued.\n\nThe next step leaves this call chain and follows that timer task."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "startSession after the await",
+                "en": "startSession after the await"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 5,
+                "end": 8,
+                "role": "walk",
+                "anchor": "if (outcome === 'gave-up') {"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "The timer runs the registered callback",
+            "en": "The timer runs the registered callback"
+          },
+          "summary": {
+            "sv": "Later, on the timer task, the callback reports 'session ready'.",
+            "en": "Later, on the timer task, the callback reports 'session ready'."
+          },
+          "body": {
+            "sv": "This is the arrow function `startSession` registered in W1.1, now running. It isn't called from the previous step. The JavaScript event loop calls it: it starts the timer task that `settle` queued (W1.4), and that task runs `callback(outcome)` with `outcome` set to `'connected'`.\n\nThe function itself is unchanged since W1.1. The ternary maps `'connected'` to `'session ready'` and passes that text to `report`. This works even though `startSession` has already returned. The arrow function is a closure: it keeps a reference to the `report` parameter it was created with, so `report` is still usable after the function that received it has finished.\n\nThat gives the full order on the success path:\n\n1. `startSession` registers the callback and awaits `connect`.\n2. `connect` gets `true` from `transport.open`, and `settle` queues the callback on a timer.\n3. `startSession` resumes, reports nothing, and resolves (W1.5).\n4. On the timer task, the callback reports `'session ready'`.\n\n**So `'session ready'` always comes after `startSession` has resolved, never as part of it.** This order follows from the event-loop rules described in W1.4. It comes from reading the code. No test run was observed.",
+            "en": "This is the arrow function `startSession` registered in W1.1, now running. It isn't called from the previous step. The JavaScript event loop calls it: it starts the timer task that `settle` queued (W1.4), and that task runs `callback(outcome)` with `outcome` set to `'connected'`.\n\nThe function itself is unchanged since W1.1. The ternary maps `'connected'` to `'session ready'` and passes that text to `report`. This works even though `startSession` has already returned. The arrow function is a closure: it keeps a reference to the `report` parameter it was created with, so `report` is still usable after the function that received it has finished.\n\nThat gives the full order on the success path:\n\n1. `startSession` registers the callback and awaits `connect`.\n2. `connect` gets `true` from `transport.open`, and `settle` queues the callback on a timer.\n3. `startSession` resumes, reports nothing, and resolves (W1.5).\n4. On the timer task, the callback reports `'session ready'`.\n\n**So `'session ready'` always comes after `startSession` has resolved, never as part of it.** This order follows from the event-loop rules described in W1.4. It comes from reading the code. No test run was observed."
+          },
+          "details": {
+            "sv": "This code runs on a timer task, not inside `startSession`. If `report` throws here, the exception doesn't reject the promise from `startSession`, because that promise has already resolved. Nothing in this code catches the exception. It escapes as an uncaught error from the timer callback, and the host decides what happens then: for example, Node.js normally ends the process on an uncaught exception. This is what the code allows. No `report` implementation in this code throws, because none exists here.",
+            "en": "This code runs on a timer task, not inside `startSession`. If `report` throws here, the exception doesn't reject the promise from `startSession`, because that promise has already resolved. Nothing in this code catches the exception. It escapes as an uncaught error from the timer callback, and the host decides what happens then: for example, Node.js normally ends the process on an uncaught exception. This is what the code allows. No `report` implementation in this code throws, because none exists here."
+          },
+          "revisit": {
+            "sv": "The first step showed this lambda being registered. Now it runs, on the timer task, after startSession has finished.",
+            "en": "The first step showed this lambda being registered. Now it runs, on the timer task, after startSession has finished."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Registered callback",
+                "en": "Registered callback"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 4,
+                "role": "walk",
+                "anchor": "'session ready'"
+              },
+              "from": {
+                "label": {
+                  "sv": "settle's timer invokes the callback",
+                  "en": "settle's timer invokes the callback"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 36,
+                "end": 36
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "kind": "walk",
+      "title": {
+        "sv": "Giving up after every attempt fails",
+        "en": "Giving up after every attempt fails"
+      },
+      "purpose": {
+        "sv": "Shows the backoff between attempts, the gave-up result, and how the two reports `'retrying later'` and `'offline mode'` are ordered.",
+        "en": "Shows the backoff between attempts, the gave-up result, and how the two reports `'retrying later'` and `'offline mode'` are ordered."
+      },
+      "question": {
+        "sv": "What happens when transport.open keeps returning false, and in what order do the reports appear?",
+        "en": "What happens when transport.open keeps returning false, and in what order do the reports appear?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "A failed attempt waits before the next try",
+            "en": "A failed attempt waits before the next try"
+          },
+          "summary": {
+            "sv": "When open is false, connect pauses attempts × 100 ms and loops again.",
+            "en": "When open is false, connect pauses attempts × 100 ms and loops again."
+          },
+          "body": {
+            "sv": "This walk starts again at the branch inside `connect`'s loop that W1.3 introduced. This time `transport.open` resolves to `false`. The `if (open)` block is skipped, so there is no `settle` and no `return`. Execution reaches `await pause(this.attempts * 100)` instead.\n\n`attempts` was already increased at the start of this pass, so the wait grows with each failure. With the default `maxAttempts` of 3:\n\n| Pass | `attempts` during the pass | `open` | Wait after it |\n|---|---|---|---|\n| 1 | 1 | `false` | 100 ms |\n| 2 | 2 | `false` | 200 ms |\n| 3 | 3 | `false` | 300 ms |\n\nAfter each wait the loop checks `attempts < maxAttempts` again. After the third pass, `3 < 3` is false and the loop ends. **The pause also runs after the last failed attempt**: `connect` waits 300 ms although no further attempt follows. With the defaults, that makes 600 ms of waiting before `connect` gives up. Whether that last wait is intended can't be read from the code. It is simply what the loop does.\n\n`pause` is a small helper that turns a timer into a promise, so `connect` can `await` the delay the same way it awaits `transport.open`. While `connect` waits, it is suspended, and `startSession` is still paused at its own `await`. The next step shows `pause` itself.",
+            "en": "This walk starts again at the branch inside `connect`'s loop that W1.3 introduced. This time `transport.open` resolves to `false`. The `if (open)` block is skipped, so there is no `settle` and no `return`. Execution reaches `await pause(this.attempts * 100)` instead.\n\n`attempts` was already increased at the start of this pass, so the wait grows with each failure. With the default `maxAttempts` of 3:\n\n| Pass | `attempts` during the pass | `open` | Wait after it |\n|---|---|---|---|\n| 1 | 1 | `false` | 100 ms |\n| 2 | 2 | `false` | 200 ms |\n| 3 | 3 | `false` | 300 ms |\n\nAfter each wait the loop checks `attempts < maxAttempts` again. After the third pass, `3 < 3` is false and the loop ends. **The pause also runs after the last failed attempt**: `connect` waits 300 ms although no further attempt follows. With the defaults, that makes 600 ms of waiting before `connect` gives up. Whether that last wait is intended can't be read from the code. It is simply what the loop does.\n\n`pause` is a small helper that turns a timer into a promise, so `connect` can `await` the delay the same way it awaits `transport.open`. While `connect` waits, it is suspended, and `startSession` is still paused at its own `await`. The next step shows `pause` itself."
+          },
+          "details": {
+            "sv": "The wait grows linearly: it adds 100 ms per attempt. It doesn't double each time, which is what an exponential backoff would do. A larger `maxAttempts` passed to the constructor makes the waits longer as well. For example, with `maxAttempts` of 5 the waits are 100, 200, 300, 400 and 500 ms, so 1.5 s in total.",
+            "en": "The wait grows linearly: it adds 100 ms per attempt. It doesn't double each time, which is what an exponential backoff would do. A larger `maxAttempts` passed to the constructor makes the waits longer as well. For example, with `maxAttempts` of 5 the waits are 100, 200, 300, 400 and 500 ms, so 1.5 s in total."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Failure branch: pause between attempts",
+                "en": "Failure branch: pause between attempts"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 19,
+                "end": 27,
+                "role": "walk",
+                "anchor": "await pause(this.attempts * 100);"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "pause wraps setTimeout in a promise",
+            "en": "pause wraps setTimeout in a promise"
+          },
+          "summary": {
+            "sv": "The helper resolves after the given number of milliseconds.",
+            "en": "The helper resolves after the given number of milliseconds."
+          },
+          "body": {
+            "sv": "`connect` reaches this helper from its `await pause(this.attempts * 100)` (W2.1). `new Promise(...)` takes a function, called the executor, and runs it immediately. The executor receives `resolve`, a function that fulfils the promise when it is called. Here the executor only starts a timer and gives `resolve` to it as the timer callback. So the promise from `pause` stays pending until the timer fires, and then it resolves with no value.\n\nWhat this means for `connect`:\n\n- **The wait is at least `ms` milliseconds.** The timer can't fire before then, and it can fire later if the event loop is busy.\n- **The promise never rejects.** Only `resolve` is used, so `await pause(...)` can't throw.\n- **The wait can't be cancelled.** The timer handle isn't kept, and `connect` takes no cancellation signal. Once `connect` starts waiting, it finishes the wait.\n\n`pause` is declared at module level and isn't exported, so code outside `link.ts` can't call it. When the promise resolves, `connect` continues its loop and checks `attempts < maxAttempts` again. After the last attempt, the next step follows it out of the loop.",
+            "en": "`connect` reaches this helper from its `await pause(this.attempts * 100)` (W2.1). `new Promise(...)` takes a function, called the executor, and runs it immediately. The executor receives `resolve`, a function that fulfils the promise when it is called. Here the executor only starts a timer and gives `resolve` to it as the timer callback. So the promise from `pause` stays pending until the timer fires, and then it resolves with no value.\n\nWhat this means for `connect`:\n\n- **The wait is at least `ms` milliseconds.** The timer can't fire before then, and it can fire later if the event loop is busy.\n- **The promise never rejects.** Only `resolve` is used, so `await pause(...)` can't throw.\n- **The wait can't be cancelled.** The timer handle isn't kept, and `connect` takes no cancellation signal. Once `connect` starts waiting, it finishes the wait.\n\n`pause` is declared at module level and isn't exported, so code outside `link.ts` can't call it. When the promise resolves, `connect` continues its loop and checks `attempts < maxAttempts` again. After the last attempt, the next step follows it out of the loop."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "pause helper",
+                "en": "pause helper"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 41,
+                "end": 43,
+                "role": "walk",
+                "anchor": "function pause(ms: number)"
+              },
+              "from": {
+                "label": {
+                  "sv": "connect awaits pause",
+                  "en": "connect awaits pause"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 26,
+                "end": 26
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.3",
+          "title": {
+            "sv": "The loop ends with gave-up",
+            "en": "The loop ends with gave-up"
+          },
+          "summary": {
+            "sv": "After the last attempt, connect settles with 'gave-up' and returns it.",
+            "en": "After the last attempt, connect settles with 'gave-up' and returns it."
+          },
+          "body": {
+            "sv": "`connect` gets here once `attempts < maxAttempts` is false. With the defaults, that is after the third failed attempt and its 300 ms pause (W2.1).\n\nThese two lines follow the same pattern as the success branch in W1.3, with `'gave-up'` in place of `'connected'`:\n\n1. `settle('gave-up')` clears `onSettled` and queues the callback on a timer, as described in W1.4. The callback doesn't run yet. When it runs, it will receive `'gave-up'`.\n2. `connect` returns `'gave-up'`. That resolves the promise `startSession` is awaiting, so `startSession` will resume in a microtask. **That microtask runs before the timer task just queued.** W1.4 explains why.\n\nThe next step follows `startSession` as it resumes with `'gave-up'`.",
+            "en": "`connect` gets here once `attempts < maxAttempts` is false. With the defaults, that is after the third failed attempt and its 300 ms pause (W2.1).\n\nThese two lines follow the same pattern as the success branch in W1.3, with `'gave-up'` in place of `'connected'`:\n\n1. `settle('gave-up')` clears `onSettled` and queues the callback on a timer, as described in W1.4. The callback doesn't run yet. When it runs, it will receive `'gave-up'`.\n2. `connect` returns `'gave-up'`. That resolves the promise `startSession` is awaiting, so `startSession` will resume in a microtask. **That microtask runs before the timer task just queued.** W1.4 explains why.\n\nThe next step follows `startSession` as it resumes with `'gave-up'`."
+          },
+          "details": {
+            "sv": "The loop is the only way to reach this point without an error. If `maxAttempts` is 0 or less, the loop condition is false from the start, so `connect` never calls `transport.open`. It settles and returns `'gave-up'` straight away. The constructor accepts such a value without checking it. Whether any caller passes one can't be seen here: the only `Link` construction this code needs is `new Link(transport)` with the default of 3.",
+            "en": "The loop is the only way to reach this point without an error. If `maxAttempts` is 0 or less, the loop condition is false from the start, so `connect` never calls `transport.open`. It settles and returns `'gave-up'` straight away. The constructor accepts such a value without checking it. Whether any caller passes one can't be seen here: the only `Link` construction this code needs is `new Link(transport)` with the default of 3."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Giving up",
+                "en": "Giving up"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 28,
+                "end": 29,
+                "role": "walk",
+                "anchor": "this.settle('gave-up');"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.4",
+          "title": {
+            "sv": "startSession reports 'retrying later' first",
+            "en": "startSession reports 'retrying later' first"
+          },
+          "summary": {
+            "sv": "Resuming from the await, startSession reports 'retrying later' before the queued callback runs.",
+            "en": "Resuming from the await, startSession reports 'retrying later' before the queued callback runs."
+          },
+          "body": {
+            "sv": "This is the same place W1.5 showed, now reached with a different value. `connect` returned `'gave-up'` (W2.3), so `startSession` resumes from `await link.connect(address)` with `outcome` set to `'gave-up'`. As on the success path, this happens in a microtask, before any timer task (W1.4).\n\nThis time the check `outcome === 'gave-up'` is true, so `startSession` calls `report('retrying later')` directly, within the same microtask. Then it reaches its end, and its promise resolves.\n\nThe callback that `settle` queued is still waiting for its timer. It will report `'offline mode'` (next step). So **the caller's `report` receives `'retrying later'` first and `'offline mode'` second**. This order follows from the event-loop rules, not from timing. It is read from the code; no run was observed.\n\nRead side by side, the two messages can look contradictory. One suggests the session will try again, the other that it has given up. Also, nothing in `startSession` or `Link` schedules another attempt after `'gave-up'`. Any retry would have to come from code outside this change. Whether that order and wording are intended is a question this code doesn't answer.",
+            "en": "This is the same place W1.5 showed, now reached with a different value. `connect` returned `'gave-up'` (W2.3), so `startSession` resumes from `await link.connect(address)` with `outcome` set to `'gave-up'`. As on the success path, this happens in a microtask, before any timer task (W1.4).\n\nThis time the check `outcome === 'gave-up'` is true, so `startSession` calls `report('retrying later')` directly, within the same microtask. Then it reaches its end, and its promise resolves.\n\nThe callback that `settle` queued is still waiting for its timer. It will report `'offline mode'` (next step). So **the caller's `report` receives `'retrying later'` first and `'offline mode'` second**. This order follows from the event-loop rules, not from timing. It is read from the code; no run was observed.\n\nRead side by side, the two messages can look contradictory. One suggests the session will try again, the other that it has given up. Also, nothing in `startSession` or `Link` schedules another attempt after `'gave-up'`. Any retry would have to come from code outside this change. Whether that order and wording are intended is a question this code doesn't answer."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "gave-up branch in startSession",
+                "en": "gave-up branch in startSession"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 5,
+                "end": 8,
+                "role": "walk",
+                "anchor": "report('retrying later');"
+              },
+              "from": {
+                "label": {
+                  "sv": "connect returns gave-up",
+                  "en": "connect returns gave-up"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 29,
+                "end": 29
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.5",
+          "title": {
+            "sv": "The timer reports 'offline mode'",
+            "en": "The timer reports 'offline mode'"
+          },
+          "summary": {
+            "sv": "On the timer task, the registered callback maps 'gave-up' to 'offline mode'.",
+            "en": "On the timer task, the registered callback maps 'gave-up' to 'offline mode'."
+          },
+          "body": {
+            "sv": "This is the timer task that `settle('gave-up')` queued (W2.3). The JavaScript event loop starts it after `startSession` has already resolved (W2.4), and it calls the arrow function registered in W1.1 with `outcome` set to `'gave-up'`. As in W1.6, the closure still holds `report`.\n\nThis time the ternary's condition `outcome === 'connected'` is false, so the else arm is used and the callback reports `'offline mode'`. `Outcome` has only two values, so `'gave-up'` is the only value that reaches this arm.\n\nThat gives the full order on the path where every attempt fails, with the defaults:\n\n1. Three calls to `transport.open` return `false`, with pauses of 100, 200 and 300 ms after them (W2.1).\n2. `settle('gave-up')` queues the callback, and `connect` returns `'gave-up'` (W2.3).\n3. `startSession` reports `'retrying later'` and resolves (W2.4).\n4. On the timer task, the callback reports `'offline mode'`.\n\n**The caller's `report` receives `'retrying later'` first and `'offline mode'` second, each exactly once.** This is read from the code; no test run was observed.",
+            "en": "This is the timer task that `settle('gave-up')` queued (W2.3). The JavaScript event loop starts it after `startSession` has already resolved (W2.4), and it calls the arrow function registered in W1.1 with `outcome` set to `'gave-up'`. As in W1.6, the closure still holds `report`.\n\nThis time the ternary's condition `outcome === 'connected'` is false, so the else arm is used and the callback reports `'offline mode'`. `Outcome` has only two values, so `'gave-up'` is the only value that reaches this arm.\n\nThat gives the full order on the path where every attempt fails, with the defaults:\n\n1. Three calls to `transport.open` return `false`, with pauses of 100, 200 and 300 ms after them (W2.1).\n2. `settle('gave-up')` queues the callback, and `connect` returns `'gave-up'` (W2.3).\n3. `startSession` reports `'retrying later'` and resolves (W2.4).\n4. On the timer task, the callback reports `'offline mode'`.\n\n**The caller's `report` receives `'retrying later'` first and `'offline mode'` second, each exactly once.** This is read from the code; no test run was observed."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Registered callback, gave-up arm",
+                "en": "Registered callback, gave-up arm"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 4,
+                "role": "walk",
+                "anchor": "'offline mode'"
+              },
+              "from": {
+                "label": {
+                  "sv": "settle's timer invokes the callback",
+                  "en": "settle's timer invokes the callback"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 36,
+                "end": 36
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W3",
+      "kind": "walk",
+      "title": {
+        "sv": "When the transport rejects",
+        "en": "When the transport rejects"
+      },
+      "purpose": {
+        "sv": "Shows that a rejection skips `settle`, so no callback report is made and the callback stays registered.",
+        "en": "Shows that a rejection skips `settle`, so no callback report is made and the callback stays registered."
+      },
+      "question": {
+        "sv": "What happens if transport.open throws or rejects instead of returning false?",
+        "en": "What happens if transport.open throws or rejects instead of returning false?"
+      },
+      "steps": [
+        {
+          "id": "W3.1",
+          "title": {
+            "sv": "A rejection leaves the loop without settling",
+            "en": "A rejection leaves the loop without settling"
+          },
+          "summary": {
+            "sv": "The awaited open is not guarded, so a rejection propagates out of connect.",
+            "en": "The awaited open is not guarded, so a rejection propagates out of connect."
+          },
+          "body": {
+            "sv": "This walk goes back to the `await this.transport.open(address)` in `connect`'s loop, which W1.3 and W2.1 followed for `true` and `false`. There is a third possible outcome: `open` doesn't produce a `boolean` at all, because its promise **rejects** (fails with an error) or `open` throws.\n\nWhen an `await` meets a rejected promise, it acts like a `throw` at that line, with the rejection's error. Code can catch that error only with a `try`/`catch` around the `await`, and `connect` has none. So execution leaves `connect` right there:\n\n- Neither `settle('connected')` nor `settle('gave-up')` runs, so no callback is queued.\n- `onSettled` keeps the callback registered by `startSession` (W1.2).\n- `attempts` stays at the count it had reached. For example, if the first attempt returned `false` and the second rejected, `attempts` is 2, and the third attempt is never made.\n\nAn `async` function never throws to its caller directly. An error that escapes it rejects the promise the function returned. So **`connect` rejects with the transport's error** rather than returning an `Outcome`. The same happens if `open` throws synchronously instead of returning a rejected promise: inside an `async` function, that `throw` also becomes a rejection of `connect`'s promise.\n\nThe next step follows that rejected promise back to `startSession`.",
+            "en": "This walk goes back to the `await this.transport.open(address)` in `connect`'s loop, which W1.3 and W2.1 followed for `true` and `false`. There is a third possible outcome: `open` doesn't produce a `boolean` at all, because its promise **rejects** (fails with an error) or `open` throws.\n\nWhen an `await` meets a rejected promise, it acts like a `throw` at that line, with the rejection's error. Code can catch that error only with a `try`/`catch` around the `await`, and `connect` has none. So execution leaves `connect` right there:\n\n- Neither `settle('connected')` nor `settle('gave-up')` runs, so no callback is queued.\n- `onSettled` keeps the callback registered by `startSession` (W1.2).\n- `attempts` stays at the count it had reached. For example, if the first attempt returned `false` and the second rejected, `attempts` is 2, and the third attempt is never made.\n\nAn `async` function never throws to its caller directly. An error that escapes it rejects the promise the function returned. So **`connect` rejects with the transport's error** rather than returning an `Outcome`. The same happens if `open` throws synchronously instead of returning a rejected promise: inside an `async` function, that `throw` also becomes a rejection of `connect`'s promise.\n\nThe next step follows that rejected promise back to `startSession`."
+          },
+          "details": {
+            "sv": "The leftover `attempts` value doesn't affect the next call, because `connect` sets it back to 0 at the start (W1.3). The leftover callback is different. Nothing clears it until a `settle` or a new `whenSettled` call. So a later `connect` on the same `Link` that does settle would call this old callback. The next step looks at what that means for `startSession`.",
+            "en": "The leftover `attempts` value doesn't affect the next call, because `connect` sets it back to 0 at the start (W1.3). The leftover callback is different. Nothing clears it until a `settle` or a new `whenSettled` call. So a later `connect` on the same `Link` that does settle would call this old callback. The next step looks at what that means for `startSession`."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Unguarded transport.open",
+                "en": "Unguarded transport.open"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 17,
+                "end": 21,
+                "role": "walk",
+                "anchor": "await this.transport.open(address)"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W3.2",
+          "title": {
+            "sv": "startSession rejects with no report",
+            "en": "startSession rejects with no report"
+          },
+          "summary": {
+            "sv": "The await in startSession rethrows, so neither report is made.",
+            "en": "The await in startSession rethrows, so neither report is made."
+          },
+          "body": {
+            "sv": "`connect` rejected (W3.1), and the rejection arrives at `await link.connect(address)` in `startSession`. As in `connect`, an `await` on a rejected promise throws at that line. `startSession` has no `try`/`catch` either, so it stops there, and **the promise returned by `startSession` rejects with the transport's error**. Any caller that awaits `startSession` gets that error thrown at its own `await`.\n\nNeither report is made:\n\n- `report('retrying later')` comes after the `await`, so it never runs.\n- The callback registered on the first line never runs, because no `settle` was reached and so nothing was queued (W1.4).\n\nThe caller learns about the failure only from the rejection, not through `report`. In the earlier revision, a rejection from `transport.open` also passed straight through `startSession`. What is new is that a rejection now gives no report, while the other two outcomes report through `report` twice or once.\n\n**The callback stays registered on the `Link`.** It holds the `report` from this failed session. It is removed only when one of these happens:\n\n- Another `whenSettled` call replaces it. A new `startSession` on the same `Link` does this as its first step, so a retry through `startSession` never runs the old callback.\n- A later `connect` on the same `Link` reaches `settle`. That `settle` would queue this old callback. This can happen only if code calls `connect` without going through `startSession` first. Nothing in this code does, but nothing prevents it.",
+            "en": "`connect` rejected (W3.1), and the rejection arrives at `await link.connect(address)` in `startSession`. As in `connect`, an `await` on a rejected promise throws at that line. `startSession` has no `try`/`catch` either, so it stops there, and **the promise returned by `startSession` rejects with the transport's error**. Any caller that awaits `startSession` gets that error thrown at its own `await`.\n\nNeither report is made:\n\n- `report('retrying later')` comes after the `await`, so it never runs.\n- The callback registered on the first line never runs, because no `settle` was reached and so nothing was queued (W1.4).\n\nThe caller learns about the failure only from the rejection, not through `report`. In the earlier revision, a rejection from `transport.open` also passed straight through `startSession`. What is new is that a rejection now gives no report, while the other two outcomes report through `report` twice or once.\n\n**The callback stays registered on the `Link`.** It holds the `report` from this failed session. It is removed only when one of these happens:\n\n- Another `whenSettled` call replaces it. A new `startSession` on the same `Link` does this as its first step, so a retry through `startSession` never runs the old callback.\n- A later `connect` on the same `Link` reaches `settle`. That `settle` would queue this old callback. This can happen only if code calls `connect` without going through `startSession` first. Nothing in this code does, but nothing prevents it."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "startSession await",
+                "en": "startSession await"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 8,
+                "role": "walk",
+                "anchor": "const outcome = await link.connect(address);"
+              },
+              "from": {
+                "label": {
+                  "sv": "connect rejects",
+                  "en": "connect rejects"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 21,
+                "end": 21
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

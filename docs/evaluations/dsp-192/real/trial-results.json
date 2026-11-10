@@ -1,0 +1,160 @@
+{
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the build is there",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-10T15:03:16.248Z"
+    },
+    {
+      "stage": "preflight",
+      "what": "the resumed profile lists its project",
+      "ok": true,
+      "detail": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-project-WAsiv6\\connect",
+      "at": "2026-11-10T15:03:16.250Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the start page shows the agent",
+      "ok": true,
+      "detail": "claude",
+      "at": "2026-11-10T15:03:18.361Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the workspace opened on the project",
+      "ok": true,
+      "detail": "connect",
+      "at": "2026-11-10T15:03:18.687Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the review of the pair is open",
+      "ok": true,
+      "detail": "r-ce710726fc90476faf1c3b02",
+      "at": "2026-11-10T15:03:19.174Z"
+    },
+    {
+      "stage": "resuming: the standard loop of the earlier attempt",
+      "what": "the resumed profile holds the first loop's definition",
+      "ok": true,
+      "detail": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-ce710726fc90476faf1c3b02\\job-a40a96cc-c07a-4c84-ac4d-71d171580436.review.json",
+      "at": "2026-11-10T15:03:19.175Z"
+    },
+    {
+      "stage": "resuming: the standard loop of the earlier attempt",
+      "what": "the first loop's job is done",
+      "ok": true,
+      "detail": "{\"id\":\"job-a40a96cc-c07a-4c84-ac4d-71d171580436\",\"state\":\"done\"}",
+      "at": "2026-11-10T15:03:19.178Z"
+    },
+    {
+      "stage": "resuming: the standard loop of the earlier attempt",
+      "what": "the loop wrote the walk definition",
+      "ok": true,
+      "detail": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-ce710726fc90476faf1c3b02\\job-a40a96cc-c07a-4c84-ac4d-71d171580436.review.json",
+      "at": "2026-11-10T15:03:19.183Z"
+    },
+    {
+      "stage": "resuming: the standard loop of the earlier attempt",
+      "what": "a simple and a complex step were found by their places",
+      "ok": true,
+      "detail": "{\"simple\":{\"id\":\"W1.1\",\"title\":\"\",\"places\":[{\"path\":\"src/session.ts\",\"side\":\"target\",\"start\":3,\"end\":5}]},\"complex\":{\"id\":\"W1.5\",\"title\":\"\",\"places\":[{\"path\":\"src/link.ts\",\"side\":\"target\",\"start\":32,\"end\":38}]},\"all\":[\"W1.1 \",\"W1.2 \",\"W1.3 \",\"W1.4 \",\"W1.5 \",\"W1.6 \",\"W2.1 \",\"W2.2 \",\"W2.3 \",\"W2.4 \",\"W2.5 \",\"W3.1 \",\"W3.2 \"]}",
+      "at": "2026-11-10T15:03:19.184Z"
+    },
+    {
+      "stage": "resuming: the standard loop of the earlier attempt",
+      "what": "resuming: the explanations the earlier attempt made",
+      "ok": true,
+      "detail": "[\"W1.1:essens:present:done\",\"W1.1:pedagog:present:done\",\"W1.5:essens:present:done\",\"W1.5:pedagog:present:done\"]",
+      "at": "2026-11-10T15:03:19.186Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in essens",
+      "what": "claude can be chosen as the agent",
+      "ok": true,
+      "detail": "{\"disabled\":false,\"title\":\"\",\"text\":\"Claude\"}",
+      "at": "2026-11-10T15:03:19.855Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in essens",
+      "what": "the model control is a select listing opus",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-10T15:03:20.011Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in essens",
+      "what": "the picker holds claude, opus, essens, loop",
+      "ok": true,
+      "detail": "{\"provider\":\"claude\",\"model\":\"opus\",\"explanations\":\"essens\",\"method\":\"loop\",\"note\":\"\"}",
+      "at": "2026-11-10T15:03:20.323Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in essens",
+      "what": "the loop started in essens",
+      "ok": true,
+      "detail": "Preparing code walks with the planner, writer and reviewer with Claude (opus)…StopFollow preparation",
+      "at": "2026-11-10T15:03:20.480Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in essens",
+      "what": "the essens loop ended as done (3 min)",
+      "ok": true,
+      "detail": "{\"settled\":\"done\",\"job\":{\"id\":\"job-0243d6cd-13b8-40a1-a841-78150e190f30\",\"state\":\"done\",\"note\":\"2 walk(s) and 0 reading(s), 11 step(s). 10 changed line(s) are in none of them. The reviewer accepted the walks at once.\",\"detail\":\"\",\"method\":\"loop\",\"provider\":\"claude\",\"model\":\"opus\",\"presentation\":{\"profile\":\"essens\",\"version\":8}}}",
+      "at": "2026-11-10T15:05:50.860Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in pedagog",
+      "what": "claude can be chosen as the agent",
+      "ok": true,
+      "detail": "{\"disabled\":false,\"title\":\"\",\"text\":\"Claude\"}",
+      "at": "2026-11-10T15:06:26.668Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in pedagog",
+      "what": "the model control is a select listing opus",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-10T15:06:26.671Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in pedagog",
+      "what": "the picker holds claude, opus, pedagog, loop",
+      "ok": true,
+      "detail": "{\"provider\":\"claude\",\"model\":\"opus\",\"explanations\":\"pedagog\",\"method\":\"loop\",\"note\":\"\"}",
+      "at": "2026-11-10T15:06:26.980Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in pedagog",
+      "what": "the loop started in pedagog",
+      "ok": true,
+      "detail": "Preparing code walks with the planner, writer and reviewer with Claude (opus)…StopFollow preparation",
+      "at": "2026-11-10T15:06:32.157Z"
+    },
+    {
+      "stage": "a new review of the same pair, the loop in pedagog",
+      "what": "the pedagog loop ended as done (3 min)",
+      "ok": true,
+      "detail": "{\"settled\":\"done\",\"job\":{\"id\":\"job-549bd742-2f1c-429a-9df3-9b283db81529\",\"state\":\"done\",\"note\":\"3 walk(s) and 0 reading(s), 13 step(s). 12 changed line(s) are in none of them. The reviewer accepted the walks at once.\",\"detail\":\"\",\"method\":\"loop\",\"provider\":\"claude\",\"model\":\"opus\",\"presentation\":{\"profile\":\"pedagog\",\"version\":8}}}",
+      "at": "2026-11-10T15:09:37.525Z"
+    },
+    {
+      "stage": "summary",
+      "what": "summary written",
+      "ok": true,
+      "detail": "<home>\\development\\DSpatch\\app\\release\\trial-profile-real\\21492-1794322996247\\summary.json",
+      "at": "2026-11-10T15:09:37.562Z"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "45528"
+    }
+  ],
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9",
+  "project": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-project-WAsiv6\\connect",
+  "evidence": "<home>\\development\\DSpatch\\app\\release\\trial-profile-real\\21492-1794322996247"
+}

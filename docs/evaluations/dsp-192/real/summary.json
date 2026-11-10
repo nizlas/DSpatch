@@ -1,0 +1,93 @@
+{
+  "provider": "claude",
+  "model": "opus",
+  "reference": "DSP-192 follow-up: the three profiles through the real provider flow, on the go-ahead of 10 November 2026",
+  "project": {
+    "case": "connect",
+    "base": "",
+    "target": ""
+  },
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9",
+  "chosenSteps": {
+    "simple": {
+      "id": "W1.1",
+      "title": "",
+      "places": [
+        {
+          "path": "src/session.ts",
+          "side": "target",
+          "start": 3,
+          "end": 5
+        }
+      ]
+    },
+    "complex": {
+      "id": "W1.5",
+      "title": "",
+      "places": [
+        {
+          "path": "src/link.ts",
+          "side": "target",
+          "start": 32,
+          "end": 38
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "profile": "standard",
+      "key": "r-ce710726fc90476faf1c3b02",
+      "jobId": "job-a40a96cc-c07a-4c84-ac4d-71d171580436",
+      "state": "done",
+      "startedAt": "2026-11-10T14:55:35.660Z",
+      "endedAt": "2026-11-10T14:59:06.459Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-ce710726fc90476faf1c3b02\\job-a40a96cc-c07a-4c84-ac4d-71d171580436.review.json"
+    },
+    {
+      "profile": "essens",
+      "key": "r-0a400da038ece46b3f38743f",
+      "jobId": "job-0243d6cd-13b8-40a1-a841-78150e190f30",
+      "state": "done",
+      "startedAt": "2026-11-10T15:03:20.330Z",
+      "endedAt": "2026-11-10T15:05:49.465Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-0a400da038ece46b3f38743f\\job-0243d6cd-13b8-40a1-a841-78150e190f30.review.json"
+    },
+    {
+      "profile": "pedagog",
+      "key": "r-7fb4aa2a48a4b41942c91ed6",
+      "jobId": "job-549bd742-2f1c-429a-9df3-9b283db81529",
+      "state": "done",
+      "startedAt": "2026-11-10T15:06:32.002Z",
+      "endedAt": "2026-11-10T15:09:34.234Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-YIpuu9\\reviews\\generated\\r-7fb4aa2a48a4b41942c91ed6\\job-549bd742-2f1c-429a-9df3-9b283db81529.review.json"
+    }
+  ],
+  "switched": [],
+  "explanations": [
+    {
+      "stepId": "W1.1",
+      "profile": "essens",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.1",
+      "profile": "pedagog",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.5",
+      "profile": "essens",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.5",
+      "profile": "pedagog",
+      "action": "present",
+      "status": "done"
+    }
+  ]
+}
