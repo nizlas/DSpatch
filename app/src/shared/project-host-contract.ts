@@ -44,6 +44,7 @@ import type {
   RevisionPairIdentity,
 } from './review-pair';
 import type { WalkLoopRecordView } from './walk-loop';
+import type { WalkLoopRunSnapshot } from './walk-loop-view';
 
 /*
  * The project host's methods (DSP-111): what the client may ask of the host, by name,
@@ -213,6 +214,8 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'reviewPair.startJob': (key: unknown, request: unknown) => PairAnswer<AgentJob>;
   readonly 'reviewPair.cancelJob': (key: unknown, jobId: unknown) => PairAnswer<{ readonly note: string }>;
   readonly 'reviewPair.walkLoopRecord': (key: unknown, jobId: unknown) => PairAnswer<WalkLoopRecordView>;
+  /** DSP-190: the walk loop run as it stands, for a window that follows it. A read. */
+  readonly 'reviewPair.walkLoopRunView': (key: unknown, jobId: unknown) => PairAnswer<WalkLoopRunSnapshot>;
   readonly 'reviewPair.thread': (key: unknown, request: unknown) => PairAnswer<PairRecord>;
   readonly 'discussion.load': (target: DiscussionTarget, request: unknown) => DiscussionLoadOutcome;
   readonly 'discussion.send': (target: DiscussionTarget, input: unknown) => DiscussionSendOutcome;
@@ -379,6 +382,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'reviewPair.startJob': true,
   'reviewPair.cancelJob': true,
   'reviewPair.walkLoopRecord': true,
+  'reviewPair.walkLoopRunView': true,
   'reviewPair.thread': true,
   'review.exampleDefinition': true,
   'discussion.load': true,

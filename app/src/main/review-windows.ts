@@ -85,7 +85,7 @@ export interface ReviewWindowsOptions {
   /** The compiled review preload. */
   readonly preloadPath: string;
   /** Load the renderer into a new review window (`?window=review#review`). */
-  readonly load: (target: Pick<WebContents, 'loadFile' | 'loadURL'>, view: 'walk' | 'diff' | 'panel') => void;
+  readonly load: (target: Pick<WebContents, 'loadFile' | 'loadURL'>, view: ReviewWindowView) => void;
   /** Development builds get reload and developer tools in the View menu. */
   readonly development: boolean;
   /**
@@ -114,6 +114,8 @@ export interface WindowZoomApi {
 }
 
 /** One review window and what it is showing. */
+export type ReviewWindowView = 'walk' | 'diff' | 'panel' | 'follow';
+
 export interface ReviewWindowEntry {
   readonly window: BrowserWindow;
   /** Held while the window lives: `closed` must not ask a destroyed window for it. */
@@ -140,10 +142,13 @@ export interface ReviewWindowEntry {
   /** Set once the view has been asked to save before the window goes. */
   flushedForClose: boolean;
   /**
-   * A walk window (a review definition), a diff window (a chosen revision pair, DSP-150), or
-   * the review's panel, Step and Discussion, in its own window or docked (30 October 2026).
+   * A walk window (a review definition), a diff window (a chosen revision pair, DSP-150), the
+   * review's panel, Step and Discussion, in its own window or docked (30 October 2026), or a
+   * window that follows one walk preparation of the review (DSP-190).
    */
-  readonly view: 'walk' | 'diff' | 'panel';
+  readonly view: ReviewWindowView;
+  /** DSP-190: for a follow window, the preparation it follows. */
+  readonly followJobId?: string;
   /** The revision pair this window is over, once known: chosen in a diff window, or a walk's own pair. */
   pairKey: string | null;
   /** A diff window's repository and commits, once it has chosen them: what its discussion is about. */
@@ -206,7 +211,10 @@ function panelLayoutKeyFrom(entry: ReviewWindowEntry): string {
   return entry.pairKey === null ? 'review-panel:unknown' : `review-panel:${entry.pairKey}`;
 }
 
-function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: 'walk' | 'diff' | 'panel'; readonly pairLabel?: string | null }): string {
+function titleFor(entry: Pick<ReviewWindowEntry, 'identity' | 'startFolder'> & { readonly view?: ReviewWindowView; readonly pairLabel?: string | null }): string {
+  if (entry.view === 'follow') {
+    return entry.pairLabel === null || entry.pairLabel === undefined ? 'DSpatch — follow preparation' : `DSpatch — follow preparation · ${entry.pairLabel}`;
+  }
   if (entry.view === 'panel') {
     return entry.identity === null
       ? 'DSpatch — discussion'
@@ -510,6 +518,46 @@ export class ReviewWindows {
       return { kind: 'opened', note: 'Review opened in its own window. The chat is unaffected.' };
     } catch (error) {
       return { kind: 'failed', note: `The review window could not be opened: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /**
+   * DSP-190: the window that follows one walk preparation of a review, opened from a window over
+   * that review, or brought to the front when it is open. Looking is not doing: this starts,
+   * repeats and stops nothing; the window reads the run as it stands and hears what follows.
+   */
+  async openFollow(from: ReviewWindowEntry, key: string, jobId: string): Promise<{ readonly ok: boolean; readonly note: string }> {
+    const existing = this.list().find((entry) => entry.view === 'follow' && entry.pairKey === key && entry.followJobId === jobId);
+    if (existing !== undefined) {
+      this.focus(existing);
+      return { ok: true, note: 'The window following this preparation has been brought to the front.' };
+    }
+    const pair: RevisionPairIdentity | null =
+      from.pairIdentity ?? (from.identity === null ? null : { repository: from.identity.repository, base: from.identity.base, target: from.identity.target });
+    if (pair === null) {
+      return { ok: false, note: 'This window is not over a revision pair yet.' };
+    }
+    const label = from.pairLabel ?? (from.identity === null ? null : reviewIdentityLabel(from.identity.repository, from.identity.base, from.identity.target));
+    try {
+      const entry = this.create({
+        sessionId: await this.newSession(),
+        startFolder: null,
+        defaultProvider: from.defaultProvider,
+        defaultModel: from.defaultModel,
+        initial: { kind: 'none', note: '', repository: null },
+        identity: null,
+        chooserKey: null,
+        view: 'follow',
+        pairStart: { kind: 'follow', review: key, jobId, pair, label: label ?? '' },
+        pairKey: key,
+        pairIdentity: pair,
+        pairLabel: label,
+        followJobId: jobId,
+      });
+      this.options.log(`follow window opened for preparation ${jobId} of review ${key}: ${entry.window.getTitle()}`);
+      return { ok: true, note: 'The preparation opened in a window of its own.' };
+    } catch (error) {
+      return { ok: false, note: `The window could not be opened: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
 
@@ -881,17 +929,24 @@ export class ReviewWindows {
     readonly initial: ReviewOpenOutcome;
     readonly identity: ReviewIdentity | null;
     readonly chooserKey: string | null;
-    readonly view?: 'walk' | 'diff';
+    readonly view?: ReviewWindowView;
     readonly pairStart?: PairWindowStart;
+    /** DSP-190: a follow window is over its review from the start. */
+    readonly pairKey?: string;
+    readonly pairIdentity?: RevisionPairIdentity;
+    readonly pairLabel?: string | null;
+    readonly followJobId?: string;
   }): ReviewWindowEntry {
     const layoutKey =
-      init.view === 'diff'
-        ? init.pairStart?.kind === 'pair'
-          ? pairLayoutKey(init.pairStart.pair)
-          : chooserLayoutKey('diff', null)
-        : init.identity !== null
-          ? reviewLayoutKey(init.identity)
-          : chooserLayoutKey('walk', init.chooserKey);
+      init.view === 'follow'
+        ? `review-follow:${init.pairIdentity === undefined ? 'unknown' : pairLayoutKey(init.pairIdentity)}`
+        : init.view === 'diff'
+          ? init.pairStart?.kind === 'pair'
+            ? pairLayoutKey(init.pairStart.pair)
+            : chooserLayoutKey('diff', null)
+          : init.identity !== null
+            ? reviewLayoutKey(init.identity)
+            : chooserLayoutKey('walk', init.chooserKey);
     const placement = this.options.layout?.placementFor(
       layoutKey,
       { width: init.view === 'diff' ? 1460 : 1400, height: 920 },
@@ -927,15 +982,16 @@ export class ReviewWindows {
       focusCount: 0,
       flushedForClose: false,
       view: init.view ?? 'walk',
-      pairKey: null,
-      pairIdentity: null,
+      ...(init.followJobId === undefined ? {} : { followJobId: init.followJobId }),
+      pairKey: init.pairKey ?? null,
+      pairIdentity: init.pairIdentity ?? null,
       showDiscussionOnLoad: null,
       pairStart: init.pairStart ?? { kind: 'choose' },
-      pairLabel: null,
+      pairLabel: init.pairLabel ?? null,
       layoutKey,
     };
     this.entries.add(entry);
-    this.options.zoom?.adopt(window, entry.view === 'diff' ? 'review-diff' : 'review-walk');
+    this.options.zoom?.adopt(window, entry.view === 'walk' ? 'review-walk' : 'review-diff');
     this.options.layout?.trackWindow(window, () => entry.layoutKey);
     if (placement?.maximized === true) {
       window.maximize();
@@ -1415,7 +1471,8 @@ export class ReviewWindows {
 
   /** After a code window has gone: the panel goes with the review's last one. */
   private panelAfterClose(entry: ReviewWindowEntry): void {
-    if (entry.view === 'panel' || entry.pairKey === null) {
+    // DSP-190: a follow window is not a code window; closing it changes nothing of the panel.
+    if (entry.view === 'panel' || entry.view === 'follow' || entry.pairKey === null) {
       return;
     }
     this.panelAfterLeaving(entry.pairKey);
@@ -1427,7 +1484,7 @@ export class ReviewWindows {
     if (panel === undefined) {
       return;
     }
-    const others = this.list().some((other) => other.view !== 'panel' && other.pairKey === pairKey);
+    const others = this.list().some((other) => other.view !== 'panel' && other.view !== 'follow' && other.pairKey === pairKey);
     if (!others) {
       panel.closing = true;
       if (!panel.frame.isDestroyed()) {

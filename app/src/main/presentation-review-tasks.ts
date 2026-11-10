@@ -1323,6 +1323,22 @@ export function presentMs(): number {
 }
 
 const presentationsFailed = new Set<string>();
+const tasksFailed = new Set<string>();
+
+/**
+ * DSP-190, SIMULATED: `DSPATCH_PRESENTATION_FAIL_TASK=<task>` makes the first turn of that review
+ * task (for instance `write-step`) end as a provider error does, once per process; later turns of
+ * the task succeed. For the walk loop that is a turn that does not finish: the run ends without a
+ * resend, which is what the window that follows it is to show.
+ */
+export function failsTask(prompt: string): boolean {
+  const marker = process.env['DSPATCH_PRESENTATION_FAIL_TASK'] ?? '';
+  if (marker === '' || !prompt.startsWith(`${TASK_HEADER} ${marker}`) || tasksFailed.has(marker)) {
+    return false;
+  }
+  tasksFailed.add(marker);
+  return true;
+}
 
 /**
  * DSPATCH_REVIEW_SIM_FAIL_PRESENT_STEP=<text>: the first time a step whose title holds that text

@@ -135,6 +135,7 @@ const AREAS = {
       { file: 'explain-prompts.test.ts', heavy: true },
       { file: 'synthetic-walks.test.ts', heavy: true },
       'walk-loop.test.ts',
+      'walk-loop-follow.test.ts',
       { file: 'walk-loop-jobs.test.ts', heavy: true },
       { file: 'synthetic-cases.test.ts', heavy: true },
       { file: 'review-discussion-service.test.ts', heavy: true },

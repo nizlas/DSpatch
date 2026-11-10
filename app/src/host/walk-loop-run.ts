@@ -20,10 +20,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { createFileResultStore } from '../main/loop-result-store';
+import { resolvedRolesWith } from '../main/loop-graph-open';
 import { RunRecordWriter, graphVersionIdFor } from '../main/run-record-store';
-import type { LoopNode, ResolvedRole, RoleResolver } from '../shared/loop-graph';
+import type { LoopNode, ResolvedRole, RoleReference, RoleResolver } from '../shared/loop-graph';
 import { loadLoopGraph } from '../shared/loop-graph-load';
 import type { RecordedRunEnding } from '../shared/loop-record';
+import type { WalkLoopFollow } from './walk-loop-follow';
 import { runLoopGraph, type RunResult, type StepContext, type StepExecution } from '../shared/loop-run';
 import type { PublicProfile } from '../shared/presentation-profiles';
 import {
@@ -114,6 +116,8 @@ export interface WalkLoopInput {
   readonly activity: (text: string) => void;
   readonly log: (message: string) => void;
   readonly now?: () => number;
+  /** DSP-190: where the run announces itself, its journal, its turns and its verdicts, for the windows that follow it. */
+  readonly follow?: WalkLoopFollow;
 }
 
 export type WalkLoopOutcome =
@@ -184,6 +188,21 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
     appVersion: input.identity.appVersion,
     startedAtUtc,
   });
+  // DSP-190: the run announces itself to the windows that follow it, with the drawing it walks
+  // and the roles as resolved, so a window draws this run's picture from this run's bindings.
+  const references = graph.nodes.flatMap((node): RoleReference[] => (node.role === undefined ? [] : [node.role]));
+  input.follow?.announce({
+    runId,
+    graphVersionId,
+    graphId: graph.id,
+    graphName: graph.name,
+    binding: 'walk-loop',
+    graphText: input.graphText,
+    startedAtUtc,
+    roles: resolvedRolesWith(references, input.resolveRole),
+    phase: 'running',
+    agent: `${input.identity.provider}/${input.identity.modelRequested === '' ? 'default' : input.identity.modelRequested}`,
+  });
 
   // --- The run's state, kept across steps by the executor's closure ------------------------
   const opened = new Set<string>();
@@ -200,19 +219,23 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
   const rewritten: string[] = [];
   let lastTurn: WalkLoopTurnResult | null = null;
 
-  async function turn(context: StepContext, prompt: string, stepId?: string): Promise<WalkLoopTurnResult> {
+  /** One provider turn in the node's session. `what` is DSpatch's sentence about it, for the job line and the run view. */
+  async function turn(context: StepContext, prompt: string, what: string, stepId?: string): Promise<WalkLoopTurnResult> {
     const nodeId = context.node.id;
+    const role = roles.get(nodeId);
+    input.activity(what);
     if (!opened.has(nodeId)) {
       await input.sessions.open(nodeId);
       opened.add(nodeId);
     }
+    input.follow?.turnStarted({ nodeId, occurrence: context.occurrence }, stepId ?? null, role?.id ?? null, what);
     const startedAt = new Date().toISOString();
     const t0 = now();
     const result = await input.sessions.turn(nodeId, prompt);
     const endedAt = new Date().toISOString();
     turns.push({ node: nodeId, occurrence: context.occurrence, ...(stepId === undefined ? {} : { stepId }), startedAt, endedAt, durationMs: Math.max(0, now() - t0) });
     usage.push(...input.sessions.usageSinceLast());
-    const role = roles.get(nodeId);
+    input.follow?.turnEnded(result.status, result.error, result.text.length);
     writer.reply({
       atUtc: endedAt,
       nodeId,
@@ -238,21 +261,22 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
   async function planStep(context: StepContext, role: ResolvedRole): Promise<StepExecution> {
     const revisit = context.occurrence > 1;
     const findings = revisit ? (reviews.at(-1)?.findings.filter((finding) => finding.kind === 'structure') ?? []) : [];
-    input.activity(revisit ? 'Planning the walks again from the reviewer\'s findings' : 'Planning the walks');
     const first = await turn(
       context,
       planPrompt({ role, material: input.material, folder: input.folder, language: input.language, rework: revisit ? { findings, earlierPlan: JSON.stringify(planRaw, null, 2) } : null }),
+      revisit ? 'Planning the walks again from the reviewer\'s findings' : 'Planning the walks',
     );
     let providerTurns = 1;
     let raw = answerJson(first.text);
     let parsed = readPlanAnswer(raw);
-    input.activity('Checking every place against the commits');
+    say('Checking every place against the commits');
     let places = parsed.plan === null ? new Map<string, string>() : await walkPlaceProblems(parsed.plan.walks, input.read, input.context);
     const crowded = parsed.plan === null ? new Map<string, string>() : new Map([...crowdedStepProblems(parsed.plan.walks), ...[...repeatedStepProblems(parsed.plan.walks)].map(([at, problem]) => [`r${at}`, problem] as const)]);
     // The same one repair turn today's single call gets, inside the planner's step. Never a loop.
     if (parsed.plan === null || parsed.problems.length > 0 || places.size > 0 || crowded.size > 0) {
-      input.activity(`Asking the planner to correct ${String(parsed.problems.length + places.size + crowded.size)} problem(s) DSpatch found`);
-      const second = await turn(context, repairPrompt([...parsed.problems, ...places.values(), ...crowded.values()]));
+      const problems = [...parsed.problems, ...places.values(), ...crowded.values()];
+      input.follow?.note(`DSpatch found ${String(problems.length)} problem(s) in the plan: ${problems.join(' ')}`);
+      const second = await turn(context, repairPrompt(problems), `Asking the planner to correct ${String(problems.length)} problem(s) DSpatch found`);
       providerTurns += 1;
       const againRaw = answerJson(second.text);
       const again = readPlanAnswer(againRaw);
@@ -264,10 +288,12 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
           places = againPlaces;
         } else {
           repairNote = 'The planner was asked once to correct its plan; its correction kept fewer valid places or covered fewer changed lines, so its first plan is kept as written.';
+          input.follow?.note(repairNote);
         }
       }
     }
     if (parsed.plan === null) {
+      input.follow?.note('The planner gave no plan DSpatch could read, even when asked again: the step declares itself blocked.');
       return { product: { kind: 'declared-failure', failure: 'blocked' }, summary: 'The planner gave no plan DSpatch could read, even when asked again.', providerTurns };
     }
     previousRefs = plan === null ? [] : stepRefsOf(plan.walks);
@@ -276,12 +302,20 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
     invalid = places;
     replanned = revisit;
     const refs = stepRefsOf(plan.walks);
+    const summary = `${String(plan.walks.walks.length)} walk(s), ${String(refs.length)} step(s)${places.size === 0 ? '' : `, ${String(places.size)} place(s) not at their commit`}${revisit ? ', planned again from the reviewer\'s findings' : ''}.`;
+    input.follow?.note(`Plan read: ${summary}`);
     return {
       product: { kind: 'outcome', outcome: revisit ? 'replanned' : 'planned' },
-      summary: `${String(plan.walks.walks.length)} walk(s), ${String(refs.length)} step(s)${places.size === 0 ? '' : `, ${String(places.size)} place(s) not at their commit`}${revisit ? ', planned again from the reviewer\'s findings' : ''}.`,
+      summary,
       providerTurns,
       resultBody: JSON.stringify(raw, null, 2),
     };
+  }
+
+  /** DSpatch's own status between turns: on the job line and in the run view. */
+  function say(text: string): void {
+    input.activity(text);
+    input.follow?.note(text);
   }
 
   /** The findings about one step, by its id in the plan the findings were written against. */
@@ -337,7 +371,6 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
     for (const [index, ref] of toWrite.entries()) {
       const findings = revisit ? findingsFor(ref.stepId, idMap) : [];
       const earlier = texts.get(ref.stepId);
-      input.activity(`${revisit ? 'Writing again' : 'Writing'} step ${ref.stepId} (${String(index + 1)} of ${String(toWrite.length)})`);
       const result = await turn(
         context,
         writeStepPrompt({
@@ -351,6 +384,7 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
           fresh,
           rework: findings.length === 0 ? null : { findings, earlierText: earlier === undefined ? '' : `${earlier.body}${earlier.details === '' ? '' : `\n\n${earlier.details}`}` },
         }),
+        `${revisit ? 'Writing again' : 'Writing'} step ${ref.stepId} (${String(index + 1)} of ${String(toWrite.length)})`,
         ref.stepId,
       );
       fresh = false;
@@ -366,9 +400,11 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
         rewritten.push(ref.stepId);
       }
     }
+    const summary = `${String(toWrite.length)} step(s) written${revisit ? ` again, ${String(refs.length - toWrite.length)} kept` : ''}${unreadable === 0 ? '' : `, ${String(unreadable)} answer(s) empty`}.`;
+    input.follow?.note(summary);
     return {
       product: { kind: 'outcome', outcome: 'written' },
-      summary: `${String(toWrite.length)} step(s) written${revisit ? ` again, ${String(refs.length - toWrite.length)} kept` : ''}${unreadable === 0 ? '' : `, ${String(unreadable)} answer(s) empty`}.`,
+      summary,
       providerTurns,
       resultBody: JSON.stringify({ steps: Object.fromEntries([...texts.entries()].map(([id, text]) => [id, text])) }, null, 2),
     };
@@ -379,7 +415,6 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
       throw new Error('The reviewer was reached without a plan.');
     }
     const final = context.occurrence > 1;
-    input.activity(final ? 'The reviewer gives its final assessment' : 'The reviewer reads the walks against the code');
     const result = await turn(
       context,
       reviewPrompt({
@@ -394,6 +429,7 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
         earlier: final ? (reviews[0] ?? null) : null,
         fresh: !opened.has(context.node.id) || context.occurrence === 1,
       }),
+      final ? 'The reviewer gives its final assessment' : 'The reviewer reads the walks against the code',
     );
     const parsed = readReviewAnswer(answerJson(result.text), stepIds(), final);
     const review: WalkReview =
@@ -401,9 +437,12 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
       { assessment: `The reviewer's answer could not be read (${parsed.problems.join(' ')}); the walks are kept as written.`, verdict: 'accept', findings: [] };
     reviews.push(review);
     const outcome = reviewOutcomeOf(review);
+    input.follow?.verdict(review, final);
+    const summary = `${final ? 'Final assessment' : 'Review'}: ${outcome}${review.findings.length === 0 ? '' : `, ${String(review.findings.length)} finding(s) about ${[...new Set(review.findings.flatMap((finding) => finding.steps))].join(', ') || 'the walks'}`}.`;
+    input.follow?.note(`${summary}${parsed.review === null ? ' (the answer could not be read; accepted by the engine\'s fallback)' : ''}`);
     return {
       product: { kind: 'outcome', outcome, source: parsed.review === null ? 'engine-fallback' : 'step-declared' },
-      summary: `${final ? 'Final assessment' : 'Review'}: ${outcome}${review.findings.length === 0 ? '' : `, ${String(review.findings.length)} finding(s) about ${[...new Set(review.findings.flatMap((finding) => finding.steps))].join(', ') || 'the walks'}`}.`,
+      summary,
       providerTurns: 1,
       resultBody: JSON.stringify(review, null, 2),
     };
@@ -438,12 +477,17 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
       reworkOutcomes: [...WALK_LOOP_REWORK_OUTCOMES],
       routeLimitAs: WALK_LOOP_LIMIT_FAILURE,
       resultStore: createFileResultStore(resultsDir),
-      onJournalEntry: (entry) => writer.journal(entry),
+      onJournalEntry: (entry) => {
+        writer.journal(entry);
+        input.follow?.journal(entry);
+      },
     });
   } catch (error) {
     // The engine records an executor that throws as a fault; this is for anything outside it.
     const detail = error instanceof Error ? error.message : String(error);
     writer.finish(ending({ endedAtUtc: new Date().toISOString(), kind: 'failed', status: null, terminalNodeId: null, note: detail, cancelled: false }));
+    input.follow?.ended({ status: null, note: detail, terminalNodeId: null });
+    input.follow?.close();
     return { kind: 'failed', note: 'The walk loop stopped before it could deliver walks.', detail, summary: null };
   }
 
@@ -510,6 +554,8 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
   } catch (error) {
     input.log(`walk loop ${runId}: the summary could not be written: ${error instanceof Error ? error.message : String(error)}`);
   }
+  input.follow?.ended({ status: result.status, note, terminalNodeId: terminal });
+  input.follow?.close();
   for (const failure of writer.failures()) {
     input.log(`walk loop ${runId}: ${failure}`);
   }

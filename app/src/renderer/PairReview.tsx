@@ -65,7 +65,6 @@ import {
 import { TokensView } from './review-code';
 import { AgentPicker, type AgentChoice } from './AgentPicker';
 import { useDefaultProfile, useDefaultWalkMethod } from './presentation-choice';
-import type { WalkLoopRecordView, WalkLoopSummary, WalkReview } from '../shared/walk-loop';
 import { PRESENTATION_INSTRUCTION_VERSION } from '../shared/presentation-profiles';
 import type { SelectionQuote } from '../shared/review-discussion';
 import type { PanelState } from '../shared/review-pair';
@@ -184,7 +183,7 @@ export function PairReview(): JSX.Element {
       const outcome = await bridge.open(start.review === undefined ? start.pair : { review: start.review });
       if (outcome.kind === 'opened') {
         const repository = { path: outcome.open.pair.repository, name: outcome.open.repositoryName };
-        setPhase({ kind: 'review', open: outcome.open, at: start.at, several: false, repository });
+        setPhase({ kind: 'review', open: outcome.open, at: start.kind === 'pair' ? start.at : null, several: false, repository });
       } else {
         setPhase({ kind: 'message', text: outcome.kind === 'failed' ? outcome.error : outcome.note });
       }
@@ -1032,7 +1031,14 @@ function DiffReview({
   const [explanationsIn, chooseExplanationsIn] = useDefaultProfile();
   // DSP-189: one call, or the planner, writer and reviewer loop; the computer's last choice.
   const [walkMethod, chooseWalkMethod] = useDefaultWalkMethod();
-  const loopJob = [...record.jobs].reverse().find((job) => job.kind === 'walks' && job.loop !== undefined) ?? null;
+  // DSP-190: the last preparation, when the loop made it: the way into the window that follows it.
+  const loopJob = walksJob !== null && walksJob.method === 'loop' ? walksJob : null;
+  const followJob = async (job: AgentJob): Promise<void> => {
+    const answer = await bridge.openFollow(open.key, job.id).catch((error: unknown) => ({ ok: false, note: requestFailure(error) }));
+    if (!answer.ok) {
+      setWalksNote(answer.note);
+    }
+  };
   const startJob = async (request: AgentJobRequestInput): Promise<boolean> => (await sendJob(request)) !== null;
   /** The one way this window starts agent work; a refusal or a failed request is said. */
   const sendJob = async (request: AgentJobRequestInput): Promise<AgentJob | null> => {
@@ -1426,12 +1432,18 @@ function DiffReview({
           </button>
         </div>
       </header>
-      {/* DSP-186: said, never acted on: walks are prepared again only when the person asks. */}
-      {record.generation !== null && (generationStale(record, PRESENTATION_INSTRUCTION_VERSION) || (record.generation.profile !== null && record.generation.profile !== explanationsIn)) && (
+      {/*
+        DSP-186: said, never acted on: walks are prepared again only when the person asks.
+        DSP-190: said only for a real difference of DSpatch's instruction version. The profile
+        the walks were prepared in is provenance, kept with the walk and shown with its own
+        text; the profile they are read in is the person's, per walk, and changing it asks for
+        a step's explanation at most, never for a new preparation.
+      */}
+      {record.generation !== null && generationStale(record, PRESENTATION_INSTRUCTION_VERSION) && (
         <p className="rv-pair-hint" data-ev="pair-stale">
-          The code walks of this review were prepared with earlier settings
-          {record.generation.profile !== null && record.generation.profile !== explanationsIn ? ` (the ${record.generation.profile} profile)` : ''}. Prepare them again to use the current
-          ones; nothing is prepared again by itself.
+          The code walks of this review were prepared with an earlier version of DSpatch's instructions
+          {record.generation.instructionVersion === null ? '' : ` (version ${String(record.generation.instructionVersion)}, now ${String(PRESENTATION_INSTRUCTION_VERSION)})`}. Prepare them again to use the
+          current ones; nothing is prepared again by itself.
         </p>
       )}
       {preparing && (
@@ -1458,10 +1470,21 @@ function DiffReview({
       )}
       {/* A preparation shows while it runs, and when it gave nothing to open; a good one opens the walks instead. */}
       {walksJob !== null && (isRunning(walksJob) || (!preparing && (walksJob.state !== 'done' || walksJob.definitionPath === null))) && (
-        <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} />
+        <JobLine job={walksJob} onStop={() => void stopJob(walksJob)} onFollow={walksJob.method === 'loop' ? () => void followJob(walksJob) : undefined} />
       )}
-      {/* DSP-189: what the loop did, and its record on request; never in the walk's reading flow. */}
-      {loopJob !== null && loopJob.loop !== undefined && !isRunning(loopJob) && <WalkLoopTrace pairKey={open.key} job={loopJob} summary={loopJob.loop} bridge={bridge} />}
+      {/*
+        DSP-190: how the walks were prepared, in one line, and the way into the run view. What
+        the loop did — its verdicts, journal, usage, prompts and answers — is the run's and is
+        read in the window that follows it; nothing of it sits here, in Step or in Discussion.
+      */}
+      {loopJob !== null && !isRunning(loopJob) && (
+        <p className="rv-pair-hint rv-walk-loop-line" data-ev="pair-walk-loop" data-status={loopJob.loop?.status ?? loopJob.state}>
+          Prepared through the planner, writer and reviewer loop{loopJob.state === 'done' ? '' : ` (${loopJob.state === 'failed' ? 'it failed' : loopJob.state === 'cancelled' ? 'stopped' : loopJob.state})`}.{' '}
+          <button type="button" className="rv-pair-link" data-ev="pair-walk-loop-follow" onClick={() => void followJob(loopJob)}>
+            Follow preparation
+          </button>
+        </p>
+      )}
       {walksNote !== '' && (
         <p className="rv-pair-error" data-ev="pair-walks-note">
           {walksNote}
@@ -1678,7 +1701,7 @@ function useHostReachable(): boolean {
  * times, reads or tool calls. Those stay in the review record, and the provider's own
  * words for a failure are on the note's tooltip for whoever needs them.
  */
-export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onStop: () => void }): JSX.Element {
+export function JobLine({ job, onStop, onFollow }: { readonly job: AgentJob; readonly onStop: () => void; readonly onFollow?: () => void }): JSX.Element {
   const running = job.state === 'running' || job.state === 'cancelling';
   const reachable = useHostReachable();
   const what =
@@ -1706,6 +1729,12 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
               Stop
             </button>
           )}
+          {/* DSP-190: the window that follows the loop; opening it starts nothing. */}
+          {onFollow !== undefined && (
+            <button type="button" data-ev={`agent-job-${job.kind}-follow`} onClick={onFollow}>
+              Follow preparation
+            </button>
+          )}
           {/* What it is doing now, as it reports it (30 October 2026). */}
           {job.state === 'running' && reachable && job.activity !== undefined && job.activity !== '' && (
             <span className="rv-agent-activity" data-ev={`agent-job-${job.kind}-activity`}>
@@ -1725,124 +1754,6 @@ export function JobLine({ job, onStop }: { readonly job: AgentJob; readonly onSt
   );
 }
 
-function minutesOf(ms: number): string {
-  return ms < 60_000 ? `${String(Math.round(ms / 1000))} s` : `${String(Math.round(ms / 6000) / 10)} min`;
-}
-
-function FindingsList({ review, testId }: { readonly review: WalkReview; readonly testId: string }): JSX.Element {
-  return (
-    <div data-ev={testId}>
-      {review.assessment !== '' && <p className="rv-pair-muted">{review.assessment}</p>}
-      {review.findings.length > 0 && (
-        <ul>
-          {review.findings.map((finding, index) => (
-            <li key={index}>
-              <strong>{finding.steps.length === 0 ? 'The walks' : finding.steps.join(', ')}</strong> ({finding.kind}): {finding.problem}
-              {finding.why === '' ? '' : ` ${finding.why}`}
-              {finding.evidence === '' ? '' : ` Evidence: ${finding.evidence}`}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/**
- * DSP-189: what the planner, writer and reviewer loop did for the last walks prepared that way,
- * and its record on request: the reviewer's findings, the final assessment, the turns and their
- * time, the usage the provider reported, and every prompt and answer under a control of its own.
- * Shown here, in the diff window's preparation area, never in the walk's reading flow.
- */
-export function WalkLoopTrace({ pairKey, job, summary, bridge }: { readonly pairKey: string; readonly job: AgentJob; readonly summary: WalkLoopSummary; readonly bridge: ReviewPairBridge }): JSX.Element {
-  const [record, setRecord] = useState<WalkLoopRecordView | { readonly error: string } | null>(null);
-  const [wanted, setWanted] = useState(false);
-  useEffect(() => {
-    if (!wanted || record !== null) {
-      return;
-    }
-    let live = true;
-    void bridge
-      .walkLoopRecord(pairKey, job.id)
-      .catch((error: unknown) => ({ error: requestFailure(error) }))
-      .then((answer) => {
-        if (live) {
-          setRecord(answer);
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [wanted, record, bridge, pairKey, job.id]);
-  const usage =
-    summary.usage === 'unknown'
-      ? 'usage not reported by the provider'
-      : summary.usage.map((reading) => `${reading.value === null ? 'unknown' : String(reading.value)} ${reading.unit} (${reading.scope})`).join(', ');
-  const verdict = summary.final ?? summary.first;
-  return (
-    <details className="rv-pair-hint rv-walk-loop" data-ev="pair-walk-loop" data-status={summary.status}>
-      <summary>
-        Prepared through the planner, writer and reviewer loop: {summary.status}
-        {summary.rounds === 0 ? ', no correction round' : `, one correction round (${summary.replanned ? 'planner and writer' : 'writer'}, ${String(summary.rewritten.length)} step(s) written again)`}; {String(summary.turns.length)} provider turn(s) in {minutesOf(summary.durationMs)}; {usage}.
-      </summary>
-      <p className="rv-pair-muted">
-        Graph {summary.graphId} ({summary.graphVersionId.slice(0, 12)}), roles {summary.roles.map((role) => role.id).join(', ')}; {job.provider}/{job.model}. The reviewer is an agent: its acceptance approves nothing of the code.
-      </p>
-      {summary.first !== null && (
-        <>
-          <p>
-            <strong>The reviewer's first verdict:</strong> {summary.first.verdict}
-          </p>
-          <FindingsList review={summary.first} testId="pair-walk-loop-first" />
-        </>
-      )}
-      {summary.final !== null && (
-        <>
-          <p>
-            <strong>Final assessment after the correction round:</strong> {summary.final.verdict}
-          </p>
-          <FindingsList review={summary.final} testId="pair-walk-loop-final" />
-        </>
-      )}
-      {verdict === null && <p className="rv-pair-muted">The reviewer gave no verdict in this run.</p>}
-      <details
-        data-ev="pair-walk-loop-record"
-        onToggle={(event) => {
-          if ((event.currentTarget as HTMLDetailsElement).open) {
-            setWanted(true);
-          }
-        }}
-      >
-        <summary>Every prompt and answer of the run</summary>
-        {record === null && wanted && <p className="rv-pair-muted">Reading the record…</p>}
-        {record !== null && isPairError(record) && <p className="rv-pair-error">{record.error}</p>}
-        {record !== null && !isPairError(record) && (
-          <div data-ev="pair-walk-loop-replies" data-count={record.replies.length}>
-            {record.error !== null && <p className="rv-pair-error">{record.error}</p>}
-            <ol className="rv-walk-loop-journal">
-              {record.journal.map((entry) => (
-                <li key={entry.seq}>
-                  <span className="rv-pair-muted">{entry.kind}</span> {entry.detail}
-                </li>
-              ))}
-            </ol>
-            {record.replies.map((reply, index) => (
-              <details key={index} className="rv-walk-loop-reply">
-                <summary>
-                  {reply.nodeLabel} (visit {String(reply.occurrence)}{reply.roleId === null ? '' : `, ${reply.roleId}`}) · {reply.atUtc.slice(11, 19)} UTC
-                </summary>
-                <p className="rv-pair-muted">Prompt</p>
-                <pre className="rv-walk-loop-text">{reply.prompt === '' ? '(not recorded)' : reply.prompt}</pre>
-                <p className="rv-pair-muted">Answer</p>
-                <pre className="rv-walk-loop-text">{reply.text}</pre>
-              </details>
-            ))}
-          </div>
-        )}
-      </details>
-    </details>
-  );
-}
 
 /** A finished job's note; the provider's own text, when there is any, only on its tooltip. */
 export function JobNote({ job }: { readonly job: AgentJob }): JSX.Element {

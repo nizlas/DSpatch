@@ -1,0 +1,339 @@
+/*
+ * Follow preparation (DSP-190): the window that follows a walk preparation through the loop.
+ * The graph on the left is the loop editor's canvas in its view mode and keeps that
+ * stylesheet's shapes, states and motion; this file styles only the window around it and
+ * the activity panel beside it.
+ */
+
+.fw-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.fw-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+  padding: 0.5rem 1rem 0.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.fw-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.fw-title h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.fw-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 20rem;
+  min-width: 0;
+  font-size: 0.9rem;
+}
+
+.fw-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.fw-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.fw-provenance {
+  margin: 0;
+  padding: 0.2rem 1rem 0.4rem;
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.fw-muted {
+  color: var(--muted);
+}
+
+.fw-problem {
+  margin: 0.3rem 1rem;
+  color: var(--no);
+}
+
+.fw-limitations {
+  margin: 0.3rem 1rem;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.fw-main {
+  display: grid;
+  grid-template-columns: minmax(20rem, 1fr) minmax(22rem, 1fr);
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.fw-graph {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  cursor: grab;
+}
+
+.fw-graph:active {
+  cursor: grabbing;
+}
+
+.fw-graph svg.view .node {
+  cursor: pointer;
+}
+
+.fw-graph-empty {
+  margin: 1rem;
+}
+
+.fw-activity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  position: relative;
+}
+
+.fw-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 1rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.fw-usage > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.fw-usage-table {
+  margin: 0.3rem 0 0.2rem;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.fw-usage-table td {
+  padding: 0.1rem 0.6rem 0.1rem 0;
+  vertical-align: top;
+}
+
+.fw-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fw-visits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.fw-visit {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.fw-visit-shown {
+  border-color: var(--text);
+}
+
+.fw-visit-open {
+  border-style: dashed;
+}
+
+.fw-live {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+}
+
+.fw-following {
+  font-size: 0.8rem;
+}
+
+.fw-entries {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.4rem 0.9rem 1rem;
+  font-size: 0.85rem;
+}
+
+.fw-visit-title {
+  margin: 0.2rem 0 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.fw-entry {
+  display: block;
+  padding: 0.18rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.fw-entry > summary,
+.fw-entry:not(details) {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.fw-entry > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.fw-entry > summary::before {
+  content: '▸';
+  position: absolute;
+  margin-left: -0.9rem;
+  color: var(--muted);
+}
+
+.fw-entry[open] > summary::before {
+  content: '▾';
+}
+
+.fw-entries .fw-entry > summary {
+  position: relative;
+  padding-left: 0.9rem;
+}
+
+.fw-kind {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fw-brief {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fw-time {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fw-entry-head {
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.3rem;
+}
+
+.fw-entry-head .fw-kind,
+.fw-entry-head .fw-brief {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.fw-entry-verdict .fw-brief {
+  font-weight: 600;
+}
+
+.fw-body {
+  padding: 0.3rem 0 0.4rem 0.9rem;
+}
+
+.fw-text {
+  max-height: 28rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  padding: 0.5rem;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.fw-findings ul {
+  margin: 0.3rem 0 0.3rem 1.2rem;
+  padding: 0;
+}
+
+.fw-open {
+  margin: 0.6rem 0 0;
+  font-style: italic;
+}
+
+.fw-unseen {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 3rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+}
+
+.fw-record {
+  border-top: 1px solid var(--line);
+  padding: 0.3rem 0.9rem;
+  font-size: 0.85rem;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.fw-record > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.fw-reply {
+  margin: 0.3rem 0;
+}
+
+.fw-reply > summary {
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .fw-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(12rem, 40%) minmax(0, 1fr);
+  }
+
+  .fw-activity {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}

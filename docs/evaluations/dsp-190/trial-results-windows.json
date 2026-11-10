@@ -1,0 +1,412 @@
+{
+  "platform": "win32",
+  "display": "",
+  "profile": "<not kept: a path on the trial machine>",
+  "project": "<not kept: a path on the trial machine>",
+  "electron": "<not kept: a path on the trial machine>",
+  "finishedAt": "2026-11-10T09:54:06.654Z",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the input and capture tools are here",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "preflight",
+      "what": "the app is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "preflight",
+      "what": "the display",
+      "ok": true,
+      "detail": "the desktop; WM already there"
+    },
+    {
+      "stage": "preflight",
+      "what": "the walk loop drawing and its roles are in this checkout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the loop is chosen in the picker and starts, slowly enough to be followed",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the loop is chosen in the picker and starts, slowly enough to be followed",
+      "what": "the walks will be explained in the Standard profile",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the loop is chosen in the picker and starts, slowly enough to be followed",
+      "what": "the running job line offers Follow preparation beside Stop",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the run view opened while the planner works",
+      "what": "the drawing shows the planner running, and nothing else reached",
+      "ok": true,
+      "detail": "{\"plan\":\"active\"}"
+    },
+    {
+      "stage": "the run view opened while the planner works",
+      "what": "the planner node carries the working state and its motion runs (the editor's own animations)",
+      "ok": true,
+      "detail": "{\"state\":\"active\",\"working\":\"true\",\"animations\":25,\"drawn\":6}"
+    },
+    {
+      "stage": "the run view opened while the planner works",
+      "what": "the view is live and says what the planner does, from the journal or the turn sent",
+      "ok": true,
+      "detail": "Plan the walks: Planning the walks"
+    },
+    {
+      "stage": "the run view opened while the planner works",
+      "what": "no editor controls are in the run view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the run view opened while the planner works",
+      "what": "the activity panel lists the planner's visit, following live",
+      "ok": true,
+      "detail": "[{\"nodeId\":\"plan\",\"occurrence\":1,\"turns\":1,\"entries\":2,\"open\":true}]"
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "the progress line names the step being written, from the turn DSpatch sent",
+      "ok": true,
+      "detail": "Write the steps: Writing step W1.1 (1 of 8)"
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "the writer is the active node and the planner is done",
+      "ok": true,
+      "detail": "{\"nodes\":{\"plan\":\"finished\",\"write\":\"active\"},\"edges\":[\"e-planned\"]}"
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "reply text, exposed reasoning, tool calls and usage readings arrived as the provider reported them",
+      "ok": true,
+      "detail": "{\"turn-started\":2,\"tool-started\":4,\"tool-finished\":4,\"usage\":5,\"reasoning-text\":1,\"reply-text\":43,\"turn-ended\":1,\"note\":2}"
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "each row is labelled as what it is: reasoning as exposed by the provider, never as thinking",
+      "ok": true,
+      "detail": "[\"Turn 2\",\"Reasoning text (exposed by the provider)\",\"Reply text\",\"Usage reported\",\"Turn ended\",\"Turn 3\"]"
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "rows stay short: no row carries a raw event list",
+      "ok": true,
+      "detail": "[50,136,161,115,55,50]"
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "the reasoning text expands to the whole of what the provider exposed",
+      "ok": true,
+      "detail": "SIMULATED reasoning: reading the places named for this turn, then writing the answer."
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "the reply text expands with its formatting kept",
+      "ok": true,
+      "detail": "SIMULATED Standard explanation of W1.1 Removed lines 6–6: what the code at `src/link.ts` lines 6–6 does here and why it "
+    },
+    {
+      "stage": "the writer followed with real stream events: text, exposed reasoning, tool calls and usage",
+      "what": "usage rows say which field and that the figure is per model call",
+      "ok": true,
+      "detail": "[\"2,500 input tokens (SIMULATED), 326 output tokens (SIMULATED) (per model call, 2 readings)\"]"
+    },
+    {
+      "stage": "an earlier visit read while the run goes on, and back to live",
+      "what": "the planner's tool calls name what was read, with their result",
+      "ok": true,
+      "detail": "[\"Reading link.ts · done\",\"Reading link.ts · done\",\"Reading session.ts · done\",\"Reading session.ts · done\"]"
+    },
+    {
+      "stage": "an earlier visit read while the run goes on, and back to live",
+      "what": "reading the planner's visit, new activity neither switches the visit nor moves the reader",
+      "ok": true,
+      "detail": "{\"scrolledTo\":0,\"scrolledNow\":0,\"shown\":{\"nodeId\":\"plan\",\"occurrence\":1}}"
+    },
+    {
+      "stage": "an earlier visit read while the run goes on, and back to live",
+      "what": "the visit list marks which visit is open and which is read",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "an earlier visit read while the run goes on, and back to live",
+      "what": "Back to live follows the active visit again",
+      "ok": true,
+      "detail": "{\"nodeId\":\"write\",\"occurrence\":1}"
+    },
+    {
+      "stage": "closed and reopened during the run: nothing stops, repeats or doubles",
+      "what": "closing the run view stops nothing: the job runs on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "closed and reopened during the run: nothing stops, repeats or doubles",
+      "what": "reopening starts no second preparation and no extra call: one job, the turns numbered on without a gap or a double",
+      "ok": true,
+      "detail": "{\"jobsNow\":[\"running\"],\"turns\":[1,2,3,4,5,6,7,8,9,10]}"
+    },
+    {
+      "stage": "closed and reopened during the run: nothing stops, repeats or doubles",
+      "what": "the reopened view is live and shows the same run",
+      "ok": true,
+      "detail": "{\"before\":76,\"after\":76}"
+    },
+    {
+      "stage": "the reviewer, the correction round and the final assessment",
+      "what": "the reviewer asked for a correction and the writer was entered again: the actual path, on the drawing",
+      "ok": true,
+      "detail": "{\"edges\":[\"e-planned\",\"e-written\",\"e-rework-text\"],\"visits\":[\"plan#1\",\"write#1\",\"review#1\",\"write#2\"]}"
+    },
+    {
+      "stage": "the reviewer, the correction round and the final assessment",
+      "what": "the reviewer's verdict and its findings are in its visit, as a finding of the walk, not of the code",
+      "ok": true,
+      "detail": "rework · 1 finding"
+    },
+    {
+      "stage": "the reviewer, the correction round and the final assessment",
+      "what": "the finding names its step, and the panel says the reviewer approves nothing of the code",
+      "ok": true,
+      "detail": "SIMULATED: the walks follow the change, but the first step names its function without explaining what decides its outcome.W1.1 (explanation): SIMULATED: the step does not say what decides the outcome "
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "the run ended at delivered-with-objections, every visited node finished",
+      "ok": true,
+      "detail": "{\"plan\":\"finished\",\"write\":\"finished\",\"review\":\"finished\",\"delivered-with-objections\":\"finished\"}"
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "the terminal the drawing declares a success carries the tick, and no motion remains",
+      "ok": true,
+      "detail": "{\"ending\":\"success\",\"tick\":true,\"animations\":0}"
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "the final assessment is on record with its objection",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "the summary strip says the turns, the time, the round and the status",
+      "ok": true,
+      "detail": "12 turns · 24 s · one correction round · delivered-with-objectionsUsage: 34,222 input tokens (SIMULATED), 9,311 output tokens (SIMULATED) (per model call, 32 readings)input tokens (SIMULATED)34,222sum"
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "usage is summed per field and per model call, from readings the provider reported, and the details open apart",
+      "ok": true,
+      "detail": "12 turns · 24 s · one correction round · delivered-with-objectionsUsage: 34,222 input tokens (SIMULATED), 9,311 output tokens (SIMULATED) (per model call, 32 readings)input tokens (SIMULATED)34,222sum of 16 readings (call); presentation.usage.inputTokensoutput tokens (SIMULATED)9,311sum of 16 readin"
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "no limitation is reported for a run followed from its start",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "stage": "the run ended: the ending on the drawing, the summary with usage, zoom",
+      "what": "zoom changes the drawing's size for readability",
+      "ok": true,
+      "detail": "{\"widthBefore\":\"856.8\",\"widthAfter\":\"957.5999999999999\"}"
+    },
+    {
+      "stage": "the diff view stays free of generation details, and the finished run reopens from it",
+      "what": "the preparation area holds one short line and the way into the run view",
+      "ok": true,
+      "detail": "Prepared through the planner, writer and reviewer loop. Follow preparation"
+    },
+    {
+      "stage": "the diff view stays free of generation details, and the finished run reopens from it",
+      "what": "no token list, journal, prompt, verdict or usage is in the diff view",
+      "ok": true,
+      "detail": "\n    On this computerEnd hostdspatch-walk-follow-project-1D8xYU6996f8b → 4a6bac6Prepare code walks…C"
+    },
+    {
+      "stage": "the diff view stays free of generation details, and the finished run reopens from it",
+      "what": "no staleness notice is shown for walks just prepared",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the diff view stays free of generation details, and the finished run reopens from it",
+      "what": "the finished run shows its history: the same visits, the text, the reasoning, the usage and the verdicts kept",
+      "ok": true,
+      "detail": "{\"visits\":5,\"kinds\":{\"turn-started\":12,\"tool-started\":4,\"tool-finished\":4,\"usage\":16,\"reasoning-text\":12,\"reply-text\":12,\"turn-ended\":12,\"note\":6,\"verdict\":2}}"
+    },
+    {
+      "stage": "the diff view stays free of generation details, and the finished run reopens from it",
+      "what": "the history shows the last visit, with no limitation",
+      "ok": true,
+      "detail": "{\"nodeId\":\"review\",\"occurrence\":2}"
+    },
+    {
+      "stage": "the diff view stays free of generation details, and the finished run reopens from it",
+      "what": "every prompt and answer of the run is readable whole, on request",
+      "ok": true,
+      "detail": "DSPATCH-REVIEW-TASK: plan-walks\n\n## Your role: walk-planner\nPlan a review's code"
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "the walk's own Standard text is shown with no explanation call",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "Essentials is chosen for reading",
+      "ok": true,
+      "detail": "essens"
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "one explanation was asked for: the current step in Essentials, nothing else",
+      "ok": true,
+      "detail": "[\"W1.1:essens:present\"]"
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "the diff view says nothing about earlier settings after the profile change",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "the walk window and its panel say nothing about earlier settings either",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "the diff view still holds its one line and no generation detail",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "the profile change started no preparation and no loop",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "the walk's places, order and the Essentials text are as prepared",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "back to Standard shows the walk's own text and asks for nothing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the reading profile changed to Essentials and back: a step explanation at most, nothing stale, no new preparation",
+      "what": "Essentials again shows the saved explanation and asks for nothing",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "stage": "a second review of the same pair, followed on its own, and stopped from its run view",
+      "what": "the second review of the same pair is its own",
+      "ok": true,
+      "detail": "r-30bd02ca28c941ed009fee05"
+    },
+    {
+      "stage": "a second review of the same pair, followed on its own, and stopped from its run view",
+      "what": "the two reviews are followed independently: different keys and jobs, and the finished run's view does not change while the second runs",
+      "ok": true,
+      "detail": "{\"second\":{\"key\":\"r-30bd02ca28c941ed009fee05\",\"job\":\"job-62837d5f-5e0f-4dd8-8a92-8e240f1d556a\"},\"first\":{\"activity\":80,\"history\":80}}"
+    },
+    {
+      "stage": "a second review of the same pair, followed on its own, and stopped from its run view",
+      "what": "still unchanged after more of the second run arrived",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a second review of the same pair, followed on its own, and stopped from its run view",
+      "what": "Stop in the run view stopped the actual job and the view says so",
+      "ok": true,
+      "detail": "{\"state\":\"cancelled\",\"status\":\"runtime-fault\"}"
+    },
+    {
+      "stage": "a second review of the same pair, followed on its own, and stopped from its run view",
+      "what": "walk windows open at the end of the first launch",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "46664"
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "the provider failure ended the job as failed, with the writer marked failed on the drawing and no resend of the turn",
+      "ok": true,
+      "detail": "{\"nodes\":{\"plan\":\"finished\",\"write\":\"failed\"},\"replies\":[\"finished\",\"failed\"]}"
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "the failed turn is on record with the provider's own error",
+      "ok": true,
+      "detail": "[\"failed: SIMULATED: the provider stopped this turn. · 0 characters of reply\"]"
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "the running review's run folder exists before it is deleted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "the review being deleted is in the list",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "deleting the review closed its run view and nothing recreated its files afterwards",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "the deleted review is not among the reviews",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a provider failure ends the run without a resend, and a deleted review takes its run view with it",
+      "what": "windows at the end",
+      "ok": true,
+      "detail": "[\"?window=review&view=diff#review\",\"\",\"?window=review&view=diff#review\",\"l\"]"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "29288"
+    }
+  ]
+}

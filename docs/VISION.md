@@ -562,6 +562,19 @@ Niclas asked for a first, bounded agent loop that generates new code walks insid
 
 This is a first evaluation version. What DSP-189 implemented and verified is recorded in the task, never here.
 
+#### Following a preparation in a view of its own, and reading profile apart from provenance (Niclas's decision, 10 November 2026)
+
+After running the loop, Niclas asked for a coherent improvement of its user interface (DSP-190): presentation, observation of the run and the state of a profile switch, with no new pedagogical prompt changes. He decided:
+
+- **The diff view is for reviewing code.** No generation journal, run summary, token list, agent activity, internal prompt or reviewer assessment of walk quality sits in it. How the walks were prepared is one line with the way into the run view; details of how walks were built belong to their preparation area and to the run view, never to Step or Discussion. The information is kept in the run's history.
+- **The reading profile is the person's; provenance is the walk's.** Changing the profile a walk is read in shows a saved explanation or asks for the missing one for the current step, and by itself marks nothing as out of date, asks for no new preparation, starts no loop and changes no code places, step order, coverage or review decision. The profile and instruction version a walk was prepared with are kept as provenance and shown apart from the reading profile; a real difference of instruction version is still said, and no legitimate staleness is hidden by removing warnings.
+- **A run view of its own, Follow preparation.** Opened from the preparation area and from the running job, during the run and afterwards; it reuses the graph editor's canvas, run model and animations in a view mode, shows the run's actual path, node states and ending, the active step's progress and an activity panel beside the graph, and offers Stop through the existing mechanism and nothing else that acts: no editing, no saving, no field for instructing a running preparation. Closing it stops nothing; opening or reopening it starts no model call and no run.
+- **Only what was reported, labelled as what it is.** The activity panel shows streamed agent text, reasoning text where the provider exposes it (named as exposed reasoning, never as the model's whole thinking), tool calls, commands and their results, usage readings, status, errors and the reviewer's findings, each bound to its run, role, node visit and turn, compact and expandable to the whole content with its formatting. Nothing is invented to fill a silence, no extra model call writes labels, and the panel follows the active node without pulling a reader away from an earlier visit.
+- **Usage summed only where its meaning allows; streaming without resending.** Readings are understood per provider source before they are added; the unknown stays unknown, never zero; the stream carries increments with sequence numbers, a reopened window gets the state so far once, and earlier records are shown as far as they go with their limits stated rather than rewritten by guesswork.
+- **Isolation and safe state unchanged.** Events follow their own review and run; two reviews of the same commit pair are followed independently; no run content leaves DSpatch's own services for presentation; Stop cancels the job and the active provider turn; a provider failure causes no resend loop; a deleted review gets nothing recreated; the run view changes no review decision, and the reviewer judging the walk's quality remains apart from approval of the code.
+
+What DSP-190 implemented and verified is recorded in the task, never here.
+
 <a id="4-maestro-och-agentnätverket"></a>
 
 ## 4 Maestro and the agent network

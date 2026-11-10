@@ -8,8 +8,8 @@
  *
  * It checks the new user flow: the picker offers how to prepare with one call chosen, the loop can
  * be chosen and started, the job line names the loop and says what it is doing, the walks open
- * like any other, the run's trace is in the review window closed until asked and then shows the
- * reviewer's verdict, the journal and every prompt and answer whole, the discussion receives
+ * like any other, the diff view keeps one line about the preparation (DSP-190) and the run is read
+ * in the window that follows it (its verdicts, its record on request), the discussion receives
  * nothing, and the run record is on disk under the review. What it proves is the product's
  * handling with simulated answers, never what a real model writes.
  *
@@ -1018,31 +1018,49 @@ async function main() {
     walkWindow = await windowShowing(isWalkPage, 'the walk window');
   }
 
-  stage = 'the trace of the run in the review window, on request';
-  await diff.until('the loop trace', `${q('pair-walk-loop')}!==null`, 30_000);
-  const trace = JSON.parse(await diff.ev(`JSON.stringify({status:${q('pair-walk-loop')}.dataset.status,text:${q('pair-walk-loop')}.querySelector('summary').textContent,open:${q('pair-walk-loop')}.open})`));
-  check('the trace says the loop delivered with no correction round (SIMULATED accept) and how many turns it took', trace.status === 'delivered' && /no correction round/.test(trace.text) && /provider turn/.test(trace.text) && !trace.open, JSON.stringify(trace));
-  check('the trace is closed until asked', trace.open === false, JSON.stringify(trace));
-  // Clicks are delivered inside the page: on a desktop where other windows cover DSpatch's, input through the operating system would land elsewhere.
-  await diff.ev("document.querySelector('[data-ev=\"pair-walk-loop\"] > summary').click(); true");
-  await diff.until('the trace opened', `${q('pair-walk-loop')}.open === true`, 10_000);
-  const verdict = await diff.ev(`${q('pair-walk-loop-first')}?.textContent ?? ''`);
-  check('the reviewer\'s verdict and assessment are shown, and named as an agent\'s', /SIMULATED review/.test(verdict) && /approves nothing of the code/.test(await diff.ev(`${q('pair-walk-loop')}.textContent`)), verdict.slice(0, 200));
-  await diff.ev("document.querySelector('[data-ev=\"pair-walk-loop-record\"] > summary').click(); true");
-  await diff.until('the record read', `${q('pair-walk-loop-replies')}!==null && Number(${q('pair-walk-loop-replies')}.dataset.count) >= 4`, 30_000);
-  const replies = JSON.parse(await diff.ev(`JSON.stringify([...document.querySelectorAll('.rv-walk-loop-reply > summary')].map((e)=>e.textContent))`));
+  stage = 'the diff view keeps one line about the preparation; the run is read in the window that follows it (DSP-190)';
+  await diff.until('the one line about the preparation', `${q('pair-walk-loop')}!==null`, 30_000);
+  const line = JSON.parse(await diff.ev(`JSON.stringify({status:${q('pair-walk-loop')}.dataset.status,text:${q('pair-walk-loop')}.textContent})`));
+  check('the line says the loop prepared the walks and offers Follow preparation, nothing more', line.status === 'delivered' && /Prepared through the planner, writer and reviewer loop/.test(line.text) && line.text.length < 160 && (await diff.ev(`${q('pair-walk-loop-follow')}!==null`)) === true, JSON.stringify(line));
+  const diffBody = await diff.ev('document.body.textContent');
+  check('no verdict, journal, usage, token list or prompt is in the diff view', !/SIMULATED review|edge-taken|provider turn|tokens|DSPATCH-REVIEW-TASK|usage/.test(diffBody));
+  check('no staleness notice is shown for walks just prepared', (await diff.ev(`${q('pair-stale')}===null`)) === true);
+  const followBefore = new Set((await client.main.windows()).filter((x) => !x.destroyed && x.url.includes('view=follow')).map((x) => x.id));
+  await diff.ev(`${q('pair-walk-loop-follow')}.click(); true`);
+  const followWindow = await poll('the follow window', async () => (await client.main.windows()).find((x) => !x.destroyed && x.url.includes('view=follow') && !followBefore.has(x.id)) ?? false, 30_000);
+  const followRead = (expression) => read(followWindow.contentsId, expression);
+  const followCheck = async () => JSON.parse((await followRead('JSON.stringify(window.__dspatchFollowCheck ? window.__dspatchFollowCheck.read() : null)')) ?? 'null');
+  const followed = await poll('the finished run read from its files', async () => {
+    const r = await followCheck();
+    return r !== null && r.announced && r.ended ? r : false;
+  }, 40_000);
+  check('the run view shows the finished run: ended at delivered, every visited node finished, no correction round', followed.live === false && followed.terminal === 'delivered' && followed.nodes.plan === 'finished' && followed.nodes.review === 'finished' && followed.visits.length === 3 && followed.limitations.length === 0, JSON.stringify({ nodes: followed.nodes, visits: followed.visits.length, limitations: followed.limitations }));
+  check('the drawing is the editor\'s own: six nodes, the delivered terminal ticked, no editor controls', (await followRead(`JSON.stringify({nodes:document.querySelectorAll('.fw-graph svg .node').length,tick:document.querySelector('[data-node-id="delivered"] .node-ending-tick')!==null,palette:document.querySelector('.editor-palette')!==null})`)) === '{"nodes":6,"tick":true,"palette":false}');
+  await followRead(`document.querySelector('[data-ev="follow-visit-review-1"]').click(); true`);
+  await poll('the reviewer\'s visit', async () => (await followCheck()).shown.nodeId === 'review', 5_000);
+  const verdictRow = await followRead(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] .fw-brief')?.textContent ?? ''`);
+  check('the reviewer\'s verdict is in its visit of the run view', /accept/.test(verdictRow), verdictRow);
+  await followRead(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] > summary').click(); true`);
+  check('the verdict\'s assessment is shown and named as an agent\'s', /SIMULATED review/.test(await followRead(`document.querySelector('[data-ev="follow-entry"][data-kind="verdict"] .fw-body')?.textContent ?? ''`)) && /approves nothing of the code/.test(await followRead('document.body.textContent')));
+  await followRead(`document.querySelector('[data-ev="follow-record"] > summary').click(); true`);
+  await poll('the record read', async () => Number((await followRead(`document.querySelector('[data-ev="follow-replies"]')?.dataset.count ?? '0'`))) >= 4, 30_000);
+  const replies = JSON.parse(await followRead(`JSON.stringify([...document.querySelectorAll('.fw-reply > summary')].map((e)=>e.textContent))`));
   check(
     'every exchange is listed: the planner, each step the writer wrote, the reviewer',
     replies.some((r) => /Plan the walks/.test(r)) && replies.filter((r) => /Write the steps/.test(r)).length >= 2 && replies.some((r) => /Review the walks/.test(r)),
     JSON.stringify(replies),
   );
-  const journal = JSON.parse(await diff.ev(`JSON.stringify([...document.querySelectorAll('.rv-walk-loop-journal li')].map((e)=>e.textContent))`));
-  check('the engine\'s journal is shown with the edges it took', journal.some((line) => /edge-taken/.test(line)) && journal.some((line) => /accepted/.test(line)), JSON.stringify(journal).slice(0, 400));
-  await diff.ev("document.querySelector('.rv-walk-loop-reply > summary').click(); true");
-  await diff.until('the first exchange opened', `document.querySelector('.rv-walk-loop-reply').open === true`, 10_000);
-  const firstPrompt = await diff.ev(`document.querySelector('.rv-walk-loop-reply .rv-walk-loop-text')?.textContent ?? ''`);
+  await followRead(`document.querySelector('.fw-reply > summary').click(); true`);
+  const firstPrompt = await poll('the first exchange opened', async () => {
+    const state = JSON.parse(await followRead(`JSON.stringify({replies:document.querySelectorAll('.fw-reply').length,open:document.querySelector('.fw-reply')?.open ?? null,text:document.querySelector('.fw-reply .fw-text')?.textContent ?? ''})`));
+    if (state.open !== true) await followRead(`document.querySelector('.fw-reply > summary')?.click(); true`);
+    return state.text !== '' ? state.text : false;
+  }, 15_000);
   check('the planner\'s prompt is readable whole: its task header and its role', firstPrompt.startsWith('DSPATCH-REVIEW-TASK: plan-walks') && /## Your role: walk-planner/.test(firstPrompt), firstPrompt.slice(0, 120));
-  await shotWindow(await windowById(diffWindow.id), '03-trace');
+  await client.main.size(followWindow.id, 1500, 940);
+  await delay(500);
+  await shotWindow(await windowById(followWindow.id), '03-follow-run');
+  await shotWindow(await windowById(diffWindow.id), '03b-diff-line');
 
   stage = 'the walk opens and reads like any other, and the discussion is untouched';
   const walk = new Page(client.cdp, 'walk', isWalkPage);

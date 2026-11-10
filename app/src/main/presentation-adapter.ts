@@ -4,6 +4,7 @@ import type {
   AgentEventListener,
   CapabilityReport,
   ModelInfo,
+  ProviderId,
   RunReference,
   SessionConfig,
   SessionHandle,
@@ -13,7 +14,24 @@ import type {
 } from '../adapter/types';
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import { TASK_HEADER } from '../shared/review-agent';
-import { failsPresentation, presentMs, simulatedReviewTask, streamMs } from './presentation-review-tasks';
+import { failsPresentation, failsTask, presentMs, simulatedReviewTask, streamMs } from './presentation-review-tasks';
+
+/**
+ * DSP-190, SIMULATED: `DSPATCH_PRESENTATION_USAGE=1` makes every simulated turn report usage
+ * readings (one event per simulated tool call and one at the turn's end, named by field as the
+ * Copilot adapter names them), and `DSPATCH_PRESENTATION_REASONING=1` makes it stream a few
+ * reasoning deltas before the reply. Both off by default, so every earlier scenario reads as
+ * it did: a provider that reports nothing stays unknown.
+ */
+const simulatedUsageOn = (): boolean => process.env['DSPATCH_PRESENTATION_USAGE'] === '1';
+const simulatedReasoningOn = (): boolean => process.env['DSPATCH_PRESENTATION_REASONING'] === '1';
+function simulatedReadings(provider: ProviderId, input: number, output: number): UsageReading[] {
+  const observedAt = new Date().toISOString();
+  return [
+    { provider, unit: 'tokens', scope: 'call', value: input, source: 'presentation.usage.inputTokens', observedAt },
+    { provider, unit: 'tokens', scope: 'call', value: output, source: 'presentation.usage.outputTokens', observedAt },
+  ];
+}
 import type { AuthStatusReading, ChatAdapter } from './chat-service';
 
 /** SIMULATED: what `[[tools]]` reports for a chat turn. */
@@ -688,6 +706,10 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
           emit({ ...base, type: 'command.finished', at: new Date().toISOString(), toolCallId, command: record });
         }
         emit({ ...base, type: 'tool.finished', at: new Date().toISOString(), toolCallId, name: tool.name, status: tool.ok ? 'ok' : 'error' });
+        // DSP-190, SIMULATED: a usage reading per model call, as Copilot reports one per API call.
+        if (simulatedUsageOn()) {
+          emit({ ...base, type: 'usage', at: new Date().toISOString(), readings: simulatedReadings(state.config.provider, 1_000 + index * 37, 40 + index) });
+        }
       };
       if (toolMs === 0) {
         call();
@@ -702,7 +724,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
 
     const reply = (): void => {
       // `[[fail]]`, SIMULATED: the turn ends as a provider's error does, after its tools.
-      if (prompt.includes('[[fail]]') || failsPresentation(prompt)) {
+      if (prompt.includes('[[fail]]') || failsPresentation(prompt) || failsTask(prompt)) {
         const timer = setTimeout(() => {
           state.timers.delete(timer);
           state.activeRun = null;
@@ -711,6 +733,22 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
         state.timers.add(timer);
         return;
       }
+      // DSP-190, SIMULATED: reasoning text the provider exposes, before the reply, as Claude's
+      // thinking deltas and Copilot's reasoning deltas arrive. Labelled SIMULATED, never a thought.
+      const reasoning = simulatedReasoningOn() ? ['SIMULATED reasoning: ', 'reading the places named for this turn, ', 'then writing the answer.'] : [];
+      reasoning.forEach((piece, index) => {
+        const timer = setTimeout(
+          () => {
+            state.timers.delete(timer);
+            if (state.activeRun !== dspatchRunId) {
+              return;
+            }
+            emit({ ...base, type: 'reasoning.delta', at: new Date().toISOString(), text: piece });
+          },
+          lead + deltaMs * (index + 1),
+        );
+        state.timers.add(timer);
+      });
       chunks.forEach((chunk, index) => {
         const timer = setTimeout(
           () => {
@@ -735,6 +773,10 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
                 answer = `${answer}\n\n${heard.map((text) => `Steering taken into this turn: ${text}`).join('\n\n')}`;
               }
               state.activeRun = null;
+              // DSP-190, SIMULATED: the turn's own usage, as the real adapters report at a turn's end.
+              if (simulatedUsageOn()) {
+                emit({ ...base, type: 'usage', at: new Date().toISOString(), readings: simulatedReadings(state.config.provider, 2_500, answer.length) });
+              }
               // The whole answer once, the way the real adapter ends a turn.
               //
               // **This was missing, and it made the double incomplete in a way nothing
@@ -760,7 +802,7 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
               });
             }
           },
-          lead + deltaMs * (index + 1),
+          lead + deltaMs * (reasoning.length + index + 1),
         );
         state.timers.add(timer);
       });

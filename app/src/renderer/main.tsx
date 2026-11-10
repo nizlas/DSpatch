@@ -7,10 +7,12 @@ import { HostBrowser, HostLinkLine, SshQuestions } from './HostLink';
 import { LoopEditor } from './LoopEditor';
 import { PairReview } from './PairReview';
 import { ReviewView } from './ReviewView';
+import { WalkLoopFollow } from './WalkLoopFollow';
 import './styles.css';
 import './loop-editor.css';
 import './start-page.css';
 import './review.css';
+import './follow.css';
 
 const host = document.getElementById('root');
 
@@ -45,6 +47,9 @@ const isReviewWindow = new URLSearchParams(window.location.search).get('window')
 
 /** A review window over a chosen revision pair (DSP-150): the diff review, not a walk. */
 const isDiffReview = isReviewWindow && new URLSearchParams(window.location.search).get('view') === 'diff';
+
+/** The window that follows one walk preparation of a review (DSP-190). */
+const isFollowView = isReviewWindow && new URLSearchParams(window.location.search).get('view') === 'follow';
 
 /** The hash the window was opened on, which decides whether it has a chat to keep. */
 const initialView = chosenView();
@@ -107,5 +112,5 @@ if (new URLSearchParams(window.location.search).get('view') === 'panel') {
 }
 
 createRoot(host).render(
-  <StrictMode>{isBrowseWindow ? <HostBrowser /> : <><HostLinkLine /><SshQuestions />{isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
+  <StrictMode>{isBrowseWindow ? <HostBrowser /> : <><HostLinkLine /><SshQuestions />{isFollowView ? <WalkLoopFollow /> : isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
 );

@@ -193,7 +193,8 @@ export interface AnnouncedRole {
   readonly role: ResolvedRole | null;
 }
 
-export type LoopRunBinding = 'editor-loop' | 'chat-loop' | 'canvas-dry-run';
+/** `walk-loop` (DSP-190): a review's walk preparation through the planner, writer and reviewer. */
+export type LoopRunBinding = 'editor-loop' | 'chat-loop' | 'canvas-dry-run' | 'walk-loop';
 
 /**
  * The version id of a graph that was never read from a file.

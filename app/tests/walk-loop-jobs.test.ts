@@ -21,6 +21,7 @@ import { RevisionSnapshots } from '../src/host/revision-snapshots';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
 import { ReviewService } from '../src/main/review-service';
 import { isPairError, type AgentJob, type PairRecord } from '../src/shared/review-pair';
+import type { WalkLoopRunEvent } from '../src/shared/walk-loop-view';
 import { CONNECT_CASE, makeSyntheticRepo } from './support/synthetic-walks';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -42,6 +43,7 @@ async function setup(name: string, deltaMs = 1) {
     throw new Error(opened.error);
   }
   const sent: string[] = [];
+  const runEvents: { readonly key: string; readonly event: WalkLoopRunEvent }[] = [];
   const jobs = new ReviewAgentJobs({
     recordsDir: records,
     createAdapter: () => {
@@ -61,6 +63,10 @@ async function setup(name: string, deltaMs = 1) {
     loopResources: repoRoot,
     appVersion: 'test',
     cancelConfirmMs: 500,
+    // DSP-190: what the windows over the review would hear.
+    runEvent: (key, event) => {
+      runEvents.push({ key, event });
+    },
   });
   const settled = async (jobId: string, timeoutMs = 30_000): Promise<AgentJob> => {
     const until = Date.now() + timeoutMs;
@@ -73,7 +79,7 @@ async function setup(name: string, deltaMs = 1) {
     }
     throw new Error(`job ${jobId} did not settle`);
   };
-  return { key: opened.key, pairs, jobs, sent, records, settled };
+  return { key: opened.key, pairs, jobs, sent, records, settled, runEvents };
 }
 
 function taskOf(prompt: string): string {
@@ -83,9 +89,23 @@ function taskOf(prompt: string): string {
 describe('the walk loop through the job service (SIMULATED)', () => {
   it('plans, writes each step in the writer\'s session, reviews, delivers a definition that opens, and keeps its record', async () => {
     delete process.env['DSPATCH_REVIEW_SIM'];
-    const { key, pairs, jobs, sent, records, settled } = await setup('accept');
+    const { key, pairs, jobs, sent, records, settled, runEvents } = await setup('accept');
     const started = jobs.start(key, { kind: 'walks', provider: 'claude', model: 'sim-model', method: 'loop', presentation: { profile: 'pedagog' } });
     assert.ok(!isPairError(started), isPairError(started) ? started.error : '');
+    // DSP-190: a window opening while it runs is handed the run so far, live.
+    const during = await (async () => {
+      const until = Date.now() + 20_000;
+      while (Date.now() < until) {
+        const answer = jobs.walkLoopRunView(key, started.id);
+        if (!isPairError(answer) && answer.view !== null && answer.activity.length > 0) {
+          return answer;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error('no live snapshot');
+    })();
+    assert.equal(during.live, true);
+    assert.ok(!during.view?.ended);
     assert.equal(started.method, 'loop');
     assert.ok(started.note.includes('planner, writer and reviewer'));
     assert.equal((pairs.state(key) as PairRecord).generation?.method, 'loop', 'the review records how its walks are being prepared');
@@ -114,6 +134,24 @@ describe('the walk loop through the job service (SIMULATED)', () => {
     assert.equal(view.replies[0]?.roleId, 'walk-planner');
     assert.ok(view.complete);
     assert.ok(view.journal.some((entry) => entry.kind === 'edge-taken'));
+    // DSP-190: the run's events went to the review's windows, addressed; the run reads back from its files.
+    const own = runEvents.filter((entry) => entry.key === key && entry.event.jobId === started.id);
+    assert.equal(own.length, runEvents.length, 'every event is this review and this job');
+    assert.ok(own.some((entry) => 'event' in entry.event && entry.event.event.kind === 'started'));
+    assert.ok(own.some((entry) => 'event' in entry.event && entry.event.event.kind === 'ended'));
+    const starts = own.flatMap((entry) => ('activity' in entry.event && entry.event.activity.kind === 'turn-started' ? [entry.event.activity] : []));
+    assert.equal(starts.length, sent.length, 'one turn-started per prompt sent');
+    assert.ok(own.some((entry) => 'activity' in entry.event && entry.event.activity.kind === 'tool-started'), 'the simulated reads are reported');
+    assert.ok(own.some((entry) => 'activity' in entry.event && entry.event.activity.kind === 'reply-text'), 'the streamed text is reported');
+    const after = jobs.walkLoopRunView(key, started.id);
+    assert.ok(!isPairError(after), isPairError(after) ? after.error : '');
+    assert.equal(after.live, false);
+    assert.ok(after.view?.ended && after.view.terminalNodeId === 'delivered');
+    assert.equal(after.activity.filter((entry) => entry.kind === 'turn-started').length, sent.length);
+    assert.ok(after.summary !== null && after.summary.status === 'delivered');
+    assert.deepEqual(after.limitations, []);
+    const wrong = jobs.walkLoopRunView(key, 'no-such-job');
+    assert.ok(isPairError(wrong));
     const service = new ReviewService({ recordsDir: path.join(records, 'review'), log: () => undefined });
     const shown = await service.openDefinition(job.definitionPath);
     assert.equal(shown.kind, 'opened', shown.kind === 'failed' ? shown.error : '');
@@ -215,7 +253,7 @@ describe('the walk loop through the job service (SIMULATED)', () => {
   });
 
   it('writes nothing back once its review was deleted while it ran', async () => {
-    const { key, pairs, jobs, sent, records } = await setup('deleted', 40);
+    const { key, pairs, jobs, sent, records, runEvents } = await setup('deleted', 40);
     const started = jobs.start(key, { kind: 'walks', provider: 'claude', model: 'sim-model', method: 'loop' });
     assert.ok(!isPairError(started));
     const until = Date.now() + 10_000;
@@ -225,6 +263,7 @@ describe('the walk loop through the job service (SIMULATED)', () => {
     const removed = pairs.remove(key);
     assert.ok(!isPairError(removed));
     await jobs.forgetReview(key);
+    const heardBefore = runEvents.length;
     const generated = path.join(records, 'generated', key);
     fs.rmSync(generated, { recursive: true, force: true });
     const end = Date.now() + 10_000;
@@ -234,5 +273,6 @@ describe('the walk loop through the job service (SIMULATED)', () => {
     assert.ok(!jobs.working(), 'the job ended');
     assert.ok(!fs.existsSync(generated), 'nothing recreated the deleted review\'s folder');
     assert.ok(!pairs.holds(key));
+    assert.equal(runEvents.length, heardBefore, 'DSP-190: nothing of a deleted review\'s run reaches any window afterwards');
   });
 });

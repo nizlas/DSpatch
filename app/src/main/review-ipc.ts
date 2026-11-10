@@ -438,6 +438,18 @@ export function registerReviewIpc(
   ipcMain.handle(REVIEW_PAIR_CHANNELS.walkLoopRecord, async (event, key: unknown, jobId: unknown) =>
     pairs.call('reviewPair.walkLoopRecord', keyOf(entryOf(event), key), jobId),
   );
+  // DSP-190: the run as it stands, for the window that follows it; a read, like the record.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.walkLoopRunView, async (event, key: unknown, jobId: unknown) =>
+    pairs.call('reviewPair.walkLoopRunView', keyOf(entryOf(event), key), jobId),
+  );
+  // DSP-190: the window that follows a preparation, opened from a window over the same review.
+  ipcMain.handle(REVIEW_PAIR_CHANNELS.openFollow, async (event, key: unknown, jobId: unknown): Promise<{ readonly ok: boolean; readonly note: string }> => {
+    const entry = entryOf(event);
+    if (typeof jobId !== 'string' || jobId === '') {
+      return { ok: false, note: 'No preparation was named.' };
+    }
+    return windows.openFollow(entry, keyOf(entry, key), jobId);
+  });
   ipcMain.handle(REVIEW_PAIR_CHANNELS.showInDiff, async (event, raw: unknown) => {
     const entry = entryOf(event);
     const location = locationFrom(raw);

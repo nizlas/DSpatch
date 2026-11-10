@@ -14,6 +14,7 @@
 import { isProfile, type PresentationProfile } from './presentation-profiles';
 import { stepReferencesFrom, type StepReference } from './review-discussion';
 import { isWalkMethod, walkLoopSummaryFrom, type WalkLoopRecordView, type WalkLoopSummary, type WalkMethod } from './walk-method';
+import type { WalkLoopRunEvent, WalkLoopRunSnapshot } from './walk-loop-view';
 
 import { diffChars } from 'diff';
 
@@ -2068,7 +2069,9 @@ export type PairWindowStart =
   /** A diff window that has not chosen a pair yet: repository list or log. */
   | { readonly kind: 'choose' }
   /** A diff window reopened onto a pair, and where to go in it, if anywhere. */
-  | { readonly kind: 'pair'; readonly pair: RevisionPairIdentity; readonly at: DiffLocation | null; readonly review?: string };
+  | { readonly kind: 'pair'; readonly pair: RevisionPairIdentity; readonly at: DiffLocation | null; readonly review?: string }
+  /** DSP-190: a window that follows one walk preparation of a review, running or finished. */
+  | { readonly kind: 'follow'; readonly review: string; readonly jobId: string; readonly pair: RevisionPairIdentity; readonly label: string };
 
 export type PairOpenOutcome =
   | { readonly kind: 'opened'; readonly open: OpenPair }
@@ -2105,6 +2108,8 @@ export const REVIEW_PAIR_CHANNELS = {
   startJob: 'dspatch:review-pair-start-job',
   cancelJob: 'dspatch:review-pair-cancel-job',
   walkLoopRecord: 'dspatch:review-pair-walk-loop-record',
+  walkLoopRunView: 'dspatch:review-pair-walk-loop-run-view',
+  openFollow: 'dspatch:review-pair-open-follow',
   thread: 'dspatch:review-pair-thread',
 } as const;
 
@@ -2172,6 +2177,15 @@ export interface ReviewPairBridge {
   cancelJob(key: string, jobId: string): Promise<PairAnswer<{ readonly note: string }>>;
   /** DSP-189: a walk loop's record, read on request: every prompt and answer, and the journal. */
   walkLoopRecord(key: string, jobId: string): Promise<PairAnswer<WalkLoopRecordView>>;
+  /**
+   * DSP-190: the walk loop run as it stands, for a window that follows it: the run view and the
+   * activity so far while it runs, or what its files hold afterwards. A read: starts nothing.
+   */
+  walkLoopRunView(key: string, jobId: string): Promise<PairAnswer<WalkLoopRunSnapshot>>;
+  /** DSP-190: open (or bring to the front) the window that follows this preparation. Starts nothing. */
+  openFollow(key: string, jobId: string): Promise<{ readonly ok: boolean; readonly note: string }>;
+  /** DSP-190: the run events of every walk loop of this window's review; the listener drops what is not its job's. */
+  onRunEvent(listener: (event: WalkLoopRunEvent) => void): () => void;
   /**
    * DSP-175: a person's comment or decision in a review thread. It records what the person
    * did; it never runs anything, never approves lines and never changes an agent's result.

@@ -207,6 +207,15 @@ jobs:
         with:
           name: walk-loop-trial
           path: app/release/trial-walk-loop/ci
+      - name: The follow preparation trial in real windows (DSP-190)
+        if: ${{ always() }}
+        run: node scripts/walk-follow-trial.mjs release/trial-walk-follow/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: walk-follow-trial
+          path: app/release/trial-walk-follow/ci
 
   published:
     if: ${{ inputs.published }}

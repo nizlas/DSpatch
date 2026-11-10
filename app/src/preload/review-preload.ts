@@ -11,6 +11,7 @@ import type {
 } from '../shared/review-model';
 import type { ReviewDiscussionBridge, ReviewDiscussionEvent } from '../shared/review-discussion';
 import type { DiffLocation, PairChangedEvent, PanelAction, PanelFollow, PanelState, ReviewPairBridge, ReviewPanelBridge } from '../shared/review-pair';
+import type { WalkLoopRunEvent } from '../shared/walk-loop-view';
 
 /**
  * The review window's preload, and the only bridge a review window has.
@@ -134,6 +135,18 @@ const pairBridge: ReviewPairBridge = {
     ipcRenderer.invoke('dspatch:review-pair-cancel-job', key, jobId) as ReturnType<ReviewPairBridge['cancelJob']>,
   walkLoopRecord: (key, jobId) =>
     ipcRenderer.invoke('dspatch:review-pair-walk-loop-record', key, jobId) as ReturnType<ReviewPairBridge['walkLoopRecord']>,
+  walkLoopRunView: (key, jobId) =>
+    ipcRenderer.invoke('dspatch:review-pair-walk-loop-run-view', key, jobId) as ReturnType<ReviewPairBridge['walkLoopRunView']>,
+  openFollow: (key, jobId) => ipcRenderer.invoke('dspatch:review-pair-open-follow', key, jobId) as ReturnType<ReviewPairBridge['openFollow']>,
+  onRunEvent: (listener) => {
+    const handler = (_event: unknown, payload: WalkLoopRunEvent): void => {
+      listener(payload);
+    };
+    ipcRenderer.on('dspatch:review-pair-run-event', handler);
+    return () => {
+      ipcRenderer.removeListener('dspatch:review-pair-run-event', handler);
+    };
+  },
   onChanged: (listener) => {
     const handler = (_event: unknown, payload: PairChangedEvent): void => {
       listener(payload);

@@ -1953,12 +1953,17 @@ function OpenReview({
           />
           {rightTab === 'step' && (
             <>
-              {/* DSP-186: as in the diff window, said and never acted on: walks are prepared again only when the person asks. */}
-              {pair !== null && pair.record.generation !== null && (generationStale(pair.record, PRESENTATION_INSTRUCTION_VERSION) || (pair.record.generation.profile !== null && pair.record.generation.profile !== profile)) && (
+              {/*
+                DSP-186: as in the diff window, said and never acted on: walks are prepared again
+                only when the person asks. DSP-190: said only for a real difference of DSpatch's
+                instruction version; the profile the walks are read in is the person's choice and
+                is never a reason to prepare again (the walk's own text names its profile below).
+              */}
+              {pair !== null && pair.record.generation !== null && generationStale(pair.record, PRESENTATION_INSTRUCTION_VERSION) && (
                 <p className="rv-pair-hint" data-ev="walk-stale">
-                  The code walks of this review were prepared with earlier settings
-                  {pair.record.generation.profile !== null && pair.record.generation.profile !== profile && isPublicProfile(pair.record.generation.profile) ? ` (the ${words.profiles.name[pair.record.generation.profile]} profile)` : ''}. Prepare them again to use the current
-                  ones; nothing is prepared again by itself.
+                  The code walks of this review were prepared with an earlier version of DSpatch's instructions
+                  {pair.record.generation.instructionVersion === null ? '' : ` (version ${String(pair.record.generation.instructionVersion)}, now ${String(PRESENTATION_INSTRUCTION_VERSION)})`}. Prepare them again to use
+                  the current ones; nothing is prepared again by itself.
                 </p>
               )}
               {pair !== null && pairBridge !== undefined && focus !== null && (

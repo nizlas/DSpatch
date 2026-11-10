@@ -449,8 +449,9 @@ test('the review preload repeats every review channel name exactly, and the chat
 test('the review preload repeats every review-pair channel name exactly (DSP-150)', async () => {
   const fs = await import('node:fs');
   const { REVIEW_PAIR_CHANNELS, REVIEW_PAIR_CHANGED, REVIEW_PAIR_NAVIGATE } = await import('../src/shared/review-pair');
+  const { REVIEW_PAIR_RUN_EVENT } = await import('../src/shared/walk-loop-view');
   const preload = fs.readFileSync(new URL('../src/preload/review-preload.ts', import.meta.url), 'utf8');
-  const expected = [...Object.values(REVIEW_PAIR_CHANNELS), REVIEW_PAIR_CHANGED, REVIEW_PAIR_NAVIGATE].map((channel) => `'${channel}'`).sort();
+  const expected = [...Object.values(REVIEW_PAIR_CHANNELS), REVIEW_PAIR_CHANGED, REVIEW_PAIR_NAVIGATE, REVIEW_PAIR_RUN_EVENT].map((channel) => `'${channel}'`).sort();
   const literal = [...new Set(preload.match(/'dspatch:review-pair-[a-z-]+'/g) ?? [])].sort();
   assert.deepEqual(literal, expected);
 });

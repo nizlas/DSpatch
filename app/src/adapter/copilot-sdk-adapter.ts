@@ -1114,15 +1114,19 @@ export class CopilotSdkAdapter implements AgentAdapter {
         if (typeof data['model'] === 'string') {
           state.modelReported = data['model'];
         }
-        const reading = (value: unknown): UsageReading => ({
+        // One event per LLM API call, in the SDK's own words: a field summed over the calls is
+        // the run's figure for that field. The source names the field (DSP-190), so a reader
+        // can tell input from output and add like to like; a reading without a field name is
+        // not summed by anyone.
+        const reading = (field: 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'): UsageReading => ({
           provider: 'copilot',
           unit: 'tokens',
           scope: 'call',
-          value: typeof value === 'number' ? value : null,
-          source: 'assistant.usage',
+          value: typeof data[field] === 'number' ? (data[field] as number) : null,
+          source: `assistant.usage.${field}`,
           observedAt: base.at,
         });
-        const readings = [reading(data['inputTokens']), reading(data['outputTokens'])];
+        const readings = [reading('inputTokens'), reading('outputTokens'), reading('cacheReadTokens'), reading('cacheWriteTokens')];
         state.usage.push(...readings);
         this.emit(state, { ...base, type: 'usage', readings });
         return;

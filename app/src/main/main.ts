@@ -5244,7 +5244,8 @@ function main(): void {
         // `window=review` makes the renderer mount review alone (`renderer/main.tsx`);
         // `view=diff` (DSP-150) mounts the diff review of a chosen revision pair, and
         // `view=panel` the review's panel, Step and Discussion (30 October 2026).
-        const search = view === 'diff' ? 'window=review&view=diff' : view === 'panel' ? 'window=review&view=panel' : 'window=review';
+        // `view=follow` (DSP-190) mounts the window that follows one walk preparation of a review.
+        const search = view === 'diff' ? 'window=review&view=diff' : view === 'panel' ? 'window=review&view=panel' : view === 'follow' ? 'window=review&view=follow' : 'window=review';
         if (rendererUrl === undefined) {
           void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), {
             hash: 'review',

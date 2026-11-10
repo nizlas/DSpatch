@@ -30,8 +30,10 @@ import { DEFAULT_PROFILE, PRESENTATION_INSTRUCTION_VERSION, PROFILE_PROMPT_NAMES
 import { createFileRoleResolver } from '../main/loop-graph-roles';
 import { WALK_LOOP_GRAPH_REL, isWalkMethod, type WalkLoopUsage, type WalkMethod } from '../shared/walk-loop';
 import { WALK_LOOP_RECORD_FILE, runWalkLoop, type WalkLoopTurnResult } from './walk-loop-run';
+import { WalkLoopFollow, readWalkLoopFollow } from './walk-loop-follow';
 import { parseRunRecord } from '../shared/loop-record';
 import type { WalkLoopRecordView } from '../shared/walk-loop';
+import type { WalkLoopRunEvent, WalkLoopRunSnapshot } from '../shared/walk-loop-view';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -187,6 +189,8 @@ export interface ReviewAgentJobsOptions {
   readonly loopResources?: string | null;
   /** DSP-189: for the walk loop's run record. `unknown` when not given. */
   readonly appVersion?: string;
+  /** DSP-190: where a walk loop run's events go: every window over the review. Absent: nobody follows. */
+  readonly runEvent?: (key: string, event: WalkLoopRunEvent) => void;
 }
 
 interface Live {
@@ -225,6 +229,8 @@ interface Live {
   readonly sessions: Map<string, string>;
   /** DSP-189: what the provider reported about usage since the executor last asked. */
   usageSince: WalkLoopUsage[];
+  /** DSP-190: the walk loop run as the windows follow it, while it runs; `null` for every other job. */
+  follow: WalkLoopFollow | null;
 }
 
 /** An explanation of selected code, checked against the commits before its job is registered. */
@@ -654,6 +660,7 @@ export class ReviewAgentJobs {
       abort: new AbortController(),
       sessions: new Map(),
       usageSince: [],
+      follow: null,
     };
     this.live.set(job.id, live);
     void this.run(live, job).finally(() => {
@@ -740,6 +747,55 @@ export class ReviewAgentJobs {
   }
 
   /**
+   * DSP-190: the walk loop run as it stands, for a window that follows it. While the job runs,
+   * the state the host folds from the same events it sends; afterwards what the run's files
+   * hold. A read: it starts nothing and repeats nothing.
+   */
+  walkLoopRunView(key: unknown, jobId: unknown): PairAnswer<WalkLoopRunSnapshot> {
+    if (typeof key !== 'string' || typeof jobId !== 'string') {
+      return { error: 'That review is not open.' };
+    }
+    const record = this.options.pairs.state(key);
+    if (isPairError(record)) {
+      return record;
+    }
+    const job = record.jobs.find((entry) => entry.id === jobId);
+    if (job === undefined || job.kind !== 'walks' || job.method !== 'loop') {
+      return { error: 'That preparation was not made by the planner, writer and reviewer loop.' };
+    }
+    const live = this.live.get(jobId);
+    if (live !== undefined && live.key === key && live.follow !== null) {
+      return live.follow.snapshot();
+    }
+    if (live !== undefined && live.key === key && (job.state === 'running' || job.state === 'cancelling')) {
+      // Registered and not yet announced: the revision folder is still being written.
+      return { jobId, view: null, activity: [], summary: null, live: true, limitations: [] };
+    }
+    const dir = path.join(this.options.recordsDir, 'generated', key, `${job.id}.walk-loop`);
+    if (job.loop !== undefined && path.resolve(job.loop.recordPath) !== path.resolve(path.join(dir, WALK_LOOP_RECORD_FILE))) {
+      return { error: 'The record is not where this review keeps it, so it was not read.' };
+    }
+    const resources = this.options.loopResources ?? null;
+    let fallbackGraphText: string | null = null;
+    if (resources !== null) {
+      try {
+        fallbackGraphText = fs.readFileSync(path.join(resources, WALK_LOOP_GRAPH_REL), 'utf8');
+      } catch {
+        fallbackGraphText = null;
+      }
+    }
+    return readWalkLoopFollow({
+      jobId,
+      dir,
+      summary: job.loop ?? null,
+      fallbackGraphText,
+      resolveRole: resources === null ? () => null : createFileRoleResolver(resources),
+      provider: job.provider,
+      model: job.model,
+    });
+  }
+
+  /**
    * A review is being deleted (DSP-186): its running work is asked to stop and its sessions
    * closed, and nothing any of it answers later is written: no record, no walks, no points.
    */
@@ -749,6 +805,9 @@ export class ReviewAgentJobs {
       live.cancelRequested = true;
       live.abort.abort();
       this.quiet(live);
+      // DSP-190: nothing more of the run is recorded or sent for a review that is going.
+      live.follow?.close();
+      live.follow = null;
       if (live.adapter !== null && live.sessionId !== null && live.runId !== null) {
         await live.adapter.cancel(live.sessionId).catch(() => undefined);
       }
@@ -864,6 +923,9 @@ export class ReviewAgentJobs {
     this.quiet(live);
     this.setJob(live, { ...extra, ...this.investigationOf(live), state, note, endedAt: new Date().toISOString() });
     this.options.log(`review agent ${live.jobId}: ${state} - ${note}`);
+    // DSP-190: from here the run is read from its files; a window asking now gets what they hold.
+    live.follow?.close();
+    live.follow = null;
   }
 
   /** What the agent looked at, for the job's Details; nothing when no folder was written. */
@@ -990,6 +1052,8 @@ export class ReviewAgentJobs {
     if (live.runId !== null && event.dspatchRunId !== live.runId) {
       return;
     }
+    // DSP-190: what the provider reports in the active turn, for the windows that follow the loop.
+    live.follow?.adapterEvent(event);
     if (event.type === 'tool.started') {
       // Counted as read or searched only once its result says it ran.
       const subject = event.subject === undefined ? null : this.relative(live, event.subject);
@@ -1383,9 +1447,29 @@ export class ReviewAgentJobs {
       this.finish(live, 'failed', 'The walk loop\'s drawing could not be read. Nothing was sent.', { detail: describe(error) });
       return;
     }
+    if (!this.accepts(live)) {
+      // DSP-190: the review went while the revisions were prepared; the run's folder is not made for it.
+      this.finish(live, 'cancelled', 'The review is no longer open, so the loop was not started. Nothing was sent.');
+      return;
+    }
     const opened = this.options.pairs.opened(live.key);
     const profile: PublicProfile = isPublicProfile(job.presentation?.profile) ? job.presentation.profile : DEFAULT_PROFILE;
     const folderPath = live.folder ?? '';
+    const recordDir = path.join(this.options.recordsDir, 'generated', live.key, `${job.id}.walk-loop`);
+    // DSP-190: the run as the windows follow it. Events leave only through the option given at
+    // construction, to the review's own windows; a dropped review's events go nowhere.
+    live.follow = new WalkLoopFollow({
+      key: live.key,
+      jobId: job.id,
+      dir: recordDir,
+      emit: (event) => {
+        if (!live.dropped) {
+          this.options.runEvent?.(live.key, event);
+        }
+      },
+      log: (message) => this.options.log(`review agent ${live.jobId}: ${message}`),
+      relative: (subject) => this.relative(live, subject),
+    });
     const outcome = await runWalkLoop({
       graphText,
       graphPath: WALK_LOOP_GRAPH_REL,
@@ -1406,7 +1490,8 @@ export class ReviewAgentJobs {
           return readings;
         },
       },
-      recordDir: path.join(this.options.recordsDir, 'generated', live.key, `${job.id}.walk-loop`),
+      recordDir,
+      follow: live.follow,
       identity: {
         projectPath: folderPath,
         mandate: `Prepare code walks for ${opened?.repositoryName ?? material.repositoryName} ${material.pair.base.slice(0, 7)}→${material.pair.target.slice(0, 7)}, explained in the ${PROFILE_PROMPT_NAMES[profile]} profile.`,

@@ -178,6 +178,7 @@ import { ReviewContexts } from './context-repositories';
 import { ResourceGovernor, ResourceSampler, availableCpus, governorConfig } from '../main/resource-governor';
 import { GovernedRunControl } from '../main/resource-governor-control';
 import { REVIEW_PAIR_CHANGED, isPairError, isReviewId } from '../shared/review-pair';
+import { REVIEW_PAIR_RUN_EVENT } from '../shared/walk-loop-view';
 
 /*
  * The project host (DSP-111): the services that do a project's work, in a process of
@@ -4143,6 +4144,8 @@ function registerReviewMethods(): void {
   handle('reviewPair.thread', (_event, key: unknown, request: unknown) => requireReviewPairs().thread(key, request));
   handle('reviewPair.cancelJob', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().cancel(key, jobId));
   handle('reviewPair.walkLoopRecord', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().walkLoopRecord(key, jobId));
+  // DSP-190: the run as it stands, for the window that follows it. A read.
+  handle('reviewPair.walkLoopRunView', (_event, key: unknown, jobId: unknown) => requireReviewAgentJobs().walkLoopRunView(key, jobId));
 
   handle('discussion.load', (_event, target: DiscussionTarget, request: unknown) =>
     discussionOf(target).load(
@@ -4657,6 +4660,10 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     // DSP-189: the walk loop's drawing and roles, from DSpatch's own resources (bundled or the repository).
     loopResources: ownRepoRoot,
     appVersion: config().appVersion,
+    // DSP-190: the run's events go to every window over the review; each window keeps what is its job's.
+    runEvent: (key, event) => {
+      emitEvent({ kind: 'review-pair', key }, REVIEW_PAIR_RUN_EVENT, event);
+    },
     // The shared factory, for the analysis purpose only; the jobs check the policy themselves.
     createAdapter: (provider) => {
       log(`[review] building a ${provider} analysis adapter${presentationMode ? ' (presentation, simulated)' : ''}`);
