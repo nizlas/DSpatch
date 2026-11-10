@@ -2,9 +2,9 @@
 
 Reference for code walks and the design of agent instructions
 
-9 November 2026 · Version 1.0 · Adopted direction
+10 November 2026 · Version 1.1 · Adopted direction
 
-**Source and status.** Niclas adopted this document's direction on 9 November 2026 ([VISION.md section 3.4](VISION.md#code-understanding-and-explanation-profiles-one-reference-niclass-decision-9-november-2026)). It owns the detail definition of code understanding, the walk's pedagogical flow and the explanation profiles; VISION.md records the decisions, [AGENT_BEHAVIOUR_AND_ORCHESTRATION.md](AGENT_BEHAVIOUR_AND_ORCHESTRATION.md) the general agent principles, and the host's technical contracts stay in their own documents and code. It describes intended behaviour: what of it is built and verified is recorded in the tasks (DSP-152, DSP-176, DSP-181, DSP-184 to DSP-186, which implemented parts of sections 7 to 10 the same day from Niclas's evaluation of 0.1.11, and the follow-up DSP-188), never here. This Markdown file is the maintained source; a Word edition is a reading copy generated from it. Version 0.2 of the same day was the draft Niclas reviewed; version 1.0 is that text with this status.
+**Source and status.** Niclas adopted this document's direction on 9 November 2026 ([VISION.md section 3.4](VISION.md#code-understanding-and-explanation-profiles-one-reference-niclass-decision-9-november-2026)). It owns the detail definition of code understanding, the walk's pedagogical flow and the explanation profiles; VISION.md records the decisions, [AGENT_BEHAVIOUR_AND_ORCHESTRATION.md](AGENT_BEHAVIOUR_AND_ORCHESTRATION.md) the general agent principles, and the host's technical contracts stay in their own documents and code. It describes intended behaviour: what of it is built and verified is recorded in the tasks (DSP-152, DSP-176, DSP-181, DSP-184 to DSP-186, which implemented parts of sections 7 to 10 the same day from Niclas's evaluation of 0.1.11, the follow-up DSP-188, and DSP-192), never here. This Markdown file is the maintained source; a Word edition is a reading copy generated from it. Version 0.2 of 9 November 2026 was the draft Niclas reviewed; version 1.0 was that text with this status. Version 1.1 of 10 November 2026 clarifies, on Niclas's instruction after his use of the profiles, each profile's pedagogical responsibility and the common ground in section 4, adds the background-worker calibration example to section 5, says in section 6 that the original text is material rather than a content list and how a reviewer judges help for the profile's reader, and asks in section 11 that every evaluation name its generation path; nothing else changed in meaning.
 
 ### Purpose
 
@@ -114,15 +114,19 @@ The agent may need to read all relevant accesses involving a lock but explain on
 
 ## 4 Profiles adapt the help to the reader
 
-All profiles share the same requirements for grounded understanding and truthfulness. They differ in how much orientation, mechanism explanation, and teaching the reader needs. They are not fixed text formats, and none should automatically change review depth, decisions, or walk structure.
+All profiles must be correct, grounded in the same reviewed code, and preserve the review's decisions. They differ in how much of the relevant material they select and at which level they explain it: a different abstraction level, a different selection, a different amount of teaching. They are not fixed text formats, none of them is another profile's content at a different density, and none should automatically change review depth, decisions, or walk structure.
 
-### Essentials provides quick orientation
+Preserving truth, risks, and findings does not mean that every explanation's short part must restate every fact, uncertainty, or detail of the original text. Existing findings remain available in the review's state and must be neither distorted nor lost; the explanation chooses what this reader needs here. A detail belongs in the short part when it is needed to understand the main behavior or to avoid a misleading conclusion. Other relevant mechanics may go under Show more or be explained in the walk step that treats them. Not everything the agent investigated needs to be retold.
 
-Essentials is for an experienced developer who wants to grasp the purpose, main flow, and decisive conditions. Brevity comes from choosing the right level of abstraction and omitting the obvious, not from compressing a line-by-line description or skipping important relationships.
+The profiles need not differ in length for every simple piece of code. For complex code, their different pedagogical tasks must be clearly noticeable. Length is a consequence of the help chosen, not a measure of quality. Whatever the profile, the reader must not lose track of where in the flow they are: the coherent execution flow, the comprehensible transitions between calls, branches, and threads, the focused steps, and the relevant code access of sections 1 to 3 hold for every profile.
 
-Scope adapts to the step. A simple change may take a couple of sentences; a worker involving connection, retries, work coordination, and shutdown often needs more room. There is no sentence quota or identifier limit. Use concrete names when they help orientation and leave other details to the deeper explanation.
+### Essentials gives an experienced developer an accurate main picture quickly
 
-The short explanation must be sufficient to give an accurate overall picture. A decisive condition or risk must not be hidden if that would make the text misleading. This does not mean recounting every uncertainty and finding there; deeper explanation and clear references to findings can carry the rest.
+Essentials helps an experienced developer understand quickly why the code is here, what main work happens, and which decisive conditions or consequences are needed for an accurate main picture.
+
+The explanation chooses a higher level of abstraction. It normally need not describe every call, state flag, loop step, language detail, or how each guard is implemented: the reader can read the ordinary mechanics in the code themselves. Brevity comes from meaningful selection. Essentials is not a compressed Standard text in which the same details are packed into longer sentences.
+
+Scope still follows the step: a simple change takes a couple of sentences, a worker that connects, retries, coordinates work, and shuts down takes more room. A decisive condition or an important difference between outcomes belongs in the short part when leaving it out would mislead; further mechanics the experienced reader may want next can follow under Show more.
 
 ### Standard makes the central mechanism comprehensible
 
@@ -130,15 +134,19 @@ Standard is for a developer with ordinary experience who does not know this part
 
 Standard may explain a language detail when it is needed for interpretation. It need not teach every basic concept or accumulate more facts merely to be longer than Essentials. A good response helps the reader understand the mechanism and relate it to the code without having to fill in the central gaps themselves.
 
-### Teacher builds the understanding the reader lacks
+Standard as it now works is the comparison point for the other two profiles. Its reader description and its task are not widened to make the profiles symmetrical; when a shared instruction changes, Standard's working behavior is checked and kept.
 
-Teacher helps a reader who can program but may be unfamiliar with the language, library, or mechanism. Develop the necessary concepts and intermediate reasoning, and connect them to what the code does here. Use concrete examples and comparisons when they make the reasoning easier to follow.
+### Teacher builds the understanding the reasoning presupposes
 
-The text may take the space that understanding requires. It should not be governed by a fixed length or a list of concepts that must be mentioned. The presence of the words mutex and shared_ptr is not enough: the reader needs to understand what they do together. Avoid a detached textbook discussion when a local explanation is more helpful.
+Teacher helps a reader who can program but lacks prior knowledge of the language, library, or mechanism at hand. What distinguishes it from Standard is that Teacher builds the understanding the reasoning presupposes: what the concepts mean here, why the mechanism is needed, and how the parts work together. A concrete example or a relevant comparison can make this clearer.
+
+Teacher is not Standard with more facts or a few extra lines. It need not inventory every line of code or teach every term. Choose the concepts and intermediate steps the reader actually needs to understand this step; the presence of the words mutex and shared_ptr is not enough, the reader needs to understand what they do together. A local explanation beats a detached textbook discussion.
+
+Teacher may take the room understanding requires, and it uses what the walk has already established. A short reminder with a reference suffices in a later step; the same foundation is not derived anew everywhere.
 
 ### Deeper explanation and individual adaptation
 
-Show more should add relevant depth at the selected level. Facts may overlap between profiles, but the short explanation should not simply be repeated. Explain more simply simplifies the current reasoning without silently changing the profile. The user's questions may reveal what needs elaboration or can be skipped; profiles should support that judgment, not obstruct it.
+Show more gives relevant continued explanation for the selected reader: for Essentials the mechanics an experienced developer may want next, for Teacher the next layer of a concept or its consequences. It is not an automatic dump of everything the short part left out, it does not repeat the short part, and it need not exist when there is no meaningful depth to add. Facts may overlap between profiles. Explain more simply simplifies the current reasoning without silently changing the profile. The user's questions may reveal what needs elaboration or can be skipped; profiles should support that judgment, not obstruct it.
 
 ## 5 Generic calibration examples
 
@@ -163,6 +171,16 @@ Suppose acquire(key) looks up a slot in a map and creates it if missing. The sam
 Suppose resourceName(index) constructs a name such as “ITEM:7”. The name serves both as a key in a map and as an identity in an external call. The explanation should connect the result, its construction, and its use. Standard may focus on the identity's role; Teacher may also explain the string conversion if it is difficult to interpret.
 
 This is justified detail because it resolves a comprehension problem. Prohibiting all syntax explanation would be as wrong as requiring every line to be paraphrased. The profile's level and the reader's needs determine what is helpful.
+
+### A background worker, in the three profiles
+
+Suppose a background worker's code creates a client, establishes a connection, and then processes subscriptions registered by the main thread; blocking requests run outside the lock the two threads share; a connection failure is retried, a failure to create the client ends the worker. An Essentials explanation of such code might read:
+
+“The background worker creates the client and establishes the connection before processing subscriptions. Blocking requests run outside the shared lock, allowing the main thread to keep registering work. Connection failures are retried, but failure to create the client ends the worker without recovery.”
+
+What makes this the Essentials level is the selection: the purpose, the main interaction, and one important difference between failure paths. It is not a requirement of three sentences and not a template for every worker; a worker with a different shape gets a different selection.
+
+Standard develops the central mechanics and why the parts work together as they do: what the lock protects and why the blocking request is made outside it, how the worker learns of new subscriptions, where a retry resumes, and what the two failure paths leave behind. Teacher builds, where this reader needs it, the understanding of a background thread, shared state, a lock, and blocking work, and ties those concepts to the code's behavior with a concrete example or comparison, using what earlier steps already established. That list of concepts is what this example happens to need; it is not a list every Teacher answer must cover.
 
 ### Why Explain this is an important comparison
 
@@ -193,6 +211,10 @@ These are starting points to develop, not finished, fixed prompts. Do not add ex
 The explanation request needs sufficient orientation about the walk and access to relevant code. If pregeneration receives only a narrow excerpt while Explain this can search the entire workspace, no style instruction alone can eliminate the difference. Check both what is sent and what the agent is actually allowed to read.
 
 Shared instructions should be reused between original text and alternative profile explanations where the tasks are the same. Switching profiles should not create a second, contradictory definition of a good explanation. This does not mean that every path must share the same agent session or copy the same chat.
+
+A shared instruction must leave room for the profile's selection. A wording that asks the agent to keep every fact, risk, uncertainty, finding, and recommendation in each answer makes every profile retell the same material, and an original text sent along reads as a list of what must be said. The original text and earlier answers are material, never a mandatory content list: the code is the source of what is true, the review's state is where findings live, and the profile decides what help this reader needs to understand the code. The boundary a profile keeps is that it states nothing the code does not support and changes no decision of the review.
+
+The reviewer in a loop judges whether the explanation helps the profile's intended reader. It does not ask Essentials for the details it left out unless their absence makes the main picture misleading, and it does not ask Teacher for more detail merely to make the text longer; an omission that misleads is a finding in any profile. Judging the explanation's quality stays apart from approving the code.
 
 ### Improve by simplifying and testing
 
@@ -322,7 +344,9 @@ Automated tests should check identities, storage, reference targets, and call be
 
 ### Assess pedagogical quality in actual text
 
-Have a real model generate all profiles using the final instructions and relevant code context. Assess the text against the reader's needs: does Essentials provide quick orientation, does Standard explain the mechanism, and does Teacher make the interaction between concepts understandable? Assess relevance, clarity, and accuracy. Sentence counts, identifier counts, or keyword presence must not serve as acceptance criteria.
+Have a real model generate all profiles using the final instructions and relevant code context. Assess the text against the reader's needs: does Essentials give an accurate main picture quickly at a higher level of abstraction, does Standard explain the mechanism, and does Teacher make the concepts and their interaction understandable? Assess relevance, clarity, and accuracy. Sentence counts, identifier counts, or keyword presence must not serve as acceptance criteria, and a length difference must not be forced where it does not help the reader.
+
+Name the generation path of every text assessed: the one call that writes the whole walk, the loop's writer with its reviewer, or a profile alternative made by a step explanation after the walk. The paths differ in what the agent is given and whether a reviewer read the result, so a difference between texts from different paths must not be attributed to the profile alone. Compare profiles on the same locked walk plan, revision, and steps, with the same model and comparable code access, keeping the path the same within each comparison. Include a profile alternative made after the walk exists and check that it chooses its own level rather than paraphrasing the original text.
 
 ### Test variety and natural explanation
 

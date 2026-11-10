@@ -1,0 +1,45 @@
+{
+  "version": 8,
+  "revisions": "<home>\\AppData\\Local\\Temp\\dsp192-Mbt4bl\\revisions",
+  "repo": "<home>\\AppData\\Local\\Temp\\dsp192-Mbt4bl\\connect",
+  "base": "0d84ede4f9f02da003250d4e6d2e8c964d2efc27",
+  "target": "04340e9e61613079481f5a24728f70f6fa2b6cc4",
+  "prompts": [
+    {
+      "name": "writer-essens-W1.1",
+      "note": "the loop writer's prompt (first turn) for W1.1 in Essentials, instruction version 8"
+    },
+    {
+      "name": "writer-standard-W1.1",
+      "note": "the loop writer's prompt (first turn) for W1.1 in Standard, instruction version 8"
+    },
+    {
+      "name": "writer-pedagog-W1.1",
+      "note": "the loop writer's prompt (first turn) for W1.1 in Teacher, instruction version 8"
+    },
+    {
+      "name": "writer-essens-W1.5",
+      "note": "the loop writer's prompt (first turn) for W1.5 in Essentials, instruction version 8"
+    },
+    {
+      "name": "writer-standard-W1.5",
+      "note": "the loop writer's prompt (first turn) for W1.5 in Standard, instruction version 8"
+    },
+    {
+      "name": "writer-pedagog-W1.5",
+      "note": "the loop writer's prompt (first turn) for W1.5 in Teacher, instruction version 8"
+    },
+    {
+      "name": "present-essens-W1.5",
+      "note": "the step explanation channel's prompt for a Essentials alternative of W1.5 made after the walk (the walk's own text is the DSP-189 Standard text), instruction version 8"
+    },
+    {
+      "name": "present-pedagog-W1.5",
+      "note": "the step explanation channel's prompt for a Teacher alternative of W1.5 made after the walk (the walk's own text is the DSP-189 Standard text), instruction version 8"
+    },
+    {
+      "name": "writer-essens-W1.5-v7",
+      "note": "the same writer prompt for W1.5 in Essentials with the instructions of version 7 (reader, boundary and deepening substituted from the baseline file; substitution complete)"
+    }
+  ]
+}

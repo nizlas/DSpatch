@@ -137,8 +137,16 @@ export function changedRangesOf(files: readonly PairFile[]): readonly LineRange[
   return rangesOf(files.flatMap((file) => changedLinesOf(file)));
 }
 
-/** The folder section: where the revisions are, what the agent can do there, and what is missing. */
-export function folderSection(material: AnalysisMaterial, folder: AgentMaterial): string {
+/** How an answer names a place in the folder: the default for answers that carry places or references. */
+export const PLACE_NAMING =
+  'In your answer, name places by repository path without `base/` or `target/`, with the side ("base" for From, "target" for To) and 1-based lines at that side.';
+
+/**
+ * The folder section: where the revisions are, what the agent can do there, and what is
+ * missing. `naming` replaces the sentence on how the answer names places, for an answer that
+ * is read beside the places already shown (the walk writer's, DSP-192).
+ */
+export function folderSection(material: AnalysisMaterial, folder: AgentMaterial, naming: string = PLACE_NAMING): string {
   const lines = [
     '## The code, and how to read it',
     'Your working folder holds the two revisions as files, written by DSpatch from the repository\'s commits:',
@@ -146,7 +154,7 @@ export function folderSection(material: AnalysisMaterial, folder: AgentMaterial)
     `- \`target/\` is To, commit ${material.pair.target}`,
     'Use your Read, Glob and Grep tools there. Read whole files, follow the calls, definitions, imports and callers the change touches across files, look at unchanged code, tests and configuration, and compare base/ with target/ where behaviour changed. Keep looking until you can explain or judge from the code itself; the diff below is a starting point, not everything you may need.',
     'Only these tools exist here and only inside this folder: you cannot change files, run commands or reach anything else. Nothing here comes from a working copy.',
-    'In your answer, name places by repository path without `base/` or `target/`, with the side ("base" for From, "target" for To) and 1-based lines at that side.',
+    naming,
   ];
   if (folder.skippedCount > 0) {
     lines.push(

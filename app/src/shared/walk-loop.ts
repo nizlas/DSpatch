@@ -8,7 +8,7 @@
  * the roles in `docs/loop/roles/review/` decide the method; the engine (`runLoopGraph`) decides
  * the execution. Nothing here routes: the executor returns a node's declared outcome, and the
  * drawing says where it leads. The pedagogy is docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md
- * (version 1.0), through the same shared explanation task and profile readers every step
+ * (version 1.1), through the same shared explanation task and profile readers every step
  * explanation uses (`presentation-profiles.ts`, instruction version 7).
  */
 
@@ -53,6 +53,14 @@ export const WALK_LOOP_LIMIT_FAILURE = 'limit-reached';
 export const WALK_LOOP_NODES = { plan: 'plan', write: 'write', review: 'review' } as const;
 
 export const WALK_LOOP_TASKS = { plan: 'plan-walks', write: 'write-step', review: 'review-walks' } as const;
+
+/**
+ * How the writer names places (DSP-192): its text is read beside the step's places, which
+ * already name files and lines, and the walk's reading rules ask for functions, types and
+ * values in the prose. The folder section's default sentence would contradict them.
+ */
+const WRITER_PLACE_NAMING =
+  'The places shown beside your text already name files and lines: in the prose name functions, types and values, and name a place by repository path (without `base/` or `target/`, with the side, "base" for From and "target" for To, and 1-based lines at that side) only when you point at code outside this step\'s places.';
 
 // --- Step ids ---------------------------------------------------------------------------------------
 
@@ -477,7 +485,7 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     `Answer with the explanation of the step only, in Markdown: no JSON, no heading with the step\'s title or id, no restatement of the places. First the part the person reads at once. When there is real depth to add, put it after a line holding only ${DETAILS_MARKER}; the person opens it with Show more.`,
     ...DEEPENING_RULES.map((rule) => `- ${rule}`),
     '',
-    folderSection(input.material, input.folder),
+    folderSection(input.material, input.folder, WRITER_PLACE_NAMING),
     '',
     ...stepSection,
     ...reworkSection,
@@ -543,7 +551,7 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     '- Can the reader follow the course: at each step, how it is reached and what the caller needs, what a return brings back, that an alternative outcome is back at the branch point, what starts a worker or callback and which context is followed, and when the teaching order differs from the execution order?',
     '- Is every code place a step shows explained there, at this reader\'s level: what it does here, why it matters for the change, and what decides the outcome? Naming a function or showing its lines is not explaining it.',
     '- Is what the text claims true of the code? Read the code behind each step with your tools before you judge; a confident sentence is not evidence.',
-    '- Does the text give this reader the help the profile is for: quick orientation at the right level of abstraction, the mechanism made understandable, or the concepts and intermediate reasoning built where they are needed? Length and density are not the measure.',
+    '- Does the text give this reader the help the profile is for: for Essentials an accurate main picture at a higher level of abstraction, chosen rather than compressed; for Standard the mechanism made understandable; for Teacher the concepts and intermediate reasoning built where this step needs them? Do not ask Essentials for the mechanics it left out unless their absence makes the main picture misleading, and do not ask Teacher for more detail to make the text longer; an omission that misleads is a finding in any profile. Length and density are not the measure.',
     '- Is the part after Show more a deepening that continues the first part, not a repetition of it?',
     '- Is an important new implementation walked rather than left behind a function name, and are alternatives presented as alternatives, never as one run?',
     'Report only shortcomings that matter to the reader\'s understanding, each concrete: the steps it concerns, what falls short, why it matters, and what in the code shows it. A finding about which walks, steps or places exist is "structure" and goes to the planner; one about a step\'s text is "explanation" and goes to the writer. A statement about the code that is not true is a shortcoming whatever its size, since the person checks the code through these texts: name it as a finding with the correct reading, even when the rest of the step is right. Different good explanations are acceptable: accept without changes when nothing false and nothing significant falls short, and never ask for a change on a matter of style or preference.',

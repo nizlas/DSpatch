@@ -605,7 +605,6 @@ function StreamPanel({
         {blocks.map((block) => (
           <StreamBlockView key={block.key} block={block} />
         ))}
-        {running && <p className="fw-muted fw-open">The run goes on; what the agent reports appears here as it comes.</p>}
       </div>
     </aside>
   );

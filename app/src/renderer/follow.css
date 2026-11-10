@@ -284,11 +284,6 @@
   color: var(--no);
 }
 
-.fw-open {
-  margin: 0.8rem 0 0;
-  font-style: italic;
-}
-
 @media (max-width: 900px) {
   .fw-window.fw-with-stream {
     grid-template-columns: 1fr;

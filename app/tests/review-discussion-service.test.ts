@@ -796,7 +796,7 @@ test('step explanations: no discussion entry and no discussion turn; their own s
     assert.ok(explainer !== undefined);
     const prompt = explainer.sent[0] ?? '';
     assert.match(prompt, /## How to present \(Essentials\)/);
-    assert.match(prompt, /Instruction version: 7/);
+    assert.match(prompt, /Instruction version: 8/);
     assert.match(prompt, /## Where this step is in the walk\nWalk: Greeting a visitor\n1\. Read the name \(code: src\/a\.ts 1–3 \(To\)\)  <- this step\n2\. Build the greeting/);
     assert.match(prompt, /rather than file names, paths or line numbers/);
     assert.ok(!fs.existsSync(discussionRecordPath(s.fixture.records, s.identity.key)), 'the discussion file is not even written');
@@ -818,7 +818,7 @@ test('step explanations: no discussion entry and no discussion turn; their own s
     assert.equal(entries.length, 1);
     assert.equal(entries[0]?.status, 'done');
     assert.equal(entries[0]?.trigger, 'auto');
-    assert.equal(entries[0]?.instructionVersion, 7);
+    assert.equal(entries[0]?.instructionVersion, 8);
     assert.equal(entries[0]?.prompt, prompt, 'the exact prompt is kept with the explanation');
     assert.ok(events.some((event) => event.kind === 'explanation' && event.entry.prompt === undefined), 'windows get no prompt');
     // The discussion holds only the person's question.

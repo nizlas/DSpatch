@@ -1076,6 +1076,7 @@ async function main() {
   check('no editor controls are in the run view', reading.editorControls === false && (await follow.ev(`document.querySelector('.editor-palette, .editor-inspector')===null`)) === true);
   const noDebug = (text) => !/tokens|cache|instruction version|graph-[0-9a-f]{6}|DSPATCH-REVIEW-TASK|seq\b|runId|rawProviderEvent/.test(text);
   check('no token, cache, version, graph id or prompt text anywhere in the view', noDebug(await follow.ev('document.body.textContent')));
+  check('no waiting sentence under the liveness line while the run goes on (DSP-192)', (await follow.ev(`document.querySelector('.fw-open')===null && !/The run goes on; what the agent reports appears here as it comes/.test(document.body.textContent)`)) === true);
   await client.main.size(followWindow.id, 1500, 940);
   await delay(600);
   await shotWindow(await windowById(followWindow.id), '01-follow-planner');

@@ -25,8 +25,10 @@
  *   the walk's outline and how an explanation reads beside the walk ({@link WALK_READING_RULES}),
  *   and the references block.
  *
- * A profile changes presentation only ({@link SAME_FACTS_RULES}): never how carefully the code is
- * read, which facts are stated, the findings, their recommendations or what is approved. The same
+ * A profile changes which of the relevant material is selected and at what level it is explained
+ * ({@link SAME_FACTS_RULES}, reference version 1.1, DSP-192): never how carefully the code is read,
+ * what is true of it, the review's findings or what is approved; the prepared text is material,
+ * not a list of what must be said. The same
  * parts reach walk generation ({@link walkExplanationSection}), a profile's explanation,
  * regeneration, Tell me more, Explain more simply and Explain this ({@link presentationPromptSection}).
  * The discussion carries no profile: a profile changes the step's explanation, not the
@@ -47,8 +49,12 @@ export const PRESENTATION_PROFILES: readonly PresentationProfile[] = ['original'
 export const DEFAULT_PROFILE: PublicProfile = 'standard';
 /** The prepared explanation of an older walk, as the walk generator wrote it. */
 export const LEGACY_PROFILE: PresentationProfile = 'original';
-/** Raised when profile instructions change in meaning; stored with every step explanation and walk. */
-export const PRESENTATION_INSTRUCTION_VERSION = 7;
+/**
+ * Raised when profile instructions change in meaning; stored with every step explanation and walk.
+ * 8 (DSP-192, 10 November 2026): the profiles select at different levels; the prepared text is
+ * material, not a content list; Standard's reader unchanged.
+ */
+export const PRESENTATION_INSTRUCTION_VERSION = 8;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -101,8 +107,8 @@ export const DETAILS_PART_RULE =
  * review's decisions are not the profile's to change.
  */
 export const SAME_FACTS_RULES = [
-  'A profile changes how the step is presented, not what is true of the code or what is reviewed or approved: keep every fact, risk, uncertainty, finding and recommendation the code supports, add none it does not, and change no decision of the review. A new observation of yours is an observation, not a verified fact.',
-  'Present this step; do not start a new broad review and do not retell the whole discussion or every finding of the review. An important objection may be summarised in one line that points to its thread.',
+  'A profile changes which of the relevant material is selected and at what level it is explained, not what is true of the code or what the review has decided: state nothing the code does not support, treat a new observation of yours as an observation rather than a verified fact, and change no decision of the review. The review\'s findings stay in the review\'s state; an explanation need not restate them.',
+  'The prepared explanation and earlier answers given to you are material, not a list of what must be said: the code decides what is true, and the profile decides what this reader needs to understand it. Present this step; do not start a new broad review and do not retell the whole discussion. An important objection may be summarised in one line that points to its thread.',
 ] as const;
 
 /**
@@ -120,7 +126,7 @@ export const EXPLANATION_TASK = [
 
 /** What comes after the marker line, in every profile: the technical contract of Show more. */
 export const DEEPENING_RULES = [
-  'After the marker line comes the deepening only, in the same manner and at the same level as the first part: the mechanisms behind what it says, special cases that change the outcome, longer evidence and more references, readable even when long. It continues the first part rather than restating it: nothing said above the line is said again below it, also not in other words or under a heading of its own, and the comparison with the earlier revision is made once. Leave the line out when there is nothing to add.',
+  'After the marker line comes the deepening only: relevant continued explanation for the same reader at the same level (for Essentials the mechanics an experienced developer may want next, for Teacher the next layer of a concept or its consequences), the special cases that change the outcome, longer evidence and more references, readable even when long. It is not an inventory of what the first part left out. It continues the first part rather than restating it: nothing said above the line is said again below it, also not in other words or under a heading of its own, and the comparison with the earlier revision is made once. Leave the line out when there is nothing to add.',
 ] as const;
 
 /**
@@ -167,7 +173,7 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     id: 'essens',
     promptName: 'Essentials',
     reader: [
-      'The reader is an experienced developer who wants quick orientation: the purpose, the main course and the conditions that decide the outcome, at a level above the individual statements. Brevity comes from choosing the right level of abstraction and leaving out the obvious, not from compressing a line-by-line account or dropping a condition or risk without which the picture would mislead. Use concrete names where they orient; the mechanisms and the evidence go after the marker.',
+      'The reader is an experienced developer who wants to understand quickly why this code is here, what main work happens, and which decisive conditions or consequences an accurate main picture needs. Choose a higher level of abstraction: normally do not describe every call, state flag, loop step, language detail or how each guard is implemented; this reader reads the ordinary mechanics in the code. Brevity comes from meaningful selection, not from packing the same details into fewer sentences. A detail belongs in the first part when the main behaviour needs it or leaving it out would mislead; further mechanics this reader may want next go after the marker, or stay in the step that treats them.',
     ],
     simpler: ['Plainer language and less jargon: the same point, said more directly.'],
   },
@@ -183,7 +189,7 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     id: 'pedagog',
     promptName: 'Teacher',
     reader: [
-      'The reader can program but may not know this language, library or mechanism: build the concepts and the intermediate reasoning this step needs and connect them to what the code does here, with a concrete example or comparison where it makes the reasoning easier to follow. State what a primitive guarantees before an argument rests on it, define a term the first time it appears, and name a fault for what it is: unsynchronised concurrent access with a writer is a data race, not a stale value. A local explanation beats a detached lesson, and the text may take the room understanding needs.',
+      'The reader can program but may not know this language, library or mechanism: build the understanding the reasoning presupposes, what the concepts mean here, why the mechanism is needed and how the parts work together, and tie it to what the code does here, with a concrete example or comparison where it makes the reasoning easier to follow. Choose the concepts and intermediate steps this step actually needs: do not inventory every line or teach every term, and do not add facts to be longer than Standard. Use what the walk has established: a short reminder with a reference in a later step, not the same foundation derived again. State what a primitive guarantees before an argument rests on it, and name a fault for what it is: unsynchronised concurrent access with a writer is a data race, not a stale value. A local explanation beats a detached lesson, and the text may take the room understanding needs.',
     ],
     simpler: ['Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.'],
   },
@@ -217,7 +223,7 @@ export const MORE_RULES = [
 
 /** DSP-184: Regenerate: a new explanation in the same profile, not a copy of the one shown. */
 export const REGENERATE_RULES = [
-  'The person asked for a new explanation of this step in this profile. The one they had is below: write a new one from the code and the prepared explanation, following the rules above. Do not copy its sentences or its structure; keep its facts.',
+  'The person asked for a new explanation of this step in this profile. The one they had is below, as material: write a new one from the code, following the rules above and choosing again what this reader needs. Do not copy its sentences or its structure, and state nothing the code does not support.',
 ] as const;
 
 /** DSP-184: Explain this, on a selection inside the step's explanation or its code. */
@@ -485,7 +491,7 @@ export function readingContextSection(reading: { readonly text: string } | null)
 
 /** For the walk generator's JSON: what a step's `details` field holds. */
 export const WALK_DETAILS_RULE =
-  '"details" is the deepening the person opens with Show more, for a step with real depth to add: complementary mechanics, special cases, longer evidence, more code references, in the same manner as the explanation. Leave it empty when there is nothing to add, and do not repeat the explanation in it.';
+  '"details" is the deepening the person opens with Show more, for a step with real depth to add: relevant continued explanation for the same reader (complementary mechanics, special cases, longer evidence, more code references), in the same manner as the explanation. It is not an inventory of what the explanation left out. Leave it empty when there is nothing to add, and do not repeat the explanation in it.';
 
 /**
  * The walk generator's section when the person chose a profile before the walks are prepared

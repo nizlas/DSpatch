@@ -139,7 +139,7 @@ describe('the chain, with the simulated provider (DSP-181)', () => {
 
   it('a step about an unfamiliar tool: the Teacher prompt asks for the prerequisite knowledge, and the answer builds it before the code', () => {
     const got = present('Declare the build option that switches the greeting on', 'pedagog');
-    assert.match(got.prompt, /build the concepts and the intermediate reasoning this step needs/);
+    assert.match(got.prompt, /build the understanding the reasoning presupposes/);
     assert.ok(!/build setting/.test(got.prompt), 'no hard-coded example (DSP-184)');
     assert.ok(got.short.indexOf('First the idea') < got.short.indexOf('Now the code'));
   });

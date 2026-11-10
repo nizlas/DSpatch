@@ -50,7 +50,7 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 7);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 8);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
@@ -119,8 +119,8 @@ describe('one policy in the prompt (DSP-181)', () => {
     const essentials = presentationPromptSection({ profile: 'essens', mode: 'present', shown: [] }) ?? '';
     const standard = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [] }) ?? '';
     const teacher = presentationPromptSection({ profile: 'pedagog', mode: 'present', shown: [] }) ?? '';
-    assert.match(essentials, /experienced developer who wants quick orientation/);
-    assert.match(essentials, /not from compressing a line-by-line account/);
+    assert.match(essentials, /experienced developer who wants to understand quickly why this code is here/);
+    assert.match(essentials, /Brevity comes from meaningful selection, not from packing the same details into fewer sentences/);
     assert.match(standard, /knows programming but not this code/);
     assert.match(standard, /how the parts work together and why their relationship matters/);
     assert.match(teacher, /may not know this language, library or mechanism/);
@@ -132,8 +132,10 @@ describe('one policy in the prompt (DSP-181)', () => {
       // Every profile: the code decides, understanding beyond the lines, the boundary of facts and decisions, references.
       assert.match(section, /The code decides/);
       assert.match(section, /do not retell statements in prose/);
-      assert.match(section, /not what is true of the code or what is reviewed or approved/);
+      assert.match(section, /not what is true of the code or what the review has decided/);
       assert.match(section, /do not start a new broad review/);
+      assert.match(section, /material, not a list of what must be said/);
+      assert.ok(!/keep every fact, risk, uncertainty, finding and recommendation/.test(section), 'no content list that makes every profile retell the same material');
       assert.match(section, /Point at the code you rest on with references/);
     }
     assert.notEqual(essentials, standard);
