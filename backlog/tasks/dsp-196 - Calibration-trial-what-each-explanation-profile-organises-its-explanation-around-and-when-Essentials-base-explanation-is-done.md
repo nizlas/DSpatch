@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-10 21:21'
-updated_date: '2026-11-10 22:05'
+updated_date: '2026-11-10 22:50'
 labels:
   - review
 dependencies:
@@ -43,4 +43,12 @@ Trial made on 10 November 2026; material and judgment in `docs/evaluations/dsp-1
 - **Compatibility:** the definitions agree with sections 4 and 6. "The decisive consequence" should read "condition or consequence". The completion condition should also hold for Show more. The planner's brief conflicts with section 6 in the implementation: the planner role asks for "what the step must make comprehensible", and the briefs come out as lists of operations to explain.
 - **Result:** the variant made Essentials organise around the step's role in the condition step (both paths), but not in the simple step or the mechanism step, where every text still goes operation by operation, following the brief's items. Standard keeps the mechanism and Teacher builds concepts with both instructions. No profile left out the readiness gap or the failure path. With the variant, the deepening grew into lists of the facts the first part no longer carried. Without the briefs, Essentials organised W1.2 and W1.3 around the step's role, W1.7 still went flag by flag, and once the decisive point moved behind Show more. In the loop path, the planner's operation-level step summary is shown first in every profile.
 - **Proposal (for discussion, not implemented):** the reference's section 4 opens each profile with what it is organised around and says no profile goes on because the material holds more facts, also behind Show more. The planner writes briefs and step summaries as orientation, which is a correction of the implementation. The new reader definitions are adopted only together with that, after one more round over three examples, including the one-call path. No further Essentials rules.
+
+**Round 2 (Niclas's follow-up the same evening):** the planner's brief and step summary as orientation, Essentials first. Same code, steps, places and model. One call rewrote each step's summary and brief as orientation, keeping the facts as separate notes given to the writer as material. B (oriented brief, product readers) and C (oriented brief, proposed readers), two samples per step, compared with round 1's A (current brief, product readers) and D (current brief, proposed readers). 13 calls; material in `docs/evaluations/dsp-196/round-2/` and `texts-round-2.md`, judgment in section 7 of `JUDGMENT.md`.
+
+- The oriented brief made no difference on its own. W1.2 is unchanged in every cell. In W1.3, B listed strict mode again, following the rewritten brief's own words. In W1.7, one B sample moved the readiness gap behind Show more and brought a new fact from the notes (the exposed debug port) into the first part.
+- The proposed reader definition helped a little, as in round 1: W1.3 as a gate, and W1.7's decisive consequence in bold in the first part. C is not clearly better than D.
+- The step summary shown first stays at the operations in every cell.
+- The notes kept the facts available but became a second content list that turned up behind Show more as an inventory.
+- The outcome is weak, so the check of Standard, Teacher and the one-call path was not made and no further prompt round is proposed.
 <!-- SECTION:NOTES:END -->

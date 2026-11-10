@@ -1,0 +1,10 @@
+VS Code finds this task through its label: `"Start debugger in dev container"` is the exact string the debug configuration names in `preLaunchTask` (W1.1). The file is new in this change. Before, nothing ran ahead of the debug session.
+
+The task runs the start script as a plain shell command. It doesn't set `isBackground`, so **VS Code waits for the script to exit and goes on to the attach only if the exit code is 0**. `problemMatcher` is empty, so VS Code reads none of the output. Anything the script prints shows up only in the task terminal. From here on, the script's exit code decides whether the editor attaches.
+
+The task gives the script two values in its environment: `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678`. The next step shows how the script picks them up.
+
+<!-- dspatch:details -->
+- **What a successful exit means.** The script reports success once it has *started* the debugger, not once the debugger is ready. W1.7 shows that its last command returns right away. So an exit code of 0 tells VS Code that every step before that one worked. It doesn't tell VS Code that the debugger is already listening.
+- **Running the script directly.** `command` points straight at `scripts/start-debugger.sh`. This relies on the shell running the bash shebang and on the file being executable. `tasks.json` has no `windows` variant, so on a Windows host this depends on how the task's shell handles a `.sh` path.
+- **Repeated values.** The values here are copies, not references. The container name also appears as `container_name` in `compose.yaml` (target line 4). The port also appears in the `connect` block of the debug configuration and in the published ports in `compose.yaml` (target line 9). Nothing keeps these in step: changing `DEBUG_PORT` here changes only the port debugpy listens on.

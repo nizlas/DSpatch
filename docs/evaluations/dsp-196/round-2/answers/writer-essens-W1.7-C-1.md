@@ -1,0 +1,11 @@
+This is the script's last command, and here the work passes from the script to a separate process. `docker exec -d` starts debugpy in the container and returns straight away. The script then ends with exit 0, so **the pre-launch task succeeds as soon as the process has been launched, not once debugpy is ready**.
+
+Inside the container, debugpy listens on `0.0.0.0:$PORT` and holds `orders.main` back until a debugger client connects (`--wait-for-client`). So the service code does not run yet. It is released by the attach in the next step (W1.8).
+
+From here, two things happen in parallel with nothing to coordinate them: VS Code moves on to attach, and debugpy is still starting up. Because of `-d`, the task terminal shows none of debugpy's output. If debugpy fails to start, for example on an import error or a port already in use, the task still reports success. The failure only shows up later, when the attach finds nothing listening.
+
+<!-- dspatch:details -->
+- **Where the module is found:** `-m orders.main` works because the container's working directory is `/workspace` (`working_dir` in compose.yaml target line 5, and `docker exec` uses it by default). That folder is the bind-mounted repository, so debugpy runs the host's current source.
+- **What `-d` still catches:** the exit code of `docker exec -d` only covers starting the process. Under `set -e` a failure at that point would still fail the task. Anything that goes wrong after the process starts does not reach the task.
+- **Exposure:** listening on `0.0.0.0` is needed for compose's port publishing to reach debugpy. But `"5678:5678"` in compose.yaml (target line 9) gives no host address, so the debug server, which has no authentication, is reachable on every host interface, not just localhost.
+- **Running it again:** the script never checks for an earlier debugpy or service process in the container. If one is still running, a second F5 starts another process on the same ports. The new one would most likely fail to bind, and because of `-d` that failure would not show in the task.

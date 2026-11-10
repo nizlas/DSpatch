@@ -9,6 +9,7 @@ Material for [DSP-196](../../../backlog/tasks/dsp-196%20-%20Calibration-trial-wh
 | `plan/` | The walk plan, locked for every call: a Standard loop by Claude on the invented case (`definition.review.json`, `record.jsonl`). |
 | `trial/` | 48 answers (3 steps; Essentials, Standard, Teacher; writer and profile switch; baseline and variant; Essentials sampled twice), the manifest, `variant.json` with the baseline and variant texts, and four of the prompts. |
 | `diagnostic-no-brief/` | 6 answers: the Essentials writer under the variant with the planner's briefs taken out, two samples per step. |
+| `round-2/`, `texts-round-2.md` | Round 2: the planner's brief and step summary rewritten as orientation with the facts kept as notes; Essentials under the oriented brief with the product's readers (B) and with the proposed readers (C), compared with round 1's cells. |
 
 The example is invented: `app/tests/support/synthetic-exec-debug.ts`, a task that starts the service under debugpy in a dev container that is already running.
 
@@ -17,4 +18,5 @@ How it was made, from `app/`:
 ```
 node --import ./scripts/ts-resolve.mjs scripts/walk-real-chain.mjs --case exec-debug --method loop --profile standard --provider claude --model opus --out <plan dir>
 node --import ./scripts/ts-resolve.mjs scripts/profile-locked-compare.mjs --phase calibration-196 [--nobrief-only] --case exec-debug --plan-record <plan dir>/record.jsonl --steps W1.2,W1.7,W1.3 --provider claude --model opus --out <dir>
+node --import ./scripts/ts-resolve.mjs scripts/profile-locked-compare.mjs --phase brief-196 --variant-from <round 1 dir>/variant.json --case exec-debug --plan-record <plan dir>/record.jsonl --steps W1.2,W1.7,W1.3 --provider claude --model opus --out <dir>
 ```

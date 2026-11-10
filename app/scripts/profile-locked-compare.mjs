@@ -293,6 +293,66 @@ if (phase === 'ablation') {
   }
   await pool(presentTasks);
   }
+} else if (phase === 'brief-196') {
+  // DSP-196, second round (an experiment on the built text, not product prompts): the planner's
+  // briefs and step summaries written as orientation, with the facts they held kept apart as
+  // source-grounded notes, on the same locked plan (same steps, titles and places). One call
+  // rewrites them, by the same model with the same code access, and its answer is locked for the
+  // round. B: the oriented plan with the product's readers. C: the oriented plan with the readers of
+  // the first round's variant (read from its variant.json, so the text is identical). A, and the
+  // current brief with the variant readers, are the first round's answers.
+  const { EXPLANATION_TASK } = await import('../src/shared/presentation-profiles');
+  const { planOutline, stepRefsOf } = await import('../src/shared/walk-loop');
+  const first = JSON.parse(fs.readFileSync(path.resolve(arg('--variant-from', '')), 'utf8'));
+  const rewrittenFile = path.join(out, 'oriented-plan.json');
+  const REWRITE_INSTRUCTION = [
+    'You planned the walks below for a code review. Keep every walk, step, title and place exactly as they are. For every step, write three things again:',
+    '- "summary": one line the person reads first above the step\'s explanation, in every profile. Say what the step does in the flow: its task and its effect, the way an experienced developer would name it. Do not list the operations, flags or fields the code uses.',
+    '- "brief": orientation for the writer, written before the profile is known. Say what the step is for in the flow, how the walk reaches it, and what the reader takes onward to the next step, including a condition or risk that decides the outcome. Do not tell the writer which operations, flags or fields to explain: which of the material this reader needs, and at what level, the profile decides.',
+    '- "notes": the facts, conditions and risks that the old brief and your reading of the code hold for this step, as plain statements of what the code does and allows, each grounded in the code. Keep every fact of the old brief that the code supports. These are material the writer can draw on in every profile, not a list of what must be said.',
+    'Read the code at the places with your tools before you write. Answer with one JSON object in a fence: {"steps": {"<step id>": {"summary": "...", "brief": "...", "notes": "..."}}}, with every step of the plan.',
+  ];
+  if (!fs.existsSync(rewrittenFile)) {
+    const prompt = [`DSPATCH-REVIEW-TASK: rewrite-briefs (DSP-196 trial)`, '', ...REWRITE_INSTRUCTION, '', '## The plan, with its current summaries and briefs', '', ...planOutline(plan, { briefs: true }), '', folderSection(material, folder)].join('\n');
+    const answer = await ask('rewrite-briefs', prompt, 'the planner\'s summaries and briefs rewritten as orientation, the facts kept as notes');
+    const json = answer.slice(answer.indexOf('{'), answer.lastIndexOf('}') + 1);
+    fs.writeFileSync(rewrittenFile, `${JSON.stringify(JSON.parse(json), null, 2)}\n`);
+  }
+  const rewritten = JSON.parse(fs.readFileSync(rewrittenFile, 'utf8')).steps;
+  const oriented = structuredClone(plan);
+  const refs = stepRefsOf(oriented.walks);
+  for (const ref of refs) {
+    const next = rewritten[ref.stepId];
+    if (next === undefined) throw new Error(`the rewrite has no ${ref.stepId}`);
+    oriented.walks.walks[ref.walkIndex].steps[ref.stepIndex].summary = next.summary;
+    oriented.briefs.set(ref.stepId, next.brief);
+  }
+  // The notes reach the writer beside the brief, for every step in the outline and for this step.
+  const withNotes = (prompt, stepId) => {
+    let text = prompt;
+    for (const ref of refs) {
+      const brief = `  - Brief: ${oriented.briefs.get(ref.stepId)}`;
+      if (!text.includes(brief)) throw new Error(`no brief line for ${ref.stepId}`);
+      text = text.replace(brief, `${brief}\n  - Notes from the code: ${rewritten[ref.stepId].notes}`);
+    }
+    const own = `The planner's brief, written for every profile: ${oriented.briefs.get(stepId)}`;
+    if (!text.includes(own)) throw new Error('no brief for this step');
+    return text.replace(own, `${own}\nThe planner's notes from the code, material for every profile (which of it this reader needs is the profile's): ${rewritten[stepId].notes}`);
+  };
+  const variantReaders = (profile) => (prompt) => {
+    const reader = PROFILES[profile].reader[0];
+    const scope = EXPLANATION_TASK[3];
+    if (!prompt.includes(reader) || !prompt.includes(scope)) throw new Error(`the ${profile} reader or the scope rule is not in the prompt`);
+    return prompt.split(reader).join(first.variantReaders[profile]).split(scope).join(`${scope} ${first.addedToSharedScopeRule}`);
+  };
+  const build = (profile, stepId, version) => {
+    const prompt = withNotes(writeStepPrompt({ role, plan: oriented, stepId, profile, language: 'en', material, folder, fresh: true, rework: null }), stepId);
+    return version === 'C' ? variantReaders(profile)(prompt) : prompt;
+  };
+  const profiles = arg('--profiles', 'essens').split(',');
+  const versions = arg('--versions', 'B,C').split(',');
+  const count = Number(arg('--samples', '2'));
+  await pool(profiles.flatMap((profile) => STEPS.flatMap((stepId) => versions.flatMap((version) => Array.from({ length: count }, (_, i) => () => ask(`writer-${profile}-${stepId}-${version}-${String(i + 1)}`, build(profile, stepId, version), `the loop writer, ${PROFILES[profile].promptName}, ${stepId}, ${version === 'B' ? 'oriented brief, product readers' : 'oriented brief, proposed readers'}, sample ${String(i + 1)}`))))));
 } else if (phase === 'v8-teacher') {
   // Teacher at version 8, for the before-picture: the version 9 prompts with the DSP-194 changes
   // turned back, exactly (the brief's label and the writer role's sentence; the profile section's

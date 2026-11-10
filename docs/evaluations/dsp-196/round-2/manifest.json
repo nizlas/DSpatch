@@ -1,0 +1,129 @@
+{
+  "phase": "brief-196",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 10,
+  "base": "e3cf9a268a6d276516b33019ab42446c3477a8fe",
+  "target": "f78f14a342d216c0b76732b9578c8a67b58e2f5e",
+  "startedAt": "2026-11-10T21:52:57.701Z",
+  "runs": [
+    {
+      "name": "rewrite-briefs",
+      "note": "the planner's summaries and briefs rewritten as orientation, the facts kept as notes",
+      "status": "finished",
+      "error": null,
+      "seconds": 93,
+      "chars": 19507,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-C-1",
+      "note": "the loop writer, Essentials, W1.2, oriented brief, proposed readers, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1764,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-B-1",
+      "note": "the loop writer, Essentials, W1.2, oriented brief, product readers, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1650,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-B-2",
+      "note": "the loop writer, Essentials, W1.2, oriented brief, product readers, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1815,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-C-2",
+      "note": "the loop writer, Essentials, W1.2, oriented brief, proposed readers, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1812,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-B-2",
+      "note": "the loop writer, Essentials, W1.7, oriented brief, product readers, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 2328,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-C-1",
+      "note": "the loop writer, Essentials, W1.7, oriented brief, proposed readers, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 2064,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-C-2",
+      "note": "the loop writer, Essentials, W1.7, oriented brief, proposed readers, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 2111,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-B-1",
+      "note": "the loop writer, Essentials, W1.7, oriented brief, product readers, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 2326,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-B-1",
+      "note": "the loop writer, Essentials, W1.3, oriented brief, product readers, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 8,
+      "chars": 1583,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-B-2",
+      "note": "the loop writer, Essentials, W1.3, oriented brief, product readers, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 9,
+      "chars": 1413,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-C-2",
+      "note": "the loop writer, Essentials, W1.3, oriented brief, proposed readers, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1614,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-C-1",
+      "note": "the loop writer, Essentials, W1.3, oriented brief, proposed readers, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1851,
+      "modelReported": "claude-opus-5-5"
+    }
+  ],
+  "endedAt": "2026-11-10T21:55:03.193Z"
+}

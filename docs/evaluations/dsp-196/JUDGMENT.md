@@ -65,3 +65,38 @@ W1.7 still went flag by flag. So in the writer path the brief is a large part of
 2. **Product, the planner's brief and summary (the larger lever in the writer path):** have the planner write the brief as orientation, meaning what the step is for in the flow, how it is reached and what the reader takes onward, including a decisive condition. It should not list the operations to explain. Section 6 already asks for this, so this is a correction of the implementation (the planner role's "what the step must make comprehensible"), not a new rule. The step summary the Step panel shows first in every profile should likewise say what the step does in the flow, not which operations it performs.
 3. **Product, the readers:** take the proposed reader definitions in only together with the brief change, and test both in one round on this example, the attach example and the connect example. Include the one-call path and the profile switch, and read the texts the same way.
 4. **Not proposed:** more Essentials rules, length targets, or a calibration example in the prompts. The trial does not show that the reader wording alone changes the level.
+
+## 7. Round 2: the planner's brief as orientation
+
+Niclas asked for a bounded follow-up: the same code, steps, places and model, Essentials only first, comparing A (current brief, product readers), B (oriented brief, product readers) and C (oriented brief, proposed readers). Round 1's variant gives a fourth cell, D (current brief, proposed readers). Material: `round-2/` and `texts-round-2.md`.
+
+**How B and C were made.** One call by the same model, with the same code access, rewrote each step's summary and brief as orientation and kept the facts as separate notes. Steps, titles and places were locked (`round-2/prompts/rewrite-briefs.md`, its answer in `round-2/oriented-plan.json`). The writer saw the oriented brief, plus the notes labelled as material for every profile. Nothing else changed. That makes 13 new calls: the rewrite and 2 samples × 3 steps × B and C.
+
+**What the rewrite gave.**
+- The briefs became more about the step's role. W1.7: "the point where work passes from the script to a separate process … the reader takes forward two things running in parallel".
+- They still name operations where the code is a list of them. W1.3: "it sets strict error handling, settles which container and port it will use, and confirms the container is running".
+- The summaries stayed close to the operations. W1.7: "The script hands off to a detached debugpy process in the container, which listens for the editor and holds the service until it attaches."
+- The notes kept every fact of the old briefs and added new ones, for example that the published debug port is reachable on all host interfaces without authentication.
+
+**What made a difference.**
+- **The oriented brief alone (A to B, and D to C) did not.**
+  - In W1.2 every cell goes through the label match, `isBackground`, the empty `problemMatcher` and the two environment variables.
+  - In W1.3, B put strict mode back as item 1 of a numbered list, following the oriented brief's own wording.
+  - In W1.7, one B sample moved the readiness gap behind Show more and brought the notes' exposure point into the first part instead.
+- **The proposed reader definition (A to D, and B to C) helped a little, in the same places as in round 1.** In W1.3, C reads "This is the gate for everything inside the container … It never starts the container itself." In W1.7, both C samples carry the decisive consequence in bold in the first part: "the pre-launch task succeeds as soon as the process has been launched, not once debugpy is ready". C is not clearly better than D. W1.2 is unchanged in every cell.
+- **The step summary decides part of the level in every profile.** It stands first and stays at the operations in all cells, oriented or not.
+
+**Conditions and Show more.**
+- The decisive points stayed in the first part in A, C and D: the readiness gap in W1.7, the failure path and the gate in W1.2 and W1.3. One B sample moved the readiness gap out of the first part (W1.7 sample 2).
+- The deepening became a list of the remaining facts in every cell, and most of all with the notes. Examples: "Exposure", "Port coupling", "Repeated runs", "Module resolution" in C's W1.7; "Repeated values", "Platform" in B's W1.2.
+- Keeping the facts as material did keep them available. It also made them a second content list, which turned up behind Show more.
+
+| Visible characters (summary and first part) / behind Show more | A | D | B | C |
+|---|---|---|---|---|
+| W1.2 | 812/795, 862/429 | 995/663, 929/998 | 947/810, 965/957 | 950/921, 915/1004 |
+| W1.7 | 922/804, 1098/960 | 871/981, 739/1252 | 1232/1227, 1379/1082 | 1103/1095, 1122/1123 |
+| W1.3 | 1367/663, 1280/833 | 892/1164, 934/856 | 936/713, 996/483 | 1095/822, 1024/656 |
+
+The numbers are shown for completeness; the judgment rests on the texts.
+
+**Result.** The outcome is weak. Writing the brief as orientation, with the facts kept as material, did not change Essentials' level. The proposed reader definition gives a small, repeatable gain in the condition step and in how the mechanism step frames its consequence, but not in the simple step. No variant helped clearly enough to warrant the check of Standard, Teacher and the one-call path, so that check was not made. As Niclas asked, no further prompt round is proposed.

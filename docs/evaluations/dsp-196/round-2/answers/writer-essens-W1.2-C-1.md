@@ -1,0 +1,8 @@
+VS Code finds this task through the label: the `preLaunchTask` value from W1.1 must match `label` exactly. The task runs `start-debugger.sh` as a shell command and gives it two environment variables, `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678`. In the next step the script reads these as its container name and port. The file is new in this change, since the old configuration had no pre-launch task.
+
+**The script's exit code decides whether the attach happens.** VS Code treats the task as finished when the script exits, because no `isBackground` is set. `problemMatcher` is empty, so VS Code doesn't check the output for errors and goes only by the exit code. If the script exits with 0, VS Code goes on to attach (W1.8). If it exits with anything else, VS Code reports the pre-launch task as failed (W2.2).
+
+<!-- dspatch:details -->
+- **The task is finished before the service is running.** The script's last command is a detached `docker exec -d` (W1.7), so the task succeeds once debugpy has been started, not once it is listening. This step does not wait for the service to be ready.
+- **The script runs directly, without a shell in front of it.** `command` is the script path itself, so the host must be able to run it: it needs the `#!/usr/bin/env bash` line and the executable bit set. No Windows-specific variant of the task is defined.
+- **The values are copied by hand.** The container name also appears as `container_name` in `compose.yaml`. Port 5678 also appears in `compose.yaml`'s port mapping and in `connect` in `launch.json` (target line 9). Nothing ties these copies together. If someone changes `DEBUG_PORT` here and not in the other places, debugpy listens on a port that isn't published or that VS Code doesn't connect to (see W1.4).
