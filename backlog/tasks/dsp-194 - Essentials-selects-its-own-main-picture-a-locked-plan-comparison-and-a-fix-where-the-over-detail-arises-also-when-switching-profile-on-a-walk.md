@@ -3,10 +3,10 @@ id: DSP-194
 title: >-
   Essentials selects its own main picture: a locked-plan comparison and a fix
   where the over-detail arises, also when switching profile on a walk
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-10 17:03'
-updated_date: '2026-11-10 17:21'
+updated_date: '2026-11-10 18:03'
 labels:
   - review
 dependencies:
@@ -27,7 +27,7 @@ Niclas's follow-up of DSP-192 (10 November 2026). The real-provider comparison s
 - [x] #1 The effective instructions and inputs of the loop's writer and reviewer, the profile alternative and regeneration are traced, and what drives Essentials' detail is established by a controlled variation where possible and otherwise named as a hypothesis
 - [x] #2 The fix changes the sources where the detail arises, without stacking negative rules on contradictory instructions; Standard's and Teacher's readers are unchanged; the instruction version is raised; saved explanations are kept and nothing is regenerated
 - [x] #3 The profiles are compared on one locked plan, revision and steps with one provider and model, for a simple step and one with interacting mechanisms, through the product's builders and adapter, with what the harness runs and does not run stated; Standard before and after and Teacher as a control are included; first parts and Show more are shown apart and judged on selection and abstraction
-- [ ] #4 The reference and the runtime instructions stay consistent with no parallel definition; a profile switch changes no walk structure, puts nothing in Discussion and touches no review decision; regeneration and returning to a saved explanation are checked in real windows; relevant checks pass and a Linux pre-release is published
+- [x] #4 The reference and the runtime instructions stay consistent with no parallel definition; a profile switch changes no walk structure, puts nothing in Discussion and touches no review decision; regeneration and returning to a saved explanation are checked in real windows; relevant checks pass and a Linux pre-release is published
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -46,4 +46,5 @@ Niclas's follow-up of DSP-192 (10 November 2026). The real-provider comparison s
 **Checks.** Type checks clean; the prompt tests 88 of 88 with new assertions (the version, the answer form of a profile explanation, the brief's label and the role's sentence); `test:presentation` 317 of 317; `test:review` 349 of 350, the one failure the known Windows path-separator case in `review-context.test.ts`; the follow trial on Windows 73 of 73 with a new stage (New response as a regeneration at version 9 with the form-only answer format, back to the saved explanation with no call, nothing in Discussion, the walk's steps unchanged); the Copilot product-path trial 24 entries passed.
 
 **Remaining.** One provider, model, change and pair of steps, one sample per cell; the simple step's Essentials is uneven; Copilot's Standard and Teacher are short in both versions; the planner's brief wording is unchanged; Claude was not rerun.
+**Release 0.1.19.** Commits 26cc9d5 (the change), 26e98d8 (the version) and the upgrade-trial fix below, tag v0.1.19. `linux-verify` run 42864153806 green on all jobs. `package.yml` run 42866060770 published https://github.com/nizlas/DSpatch/releases/tag/v0.1.19 as a pre-release: `dspatch_0.1.19_amd64.deb` (288 154 536 bytes, sha256 4b1053af85b1f7c738c85da339e3a29ef1a5c9f739c7d4029fd51c1f5c1f9ff4), `dspatch-host-0.1.19-26e98d8e108c-linux-x64.tar.gz` (sha256 c5ee61ac05b8b6a49b5f78307d8684da380457e4580071845ca5daa6b022e557), `host-manifest.json` and `SHA256SUMS`; host contract 466d3b1320a1b083, unchanged since 0.1.15. The published-package trial against v0.1.18 (run 42867145502) first stopped while running 0.1.18 itself: it waited for the delegated report to say "approved", which 0.1.18 folds and no longer says (DSP-193); the trial now also accepts the report's done state, and run 42868736959 passed all 30 checks.
 <!-- SECTION:NOTES:END -->
