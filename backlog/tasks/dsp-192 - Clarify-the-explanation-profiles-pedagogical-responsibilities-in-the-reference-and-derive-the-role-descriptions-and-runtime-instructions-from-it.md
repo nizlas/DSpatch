@@ -3,10 +3,10 @@ id: DSP-192
 title: >-
   Clarify the explanation profiles' pedagogical responsibilities in the
   reference and derive the role descriptions and runtime instructions from it
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-10 12:50'
-updated_date: '2026-11-10 12:09'
+updated_date: '2026-11-10 13:12'
 labels:
   - review
 dependencies:
@@ -33,7 +33,7 @@ Niclas's assignment of 10 November 2026, after DSP-190 and DSP-191 and his use o
 - [x] #3 The loop's reviewer judges help for the profile's reader, neither demanding omitted details back in Essentials nor more detail in Teacher for length, while catching omissions that mislead; the judging of explanation quality stays apart from approval of the code
 - [x] #4 Essentials, Standard and Teacher are generated for the same locked walk plan, revision and steps with the same model and comparable code access, for simple code and a step where several mechanisms interact, plus a profile alternative made after the walk; the texts are judged against the readers' needs; the generation path of every example is named; what was done with a real provider is stated
 - [x] #5 The line *The run goes on; what the agent reports appears here as it comes.* is gone from the loop viewer with no replacement, and the rest of the viewer's behaviour is unchanged
-- [ ] #6 Documents and instructions that contradict the clarification are aligned; relevant automated checks and the profile and follow window trials pass; the work is pushed, CI is green, and a Linux pre-release with .deb, host package, manifest and checksums is published and verified
+- [x] #6 Documents and instructions that contradict the clarification are aligned; relevant automated checks and the profile and follow window trials pass; the work is pushed, CI is green, and a Linux pre-release with .deb, host package, manifest and checksums is published and verified
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,4 +59,6 @@ Niclas's assignment of 10 November 2026, after DSP-190 and DSP-191 and his use o
 **Checks.** Type checks clean. Tests: presentation-profiles, presentation-chain, walk-loop, review-discussion-service, presentation-walks, explain-prompts (70 of 70 after the instruction version in one assertion was raised to 8) and review-discussion (18 of 18). Build clean. The follow preparation trial in real windows on Windows: 69 of 69 checks, with a new check that the removed line and its class are absent during a run. The profile trial needs xdotool and ImageMagick and runs only in `linux-verify`'s Xvfb job; locally it stops in its preflight. Not run: the broad loop, provider, host and presentation groups (nothing in them reaches the changed code beyond the files above); the reviewer's turn with the new judging rule, whose output is untested.
 
 **Not established.** Anything with a real provider: whether Claude, Copilot or Cursor give Essentials and Teacher the intended shape under version 8 is open and is the first thing to look at in a real run.
+
+**Release 0.1.17.** Commits 31e616d (the change), 8438c32 (the harness scripts pass the tools typecheck, after CI's `tests` job failed on them: the scripts were moved into `app/scripts/` after the local typecheck had run) and 3fcce35 (the version), tag v0.1.17. `linux-verify` run 42815114169 green on all jobs; its `provider-tests` job failed once on `tests/copilot-review-jobs.test.ts` ("a stop during the job ends as cancelled"): the Copilot runtime could not create a session because its working directory no longer existed, in code the change does not touch, and the job passed on rerun. `package.yml` run 42816993643 published https://github.com/nizlas/DSpatch/releases/tag/v0.1.17 as a pre-release with `dspatch_0.1.17_amd64.deb` (288 099 792 bytes, sha256 f90a9b6a2ca0f515c8463f6d472acef6135b3918ac6bff246f4df45783a8db36), `dspatch-host-0.1.17-3fcce359ce55-linux-x64.tar.gz` (sha256 e7f90148baba82274004080d42591c5a6ea0bbba66404847ef439b39e979c265), `host-manifest.json` and `SHA256SUMS`; the host contract is 466d3b1320a1b083, the same as 0.1.15 and 0.1.16, so a kept host of those versions goes through Restart host. The published-package trial against v0.1.16 (`linux-verify` run 42817856635) first failed before any check of DSpatch: the trial image's `apt-get install` got 404 from Ubuntu's security mirror on three perl packages; a rerun ten minutes later got the same from the archive mirror (the index named perl 5.38.2-3.2ubuntu0.7, the pool no longer had it); the third attempt, another ten minutes later, built the image and passed all 30 checks (the install of 0.1.17 over 0.1.16, the kept host's Restart host, the remote host over SSH). Nothing in the trial itself or the packages was changed between the attempts.
 <!-- SECTION:NOTES:END -->
