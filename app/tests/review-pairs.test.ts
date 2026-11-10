@@ -18,6 +18,7 @@ import { ReviewPairs, pairKeyOf } from '../src/host/review-pairs';
 import {
   adoptPairRecord,
   changedLinesOf,
+  delegationDecisionOf,
   emptyRecord,
   fileProgressOf,
   fileReviewFactsOf,
@@ -38,8 +39,10 @@ import {
   stripStatusOf,
   unifiedRowsOf,
   type AgentReview,
+  type LineStatus,
   type OpenPair,
   type PairFile,
+  type PairMark,
   type PairRecord,
 } from '../src/shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges } from '../src/shared/review-pair-walk';
@@ -374,25 +377,43 @@ describe('requirements and agent review', () => {
     summary: 'fine',
   };
 
-  it("counts the person's review or a delegated approval, by one rule, also in an older review", () => {
-    // Niclas's decision of 30 October 2026: no setting; an approval counts when a review the
-    // person delegated recorded it (it carries that job).
+  const accept = (jobId: string, op: 'accept-agent' | 'reject-agent' | 'clear' = 'accept-agent'): PairMark => ({ id: `d-${jobId}-${op}`, op, scope: { kind: 'job', jobId }, reason: '', at: '2026-11-10T12:00:00.000Z' });
+
+  it("counts the person's review, or a delegated assessment the person accepted; an assessment alone counts nothing (DSP-193)", () => {
+    // Niclas's decision of 10 November 2026, changing the one rule of 30 October for the agent's
+    // part: the agent's assessment is material, and only an accepted one counts its lines.
     const withAgent: PairRecord = { ...emptyRecord(pair), agentReviews: [agent] };
     assert.equal(fileProgressOf(file, withAgent).handled, 0, 'an agent review without a mandate does not count');
     const delegated: PairRecord = { ...withAgent, agentReviews: [{ ...agent, jobId: 'job-1' }] };
-    assert.equal(fileProgressOf(file, delegated).handled, 2);
-    assert.equal(fileProgressOf(file, delegated).done, false, 'the removed line was not in the delegated scope');
+    const undecided = fileProgressOf(file, delegated);
+    assert.deepEqual([undecided.handled, undecided.agent, undecided.assessed], [0, 0, 2], 'a finished delegated review handles nothing by itself: its lines are assessed, awaiting the person');
+    const accepted: PairRecord = { ...delegated, marks: [accept('job-1')] };
+    assert.equal(fileProgressOf(file, accepted).handled, 2);
+    assert.equal(fileProgressOf(file, accepted).assessed, 0);
+    assert.equal(fileProgressOf(file, accepted).done, false, 'the removed line was not in the delegated scope');
+    const rejected = fileProgressOf(file, { ...delegated, marks: [accept('job-1', 'reject-agent')] });
+    assert.deepEqual([rejected.handled, rejected.assessed], [0, 0], 'a rejected assessment counts nothing and is not awaiting either');
+    const withdrawn = fileProgressOf(file, { ...delegated, marks: [accept('job-1'), accept('job-1', 'clear')] });
+    assert.deepEqual([withdrawn.handled, withdrawn.assessed], [0, 2], 'a withdrawn decision leaves the assessment awaiting again');
+    assert.equal(delegationDecisionOf(accepted, 'job-1')?.op, 'accept-agent');
+    assert.equal(delegationDecisionOf({ ...delegated, marks: [accept('job-1'), accept('job-1', 'clear')] }, 'job-1'), null);
     // A DSP-150 record that stored the older requirement keeps the value, its reviews and its
     // history, and is counted by the same rule as any other: the hidden value changes nothing.
     const older = adoptPairRecord({ ...withAgent, requirement: 'manual-or-agent' }, pair);
     assert.equal(older.requirement, 'manual-or-agent');
     assert.equal(older.agentReviews.length, 1);
     assert.equal(fileProgressOf(file, older).handled, 0);
-    assert.equal(fileProgressOf(file, { ...older, agentReviews: [{ ...agent, jobId: 'job-1' }] }).handled, 2);
-    // Mixed: the person reviewed the removed line, the agent approved the added ones.
+    // An older delegated approval, never decided on, is the agent's assessment awaiting the person: never a decision of theirs.
+    const olderDelegated = adoptPairRecord({ ...older, agentReviews: [{ ...agent, jobId: 'job-1' }] }, pair);
+    assert.deepEqual([fileProgressOf(file, olderDelegated).handled, fileProgressOf(file, olderDelegated).assessed], [0, 2]);
+    assert.equal(fileProgressOf(file, { ...olderDelegated, marks: [accept('job-1')] }).handled, 2);
+    // A decision mark survives a save and a read, and one over lines never takes a job's op.
+    const readBack = adoptPairRecord(JSON.parse(JSON.stringify({ ...accepted, marks: [...accepted.marks, { id: 'bad', op: 'accept-agent', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' }] })), pair);
+    assert.deepEqual(readBack.marks.map((mark) => `${mark.op}:${mark.scope.kind}`), ['accept-agent:job']);
+    // Mixed: the person reviewed the removed line, the agent assessed the added ones and the person accepted.
     const mixed: PairRecord = {
-      ...delegated,
-      marks: [{ id: 'm', op: 'manual', scope: { kind: 'lines', side: 'base', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' }],
+      ...accepted,
+      marks: [...accepted.marks, { id: 'm', op: 'manual', scope: { kind: 'lines', side: 'base', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' }],
     };
     const progress = fileProgressOf(file, mixed);
     assert.deepEqual([progress.handled, progress.manual, progress.agent, progress.done], [3, 1, 2, true]);
@@ -401,19 +422,24 @@ describe('requirements and agent review', () => {
     assert.deepEqual([exempted.handled, exempted.exempted, exempted.manual], [1, 1, 0]);
   });
 
-  it('draws manual over agent in the strip, and keeps both in the details', () => {
-    const record: PairRecord = {
+  it('draws manual over agent in the strip, an accepted assessment as agent, an undecided one as assessed, and keeps all in the details', () => {
+    const base: PairRecord = {
       ...emptyRecord(pair),
-      agentReviews: [agent],
+      agentReviews: [{ ...agent, jobId: 'job-1' }],
       marks: [{ id: 'm', op: 'manual', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: '' }],
     };
-    const statuses = lineStatusesOf(file, record);
-    const two = statuses.get(lineKey({ side: 'target', path: 'a.ts', line: 2 }));
-    const three = statuses.get(lineKey({ side: 'target', path: 'a.ts', line: 3 }));
+    const undecided = lineStatusesOf(file, base);
+    const two = undecided.get(lineKey({ side: 'target', path: 'a.ts', line: 2 }));
+    const three = undecided.get(lineKey({ side: 'target', path: 'a.ts', line: 3 }));
     assert.ok(two !== undefined && three !== undefined);
     assert.equal(stripStatusOf(two), 'manual');
     assert.equal(two.agent.length, 1);
-    assert.equal(stripStatusOf(three), 'agent');
+    assert.equal(stripStatusOf(three), 'assessed');
+    assert.deepEqual([three.accepted.length, three.awaiting.length], [0, 1]);
+    const accepted = lineStatusesOf(file, { ...base, marks: [...base.marks, accept('job-1')] });
+    assert.equal(stripStatusOf(accepted.get(lineKey({ side: 'target', path: 'a.ts', line: 3 })) as LineStatus), 'agent');
+    const rejected = lineStatusesOf(file, { ...base, marks: [...base.marks, accept('job-1', 'reject-agent')] });
+    assert.equal(stripStatusOf(rejected.get(lineKey({ side: 'target', path: 'a.ts', line: 3 })) as LineStatus), 'none');
   });
 
   it('says who handled a file and keeps open agent findings beside a finished file', () => {
@@ -453,10 +479,15 @@ describe('requirements and agent review', () => {
       ],
       jobs: [job],
     };
-    const progress = fileProgressOf(file, record);
+    // DSP-193: until the person accepts, the agent's line is assessed and the file is not done.
+    const undecided = fileProgressOf(file, record);
+    assert.deepEqual([undecided.done, undecided.agent, undecided.assessed], [false, 0, 1]);
+    assert.deepEqual(fileReviewFactsOf(file, record).agents, [], 'an assessment not accepted names no reviewer of the file');
+    const accepted: PairRecord = { ...record, marks: [...record.marks, { id: 'd', op: 'accept-agent', scope: { kind: 'job', jobId: 'job-1' }, reason: '', at: '' }] };
+    const progress = fileProgressOf(file, accepted);
     assert.equal(progress.done, true);
     assert.deepEqual([progress.manual, progress.agent, progress.exempted], [1, 1, 1]);
-    const facts = fileReviewFactsOf(file, record);
+    const facts = fileReviewFactsOf(file, accepted);
     assert.deepEqual(facts.agents, ['Claude · opus']);
     assert.equal(facts.findings, 1, 'a problem at this file counts; a note and another file do not');
   });
@@ -517,23 +548,26 @@ describe('requirements and agent review', () => {
     assert.deepEqual(decisions.map((decision) => decision.outcome), ['accepted']);
   });
 
-  it('shows a hunk approved in a delegated review as reviewed in the walk, by the agent; an approval without a job does not count', () => {
+  it('shows a hunk assessed in a delegated review as reviewed in the walk only once the person accepted it, by the agent; an assessment alone or without a job does not count', () => {
     const hunk = { id: 'H1', path: 'a.ts', baseStart: 2, baseCount: 1, targetStart: 2, targetCount: 2 };
     const files = [{ path: 'a.ts', status: 'modified' as const, binary: false, hunks: [hunk], added: 2, deleted: 1 }];
     const approvals = hunkRanges(hunk).map((scope) => ({ ...agent, scope, reviewer: 'Claude · opus', jobId: 'job-1' }));
-    const delegated = hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals }, { base: pair.base, target: pair.target });
+    // DSP-193: the assessment alone decides nothing in the walk either.
+    assert.deepEqual(hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals }, { base: pair.base, target: pair.target }), []);
+    const acceptedMark: PairMark = { id: 'd', op: 'accept-agent', scope: { kind: 'job', jobId: 'job-1' }, reason: '', at: '2026-11-10T12:00:00.000Z' };
+    const delegated = hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals, marks: [acceptedMark] }, { base: pair.base, target: pair.target });
     assert.deepEqual(
       delegated.map((decision) => [decision.outcome, decision.by]),
       [['accepted', { kind: 'agent-delegated', adapterId: 'Claude · opus', mandate: 'job-1' }]],
     );
-    // An older agent review with no delegated job behind it approves nothing.
+    // An older agent review with no delegated job behind it approves nothing, accepted or not.
     const undelegated = approvals.map(({ jobId: _job, ...rest }) => rest);
-    assert.deepEqual(hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: undelegated }, { base: pair.base, target: pair.target }), []);
-    // A person's decision on one line and the delegated approval on the rest: reviewed, and by the person.
+    assert.deepEqual(hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: undelegated, marks: [acceptedMark] }, { base: pair.base, target: pair.target }), []);
+    // A person's decision on one line and the accepted assessment on the rest: reviewed, and by the person.
     const mixed: PairRecord = {
       ...emptyRecord(pair),
       agentReviews: approvals,
-      marks: [{ id: 'm', op: 'manual', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: 't' }],
+      marks: [acceptedMark, { id: 'm', op: 'manual', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: 't' }],
     };
     assert.deepEqual(hunkDecisionsFromPair(files, mixed, { base: pair.base, target: pair.target }).map((decision) => decision.by.kind), ['human']);
   });

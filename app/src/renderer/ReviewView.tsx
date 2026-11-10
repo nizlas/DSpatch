@@ -65,7 +65,7 @@ import {
 import { usePresentationProfile, useStepExplanations } from './presentation-choice';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
-import { generationStale, isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
+import { delegationDecisionOf, generationStale, isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
 import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
 import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
 import { PairKeyContext, ReferenceLinksContext, type ReferenceLinks } from './DiscussionAnswer';
@@ -901,19 +901,27 @@ function OpenReview({
   const activeStation = current === null ? -1 : stations.findIndex((entry) => entry.stepId === current.step.id && entry.placeIndex === placeIndex);
   const activeWalkStop = activeStation < 0 ? -1 : walkStops.findIndex((stop) => stop.stations.includes(activeStation));
   const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
-  const threadsHere = useMemo(
-    () =>
-      focus === null
-        ? []
-        : threads.filter(
-            (thread) =>
-              thread.anchors.some((anchor) => anchor.side === focus.side && anchor.path === focus.path && anchor.start <= focus.end && anchor.end >= focus.start) ||
-              // A thread about this file whose place could not be found, or that named no line:
-              // listed here too, saying so, and nothing in the code is marked for it.
-              (thread.anchors.length === 0 && thread.file !== null && thread.file.path === focus.path),
-          ),
-    [threads, focus?.side, focus?.path, focus?.start, focus?.end],
-  );
+  /*
+   * DSP-193: the threads relevant to the step, by code place: a thread anchored in any of the
+   * step's places, or about one of their files with no line named. Shown once, in the step's
+   * Review section; the walk's other threads stay reachable in the report there, and a thread
+   * with no place at all (about the review as a whole) is read in the report, never dropped.
+   */
+  const stepThreads = useMemo(() => {
+    // Outside the walk, at a place opened from a thread or a reference: the threads at that place,
+    // so a thread chosen in the report is read beside its code (DSP-175).
+    const places: readonly { readonly side: LineRange['side']; readonly path: string; readonly start: number; readonly end: number }[] =
+      away !== null ? [away] : current === null ? [] : current.step.places.map((entry) => entry.focus);
+    if (places.length === 0) {
+      return [];
+    }
+    const paths = new Set(places.map((entry) => entry.path));
+    return threads.filter(
+      (thread) =>
+        thread.anchors.some((anchor) => places.some((place) => anchor.side === place.side && anchor.path === place.path && anchor.start <= place.end && anchor.end >= place.start)) ||
+        (thread.anchors.length === 0 && thread.file !== null && paths.has(thread.file.path)),
+    );
+  }, [threads, current, away]);
   const contexts: readonly CodeLocation[] = away === null && place !== null ? place.context.map(asLocation) : [];
 
   // Opening a place records that it was opened — and only that.
@@ -1982,61 +1990,6 @@ function OpenReview({
                   {diffNote !== '' && <span className="rv-sub">{diffNote}</span>}
                 </div>
               )}
-              {focus !== null && threadsHere.some((thread) => thread.id !== openCheckThread?.id) && (
-                // DSP-175: the review's threads at the place shown, the same threads the diff shows;
-                // an open point's own thread is shown with the point, not twice.
-                <div className="rv-threads-here" data-ev="walk-threads-here">
-                  {threadsHere.filter((thread) => thread.id !== openCheckThread?.id).map((thread) => (
-                    <ThreadCard key={thread.id} thread={thread} />
-                  ))}
-                </div>
-              )}
-              {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
-                <div className="rv-walk-delegate">
-                  {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
-                    <AgentReviewResult
-                      job={walkJob}
-                      files={pair.files}
-                      threads={threads.filter((thread) => thread.jobId === walkJob.id)}
-                      expandThreads
-                      onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)}
-                      onShow={(range) => {
-                        void pairBridge
-                          .showInDiff({ side: range.side, path: range.path, line: range.start })
-                          .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
-                      }}
-                    />
-                  )}
-                  {delegatingWalk ? (
-                    <AgentPicker
-                      pairKey={pair.key}
-                      action="Delegate this walk"
-                      busy={false}
-                      testId="walk-delegate-agent"
-                      onCancel={() => setDelegatingWalk(false)}
-                      onStart={(choice) => {
-                        void pairBridge
-                          .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
-                          .catch((error: unknown) => ({ error: requestFailure(error) }))
-                          .then((answer) => {
-                          if (isPairError(answer)) {
-                            setDiffNote(`The review could not be started: ${answer.error}`);
-                          } else {
-                            setDelegatingWalk(false);
-                          }
-                        });
-                      }}
-                    />
-                  ) : (
-                    walkJob?.state !== 'running' &&
-                    walkJob?.state !== 'cancelling' && (
-                      <button type="button" className="rv-quiet" data-ev="walk-delegate" onClick={() => setDelegatingWalk(true)}>
-                        Delegate this walk to the agent…
-                      </button>
-                    )
-                  )}
-                </div>
-              )}
               {openCheck !== null && (
                 <CheckPanel
                   check={openCheck}
@@ -2179,6 +2132,87 @@ function OpenReview({
                   revisionText={revisionText}
                   words={words}
                 />
+                {/*
+                  DSP-193: the delegated review of this walk, its report and the person's decision
+                  about it, here in Review and folded: the step's explanation stays the main content
+                  of Step, the report is in one place for the whole walk, and an arriving result
+                  changes no tab, focus or scroll position and opens nothing.
+                */}
+                {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
+                  <div className="rv-walk-delegate" data-ev="walk-delegation">
+                    {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
+                      <AgentReviewResult
+                        job={walkJob}
+                        files={pair.files}
+                        threads={threads.filter((thread) => thread.jobId === walkJob.id)}
+                        decision={delegationDecisionOf(pair.record, walkJob.id)}
+                        onDecide={async (op) => {
+                          const answer = await pairBridge.mark(pair.key, { op, scopes: [{ kind: 'job', jobId: walkJob.id }], reason: '' }).catch((error: unknown) => ({ error: requestFailure(error) }));
+                          if (isPairError(answer)) {
+                            setDiffNote(`The decision could not be recorded: ${answer.error}`);
+                          } else {
+                            setPair({ ...pair, record: answer });
+                          }
+                        }}
+                        onStop={() => void pairBridge.cancelJob(pair.key, walkJob.id)}
+                        onShow={(range) => {
+                          void pairBridge
+                            .showInDiff({ side: range.side, path: range.path, line: range.start })
+                            .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
+                        }}
+                      />
+                    )}
+                    {delegatingWalk ? (
+                      <AgentPicker
+                        pairKey={pair.key}
+                        action="Delegate this walk"
+                        busy={false}
+                        testId="walk-delegate-agent"
+                        onCancel={() => setDelegatingWalk(false)}
+                        onStart={(choice) => {
+                          void pairBridge
+                            .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
+                            .catch((error: unknown) => ({ error: requestFailure(error) }))
+                            .then((answer) => {
+                              if (isPairError(answer)) {
+                                setDiffNote(`The review could not be started: ${answer.error}`);
+                              } else {
+                                setDelegatingWalk(false);
+                              }
+                            });
+                        }}
+                      />
+                    ) : (
+                      walkJob?.state !== 'running' &&
+                      walkJob?.state !== 'cancelling' && (
+                        <button type="button" className="rv-quiet" data-ev="walk-delegate" onClick={() => setDelegatingWalk(true)}>
+                          Delegate this walk to the agent…
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
+                {stepThreads.some((thread) => thread.id !== openCheckThread?.id) && (
+                  // DSP-175, DSP-193: the review's threads at this step's places (or at the place opened
+                  // outside the walk), folded, one card each; an open point's own thread is shown with
+                  // the point, not twice.
+                  <div className="rv-threads-here" data-ev="walk-threads-here">
+                    <div className="rv-section-title">{away === null ? words.findingsAtStep : words.findingsAtPlace}</div>
+                    {stepThreads.filter((thread) => thread.id !== openCheckThread?.id).map((thread) => (
+                      <ThreadCard key={thread.id} thread={thread} />
+                    ))}
+                  </div>
+                )}
+                {current !== null && away === null && walkJob !== null && (
+                  (() => {
+                    const elsewhere = threads.filter((thread) => thread.jobId === walkJob.id && !stepThreads.includes(thread)).length;
+                    return elsewhere > 0 ? (
+                      <p className="rv-sub" data-ev="walk-threads-elsewhere">
+                        {words.findingsElsewhere(elsewhere)}
+                      </p>
+                    ) : null;
+                  })()
+                )}
               </Collapsible>
               <NotesHere notes={state.notes} location={focus} stepId={current?.step.id ?? null} words={words} onOpen={goAway} />
             </>
@@ -2784,7 +2818,7 @@ function CheckPanel({
       )}
       {thread !== null && (
         <div className="rv-check-thread-card" data-ev="check-thread">
-          <ThreadCard thread={thread} />
+          <ThreadCard thread={thread} defaultOpen />
         </div>
       )}
       <div className="rv-deepen-actions">

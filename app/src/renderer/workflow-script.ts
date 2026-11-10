@@ -12203,7 +12203,7 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
       expect((interrupted?.approved.length ?? 0) === 0, 'an interrupted review approved something');
       await showFile(diff.id, 'src/keep.ts');
       const keep = await untilPair(diff.id, 'keep.ts with its agent review', (reading) => (reading.pair?.strips?.length ?? 0) === 5 && ((reading.pair as { agentReviewsShown?: number }).agentReviewsShown ?? 0) > 0);
-      expect(stripOf(keep, 'target', 8)?.status === 'agent', 'the agent approval is not drawn after a restart');
+      expect(stripOf(keep, 'target', 8)?.status === 'agent', 'the accepted assessment is not drawn after a restart');
       await untilPair(diff.id, 'Code walks to be offered', (reading) => ((reading.pair as { walkCount?: number | null } | undefined)?.walkCount ?? 0) > 0);
       await inPairWindow(diff.id, '[data-ev="pair-walks"]');
       const walk = await untilWindow('the generated walk', (rows) => rows.find((row) => row.view === 'walk'));
@@ -12287,10 +12287,14 @@ async function runCodeWalksScenario(plan: ScriptedRunPlan): Promise<ScriptedRunR
     record('delegated lines', { job: lines });
     expect(lines.state === 'done' && lines.approved.length === 1 && lines.approved[0]?.start === 8 && lines.approved[0]?.end === 8, `the delegated lines did not approve exactly line 8: ${JSON.stringify(lines)}`);
     expect(lines.findings === 1, 'the finding on line 9 is not recorded');
-    const keep = await untilPair(diff.id, 'the agent strip', (reading) => stripOf(reading, 'target', 8)?.status === 'agent');
+    // DSP-193: the agent's assessment counts nothing by itself; the person accepts it in the report.
+    const assessed = await untilPair(diff.id, 'the assessed strip', (reading) => stripOf(reading, 'target', 8)?.status === 'assessed');
+    expect((fileReading(assessed, 'src/keep.ts')?.percent ?? 0) === 0, `an assessment not accepted counts as handled: ${String(fileReading(assessed, 'src/keep.ts')?.percent)}`);
+    await inPairWindow(diff.id, '[data-ev="agent-review-accept"]');
+    const keep = await untilPair(diff.id, 'the agent strip after accepting', (reading) => stripOf(reading, 'target', 8)?.status === 'agent');
     expect(stripOf(keep, 'target', 9)?.status === 'none', 'a line with a problem was marked as reviewed');
     expect(((keep.pair as { findingsShown?: string[] }).findingsShown ?? []).some((text) => text.includes('Problem')), 'the finding is not shown at the file');
-    expect((fileReading(keep, 'src/keep.ts')?.percent ?? 0) === 20, `one delegated approval of five lines is not 20%: ${String(fileReading(keep, 'src/keep.ts')?.percent)}`);
+    expect((fileReading(keep, 'src/keep.ts')?.percent ?? 0) === 20, `one accepted assessment of five lines is not 20%: ${String(fileReading(keep, 'src/keep.ts')?.percent)}`);
     await capture(diff.id, 'delegated-lines');
 
     // --- 5. A file with too little material: nothing approved ---------------------------------

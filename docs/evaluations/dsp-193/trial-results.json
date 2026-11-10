@@ -1,0 +1,311 @@
+{
+  "evidence": "the screenshots beside this file",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the build is there",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "the report is folded by default",
+      "ok": true,
+      "detail": "{\"reportOpen\":false}"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "the report leads with the state: complete, awaiting the person, nothing counted",
+      "ok": true,
+      "detail": "Agent review complete — awaiting your assessment. Nothing counts as reviewed until you accept it."
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "the report says what the agent examined and assessed, as counts, with no approval",
+      "ok": true,
+      "detail": "The agent examined 48 of 48 changed lines in this part and assessed 47 as acceptable. 1 changed line of the part is not assessed acceptable."
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "what remains is said from the threads: open problems, questions and gaps",
+      "ok": true,
+      "detail": "2 open problems · 4 open questions · 3 verification gaps"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "Files changed totals after the delegation, before any decision",
+      "ok": true,
+      "detail": "0 of 2 files done · 0 of 48 changed lines handled"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "assessed lines are drawn as assessed, none as reviewed: the result changed no coverage",
+      "ok": true,
+      "detail": "{\"assessed\":38,\"agent\":0}"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "the file counts nothing as handled before a decision",
+      "ok": true,
+      "detail": "0%"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "the findings are folded by default in the diff view",
+      "ok": true,
+      "detail": "{\"cards\":4,\"open\":[],\"ids\":[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:363b1c0a\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:c266e3e4\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:cb94707f\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:4dcae47d\"]}"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "opening one finding opens that one only",
+      "ok": true,
+      "detail": "[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:363b1c0a\"]"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "opening a second leaves the first open",
+      "ok": true,
+      "detail": "[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:363b1c0a\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:c266e3e4\"]"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "closing the first leaves the second open: one click, one finding",
+      "ok": true,
+      "detail": "[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:c266e3e4\"]"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "an update of the record reopens no folded finding",
+      "ok": true,
+      "detail": "[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:c266e3e4\"]"
+    },
+    {
+      "stage": "a delegated review of the whole change, read in the diff view",
+      "what": "a folded finding's head in the wide diff view",
+      "ok": true,
+      "detail": "{\"headHeight\":26.760417938232422,\"titleHeight\":19.03125,\"titleTop\":366.8333435058594,\"statusTop\":369.5,\"width\":1416.40625}"
+    },
+    {
+      "stage": "the person decides: accept, withdraw, accept again",
+      "what": "accepting makes the assessed lines count as reviewed through the delegation, and nothing else",
+      "ok": true,
+      "detail": "{\"agent\":38,\"assessed\":0,\"state\":\"Accepted by you on 2026-11-10: the lines the agent assessed count as reviewed through this delegation.\"}"
+    },
+    {
+      "stage": "the person decides: accept, withdraw, accept again",
+      "what": "the file now counts the accepted lines",
+      "ok": true,
+      "detail": "✓agent"
+    },
+    {
+      "stage": "the person decides: accept, withdraw, accept again",
+      "what": "accepting closes no finding and answers no question: the threads are as they were",
+      "ok": true,
+      "detail": "{\"cards\":4,\"open\":[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:c266e3e4\"],\"ids\":[\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:363b1c0a\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:c266e3e4\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:cb94707f\",\"job-bcfd2e13-07ec-4a25-b43e-c9d8579c75d4:f:4dcae47d\"]}"
+    },
+    {
+      "stage": "the person decides: accept, withdraw, accept again",
+      "what": "what remains still says the open questions and gaps",
+      "ok": true,
+      "detail": "2 open problems · 4 open questions · 3 verification gaps"
+    },
+    {
+      "stage": "the person decides: accept, withdraw, accept again",
+      "what": "withdrawing the decision counts the lines as assessed again",
+      "ok": true,
+      "detail": "{\"agent\":0,\"assessed\":38}"
+    },
+    {
+      "stage": "the person decides: accept, withdraw, accept again",
+      "what": "not accepting counts nothing and keeps the report",
+      "ok": true,
+      "detail": "{\"agent\":0,\"assessed\":0,\"state\":\"Not accepted by you on 2026-11-10: nothing from this review counts as reviewed.\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the panel is",
+      "ok": true,
+      "detail": "floating in its own window"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "Step shows the step's explanation first and its Review section folded, with no report above the explanation",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"false\",\"reports\":0,\"reportsOpen\":0,\"reportsInReview\":0,\"here\":0,\"hereOpen\":0,\"elsewhere\":\"\",\"stepId\":\"W1.1\",\"scrollers\":[],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the delegation of the walk is offered inside the Review section",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the arriving result changed no tab, scroll position or focus, and opened nothing",
+      "ok": true,
+      "detail": "{\"before\":[4],\"after\":[4],\"reportsOpen\":0,\"focus\":[\"BODY\",\"BODY\"]}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the report is in the Review section, once, folded; the explanation stays first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":7,\"hereOpen\":0,\"elsewhere\":\"7 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.1\",\"scrollers\":[4],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the walk's report awaits the person's assessment",
+      "ok": true,
+      "detail": "Agent review complete — awaiting your assessment. Nothing counts as reviewed until you accept it."
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the walk window lists the steps",
+      "ok": true,
+      "detail": "{\"heads\":[\"W1\",\"W2\"],\"steps\":[\"W1.1\",\"W1.2\",\"W1.3\",\"W1.4\",\"W1.5\",\"W1.6\",\"W2.1\",\"W2.2\",\"W2.3\",\"W2.4\"]}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W1.1: the report is once and folded, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":7,\"hereOpen\":0,\"elsewhere\":\"7 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.1\",\"scrollers\":[4],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W1.2: the report is once and folded, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":2,\"hereOpen\":0,\"elsewhere\":\"8 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.2\",\"scrollers\":[0],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W1.3: the report is once and folded, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":5,\"hereOpen\":0,\"elsewhere\":\"5 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.3\",\"scrollers\":[0],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W1.4: the report is once and folded, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":2,\"hereOpen\":0,\"elsewhere\":\"8 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.4\",\"scrollers\":[0],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W1.5: the report is once and folded, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":2,\"hereOpen\":0,\"elsewhere\":\"8 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.5\",\"scrollers\":[0],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W1.6: the report is once and folded, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":4,\"hereOpen\":0,\"elsewhere\":\"6 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.6\",\"scrollers\":[0],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W2.1: the report is not shown, since another walk was delegated, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":0,\"reportsOpen\":0,\"reportsInReview\":0,\"here\":0,\"hereOpen\":0,\"elsewhere\":\"\",\"stepId\":\"W2.1\",\"scrollers\":[],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W2.2: the report is not shown, since another walk was delegated, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":0,\"reportsOpen\":0,\"reportsInReview\":0,\"here\":0,\"hereOpen\":0,\"elsewhere\":\"\",\"stepId\":\"W2.2\",\"scrollers\":[],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W2.3: the report is not shown, since another walk was delegated, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":0,\"reportsOpen\":0,\"reportsInReview\":0,\"here\":0,\"hereOpen\":0,\"elsewhere\":\"\",\"stepId\":\"W2.3\",\"scrollers\":[],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "step W2.4: the report is not shown, since another walk was delegated, the explanation first",
+      "ok": true,
+      "detail": "{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":0,\"reportsOpen\":0,\"reportsInReview\":0,\"here\":2,\"hereOpen\":0,\"elsewhere\":\"\",\"stepId\":\"W2.4\",\"scrollers\":[],\"activeElement\":\"BODY\"}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "some step shows the agent's findings at its places, folded",
+      "ok": true,
+      "detail": "{\"id\":\"W1.1\",\"here\":{\"tab\":\"true\",\"stepFirst\":true,\"reviewOpen\":\"true\",\"reports\":1,\"reportsOpen\":0,\"reportsInReview\":1,\"here\":7,\"hereOpen\":0,\"elsewhere\":\"7 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.\",\"stepId\":\"W1.1\",\"scrollers\":[4],\"activeElement\":\"BODY\"}}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the step says where the walk's other findings are",
+      "ok": true,
+      "detail": "7 more findings of this walk's review are about other steps or the walk as a whole; they are in the report above."
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the walk's report lists its findings one line each",
+      "ok": true,
+      "detail": "{\"indexed\":9,\"here\":7}"
+    },
+    {
+      "stage": "the walk: the report in Review, folded, once; the step's own findings; nothing moves on arrival",
+      "what": "the report's line opens the one card of that finding beside its code, with its discussion reachable, never a second copy",
+      "ok": true,
+      "detail": "{\"clicked\":true,\"cards\":1,\"open\":true,\"places\":0,\"field\":true,\"outside\":true}"
+    },
+    {
+      "stage": "a narrow panel, floating and docked",
+      "what": "floating panel at 420 px: a finding's title has its own line, readable, with the metadata below it and no sideways overflow",
+      "ok": true,
+      "detail": "{\"width\":358,\"titleLines\":1,\"titleWidth\":339,\"metaBelowTitle\":true,\"overflow\":false}"
+    },
+    {
+      "stage": "a narrow panel, floating and docked",
+      "what": "docked narrow panel: the title is readable and nothing overflows sideways",
+      "ok": true,
+      "detail": "{\"width\":377,\"titleLines\":1,\"titleWidth\":358,\"metaBelowTitle\":true,\"overflow\":false}"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "44872"
+    },
+    {
+      "stage": "a restart, and an older record: an agent approval never decided on is awaiting, not a decision",
+      "what": "the pair record is on disk",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "stage": "a restart, and an older record: an agent approval never decided on is awaiting, not a decision",
+      "what": "the record as 0.1.17 would have left it: the decision marks removed, the agent reviews and other marks kept",
+      "ok": true,
+      "detail": "{\"marksBefore\":5,\"jobMarksRemoved\":5,\"agentReviews\":16}"
+    },
+    {
+      "stage": "a restart, and an older record: an agent approval never decided on is awaiting, not a decision",
+      "what": "the older agent approval reads as the agent's assessment awaiting the person, never as a decision",
+      "ok": true,
+      "detail": "{\"assessed\":38,\"agent\":0,\"state\":\"Agent review complete — awaiting your assessment. Nothing counts as reviewed until you accept it.\"}"
+    },
+    {
+      "stage": "a restart, and an older record: an agent approval never decided on is awaiting, not a decision",
+      "what": "the earlier report and its findings are kept with their origin",
+      "ok": true,
+      "detail": "{\"cards\":10,\"origin\":\"Copilot · copilot-default · delegated review of walk W1 · What changes in link.ts · 11/10/26, 4:52 PM\",\"status\":\"open\"}"
+    },
+    {
+      "stage": "a restart, and an older record: an agent approval never decided on is awaiting, not a decision",
+      "what": "the comment made earlier is still in its thread, on disk and in the window",
+      "ok": true,
+      "detail": "{\"onDisk\":true,\"inThread\":true}"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "35516"
+    }
+  ]
+}

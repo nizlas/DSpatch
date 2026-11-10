@@ -19,6 +19,7 @@ import { delegatedReviewView } from '../shared/delegated-review-view';
 import { highlightLines, type Token } from '../shared/review-model';
 import {
   changedLinesOf,
+  delegationDecisionOf,
   fileProgressOf,
   fileReviewFactsOf,
   changeMarksOf,
@@ -67,7 +68,7 @@ import { AgentPicker, type AgentChoice } from './AgentPicker';
 import { useDefaultProfile, useDefaultWalkMethod } from './presentation-choice';
 import { PRESENTATION_INSTRUCTION_VERSION } from '../shared/presentation-profiles';
 import type { SelectionQuote } from '../shared/review-discussion';
-import type { PanelState } from '../shared/review-pair';
+import type { PairMark, PanelState } from '../shared/review-pair';
 import { rangeInCell } from './walk-selection';
 import { changedRangesOf } from '../shared/review-agent';
 import { isRemaining, remainingInFile, remainingLine, reviewThreadsOf, threadCountsOf, type ReviewThread } from '../shared/review-threads';
@@ -967,7 +968,7 @@ function DiffReview({
   const currentIndex = current === null ? -1 : open.files.indexOf(current);
 
   const mark = useCallback(
-    async (op: 'manual' | 'exempt' | 'clear', scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']): Promise<void> => {
+    async (op: PairMark['op'], scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']): Promise<void> => {
       const answer = await bridge.mark(open.key, { op, scopes, reason: '' });
       if (isPairError(answer)) {
         setProblem(answer.error);
@@ -1507,6 +1508,7 @@ function DiffReview({
                 startJob({ kind: 'review', ...choice, scope: { kind: 'file', label: 'the whole change', ranges: changedRangesOf(open.files) } })
               }
               onStop={(job) => void stopJob(job)}
+              onDecide={(job, op) => mark(op, [{ kind: 'job', jobId: job.id }])}
               onShow={showRange}
             />
           ) : awayHere !== null ? (
@@ -1606,11 +1608,13 @@ function ProgressMark({ progress, compact = false }: { readonly progress: FilePr
     parts.push(`${String(progress.manual)} reviewed by you`);
   }
   if (progress.agent > 0) {
-    parts.push(`${String(progress.agent)} agent-reviewed`);
+    parts.push(`${String(progress.agent)} through a delegation you accepted`);
   }
   if (progress.exempted > 0) {
     parts.push(`${String(progress.exempted)} exempted`);
   }
+  // DSP-193: assessed by the agent but not decided on: said beside, never counted as handled.
+  const awaiting = progress.assessed > 0 ? ` ${String(progress.assessed)} assessed acceptable by the agent, awaiting your decision.` : '';
   const detail =
     progress.total === 0
       ? progress.wholeFile === null
@@ -1642,7 +1646,7 @@ function ProgressMark({ progress, compact = false }: { readonly progress: FilePr
     );
   }
   return (
-    <span className="rv-pair-progress" title={detail}>
+    <span className={`rv-pair-progress${progress.assessed > 0 ? ' rv-pair-progress-assessed' : ''}`} title={`${detail}${awaiting}`} data-assessed={progress.assessed > 0 ? String(progress.assessed) : undefined}>
       {progress.total === 0 ? '–' : `${String(progress.percent)}%`}
     </span>
   );
@@ -1793,8 +1797,9 @@ export function AgentReviewResult({
   job,
   files,
   threads,
-  expandThreads = false,
-  open = true,
+  decision = null,
+  onDecide,
+  open = false,
   onStop,
   onShow,
 }: {
@@ -1803,22 +1808,39 @@ export function AgentReviewResult({
   readonly files: readonly PairFile[] | null;
   /**
    * This review's threads (DSP-175), listed here one line each; each is read in full at its
-   * code, so a finding or gap is presented once, with its status.
+   * code, so a finding or gap is presented once, with its status. A line selects the thread
+   * where it is shown; it never opens a second card of it here.
    */
   readonly threads: readonly ReviewThread[];
-  /** In a window without the diff, a thread's line opens it in place. */
-  readonly expandThreads?: boolean;
+  /** The person's decision about this review (DSP-193), or `null` while they have not decided. */
+  readonly decision?: PairMark | null;
+  /** Record the person's decision: accept the assessment, not accept it, or withdraw the decision. Absent where deciding is not offered. */
+  readonly onDecide?: (op: 'accept-agent' | 'reject-agent' | 'clear') => Promise<void> | void;
+  /** Folded by default (DSP-193): the report is read when the person opens it. */
   readonly open?: boolean;
   readonly onStop: () => void;
   readonly onShow: (range: LineRange) => void;
 }): JSX.Element {
+  const [deciding, setDeciding] = useState(false);
   if (job.state === 'running' || job.state === 'cancelling') {
     return <JobLine job={job} onStop={onStop} />;
   }
   const result = job.result;
-  const view = result === null ? null : delegatedReviewView(result, job.scope, files);
+  const view = result === null ? null : delegatedReviewView(result, job.scope, files, decision);
+  const decide = async (op: 'accept-agent' | 'reject-agent' | 'clear'): Promise<void> => {
+    if (onDecide === undefined || deciding) {
+      return;
+    }
+    setDeciding(true);
+    try {
+      await onDecide(op);
+    } finally {
+      setDeciding(false);
+    }
+  };
+  const remaining = remainingLine(threadCountsOf(threads));
   return (
-    <details className="rv-agent-review" open={open} data-ev="agent-review" data-state={job.state} data-standing={view?.standing ?? ''}>
+    <details className="rv-agent-review" open={open} data-ev="agent-review" data-state={job.state} data-standing={view?.standing ?? ''} data-decision={view?.decision ?? ''}>
       <summary>
         Agent review · {job.scope?.label ?? ''} · {view?.standingWords ?? job.state}
       </summary>
@@ -1828,37 +1850,53 @@ export function AgentReviewResult({
         </p>
       ) : (
         <div className="rv-agent-review-body">
-          <div className={`rv-agent-verdict rv-agent-verdict-${view.standing}`} data-ev="agent-review-summary">
-            <p className="rv-agent-verdict-line" data-ev="agent-review-coverage">{view.approvedLine}</p>
-            {/* DSP-175: what remains, apart from coverage: open threads and lines not approved. */}
-            <p data-ev="agent-review-remaining">
-              {[
-                ...(view.notApproved !== null && view.notApproved.length > 0
-                  ? [((count: number) => `${String(count)} changed ${count === 1 ? 'line' : 'lines'} not approved`)(view.notApproved.reduce((total, range) => total + range.end - range.start + 1, 0))]
-                  : []),
-                ...(remainingLine(threadCountsOf(threads)) === '' ? [] : [remainingLine(threadCountsOf(threads))]),
-              ].join(' · ') || 'Nothing open from this review.'}
-            </p>
+          {/*
+            DSP-193: the state first, then what the agent examined and assessed, then what
+            remains. The agent's assessment is material; the decision below is the person's.
+          */}
+          <div className={`rv-agent-verdict rv-agent-verdict-${view.standing} rv-agent-decision-${view.decision}`} data-ev="agent-review-summary">
+            <p className="rv-agent-verdict-line" data-ev="agent-review-state">{view.stateLine}</p>
+            <p data-ev="agent-review-coverage">{view.examinedLine}</p>
+            <p data-ev="agent-review-remaining">{remaining === '' ? 'Nothing open from this review.' : remaining}</p>
             {view.agentSummary !== '' && <p className="rv-pair-muted">The agent says: {view.agentSummary}</p>}
+            {onDecide !== undefined && (
+              <div className="rv-agent-decide" data-ev="agent-review-decide">
+                {view.decision === 'awaiting' && view.acceptable && (
+                  <button type="button" className="rv-pair-button rv-thread-primary" data-ev="agent-review-accept" disabled={deciding} title="Records that you accept the agent's assessment for this part: its assessed lines then count as reviewed through this delegation. Findings and questions stay open until you decide about each." onClick={() => void decide('accept-agent')}>
+                    Accept the agent's assessment
+                  </button>
+                )}
+                {view.decision === 'awaiting' && (
+                  <button type="button" className="rv-pair-button" data-ev="agent-review-reject" disabled={deciding} title="Records that you do not accept the assessment: nothing from it counts as reviewed, and the report stays." onClick={() => void decide('reject-agent')}>
+                    Do not accept
+                  </button>
+                )}
+                {view.decision !== 'awaiting' && (
+                  <button type="button" className="rv-pair-link" data-ev="agent-review-withdraw" disabled={deciding} title="Withdraws your decision; the review is awaiting your assessment again." onClick={() => void decide('clear')}>
+                    Withdraw your decision
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-          {threads.length > 0 && <ThreadIndex threads={threads} expand={expandThreads} />}
+          {threads.length > 0 && <ThreadIndex threads={threads} />}
           <details className="rv-agent-adjustments" data-ev="agent-review-basis">
             <summary>Reasoning and what it covers</summary>
             {view.reasoning !== '' && <p className="rv-agent-reasoning">{view.reasoning}</p>}
             <p className="rv-pair-muted">{attemptLabel(job)}</p>
             {result.approved.length > 0 && (
               <>
-                <span className="rv-pair-muted">Approved:</span>
+                <span className="rv-pair-muted">Assessed acceptable by the agent:</span>
                 <RangeLinks ranges={result.approved} onShow={onShow} />
               </>
             )}
-            {view.notApproved !== null && view.notApproved.length > 0 && (
+            {view.notAssessed !== null && view.notAssessed.length > 0 && (
               <>
-                <span className="rv-pair-muted">Not approved:</span>
-                <RangeLinks ranges={view.notApproved} onShow={onShow} />
+                <span className="rv-pair-muted">Not assessed acceptable:</span>
+                <RangeLinks ranges={view.notAssessed} onShow={onShow} />
               </>
             )}
-            <span className="rv-pair-muted">Reviewed:</span>
+            <span className="rv-pair-muted">Examined:</span>
             {result.reviewed.length > 0 ? <RangeLinks ranges={result.reviewed} onShow={onShow} /> : <p>Nothing.</p>}
           </details>
           {result.adjustments.length > 0 && (
@@ -1917,6 +1955,7 @@ function FilesChanged({
   onOpen,
   onDelegate,
   onStop,
+  onDecide,
   onShow,
 }: {
   readonly pairKey: string;
@@ -1929,6 +1968,8 @@ function FilesChanged({
   readonly onOpen: (file: PairFile) => void;
   readonly onDelegate: (choice: AgentChoice) => Promise<boolean>;
   readonly onStop: (job: AgentJob) => void;
+  /** DSP-193: the person's decision about a delegated review, recorded as a mark over the job. */
+  readonly onDecide: (job: AgentJob, op: 'accept-agent' | 'reject-agent' | 'clear') => Promise<void>;
   readonly onShow: (range: LineRange) => void;
 }): JSX.Element {
   const [delegating, setDelegating] = useState(false);
@@ -1988,7 +2029,15 @@ function FilesChanged({
         </div>
       )}
       {whole !== null && (!delegating || isRunning(whole)) && (
-        <AgentReviewResult job={whole} files={files} threads={threads.filter((thread) => thread.jobId === whole.id)} onStop={() => onStop(whole)} onShow={onShow} />
+        <AgentReviewResult
+          job={whole}
+          files={files}
+          threads={threads.filter((thread) => thread.jobId === whole.id)}
+          decision={delegationDecisionOf(record, whole.id)}
+          onDecide={(op) => onDecide(whole, op)}
+          onStop={() => onStop(whole)}
+          onShow={onShow}
+        />
       )}
       {reviewLevel.length > 0 && (
         <div className="rv-thread-review-level" data-ev="pair-review-threads">
@@ -2090,7 +2139,8 @@ function splitLines(text: string): string[] {
 
 const STRIP_WORD: Record<StripStatus, string> = {
   manual: 'Reviewed by you',
-  agent: 'Agent-reviewed',
+  agent: 'Reviewed through a delegation you accepted',
+  assessed: 'Assessed acceptable by the agent, awaiting your decision',
   exempt: 'Exempted',
   none: 'Not yet handled',
 };
@@ -2107,10 +2157,13 @@ function describeLine(status: LineStatus | undefined): string {
   if (status.decision !== null && status.decision.reason !== '') {
     parts.push(`reason: ${status.decision.reason}`);
   }
-  if (status.agent.length > 0 && strip !== 'agent') {
-    parts.push(`also agent-reviewed${status.agent[0]?.reviewer ? ` by ${status.agent[0].reviewer}` : ''}`);
-  } else if (strip === 'agent' && status.agent[0]?.reviewer) {
-    parts[0] = `Agent-reviewed by ${status.agent[0].reviewer}`;
+  // DSP-193: an accepted assessment names its agent; one awaiting the decision is said as such.
+  if (strip === 'agent' && status.accepted[0]?.reviewer) {
+    parts[0] = `Reviewed through a delegation you accepted, by ${status.accepted[0].reviewer}`;
+  } else if (strip === 'assessed' && status.awaiting[0]?.reviewer) {
+    parts[0] = `Assessed acceptable by ${status.awaiting[0].reviewer}, awaiting your decision`;
+  } else if (strip !== 'agent' && strip !== 'assessed' && status.agent.length > 0) {
+    parts.push(`also assessed by ${status.agent[0]?.reviewer || 'an agent'}`);
   }
   return parts.join('; ');
 }
@@ -2544,7 +2597,7 @@ function FileDiff({
   readonly target: { readonly location: DiffLocation; readonly nonce: number } | null;
   readonly progress: FileProgress;
   readonly onLayout: (layout: 'split' | 'unified') => void;
-  readonly onMark: (op: 'manual' | 'exempt' | 'clear', scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']) => Promise<void>;
+  readonly onMark: (op: PairMark['op'], scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']) => Promise<void>;
   /** Back to *Files changed*, where the list was left. */
   readonly onBack: () => void;
   readonly onPrevious: (() => void) | null;
@@ -3200,13 +3253,16 @@ function FileDiff({
       )}
       {fileJobs.length > 0 && (
         <div className="rv-agent-reviews">
-          {fileJobs.map((job, index) => (
+          {fileJobs.map((job) => (
             <AgentReviewResult
               key={job.id}
               job={job}
               files={allFiles}
               threads={threads.filter((thread) => thread.jobId === job.id)}
-              open={index === 0}
+              decision={delegationDecisionOf(record, job.id)}
+              onDecide={(op) => onMark(op, [{ kind: 'job', jobId: job.id }])}
+              // DSP-193: folded by default; a running job shows its line only; the newest is first.
+              open={false}
               onStop={() => onStop(job)}
               onShow={(range) => {
                 if (fileLocationMatch(file, { side: range.side, path: range.path, line: range.start })) {

@@ -278,9 +278,24 @@ describe('a delegated review', () => {
     const statuses = lineStatusesOf(keep, record);
     assert.equal(statuses.get(lineKey({ side: 'target', path: 'src/keep.ts', line: 8 }))?.agent[0]?.jobId, job.id);
     assert.equal(statuses.get(lineKey({ side: 'target', path: 'src/keep.ts', line: 9 }))?.agent.length, 0);
-    // Manual is the default, and a delegated approval counts for exactly its lines.
+    // Manual is the default. DSP-193: the delegated assessment counts nothing by itself; its
+    // note says so, and the line is assessed, awaiting the person.
     assert.equal(record.requirement, 'manual');
-    assert.equal(fileProgressOf(keep, record).agent, 1);
+    assert.match(job.note, /^The agent assessed 1 line\(s\) as acceptable, found 1 problem\(s\)(?:, left \d+ verification gap\(s\))?; awaiting your assessment\.$/);
+    assert.deepEqual([fileProgressOf(keep, record).agent, fileProgressOf(keep, record).assessed], [0, 1]);
+    // The person accepts through the mark channel: a mark over the job, kept with the others.
+    const accepted = pairs.mark(open.key, { op: 'accept-agent', scopes: [{ kind: 'job', jobId: job.id }], reason: 'Looked right to me.' });
+    assert.ok(!isPairError(accepted));
+    assert.deepEqual([fileProgressOf(keep, accepted).agent, fileProgressOf(keep, accepted).assessed], [1, 0]);
+    assert.equal(accepted.marks.at(-1)?.scope.kind, 'job');
+    // A decision about a job this review does not have, or that is not a finished review, is refused.
+    assert.ok(isPairError(pairs.mark(open.key, { op: 'accept-agent', scopes: [{ kind: 'job', jobId: 'job-unknown' }], reason: '' })));
+    assert.ok(isPairError(pairs.mark(open.key, { op: 'manual', scopes: [{ kind: 'job', jobId: job.id }], reason: '' })), 'a line op over a job is not a mark');
+    // Withdrawing the decision leaves the assessment awaiting again; the result is untouched.
+    const withdrawn = pairs.mark(open.key, { op: 'clear', scopes: [{ kind: 'job', jobId: job.id }], reason: '' });
+    assert.ok(!isPairError(withdrawn));
+    assert.deepEqual([fileProgressOf(keep, withdrawn).agent, fileProgressOf(keep, withdrawn).assessed], [0, 1]);
+    assert.deepEqual(withdrawn.jobs.find((entry) => entry.id === job.id)?.result?.approved, job.result?.approved);
   });
 
   it('says what it is doing in one line from what is reported, and nothing of it after the end', async () => {

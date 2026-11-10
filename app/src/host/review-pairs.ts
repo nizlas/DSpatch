@@ -35,6 +35,8 @@ import {
   pairFilesFrom,
   parseLog,
   reviewTotalsOf,
+  MARK_OPS,
+  markFits,
   scopeFrom,
   storedChecksFromDefinition,
   threadActionFrom,
@@ -313,14 +315,15 @@ function markRequestFrom(raw: unknown): MarkRequest | null {
     return null;
   }
   const value = raw as Record<string, unknown>;
-  const op = value['op'];
-  if (op !== 'manual' && op !== 'exempt' && op !== 'clear') {
+  const op = (MARK_OPS as readonly unknown[]).includes(value['op']) ? (value['op'] as PairMark['op']) : null;
+  if (op === null) {
     return null;
   }
   const scopes: MarkScope[] = [];
   for (const entry of Array.isArray(value['scopes']) ? value['scopes'] : []) {
     const scope = scopeFrom(entry);
-    if (scope === null) {
+    // A decision about a delegated review is accept, reject or clear over a job; lines and files take the rest (DSP-193).
+    if (scope === null || !markFits(op, scope)) {
       return null;
     }
     scopes.push(scope);
@@ -654,6 +657,13 @@ export class ReviewPairs {
     }
     const at = new Date().toISOString();
     const record = this.readRecord(opened.key, opened.pair);
+    // DSP-193: a decision about a delegated review names a finished review of this pair with
+    // a result; nothing else can be accepted or rejected, and the decision changes no result.
+    for (const scope of request.scopes) {
+      if (scope.kind === 'job' && !record.jobs.some((job) => job.id === scope.jobId && job.kind === 'review' && job.state === 'done' && job.result !== null)) {
+        return { error: 'That delegated review is not in this review, or has no result to decide about.' };
+      }
+    }
     const marks: PairMark[] = request.scopes.map((scope) => ({ id: randomUUID(), op: request.op, scope, reason: request.reason, at }));
     return this.write(opened.key, { ...record, marks: [...record.marks, ...marks] }, true);
   }

@@ -216,6 +216,15 @@ jobs:
         with:
           name: walk-follow-trial
           path: app/release/trial-walk-follow/ci
+      - name: The delegated-review trial in real windows (DSP-193)
+        if: ${{ always() }}
+        run: node --import ./scripts/ts-resolve.mjs scripts/delegation-trial.mjs release/trial-delegation/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: delegation-trial
+          path: app/release/trial-delegation/ci
 
   published:
     if: ${{ inputs.published }}

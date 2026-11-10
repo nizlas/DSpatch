@@ -59,11 +59,12 @@ That a line has been shown on screen does not mean it has been reviewed. Having 
 | Remaining | The part has no walk-through and no review decision. |
 | Walked through | The code has been covered in a walk but is not automatically accepted. |
 | Accepted by you | You have accepted the current part at the reviewed revision. |
-| Accepted by agent | Delegated review is complete, with a reported assessment. |
+| Assessed by agent | Delegated review is complete, with a reported assessment, and awaits your decision; nothing counts as reviewed yet. |
+| Accepted through delegation | You have accepted the agent's assessment of the delegated part; its assessed lines count as reviewed, with the agent named. |
 | Exempted | You have explicitly chosen not to review the part. |
 | Needs reassessment | Changed code or changed supporting material affects the earlier assessment. |
 
-These are the user's terms for the state, not a fixed storage schema. Walk-through, decisions and freshness may need to be stored separately. If the code has been walked through and a problem was found, the problem must remain visible even though walk-through coverage has increased.
+These are the user's terms for the state, not a fixed storage schema. Walk-through, decisions and freshness may need to be stored separately. If the code has been walked through and a problem was found, the problem must remain visible even though walk-through coverage has increased. The two delegation rows follow Niclas's decision of 10 November 2026 ([VISION.md section 3.4](VISION.md#delegated-review-is-basis-and-recommendation-the-person-decides-niclass-decision-10-november-2026), DSP-193): an agent's assessment is material, and only the user's acceptance of it counts.
 
 The overview could say, for example: "All changes handled: 60 percent reviewed together, 30 percent agent-reviewed and 10 percent exempted." It must not describe this as 100 percent manually reviewed. Open findings and parts that need reassessment are shown separately and must not be hidden by a high percentage.
 
@@ -71,7 +72,7 @@ Coverage helps us see gaps and allocate attention. It does not measure how well 
 
 ## 4 Delegate and exempt with visible decisions
 
-The user does not need to examine every line. A whole walk or another bounded part can be delegated to a review agent. The user could say, for example: "Review test X and accept it unless you find something you need to raise with me." The agent then has an explicit mandate to assess exactly that part and must report the result and any findings.
+The user does not need to examine every line. A whole walk or another bounded part can be delegated to a review agent. The user could say, for example: "Review test X and tell me whether you would accept it, and what you need to raise with me." The agent then has an explicit mandate to assess exactly that part and must report what it examined, its assessment with its grounds and uncertainty, and any findings, questions and verification gaps. The assessment is material for the user, who accepts or does not accept it; the delegation itself, the finished run and a positive assessment accept nothing, close no finding and answer no question (Niclas's decision of 10 November 2026).
 
 Another choice is: "I don't need to review test X." This is recorded as an exemption for the bounded part, with the scope of the decision and its reason when one is given. It gives an honest close without pretending that a review was performed.
 

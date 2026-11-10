@@ -12,7 +12,7 @@
  */
 
 import type { DiffFile, DiffHunk, ReviewDecision, RevisionPair } from './review-model';
-import { isDelegatedApproval, lineStatusOf, type LineRange, type PairRecord } from './review-pair';
+import { lineStatusOf, type LineRange, type PairRecord } from './review-pair';
 
 /** The changed lines of a hunk as ranges: its deletions at From, its additions at To. */
 export function hunkRanges(hunk: DiffHunk): readonly LineRange[] {
@@ -28,9 +28,11 @@ export function hunkRanges(hunk: DiffHunk): readonly LineRange[] {
 
 /**
  * The outcome over every changed line of a hunk, when it is one, by the one rule of what is
- * reviewed (Niclas's decision of 30 October 2026): each line reviewed by the person or
- * approved in a review the person delegated makes the hunk reviewed; each line exempted
- * makes it exempted. Who reviewed is kept: the agents and the jobs of their mandates.
+ * reviewed (Niclas's decision of 30 October 2026, as changed on 10 November 2026, DSP-193):
+ * each line reviewed by the person, or assessed acceptable in a delegated review whose
+ * assessment the person accepted, makes the hunk reviewed; each line exempted makes it
+ * exempted. An assessment not yet accepted counts nothing here. Who reviewed is kept: the
+ * agents and the jobs of their mandates.
  */
 function hunkOutcome(
   hunk: DiffHunk,
@@ -46,8 +48,8 @@ function hunkOutcome(
     for (let line = range.start; line <= range.end; line += 1) {
       const status = lineStatusOf({ side: range.side, path: range.path, line }, record);
       const decision = status.decision;
-      const approvals = status.agent.filter(isDelegatedApproval);
-      const lineOp: 'manual' | 'exempt' | null = decision !== null && decision.op !== 'clear' ? decision.op : approvals.length > 0 ? 'manual' : null;
+      const approvals = status.accepted;
+      const lineOp: 'manual' | 'exempt' | null = decision !== null && (decision.op === 'manual' || decision.op === 'exempt') ? decision.op : approvals.length > 0 ? 'manual' : null;
       if (lineOp === null || (op !== null && op !== lineOp)) {
         return null;
       }

@@ -862,8 +862,11 @@ function delegatedReview(prompt: string, reader: Reader): string {
     }
   }
   // DSPATCH_REVIEW_SIM=rich-review: several findings and a repeat, to look at how they read.
+  // DSPATCH_REVIEW_SIM=mixed (DSP-193): rich-review and threads together, with long headings
+  // and a long path, open questions beside assessed lines and gaps of both kinds.
+  const sim = process.env['DSPATCH_REVIEW_SIM'];
   const first = reviewed[0];
-  if (process.env['DSPATCH_REVIEW_SIM'] === 'rich-review' && first !== undefined) {
+  if ((sim === 'rich-review' || sim === 'mixed') && first !== undefined) {
     const at = { path: first.path, side: first.side };
     const question = { severity: 'question', title: 'SIMULATED: is this value meant to be public?', text: 'SIMULATED: the export widens what callers can reach, and later changes to it then break them.' };
     findings.push({ ...question, ...at, start: first.start, end: first.start });
@@ -874,7 +877,7 @@ function delegatedReview(prompt: string, reader: Reader): string {
   // question on a removed (From) line, a place that does not exist at its commit, a question
   // whose recommendation is to keep the code, and gaps tied to a finding and of their own.
   const gaps: Record<string, unknown>[] = [];
-  if (process.env['DSPATCH_REVIEW_SIM'] === 'threads' && first !== undefined) {
+  if ((sim === 'threads' || sim === 'mixed') && first !== undefined) {
     const removed = changed.find((span) => span.side === 'base' && scope.some((range) => range.path === span.path));
     if (removed !== undefined) {
       findings.push({
@@ -912,6 +915,32 @@ function delegatedReview(prompt: string, reader: Reader): string {
       gaps.push({ text: 'SIMULATED: whether any caller depends on the old behaviour was not established.', finding: findings[0].title, recommendation: { kind: 'test', action: 'SIMULATED: add a test over the callers.', rationale: 'SIMULATED: no test covers them.', nextStep: 'SIMULATED: list the callers with a search.' } });
     }
     gaps.push({ text: 'SIMULATED: how the module behaves under load was not established.', evidence: 'SIMULATED: no benchmark is in the repository.', recommendation: { kind: 'measure', action: 'SIMULATED: measure the call under load.', rationale: 'SIMULATED: nothing in the code says.', nextStep: 'SIMULATED: time 10 000 calls.' } });
+  }
+  if (sim === 'mixed' && first !== undefined) {
+    const last = reviewed[reviewed.length - 1] ?? first;
+    findings.push({
+      severity: 'problem',
+      title: 'SIMULATED: the retry count is reset by every caller, so two overlapping calls can make more attempts than the configured maximum allows',
+      text: 'SIMULATED: a long heading, to see that it stays readable beside its status, kind and reply count in a narrow panel.',
+      evidence: `SIMULATED: read ${last.path} lines ${String(last.start)}–${String(last.end)} and src/very/deeply/nested/folder/structure/with/a/long/path/to/the/module/implementation.ts lines 1–40.`,
+      recommendation: { kind: 'change', action: 'SIMULATED: keep the attempt count per call, not per instance.', rationale: 'SIMULATED: the field is shared by every call on the instance.', uncertainty: 'SIMULATED: whether callers overlap in practice was not established.', nextStep: 'SIMULATED: find the callers.' },
+      path: last.path,
+      side: last.side,
+      start: last.end,
+      end: last.end,
+    });
+    findings.push({
+      severity: 'question',
+      title: 'SIMULATED: should the pause after the last failed attempt be skipped?',
+      text: 'SIMULATED: the loop waits once more after the final failure, which delays the gave-up report by the longest pause.',
+      evidence: `SIMULATED: read ${last.path} lines ${String(last.start)}–${String(last.end)}.`,
+      recommendation: { kind: 'ask-author', action: 'SIMULATED: ask whether the trailing pause is intended.', rationale: 'SIMULATED: nothing in the change says.', uncertainty: '', nextStep: '' },
+      path: last.path,
+      side: last.side,
+      start: last.start,
+      end: last.start,
+    });
+    gaps.push({ text: 'SIMULATED: whether the timer callback can run after the test harness has torn the module down was not established.', evidence: 'SIMULATED: no test drives the timers.', recommendation: { kind: 'test', action: 'SIMULATED: add a test with fake timers.', rationale: 'SIMULATED: the order is only read from the code.', nextStep: 'SIMULATED: write the test.' } });
   }
   return fence({
     summary: findings.length > 0 ? 'SIMULATED: the lines without a problem are approved; the lines with one are not.' : 'SIMULATED: every delegated line is approved.',

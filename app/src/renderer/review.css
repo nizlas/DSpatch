@@ -2520,6 +2520,17 @@
   background-clip: content-box;
 }
 
+/* DSP-193: assessed acceptable by the agent, not yet decided on by the person: the agent's colour, hollow. */
+.rv-pair-table td.rv-pair-strip-assessed[role="button"] {
+  background: repeating-linear-gradient(to bottom, var(--rv-mark-agent) 0 2px, transparent 2px 5px);
+  background-clip: content-box;
+}
+
+.rv-pair-progress-assessed {
+  text-decoration: underline dotted var(--rv-mark-agent);
+  text-underline-offset: 3px;
+}
+
 .rv-pair-table td.rv-pair-strip:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: -2px;
@@ -2863,6 +2874,27 @@
 
 .rv-agent-verdict-partial {
   border-left-color: var(--unknown);
+}
+
+/* DSP-193: the person's decision colours the report, not the agent's extent. */
+.rv-agent-decision-awaiting {
+  border-left-color: var(--rv-amber, var(--unknown));
+}
+
+.rv-agent-decision-accepted {
+  border-left-color: var(--rv-mark-agent);
+}
+
+.rv-agent-decision-rejected {
+  border-left-color: var(--muted);
+}
+
+.rv-agent-decide {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  align-items: center;
+  margin-top: 0.4rem;
 }
 
 .rv-agent-findings {
@@ -3700,6 +3732,12 @@
   margin: 0.35rem 0;
   font-family: var(--font, inherit);
   white-space: normal;
+  /* DSP-193: the head lays itself out by the card's own width, not the window's. */
+  container-type: inline-size;
+}
+
+.rv-thread-index-row {
+  container-type: inline-size;
 }
 
 .rv-thread-resolved,
@@ -3723,8 +3761,9 @@
 .rv-thread-head,
 .rv-thread-index-line {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.6rem;
+  gap: 0.15rem 0.6rem;
   width: 100%;
   padding: 0.35rem 0.6rem;
   background: none;
@@ -3733,6 +3772,28 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/*
+ * DSP-193: in a narrow panel the title takes a line of its own and the metadata another, so
+ * a heading never wraps to a word a line beside the status, the kind and the reply count;
+ * file references wrap within the line instead of widening the panel.
+ */
+@container (max-width: 34rem) {
+  .rv-thread-head .rv-thread-title,
+  .rv-thread-index-line .rv-thread-title {
+    flex: 1 1 100%;
+    order: -1;
+  }
+
+  .rv-thread-index-line .rv-thread-where {
+    flex: 1 1 100%;
+  }
+}
+
+.rv-thread-where {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .rv-thread-head:focus-visible,
@@ -3762,9 +3823,10 @@
 }
 
 .rv-thread-title {
-  flex: 1;
+  flex: 1 1 12rem;
   min-width: 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .rv-thread-replies {
@@ -3795,6 +3857,11 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.2rem 0.9rem;
+}
+
+.rv-thread-places .rv-pair-link {
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .rv-thread-missing {

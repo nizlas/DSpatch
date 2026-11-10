@@ -416,29 +416,40 @@ export interface WholeFile {
   readonly fileKey: string;
 }
 
-export type MarkScope = LineRange | WholeFile;
+/**
+ * A delegated review as the scope of the person's decision about it (DSP-193): the job
+ * the person delegated, whose assessment they accept or do not accept.
+ */
+export interface DelegatedJob {
+  readonly kind: 'job';
+  readonly jobId: string;
+}
+
+export type MarkScope = LineRange | WholeFile | DelegatedJob;
 
 /**
  * One decision by the reviewer, in the order made.
  *
- * `clear` withdraws earlier decisions over its scope. The list is the history: nothing
- * is rewritten, and the latest decision about a line is the one that holds.
+ * `manual` and `exempt` are decisions over lines or a whole file. `accept-agent` and
+ * `reject-agent` are the person's decision about a delegated review (a `job` scope, DSP-193,
+ * Niclas's decision of 10 November 2026): only an accepted assessment counts its assessed
+ * lines as reviewed through that delegation. `clear` withdraws earlier decisions over its
+ * scope. The list is the history: nothing is rewritten, and the latest decision about a
+ * line, or about a job, is the one that holds.
  */
 export interface PairMark {
   readonly id: string;
-  readonly op: 'manual' | 'exempt' | 'clear';
+  readonly op: 'manual' | 'exempt' | 'clear' | 'accept-agent' | 'reject-agent';
   readonly scope: MarkScope;
   readonly reason: string;
   readonly at: string;
 }
 
 /**
- * A review an agent actually performed and that was recorded with its result.
- *
- * Only such a record makes a line agent-reviewed. A walk passing a line, an explanation
- * about it or a discussion of it is not one. Nothing in DSpatch writes these yet: the
- * existing model reserves delegated agent review and refuses to save it, so this list is
- * read and drawn, and stays empty until a recorded agent review exists.
+ * A line the agent assessed as acceptable in a delegated review, recorded with the job's
+ * result (DSP-152). It is the agent's assessment: a line counts as reviewed through it only
+ * once the person has accepted that job's assessment (DSP-193). A walk passing a line, an
+ * explanation about it or a discussion of it is never one.
  */
 export interface AgentReview {
   readonly id: string;
@@ -1291,8 +1302,18 @@ export function scopeFrom(raw: unknown): MarkScope | null {
   if (isRecordObject(raw) && raw['kind'] === 'file') {
     return typeof raw['fileKey'] === 'string' && raw['fileKey'] !== '' ? { kind: 'file', fileKey: raw['fileKey'] } : null;
   }
+  if (isRecordObject(raw) && raw['kind'] === 'job') {
+    return typeof raw['jobId'] === 'string' && raw['jobId'] !== '' ? { kind: 'job', jobId: raw['jobId'] } : null;
+  }
   return rangeFrom(raw);
 }
+
+/** Whether an op may be recorded over a scope: a decision about a job is accept, reject or clear; lines and files take the rest. */
+export function markFits(op: PairMark['op'], scope: MarkScope): boolean {
+  return scope.kind === 'job' ? op === 'accept-agent' || op === 'reject-agent' || op === 'clear' : op === 'manual' || op === 'exempt' || op === 'clear';
+}
+
+export const MARK_OPS: readonly PairMark['op'][] = ['manual', 'exempt', 'clear', 'accept-agent', 'reject-agent'];
 
 function positionFrom(raw: unknown): PairPosition {
   if (!isRecordObject(raw)) {
@@ -1332,8 +1353,8 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity, id = '
       continue;
     }
     const scope = scopeFrom(entry['scope']);
-    const op = entry['op'];
-    if (scope === null || (op !== 'manual' && op !== 'exempt' && op !== 'clear') || typeof entry['id'] !== 'string') {
+    const op = (MARK_OPS as readonly unknown[]).includes(entry['op']) ? (entry['op'] as PairMark['op']) : null;
+    if (scope === null || op === null || !markFits(op, scope) || typeof entry['id'] !== 'string') {
       continue;
     }
     marks.push({
@@ -1602,12 +1623,19 @@ function rangeHolds(range: LineRange, line: Pick<ChangedLine, 'side' | 'path' | 
 export interface LineStatus {
   /** The reviewer's latest decision about the line, or `null` when none holds. */
   readonly decision: PairMark | null;
-  /** Every recorded agent review over the line. */
+  /** Every recorded agent review over the line: the agent's assessment, decided on or not. */
   readonly agent: readonly AgentReview[];
+  /** Of those, the assessments the person has accepted (DSP-193): the only ones that count. */
+  readonly accepted: readonly AgentReview[];
+  /** Of those, the assessments the person has not decided on yet. */
+  readonly awaiting: readonly AgentReview[];
 }
 
-/** The status drawn in the strip: manual wins over agent; exempted is the person's decision. */
-export type StripStatus = 'manual' | 'agent' | 'exempt' | 'none';
+/**
+ * The status drawn in the strip: manual wins over agent; exempted is the person's decision;
+ * `agent` is an assessment the person accepted; `assessed` one the person has not decided on.
+ */
+export type StripStatus = 'manual' | 'agent' | 'assessed' | 'exempt' | 'none';
 
 export function stripStatusOf(status: LineStatus): StripStatus {
   if (status.decision?.op === 'manual') {
@@ -1616,26 +1644,63 @@ export function stripStatusOf(status: LineStatus): StripStatus {
   if (status.decision?.op === 'exempt') {
     return 'exempt';
   }
-  return status.agent.length > 0 ? 'agent' : 'none';
+  if (status.accepted.length > 0) {
+    return 'agent';
+  }
+  return status.awaiting.length > 0 ? 'assessed' : 'none';
 }
 
 /**
- * Whether a line is handled, by the one rule (30 October 2026): a decision of the person's
- * (reviewed or exempted), or an approval from a review the person delegated, which carries
- * the job of that mandate. Approvals exist only for what a finished delegated review
- * approved within its scope: a failed, stopped, insufficient or unconfirmed job, a walk, an
- * explanation or a discussion approves nothing.
+ * Whether a line is handled: a decision of the person's (reviewed or exempted), or an
+ * assessment from a review the person delegated **and then accepted** (Niclas's decision of
+ * 10 November 2026, DSP-193, which changes the one rule of 30 October 2026 for the agent's
+ * part). A delegated review's result by itself handles nothing: it is the agent's assessment,
+ * awaiting the person's; a failed, stopped, insufficient or unconfirmed job, a walk, an
+ * explanation or a discussion assesses nothing either.
  */
 export function isHandled(status: LineStatus): boolean {
   if (status.decision !== null) {
     return true;
   }
-  return status.agent.some(isDelegatedApproval);
+  return status.accepted.length > 0;
 }
 
-/** An agent's approval that counts: recorded by a review the person delegated. */
+/** An agent's assessment that can count: recorded by a review the person delegated. */
 export function isDelegatedApproval(review: Pick<AgentReview, 'jobId'>): boolean {
   return review.jobId !== undefined;
+}
+
+/** The person's latest decision about a delegated review, or `null` when none holds (DSP-193). */
+export function delegationDecisionOf(record: Pick<PairRecord, 'marks'>, jobId: string): PairMark | null {
+  let decision: PairMark | null = null;
+  for (const mark of record.marks) {
+    if (mark.scope.kind === 'job' && mark.scope.jobId === jobId) {
+      decision = mark.op === 'clear' ? null : mark;
+    }
+  }
+  return decision;
+}
+
+/** The delegated reviews whose assessment the person has accepted. */
+export function acceptedJobsOf(record: Pick<PairRecord, 'marks'>): ReadonlySet<string> {
+  const latest = new Map<string, PairMark['op']>();
+  for (const mark of record.marks) {
+    if (mark.scope.kind === 'job') {
+      latest.set(mark.scope.jobId, mark.op);
+    }
+  }
+  return new Set([...latest].filter(([, op]) => op === 'accept-agent').map(([jobId]) => jobId));
+}
+
+/** The delegated reviews the person has decided about, accepted or not. */
+export function decidedJobsOf(record: Pick<PairRecord, 'marks'>): ReadonlySet<string> {
+  const latest = new Map<string, PairMark['op']>();
+  for (const mark of record.marks) {
+    if (mark.scope.kind === 'job') {
+      latest.set(mark.scope.jobId, mark.op);
+    }
+  }
+  return new Set([...latest].filter(([, op]) => op !== 'clear').map(([jobId]) => jobId));
 }
 
 /** What has been decided about one line: the latest decision over it, and agent reviews. */
@@ -1649,7 +1714,15 @@ export function lineStatusOf(
       decision = mark.op === 'clear' ? null : mark;
     }
   }
-  return { decision, agent: record.agentReviews.filter((review) => rangeHolds(review.scope, line)) };
+  const agent = record.agentReviews.filter((review) => rangeHolds(review.scope, line));
+  const accepted = acceptedJobsOf(record);
+  const decided = decidedJobsOf(record);
+  return {
+    decision,
+    agent,
+    accepted: agent.filter((review) => review.jobId !== undefined && accepted.has(review.jobId)),
+    awaiting: agent.filter((review) => review.jobId !== undefined && !decided.has(review.jobId)),
+  };
 }
 
 /** The status of every changed line of a file, keyed by {@link lineKey}. */
@@ -1678,8 +1751,10 @@ export interface FileProgress {
   readonly handled: number;
   readonly manual: number;
   readonly exempted: number;
-  /** Lines handled only through a recorded agent review. */
+  /** Lines handled only through a delegated review the person accepted. */
   readonly agent: number;
+  /** Lines not handled that an agent assessed as acceptable in a review the person has not decided on (DSP-193). */
+  readonly assessed: number;
   /** Handled percentage, rounded down so a file never reads 100 before it is done. */
   readonly percent: number;
   /** Every changed line is handled under the requirement, or a whole-file decision holds. */
@@ -1694,8 +1769,12 @@ export function fileProgressOf(file: PairFile, record: PairRecord): FileProgress
   let manual = 0;
   let exempted = 0;
   let agent = 0;
+  let assessed = 0;
   for (const status of statuses.values()) {
     if (!isHandled(status)) {
+      if (status.awaiting.length > 0) {
+        assessed += 1;
+      }
       continue;
     }
     handled += 1;
@@ -1715,6 +1794,7 @@ export function fileProgressOf(file: PairFile, record: PairRecord): FileProgress
     manual,
     exempted,
     agent,
+    assessed,
     percent: total === 0 ? 0 : Math.floor((handled * 100) / total),
     done: total === 0 ? wholeFile !== null : handled === total,
     wholeFile,
@@ -1735,11 +1815,9 @@ export interface FileReviewFacts {
 export function fileReviewFactsOf(file: PairFile, record: PairRecord): FileReviewFacts {
   const agents = new Set<string>();
   for (const status of lineStatusesOf(file, record).values()) {
-    if (status.decision === null && isHandled(status)) {
-      for (const review of status.agent) {
-        if (isDelegatedApproval(review)) {
-          agents.add(review.reviewer === '' ? 'Agent' : review.reviewer);
-        }
+    if (status.decision === null) {
+      for (const review of status.accepted) {
+        agents.add(review.reviewer === '' ? 'Agent' : review.reviewer);
       }
     }
   }

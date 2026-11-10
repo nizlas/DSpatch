@@ -869,7 +869,8 @@ async function main() {
   const remaining = await diff.ev(`${q('pair-remaining')}.textContent`);
   check('Files changed says what remains apart from coverage', /open problem/.test(remaining) && /verification gap/.test(remaining) && /open question/.test(remaining), remaining);
   const verdict = await diff.ev(`${q('agent-review-coverage')}?.textContent ?? ''`);
-  check('the review result states coverage as a count, not "Whole part approved"', /\d+\/\d+ changed lines reviewed and approved by the agent/.test(verdict) && !/Whole part approved/.test(await diff.ev('document.body.innerText')), verdict);
+  // DSP-193: the report says what the agent examined and assessed, awaiting the person; it approves nothing.
+  check('the review result states what the agent examined and assessed as a count, awaiting the person, not an approval', /examined \d+ of \d+ changed lines in this part and assessed \d+ as acceptable/.test(verdict) && /awaiting your assessment/.test(await diff.ev(`${q('agent-review-state')}?.textContent ?? ''`)) && !/Whole part approved|approved by the agent/.test(await diff.ev('document.body.innerText')), verdict);
   check('the file row says how many findings are open', (await diff.ev(`${q('pair-file-findings')}?.textContent ?? ''`)).includes('open finding'), await diff.ev(`${q('pair-file-findings')}?.textContent ?? ''`));
   const missingHere = await diff.ev(`document.querySelectorAll('[data-ev="thread-missing"]').length`);
   note('threads over the review or at no file in Files changed', `${String(await diff.ev(`document.querySelectorAll('[data-ev="pair-review-threads"] [data-ev="review-thread"]').length`))} card(s); missing places shown here: ${String(missingHere)}`);

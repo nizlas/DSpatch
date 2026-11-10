@@ -22,35 +22,57 @@ const result = (change: Partial<DelegationResult>): DelegationResult => ({ asses
 
 const problem = (text: string, location: LineRange | null = null, more: Partial<AgentFinding> = {}): AgentFinding => ({ severity: 'problem', text, location, ...more });
 
-describe('what was approved', () => {
-  it('calls a part whole only when every changed line in it is approved', () => {
+describe("what the agent examined and assessed, and the person's decision (DSP-193)", () => {
+  it('leads with the state: awaiting the person while nothing is decided, and never a decision of theirs', () => {
     const view = delegatedReviewView(result({ approved: [range(10, 19)] }), scope, files);
     assert.equal(view.standing, 'whole');
-    assert.equal(view.approvedLine, '10/10 changed lines reviewed and approved by the agent.');
-    assert.equal(view.attentionLine, 'Nothing else was reported as needing attention.');
+    assert.equal(view.decision, 'awaiting');
+    assert.equal(view.standingWords, 'awaiting your assessment');
+    assert.equal(view.stateLine, 'Agent review complete — awaiting your assessment. Nothing counts as reviewed until you accept it.');
+    assert.equal(view.examinedLine, 'The agent examined 10 of 10 changed lines in this part and assessed 10 as acceptable.');
+    assert.equal(view.attentionLine, 'The agent reported nothing else as needing attention.');
+    assert.equal(view.acceptable, true);
+    assert.doesNotMatch(`${view.stateLine} ${view.examinedLine}`, /approved/, 'the agent approves nothing; it assesses');
   });
 
-  it('keeps a partial approval apart, with what remains, whatever the agent says', () => {
+  it('reads the person\'s decision from the mark, with its day and note, and keeps the extent apart from it', () => {
+    const accepted = delegatedReviewView(result({ approved: [range(10, 13)] }), scope, files, { id: 'd', op: 'accept-agent', scope: { kind: 'job', jobId: 'j' }, reason: 'Fine for the tests.', at: '2026-11-10T12:00:00.000Z' });
+    assert.equal(accepted.decision, 'accepted');
+    assert.equal(accepted.standing, 'partial', 'accepting does not make a partial assessment whole');
+    assert.equal(accepted.standingWords, 'accepted by you');
+    assert.equal(accepted.stateLine, 'Accepted by you on 2026-11-10: the lines the agent assessed count as reviewed through this delegation. Your note: Fine for the tests.');
+    const rejected = delegatedReviewView(result({ approved: [range(10, 13)] }), scope, files, { id: 'd', op: 'reject-agent', scope: { kind: 'job', jobId: 'j' }, reason: '', at: '' });
+    assert.equal(rejected.decision, 'rejected');
+    assert.equal(rejected.stateLine, 'Not accepted by you: nothing from this review counts as reviewed.');
+    const withdrawn = delegatedReviewView(result({ approved: [range(10, 13)] }), scope, files, { id: 'd', op: 'clear', scope: { kind: 'job', jobId: 'j' }, reason: '', at: '' });
+    assert.equal(withdrawn.decision, 'awaiting');
+  });
+
+  it('keeps a partial assessment apart, with what the agent reported, whatever the agent says', () => {
     const view = delegatedReviewView(result({ approved: [range(10, 13)], summary: 'Everything is approved.', findings: [problem('Broken.', range(14, 14))], uncertainties: ['Unknown caller.'] }), scope, files);
     assert.equal(view.standing, 'partial');
-    assert.equal(view.approvedLine, '4/10 changed lines reviewed and approved by the agent.');
-    assert.equal(view.attentionLine, 'Needs attention: 6 changed lines not approved, 1 problem, 1 thing not established.');
-    assert.deepEqual(view.notApproved?.map((entry) => [entry.start, entry.end]), [[14, 19]]);
+    assert.equal(view.examinedLine, 'The agent examined 10 of 10 changed lines in this part and assessed 4 as acceptable. 6 changed lines of the part are not assessed acceptable.');
+    assert.equal(view.attentionLine, 'Reported by the agent: 1 problem · 1 verification gap.');
+    assert.deepEqual(view.notAssessed?.map((entry) => [entry.start, entry.end]), [[14, 19]]);
     assert.equal(view.agentSummary, 'Everything is approved.', 'shown as its words, under the statement');
   });
 
-  it('never says whole when the changed lines are not known', () => {
+  it('never says whole, and invents no figure, when the changed lines are not known', () => {
     const view = delegatedReviewView(result({ approved: [range(10, 19)] }), scope, null);
     assert.equal(view.standing, 'partial');
-    assert.match(view.approvedLine, /not known here/);
-    assert.equal(view.notApproved, null);
+    assert.equal(view.examinedLine, 'The agent examined 10 changed lines and assessed 10 as acceptable. Whether that is all of this part is not known here.');
+    assert.equal(view.notAssessed, null);
   });
 
-  it('says nothing was approved for an insufficient review and for a review that approved nothing', () => {
-    assert.equal(delegatedReviewView(result({ insufficient: true }), scope, files).standing, 'insufficient');
+  it('offers nothing to accept for an insufficient review or one that assessed nothing', () => {
+    const insufficient = delegatedReviewView(result({ insufficient: true }), scope, files);
+    assert.equal(insufficient.standing, 'insufficient');
+    assert.equal(insufficient.acceptable, false);
+    assert.match(insufficient.stateLine, /nothing to accept/);
     const none = delegatedReviewView(result({}), scope, files);
     assert.equal(none.standing, 'none');
-    assert.equal(none.approvedLine, 'Nothing approved in this part.');
+    assert.equal(none.acceptable, false);
+    assert.equal(none.standingWords, 'nothing assessed acceptable');
   });
 });
 

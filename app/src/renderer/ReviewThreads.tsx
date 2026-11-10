@@ -116,10 +116,11 @@ function ThreadHead({ thread, replies, open, onToggle }: { readonly thread: Revi
   );
 }
 
-export function ThreadCard({ thread, inline = false }: { readonly thread: ReviewThread; readonly inline?: boolean }): JSX.Element | null {
+export function ThreadCard({ thread, inline = false, defaultOpen = false }: { readonly thread: ReviewThread; readonly inline?: boolean; readonly defaultOpen?: boolean }): JSX.Element | null {
   const actions = useContext(ThreadContext);
-  const closed = thread.status === 'resolved' || thread.status === 'dismissed';
-  const [open, setOpen] = useState(() => folded.get(thread.id) === undefined ? !closed : !folded.get(thread.id));
+  // DSP-193: folded until the person opens it (or chooses it), and left as they left it in
+  // this window: an update of the record, a new result or a move between steps reopens nothing.
+  const [open, setOpen] = useState(() => (folded.get(thread.id) === undefined ? defaultOpen : !folded.get(thread.id)));
   const [draft, setDraftState] = useState(() => drafts.get(thread.id) ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -505,7 +506,8 @@ export function useDiscussionMessages(): readonly DiscussionMessage[] {
  */
 export function ThreadIndex({ threads, expand = false }: { readonly threads: readonly ReviewThread[]; readonly expand?: boolean }): JSX.Element | null {
   const actions = useContext(ThreadContext);
-  const [opened, setOpened] = useState<string | null>(null);
+  // DSP-193: each line opens and closes on its own; opening one never closes another.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const [showClosed, setShowClosed] = useState(false);
   if (actions === null || threads.length === 0) {
     return null;
@@ -523,10 +525,18 @@ export function ThreadIndex({ threads, expand = false }: { readonly threads: rea
                 type="button"
                 className="rv-thread-index-line"
                 data-ev="thread-index-line"
-                aria-expanded={expand ? opened === thread.id : undefined}
+                aria-expanded={expand ? opened.has(thread.id) : undefined}
                 onClick={() => {
                   if (expand) {
-                    setOpened(opened === thread.id ? null : thread.id);
+                    setOpened((before) => {
+                      const next = new Set(before);
+                      if (next.has(thread.id)) {
+                        next.delete(thread.id);
+                      } else {
+                        next.add(thread.id);
+                      }
+                      return next;
+                    });
                   } else {
                     actions.select(thread);
                   }
@@ -537,9 +547,9 @@ export function ThreadIndex({ threads, expand = false }: { readonly threads: rea
                 </span>
                 <span className="rv-thread-kind">{KIND_WORDS[thread.kind]}</span>
                 <span className="rv-thread-title">{thread.title}</span>
-                <span className="rv-sub">{first !== undefined ? anchorWords(first) : thread.file !== null ? thread.file.path : 'the review'}</span>
+                <span className="rv-sub rv-thread-where">{first !== undefined ? anchorWords(first) : thread.file !== null ? thread.file.path : 'the review'}</span>
               </button>
-              {expand && opened === thread.id && <ThreadCard thread={thread} />}
+              {expand && opened.has(thread.id) && <ThreadCard thread={thread} defaultOpen />}
             </li>
           );
         })}

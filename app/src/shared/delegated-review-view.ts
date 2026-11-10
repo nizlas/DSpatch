@@ -1,23 +1,30 @@
 /**
- * A delegated review's result as a person reads it (DSP-158): what was approved and what
- * remains first, then the findings, each with a heading and a short explanation, repeats
- * gathered. Pure, and only a reading: nothing here changes a result, a decision or what
- * counts as approved, and everything the agent said stays reachable from what it returns.
+ * A delegated review's result as a person reads it (DSP-158, reshaped by DSP-193): the
+ * state first (the agent's assessment awaiting the person's decision, accepted by the
+ * person, or not accepted), then what the agent examined and what it assessed acceptable,
+ * then the findings, each with a heading and a short explanation, repeats gathered. Pure,
+ * and only a reading: nothing here changes a result, a decision or what counts as
+ * reviewed, and everything the agent said stays reachable from what it returns.
  *
- * **What was approved is DSpatch's statement, read from the checked ranges.** The agent's
- * own words are shown beside it as its words; they never decide whether a part reads as
- * wholly approved. A part is wholly approved only when every changed line in it is among
- * the approved lines. Where the changed lines are not known, it is never said to be whole.
+ * **The agent's assessment is the agent's; the decision is the person's** (Niclas's
+ * decision of 10 November 2026). What the agent examined and assessed is DSpatch's
+ * statement, read from the checked ranges; the agent's own words are shown beside it as
+ * its words and never decide the extent. A part is wholly assessed only when every changed
+ * line in it is among the assessed lines; where the changed lines are not known, no exact
+ * coverage is made up.
  *
  * **Older results read too.** They have one `text` for each finding and no summary, so the
- * heading is the first sentence and the summary the start of the assessment. No new field
- * is required of them.
+ * heading is the first sentence and the summary the start of the assessment. A result the
+ * person never decided about reads as awaiting their assessment, whenever it was made.
  */
 
-import { changedLinesOf, lineKey, rangesOf, type AgentFinding, type DelegationResult, type DelegationScope, type LineRange, type PairFile } from './review-pair';
+import { changedLinesOf, lineKey, rangesOf, type AgentFinding, type DelegationResult, type DelegationScope, type LineRange, type PairFile, type PairMark } from './review-pair';
 
-/** How the delegated part stands. `partial` is never `whole` with a smaller number. */
+/** How far the agent's assessment reaches over the delegated part. `partial` is never `whole` with a smaller number. */
 export type ReviewStanding = 'whole' | 'partial' | 'none' | 'insufficient';
+
+/** The person's decision about the delegated review. */
+export type DecisionState = 'awaiting' | 'accepted' | 'rejected';
 
 export interface FindingGroup {
   readonly severity: AgentFinding['severity'];
@@ -34,11 +41,14 @@ export interface FindingGroup {
 
 export interface DelegatedReviewView {
   readonly standing: ReviewStanding;
-  /** Three words for the folded line: the same fact as `approvedLine`. */
+  readonly decision: DecisionState;
+  /** A few words for the folded line: the decision's state, or why there is nothing to decide. */
   readonly standingWords: string;
-  /** What was approved, from the checked ranges. */
-  readonly approvedLine: string;
-  /** What remains or needs attention, or that nothing does. */
+  /** The state, first: awaiting the person's assessment, accepted or not accepted, with the date and reason when there are any. */
+  readonly stateLine: string;
+  /** What the agent examined and what it assessed acceptable, from the checked ranges; no figure the material does not support. */
+  readonly examinedLine: string;
+  /** What the result itself reports as needing attention (problems, questions, things not established), or that nothing does. */
   readonly attentionLine: string;
   /** The agent's own short words, or `''`. */
   readonly agentSummary: string;
@@ -47,8 +57,10 @@ export interface DelegatedReviewView {
   /** Problems first, then questions, then notes. */
   readonly findings: readonly FindingGroup[];
   readonly uncertainties: readonly string[];
-  /** Changed lines of the part that were not approved, or `null` when they are not known. */
-  readonly notApproved: readonly LineRange[] | null;
+  /** Changed lines of the part the agent did not assess acceptable, or `null` when they are not known. */
+  readonly notAssessed: readonly LineRange[] | null;
+  /** Whether the person can accept: the agent assessed something, and the review was not insufficient. */
+  readonly acceptable: boolean;
 }
 
 const ORDER: readonly AgentFinding['severity'][] = ['problem', 'question', 'note'];
@@ -158,8 +170,8 @@ function inRange(range: LineRange, line: { readonly side: LineRange['side']; rea
   return range.side === line.side && range.path === line.path && line.line >= range.start && line.line <= range.end;
 }
 
-/** The changed lines of the part that were not approved, or `null` when `files` is not known. */
-export function notApprovedOf(result: DelegationResult, scope: DelegationScope | null, files: readonly PairFile[] | null): { readonly total: number; readonly left: readonly LineRange[] } | null {
+/** The changed lines of the part the agent did not assess acceptable, or `null` when `files` is not known. */
+export function notAssessedOf(result: DelegationResult, scope: DelegationScope | null, files: readonly PairFile[] | null): { readonly total: number; readonly left: readonly LineRange[] } | null {
   if (scope === null || files === null || files.length === 0) {
     return null;
   }
@@ -171,42 +183,74 @@ export function notApprovedOf(result: DelegationResult, scope: DelegationScope |
   return { total: unique.length, left: rangesOf(unique.filter((line) => !result.approved.some((range) => inRange(range, line)))) };
 }
 
-export function delegatedReviewView(result: DelegationResult, scope: DelegationScope | null, files: readonly PairFile[] | null): DelegatedReviewView {
+/** The day of an ISO time, for a sentence; `''` when it cannot be read. */
+function dayOf(iso: string): string {
+  return /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : '';
+}
+
+/** How the person's decision about the job reads: `null` or a withdrawn decision is awaiting. */
+export function decisionStateOf(decision: PairMark | null): DecisionState {
+  return decision?.op === 'accept-agent' ? 'accepted' : decision?.op === 'reject-agent' ? 'rejected' : 'awaiting';
+}
+
+export function delegatedReviewView(result: DelegationResult, scope: DelegationScope | null, files: readonly PairFile[] | null, decision: PairMark | null = null): DelegatedReviewView {
   const findings = gatherFindings(result.findings);
   const uncertainties = [...new Map(result.uncertainties.map((entry) => [sameKey(entry), entry])).values()];
-  const approved = lineCount(result.approved);
-  const known = notApprovedOf(result, scope, files);
+  const examined = lineCount(result.reviewed);
+  const assessed = lineCount(result.approved);
+  const known = notAssessedOf(result, scope, files);
   const remaining = known === null ? 0 : lineCount(known.left);
-  const standing: ReviewStanding = result.insufficient ? 'insufficient' : approved === 0 ? 'none' : known !== null && remaining === 0 ? 'whole' : 'partial';
-  const approvedLine =
+  const standing: ReviewStanding = result.insufficient ? 'insufficient' : assessed === 0 ? 'none' : known !== null && remaining === 0 ? 'whole' : 'partial';
+  const state = decisionStateOf(decision);
+  const acceptable = standing !== 'insufficient' && assessed > 0;
+  const day = decision === null ? '' : dayOf(decision.at);
+  const reason = decision === null || decision.reason.trim() === '' ? '' : ` Your note: ${decision.reason.trim()}`;
+  const stateLine =
+    state === 'accepted'
+      ? `Accepted by you${day === '' ? '' : ` on ${day}`}: the lines the agent assessed count as reviewed through this delegation.${reason}`
+      : state === 'rejected'
+        ? `Not accepted by you${day === '' ? '' : ` on ${day}`}: nothing from this review counts as reviewed.${reason}`
+        : standing === 'insufficient'
+          ? 'Agent review complete: the agent could not judge this part from the code it could read, so there is nothing to accept.'
+          : assessed === 0
+            ? 'Agent review complete: the agent assessed nothing as acceptable, so there is nothing to accept.'
+            : 'Agent review complete — awaiting your assessment. Nothing counts as reviewed until you accept it.';
+  const examinedLine =
     standing === 'insufficient'
-      ? 'Nothing approved: the agent could not judge this part from the code it could read.'
-      : standing === 'none'
-        ? 'Nothing approved in this part.'
-        : known === null
-          ? `${lines(approved)} reviewed and approved by the agent. Whether that is all of this part is not known here.`
-          : // DSP-175: the coverage as a count, never a dominant "whole part approved" that
-            // reads as if nothing remained; what remains is said apart from it.
-            `${String(approved)}/${lines(known.total)} reviewed and approved by the agent.`;
+      ? `The agent examined ${lines(examined)} and found the material not enough to judge this part; it assessed none as acceptable.`
+      : known === null
+        ? `The agent examined ${lines(examined)} and assessed ${assessed === 0 ? 'none' : String(assessed)} as acceptable. Whether that is all of this part is not known here.`
+        : `The agent examined ${String(examined)} of ${lines(known.total)} in this part and assessed ${assessed === 0 ? 'none' : String(assessed)} as acceptable.${remaining > 0 && assessed > 0 ? ` ${lines(remaining)} of the part ${remaining === 1 ? 'is' : 'are'} not assessed acceptable.` : ''}`;
   const count = (severity: AgentFinding['severity']): number => findings.filter((finding) => finding.severity === severity).length;
   const attention = [
-    ...(remaining > 0 ? [`${lines(remaining)} not approved`] : []),
     ...(count('problem') > 0 ? [counted(count('problem'), 'problem', 'problems')] : []),
-    ...(count('question') > 0 ? [counted(count('question'), 'question', 'questions')] : []),
-    ...(uncertainties.length > 0 ? [counted(uncertainties.length, 'thing not established', 'things not established')] : []),
+    ...(count('question') > 0 ? [counted(count('question'), 'open question', 'open questions')] : []),
+    ...(uncertainties.length > 0 ? [counted(uncertainties.length, 'verification gap', 'verification gaps')] : []),
   ];
   const assessment = result.assessment.trim();
   const fromAssessment = clipped(firstSentence(assessment), SUMMARY_CHARS);
   const agentSummary = result.summary?.trim() || fromAssessment;
   return {
     standing,
-    standingWords: standing === 'whole' ? 'all lines approved' : standing === 'partial' ? 'partly approved' : standing === 'none' ? 'nothing approved' : 'not enough to judge',
-    approvedLine,
-    attentionLine: attention.length === 0 ? 'Nothing else was reported as needing attention.' : `Needs attention: ${attention.join(', ')}.`,
+    decision: state,
+    standingWords:
+      state === 'accepted'
+        ? 'accepted by you'
+        : state === 'rejected'
+          ? 'not accepted by you'
+          : standing === 'insufficient'
+            ? 'not enough to judge'
+            : assessed === 0
+              ? 'nothing assessed acceptable'
+              : 'awaiting your assessment',
+    stateLine,
+    examinedLine,
+    attentionLine: attention.length === 0 ? 'The agent reported nothing else as needing attention.' : `Reported by the agent: ${attention.join(' · ')}.`,
     agentSummary,
     reasoning: tidy(assessment) === tidy(agentSummary) ? '' : assessment,
     findings,
     uncertainties,
-    notApproved: known?.left ?? null,
+    notAssessed: known?.left ?? null,
+    acceptable,
   };
 }

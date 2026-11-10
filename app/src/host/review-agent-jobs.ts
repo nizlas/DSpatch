@@ -1661,12 +1661,13 @@ export class ReviewAgentJobs {
     }));
     const approvedLines = result.approved.reduce((total, range) => total + range.end - range.start + 1, 0);
     const problems = result.findings.filter((finding) => finding.severity === 'problem').length;
+    // DSP-193: the agent's assessment, awaiting the person's; nothing counts as reviewed by it.
     const note = result.insufficient
-      ? 'The agent found the material not enough to judge this part, so nothing was approved.'
-      : `${String(approvedLines)} line(s) approved by the agent` +
-        (problems > 0 ? `, ${String(problems)} problem(s) found` : '') +
-        (result.uncertainties.length > 0 ? `, ${String(result.uncertainties.length)} uncertaint${result.uncertainties.length === 1 ? 'y' : 'ies'}` : '') +
-        '.';
+      ? 'The agent found the material not enough to judge this part; it assessed nothing, and nothing counts as reviewed.'
+      : `The agent assessed ${String(approvedLines)} line(s) as acceptable` +
+        (problems > 0 ? `, found ${String(problems)} problem(s)` : '') +
+        (result.uncertainties.length > 0 ? `, left ${String(result.uncertainties.length)} verification gap(s)` : '') +
+        '; awaiting your assessment.';
     // The approvals and the job's result are written together: a result without its
     // approvals, or approvals without the result that grounds them, never exist.
     if (!this.accepts(live) || live.cancelRequested) {

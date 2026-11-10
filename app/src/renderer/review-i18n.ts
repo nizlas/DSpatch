@@ -153,6 +153,10 @@ export interface ReviewWords {
   readonly markWalked: string;
   readonly walkedUndo: string;
   readonly walkedNote: string;
+  /** DSP-193: the step's Review section lists the agent's threads at the step's places, and says where the walk's others are. */
+  readonly findingsAtStep: string;
+  readonly findingsAtPlace: string;
+  readonly findingsElsewhere: (count: number) => string;
   readonly outsideWalk: string;
   readonly backTo: (stepId: string) => string;
   /** DSP-185: before why a step's several places are shown together. */
@@ -452,6 +456,9 @@ const sv: ReviewWords = {
     noNotes: 'Inga.',
     notSent: 'Frågan nådde aldrig leverantören.',
   },
+  findingsAtStep: 'Agentens fynd vid detta steg',
+  findingsAtPlace: 'Agentens fynd vid detta ställe',
+  findingsElsewhere: (count) => (count === 1 ? 'Ytterligare 1 fynd från walkens granskning gäller andra steg eller walken som helhet; det finns i rapporten ovan.' : `Ytterligare ${String(count)} fynd från walkens granskning gäller andra steg eller walken som helhet; de finns i rapporten ovan.`),
   markWalked: 'Markera steget som genomgånget',
   walkedUndo: 'Genomgånget ✓ – ångra',
   walkedNote: 'Genomgånget är din egen markering av framsteg. Det godkänner ingen kod.',
@@ -772,6 +779,9 @@ const en: ReviewWords = {
     noNotes: 'None.',
     notSent: 'The question never reached the provider.',
   },
+  findingsAtStep: "The agent's findings at this step",
+  findingsAtPlace: "The agent's findings at this place",
+  findingsElsewhere: (count) => (count === 1 ? "1 more finding of this walk's review is about another step or the walk as a whole; it is in the report above." : `${String(count)} more findings of this walk's review are about other steps or the walk as a whole; they are in the report above.`),
   markWalked: 'Mark this step walked through',
   walkedUndo: 'Walked through ✓ – undo',
   walkedNote: 'Walked through is your own mark of progress. It approves no code.',
