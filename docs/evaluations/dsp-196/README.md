@@ -10,6 +10,7 @@ Material for [DSP-196](../../../backlog/tasks/dsp-196%20-%20Calibration-trial-wh
 | `trial/` | 48 answers (3 steps; Essentials, Standard, Teacher; writer and profile switch; baseline and variant; Essentials sampled twice), the manifest, `variant.json` with the baseline and variant texts, and four of the prompts. |
 | `diagnostic-no-brief/` | 6 answers: the Essentials writer under the variant with the planner's briefs taken out, two samples per step. |
 | `round-2/`, `texts-round-2.md` | Round 2: the planner's brief and step summary rewritten as orientation with the facts kept as notes; Essentials under the oriented brief with the product's readers (B) and with the proposed readers (C), compared with round 1's cells. |
+| `call-W1.2-essentials-C-1.md` | One model call whole: round 2, Essentials, W1.2, cell C, sample 1. Every request part as sent (system prompt, tool definitions, messages in order, tool calls and results), the full answer, and what the Step panel shows before and behind Show more, from Claude Code's session transcript and the harness log; the email address and home folder masked. |
 
 The example is invented: `app/tests/support/synthetic-exec-debug.ts`, a task that starts the service under debugpy in a dev container that is already running.
 

@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-10 21:21'
-updated_date: '2026-11-10 22:50'
+updated_date: '2026-11-10 23:20'
 labels:
   - review
 dependencies:
@@ -51,4 +51,6 @@ Trial made on 10 November 2026; material and judgment in `docs/evaluations/dsp-1
 - The step summary shown first stays at the operations in every cell.
 - The notes kept the facts available but became a second content list that turned up behind Show more as an inventory.
 - The outcome is weak, so the check of Standard, Teacher and the one-call path was not made and no further prompt round is proposed.
+
+**One call, whole (on Niclas's request):** `docs/evaluations/dsp-196/call-W1.2-essentials-C-1.md` reproduces round 2's Essentials W1.2, cell C, sample 1 from Claude Code's own session transcript, with no new model call: the system prompt Claude Code sent ("You are a Claude agent, built on Anthropic's Claude Agent SDK."), five tool definitions (Glob, Grep, DeferredToolPlaceholder, Read, advisor, although DSpatch asks for Read, Glob and Grep), an account-context reminder and an environment message Claude Code attached on its own, DSpatch's prompt (identical to the harness log), three tool calls with their results, the answer, and its split before and behind Show more by the product's readStepText. Only the thinking text is not recorded.
 <!-- SECTION:NOTES:END -->
