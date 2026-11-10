@@ -1034,7 +1034,7 @@ async function main() {
     const r = await followCheck();
     return r !== null && r.announced && r.ended ? r : false;
   }, 40_000);
-  check('the run view shows the finished run: ended at delivered, every visited node finished, no correction round', followed.live === false && followed.terminal === 'delivered' && followed.nodes.plan === 'finished' && followed.nodes.review === 'finished' && followed.visits.length === 3 && followed.limitations.length === 0, JSON.stringify({ nodes: followed.nodes, visits: followed.visits.length, limitations: followed.limitations }));
+  check('the run view shows the finished run: ended at delivered, every visited node finished, no correction round', followed.live === false && followed.terminal === 'delivered' && followed.nodes.plan === 'finished' && followed.nodes.review === 'finished' && followed.turnNumbers.length >= 4 && followed.blocks.verdict === 1 && followed.limitations.length === 0, JSON.stringify({ nodes: followed.nodes, turns: followed.turnNumbers.length, limitations: followed.limitations }));
   check('the drawing is the editor\'s own: six nodes, the delivered terminal ticked, no editor controls', (await followRead(`JSON.stringify({nodes:document.querySelectorAll('.fw-graph svg .node').length,tick:document.querySelector('[data-node-id="delivered"] .node-ending-tick')!==null,palette:document.querySelector('.editor-palette')!==null})`)) === '{"nodes":6,"tick":true,"palette":false}');
   await followRead(`document.querySelector('[data-ev="follow-liveness"]').click(); true`);
   await poll('the live stream of the finished run', async () => (await followRead(`document.querySelector('[data-ev="follow-stream"]')!==null && document.querySelectorAll('[data-ev="follow-text"]').length > 0`)) === true, 15_000);
