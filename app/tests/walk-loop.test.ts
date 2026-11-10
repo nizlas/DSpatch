@@ -30,6 +30,7 @@ import {
   reviewOutcomeOf,
   reviewPrompt,
   stepRefsOf,
+  stepSignature,
   writeStepPrompt,
   type WalkPlan,
 } from '../src/shared/walk-loop';
@@ -207,6 +208,22 @@ describe('the prompts', () => {
     assert.ok(final.includes('## The final assessment') && final.includes('no further correction follows'));
     assert.ok(final.includes('- W1.2: Thin.'), 'the final assessment recalls the first findings');
   });
+  it('show a step\'s context places to the writer and the reviewer beside its reviewed place (DSP-175)', () => {
+    const withContext = readPlanAnswer({
+      summary: 's',
+      walks: [{ kind: 'walk', title: 'Formatting', purpose: 'p', steps: [{ title: 'The call', summary: 'calls formatCount', brief: 'b', places: [{ label: 'The call', path: 'src/a.ts', side: 'target', start: 1, end: 1 }, { label: 'formatCount', repository: 'count-lib', path: 'src/format.ts', start: 6, end: 12 }] }] }],
+    }).plan;
+    assert.ok(withContext !== null);
+    assert.equal(withContext.walks.walks[0]?.steps[0]?.contextPlaces?.length, 1);
+    const writer = writeStepPrompt({ role: role('write'), plan: withContext, stepId: 'W1.1', profile: 'standard', language: 'en', material, folder, fresh: true, rework: null });
+    assert.ok(writer.includes('formatCount: context repository count-lib, src/format.ts lines 6–12'), 'the writer sees the context place');
+    const reviewer = reviewPrompt({ role: role('review'), plan: withContext, texts: new Map([['W1.1', { body: 'Text.', details: '' }]]), profile: 'standard', language: 'en', material, folder, final: false, earlier: null, fresh: true });
+    assert.ok(reviewer.includes('context repository count-lib'), 'the reviewer sees the context place');
+    const without = readPlanAnswer({ summary: 's', walks: [{ kind: 'walk', title: 'Formatting', purpose: 'p', steps: [{ title: 'The call', summary: 'calls formatCount', places: [{ label: 'The call', path: 'src/a.ts', side: 'target', start: 1, end: 1 }] }] }] }).plan;
+    assert.ok(without !== null);
+    assert.notEqual(stepSignature(withContext.walks.walks[0]!.steps[0]!), stepSignature(without.walks.walks[0]!.steps[0]!), 'a changed context place is a changed step');
+  });
+
   it('read the reviewer\'s verdict into the drawing\'s outcomes', () => {
     const ids = new Set(stepRefsOf(plan.walks).map((ref) => ref.stepId));
     const accept = readReviewAnswer({ assessment: 'fine', verdict: 'accept', findings: [] }, ids, false);

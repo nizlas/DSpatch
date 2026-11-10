@@ -83,6 +83,7 @@ export function stepSignature(step: ProposedStep): string {
   return JSON.stringify({
     title: step.title.trim(),
     places: step.places.map((place) => [place.range.path, place.range.side, place.range.start, place.range.end]),
+    context: (step.contextPlaces ?? []).map((place) => [place.range.repository, place.range.path, place.range.start, place.range.end]),
     together: step.together ?? '',
     revisit: step.revisit ?? '',
   });
@@ -253,6 +254,17 @@ function placeLine(place: ProposedStep['places'][number]): string {
   return `${place.label}: ${range.path} (${range.side === 'base' ? 'From' : 'To'}) lines ${String(range.start)}–${String(range.end)}${from}`;
 }
 
+/** A place in a context repository (DSP-175), shown beside the step's reviewed places; never covered or approved. */
+function contextPlaceLine(place: NonNullable<ProposedStep['contextPlaces']>[number]): string {
+  const range = place.range;
+  return `${place.label}: context repository ${range.repository}, ${range.path} lines ${String(range.start)}–${String(range.end)}${range.commit === '' ? ' at the commit this review recorded for it' : ` at ${range.commit.slice(0, 12)}`}`;
+}
+
+/** Every place a step shows, reviewed places first and context places after them. */
+function placeLines(step: ProposedStep): string[] {
+  return [...step.places.map((place) => `- ${placeLine(place)}`), ...(step.contextPlaces ?? []).map((place) => `- ${contextPlaceLine(place)}`)];
+}
+
 /** The plan as the writer and the reviewer see it: ids, titles, places and briefs, no texts. */
 export function planOutline(plan: WalkPlan, options: { readonly briefs: boolean }): string[] {
   const lines: string[] = [];
@@ -262,8 +274,8 @@ export function planOutline(plan: WalkPlan, options: { readonly briefs: boolean 
     lines.push(`### ${walkId} (${walk.kind}): ${walk.title}`, `Purpose: ${walk.purpose}`, ...(walk.question === '' ? [] : [`Question: ${walk.question}`]));
     for (const ref of refs.filter((entry) => entry.walkIndex === walkIndex)) {
       lines.push(`- ${ref.stepId} ${ref.step.title}${ref.step.summary === '' ? '' : ` — ${ref.step.summary}`}`);
-      for (const place of ref.step.places) {
-        lines.push(`  - ${placeLine(place)}`);
+      for (const line of placeLines(ref.step)) {
+        lines.push(`  ${line}`);
       }
       if (ref.step.together !== undefined) {
         lines.push(`  - Together: ${ref.step.together}`);
@@ -414,7 +426,8 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     `## This step: ${input.stepId} ${ref.step.title}`,
     `Walk ${ref.walkId} (${walk?.kind ?? 'walk'}): ${walk?.title ?? ''}. ${walk?.purpose ?? ''}`,
     ...(ref.step.summary === '' ? [] : [`Summary: ${ref.step.summary}`]),
-    ...ref.step.places.map((place) => `- ${placeLine(place)}`),
+    ...placeLines(ref.step),
+    'The places above are shown beside your text; name functions, types and values in the prose, not these paths and lines.',
     ...(ref.step.together === undefined ? [] : [`Together: ${ref.step.together}`]),
     ...(ref.step.revisit === undefined ? [] : [`Revisit: ${ref.step.revisit}`]),
     ...(brief === undefined ? [] : [`Brief: ${brief}`]),
@@ -511,7 +524,7 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     walksAsRead.push(`### ${walkId} (${walk.kind}): ${walk.title}`, `Purpose: ${walk.purpose}`, '');
     for (const ref of refs.filter((entry) => entry.walkIndex === walkIndex)) {
       const text = input.texts.get(ref.stepId);
-      walksAsRead.push(`#### ${ref.stepId} ${ref.step.title}`, ...ref.step.places.map((place) => `- ${placeLine(place)}`), '', text?.body ?? '(no explanation was written)');
+      walksAsRead.push(`#### ${ref.stepId} ${ref.step.title}`, ...placeLines(ref.step), '', text?.body ?? '(no explanation was written)');
       if (text !== undefined && text.details !== '') {
         walksAsRead.push('', 'Show more:', text.details);
       }
@@ -533,7 +546,7 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     '- Does the text give this reader the help the profile is for: quick orientation at the right level of abstraction, the mechanism made understandable, or the concepts and intermediate reasoning built where they are needed? Length and density are not the measure.',
     '- Is the part after Show more a deepening that continues the first part, not a repetition of it?',
     '- Is an important new implementation walked rather than left behind a function name, and are alternatives presented as alternatives, never as one run?',
-    'Report only shortcomings that matter to the reader\'s understanding, each concrete: the steps it concerns, what falls short, why it matters, and what in the code shows it. A finding about which walks, steps or places exist is "structure" and goes to the planner; one about a step\'s text is "explanation" and goes to the writer. Different good explanations are acceptable: accept without changes when nothing significant falls short, and never ask for a change on a matter of style or preference.',
+    'Report only shortcomings that matter to the reader\'s understanding, each concrete: the steps it concerns, what falls short, why it matters, and what in the code shows it. A finding about which walks, steps or places exist is "structure" and goes to the planner; one about a step\'s text is "explanation" and goes to the writer. A statement about the code that is not true is a shortcoming whatever its size, since the person checks the code through these texts: name it as a finding with the correct reading, even when the rest of the step is right. Different good explanations are acceptable: accept without changes when nothing false and nothing significant falls short, and never ask for a change on a matter of style or preference.',
     ...(input.final
       ? [
           '',
