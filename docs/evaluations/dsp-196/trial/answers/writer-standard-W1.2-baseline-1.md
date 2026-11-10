@@ -1,0 +1,11 @@
+When the developer starts "Debug orders in the dev container", VS Code first looks up the task named by the configuration's `preLaunchTask`. It finds it by matching that string exactly against a task `label`. This task is the one it finds. `tasks.json` is a new file in this change, so before it there was no task at all; the old configuration ran `orders.main` directly.
+
+The task is an ordinary `"type": "shell"` task. It runs `start-debugger.sh` from the workspace's `scripts` folder and has none of the background-task settings. **VS Code therefore treats the task as finished when the script exits, and the exit code decides what happens next.** Exit code 0 lets the debug session go on to attach, which happens in a later step (W1.8). A non-zero exit stops the attach, which W2 follows. The empty `problemMatcher` means VS Code does not scan the script's output for errors. Only the exit code counts, and anything the script prints is just text in the task terminal.
+
+`options.env` sets `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678` in the script's environment. The script reads them in the next step. The port given here has to match `connect.port` in the debug configuration (W1.1), but nothing ties the two together. Both are literal values that someone has to keep in sync by hand.
+
+<!-- dspatch:details -->
+Some details that affect whether this task works:
+
+- **The script is run directly.** `command` is the script's path, not `bash <path>`. The host shell starts it, and its shebang (`#!/usr/bin/env bash`) picks the interpreter. This only works if the file is executable in the checkout and the host's shell can run a bash script. The checkout's file mode can't be seen here, so whether the file is executable is unknown.
+- **"Finished" means the script has exited, not that the service is ready.** The script's last command (W1.7) is a detached `docker exec -d`, so the script exits as soon as that call returns. From this task's point of view, success means the script got as far as asking the container to start debugpy. It doesn't mean debugpy is already listening on `DEBUG_PORT` when VS Code tries to connect.

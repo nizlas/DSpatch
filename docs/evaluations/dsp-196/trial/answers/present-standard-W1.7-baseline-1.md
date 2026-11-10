@@ -1,0 +1,23 @@
+Here the script hands control from VS Code to the container. As we saw in the earlier steps, the script has confirmed that `orders-dev` is running, installed debugpy if it was missing, and prepared `/workspace/logs`. This line starts the service under debugpy. In the base revision none of this existed: the configuration was a plain local `launch` of `orders.main`.
+
+**How the line works.** `docker exec -d` asks Docker to start a new process inside the running container. It returns as soon as Docker has started it, without waiting for it to finish. Because this is the script's last command and `set -euo pipefail` is on, the exit status of `docker exec -d` decides the script's exit status, and so whether the pre-launch task in `tasks.json` succeeds. That status only says whether Docker could create and start the process. It says nothing about whether debugpy then started successfully.
+
+**What runs inside the container:**
+- `python -m debugpy` runs debugpy as a wrapper around the real program, which is named by the trailing `-m orders.main`.
+- `--listen "0.0.0.0:$PORT"` opens the debug-adapter port on every interface in the container. Binding to `0.0.0.0` matters here. Docker forwards the published port `5678:5678` (from `compose.yaml`, [W1.4]) to the container's network interface, not to its loopback. A listener on `127.0.0.1` would not be reachable from the host.
+- `--wait-for-client` stops debugpy before any code in `orders.main` runs, until a debugger attaches. So breakpoints in `main()` can still be hit.
+- `orders.main` resolves because `docker exec` uses the container's default `working_dir`, which is `/workspace`, the bind-mounted repository.
+
+**Two things now run at the same time.** VS Code sees the task end and goes on to connect to `localhost:5678` (next step, [W1.8]). Inside the container, debugpy is still starting up. Nothing in the script waits for the listener to be ready, and nothing checks that debugpy started at all. A wrong module path, a port already in use, or an import error happens in the detached process. Its output never reaches the task terminal, so the only visible symptom is a failed or hanging attach in the next step.
+
+<!-- dspatch:details -->
+**Points that can change the outcome:**
+
+- **Fixed port numbers in three places.** `PORT` defaults from `DEBUG_PORT`, which `tasks.json` sets to `5678`. The attach target in `launch.json` is a literal `5678`, and so is the published mapping in `compose.yaml`. The script's `DEBUG_PORT` override therefore only works if the other two files are changed with it. Otherwise debugpy listens on a port the host cannot reach.
+- **Leftover processes on a second start.** The detached debugpy process is tied to nothing on the host. If a session ends while the service is still running, or the attach never happens and debugpy keeps waiting, the next debug start runs this line again. The new debugpy then tries to bind a port the old one still holds. That is my reading of the code, not something it handles. The script does not look for or stop an existing debugpy process.
+- **Timing of the first connect.** Whether VS Code's first connection can arrive before debugpy is listening depends on how quickly the container process starts compared with the client. The code does not order the two. A failure from this race would look the same as a real startup failure.
+- **Root process.** The process runs as the container's default user, which the script's own comment at lines 18–19 says is root. So anything the service creates under `/workspace/logs` is owned by root, even though the folder itself was handed to the host user in the previous step [W1.6]. That ownership question is what the last step [W1.9] covers.
+
+```dspatch-references
+{"references": [{"label": "Detached debugpy start", "path": "scripts/start-debugger.sh", "side": "target", "start": 23, "end": 24}, {"label": "Strict mode: the last command's status becomes the script's", "path": "scripts/start-debugger.sh", "side": "target", "start": 3, "end": 6}, {"label": "Container runs as root (comment)", "path": "scripts/start-debugger.sh", "side": "target", "start": 18, "end": 21}, {"label": "Task passes DEV_CONTAINER and DEBUG_PORT", "path": ".vscode/tasks.json", "side": "target", "start": 4, "end": 10}, {"label": "Published port, working_dir and bind mount", "step": "W1.4"}, {"label": "VS Code attaches to localhost:5678", "step": "W1.8"}, {"label": "Log folder prepared for the host user", "step": "W1.6"}, {"label": "Service writes its log", "step": "W1.9"}, {"label": "Base: local launch of orders.main", "path": ".vscode/launch.json", "side": "base", "start": 4, "end": 10}], "insufficient": false}
+```

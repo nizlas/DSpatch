@@ -1,0 +1,10 @@
+This task is new in this change. Its `label` is exactly the `preLaunchTask` value from the debug configuration, and that string match is the whole link between the two (W1.1). When the developer starts the configuration, VS Code runs this task first.
+
+The task runs `start-debugger.sh` as an ordinary shell task. It has no `isBackground` setting, so VS Code waits for the script to exit and then judges the task by its exit code. Exit 0 lets the attach go ahead (W1.8). A non-zero exit stops it there (W2). Because of this, **the script must end quickly**. As a later step shows, it does that by leaving the long-running debugpy process behind in the container (W1.7).
+
+`options.env` passes `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678` into the script's environment. The script reads them first, in the next step.
+
+<!-- dspatch:details -->
+- **Empty `problemMatcher`:** VS Code doesn't scan the script's output for errors. Only the exit code decides whether the task succeeded. Without the empty value, VS Code might ask the user to choose a problem matcher when the task runs.
+- **Port and container name in several places:** The script falls back to the same two values if these variables are missing. So the task's values agree with the script's defaults, but they aren't the only source. The port is also written in `connect` and in the compose file. Nothing ties these together, so a change to one has to be repeated by hand in the others.
+- **How the script is started:** `command` points straight at the script file rather than at `bash <script>`. This works only if the file is executable in the checkout and the shell can follow its `#!/usr/bin/env bash` line. That is fine on Linux and macOS. On Windows, the default shell for tasks wouldn't run a `.sh` file this way. The file's executable bit can't be seen from the code here.

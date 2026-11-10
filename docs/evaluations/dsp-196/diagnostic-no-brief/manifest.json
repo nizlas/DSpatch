@@ -1,0 +1,66 @@
+{
+  "phase": "calibration-196",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 10,
+  "base": "c421e0ec005c9be47beddc893fea6a418e4e2524",
+  "target": "500bf376d8c60bfb4c1fb50618b5b8fe80edc51a",
+  "startedAt": "2026-11-10T21:31:50.846Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.2-variant-nobrief-2",
+      "note": "the loop writer, Essentials, W1.2, variant without the planner's briefs, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1798,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-variant-nobrief-1",
+      "note": "the loop writer, Essentials, W1.2, variant without the planner's briefs, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1561,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-variant-nobrief-1",
+      "note": "the loop writer, Essentials, W1.7, variant without the planner's briefs, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2496,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-variant-nobrief-1",
+      "note": "the loop writer, Essentials, W1.3, variant without the planner's briefs, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 1683,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-variant-nobrief-2",
+      "note": "the loop writer, Essentials, W1.7, variant without the planner's briefs, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 2125,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-variant-nobrief-2",
+      "note": "the loop writer, Essentials, W1.3, variant without the planner's briefs, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1696,
+      "modelReported": "claude-opus-5-5"
+    }
+  ],
+  "endedAt": "2026-11-10T21:32:20.430Z"
+}

@@ -1,0 +1,444 @@
+{
+  "phase": "calibration-196",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 10,
+  "base": "c6eff399b5473d8eba5da3f9ce3ffecf47a69c2d",
+  "target": "f66dae63bc3b48aac899224e9748e7755f7db6f9",
+  "startedAt": "2026-11-10T21:26:22.227Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.2-baseline-2",
+      "note": "the loop writer, Essentials, W1.2, baseline, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1206,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-baseline-1",
+      "note": "the loop writer, Essentials, W1.2, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 1522,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-variant-2",
+      "note": "the loop writer, Essentials, W1.2, variant, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 1842,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-variant-1",
+      "note": "the loop writer, Essentials, W1.2, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 1573,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-baseline-1",
+      "note": "the loop writer, Essentials, W1.7, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1631,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-baseline-2",
+      "note": "the loop writer, Essentials, W1.7, baseline, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1963,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-variant-2",
+      "note": "the loop writer, Essentials, W1.7, variant, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1896,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-variant-1",
+      "note": "the loop writer, Essentials, W1.7, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1757,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-baseline-1",
+      "note": "the loop writer, Essentials, W1.3, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1957,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-variant-2",
+      "note": "the loop writer, Essentials, W1.3, variant, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1717,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-baseline-2",
+      "note": "the loop writer, Essentials, W1.3, baseline, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 2040,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.3-variant-1",
+      "note": "the loop writer, Essentials, W1.3, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 1983,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-standard-W1.2-baseline-1",
+      "note": "the loop writer, Standard, W1.2, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 2132,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-standard-W1.2-variant-1",
+      "note": "the loop writer, Standard, W1.2, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 1790,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-standard-W1.7-baseline-1",
+      "note": "the loop writer, Standard, W1.7, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 2174,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-standard-W1.7-variant-1",
+      "note": "the loop writer, Standard, W1.7, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 15,
+      "chars": 2650,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-standard-W1.3-variant-1",
+      "note": "the loop writer, Standard, W1.3, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 2408,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-standard-W1.3-baseline-1",
+      "note": "the loop writer, Standard, W1.3, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2992,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-pedagog-W1.2-baseline-1",
+      "note": "the loop writer, Teacher, W1.2, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 3236,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-pedagog-W1.2-variant-1",
+      "note": "the loop writer, Teacher, W1.2, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2840,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-pedagog-W1.7-baseline-1",
+      "note": "the loop writer, Teacher, W1.7, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 3617,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-pedagog-W1.7-variant-1",
+      "note": "the loop writer, Teacher, W1.7, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 3306,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-pedagog-W1.3-baseline-1",
+      "note": "the loop writer, Teacher, W1.3, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 3174,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-pedagog-W1.3-variant-1",
+      "note": "the loop writer, Teacher, W1.3, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 3342,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.2-baseline-1",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.2, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 2659,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.2-variant-1",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.2, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 2773,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.2-variant-2",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.2, variant, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 3304,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.2-baseline-2",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.2, baseline, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 3359,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.7-baseline-1",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.7, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 3148,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.7-baseline-2",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.7, baseline, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 3249,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.7-variant-1",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.7, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 20,
+      "chars": 3642,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.7-variant-2",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.7, variant, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 23,
+      "chars": 3622,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.3-baseline-1",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.3, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 3176,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.3-variant-1",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.3, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 3096,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.3-baseline-2",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.3, baseline, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 3075,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-essens-W1.3-variant-2",
+      "note": "Essentials as an alternative after the baseline Standard text, W1.3, variant, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 16,
+      "chars": 2906,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-standard-W1.2-baseline-1",
+      "note": "Standard as an alternative after the baseline Essentials text, W1.2, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 20,
+      "chars": 3712,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-standard-W1.2-variant-1",
+      "note": "Standard as an alternative after the baseline Essentials text, W1.2, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 3399,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-standard-W1.7-baseline-1",
+      "note": "Standard as an alternative after the baseline Essentials text, W1.7, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 28,
+      "chars": 4679,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-standard-W1.7-variant-1",
+      "note": "Standard as an alternative after the baseline Essentials text, W1.7, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 28,
+      "chars": 4425,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-standard-W1.3-baseline-1",
+      "note": "Standard as an alternative after the baseline Essentials text, W1.3, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 3659,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-standard-W1.3-variant-1",
+      "note": "Standard as an alternative after the baseline Essentials text, W1.3, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 22,
+      "chars": 4084,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-pedagog-W1.2-variant-1",
+      "note": "Teacher as an alternative after the baseline Standard text, W1.2, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 26,
+      "chars": 5058,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-pedagog-W1.2-baseline-1",
+      "note": "Teacher as an alternative after the baseline Standard text, W1.2, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 31,
+      "chars": 6006,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-pedagog-W1.7-variant-1",
+      "note": "Teacher as an alternative after the baseline Standard text, W1.7, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 26,
+      "chars": 5289,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-pedagog-W1.7-baseline-1",
+      "note": "Teacher as an alternative after the baseline Standard text, W1.7, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 30,
+      "chars": 5913,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-pedagog-W1.3-variant-1",
+      "note": "Teacher as an alternative after the baseline Standard text, W1.3, variant, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 24,
+      "chars": 4990,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "present-pedagog-W1.3-baseline-1",
+      "note": "Teacher as an alternative after the baseline Standard text, W1.3, baseline, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 29,
+      "chars": 5946,
+      "modelReported": "claude-opus-5-5"
+    }
+  ],
+  "endedAt": "2026-11-10T21:30:08.036Z"
+}

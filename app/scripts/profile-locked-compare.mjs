@@ -35,6 +35,7 @@ const { providerAdapters } = await import('../src/main/provider-adapters');
 const { copilotRuntimeInstalled } = await import('../src/adapter/copilot-sdk-adapter');
 const { CONNECT_CASE, makeSyntheticRepo } = await import('../tests/support/synthetic-walks');
 const { ATTACH_CASE } = await import('../tests/support/synthetic-attach');
+const { EXEC_DEBUG_CASE } = await import('../tests/support/synthetic-exec-debug');
 const { createFileRoleResolver } = await import('../src/main/loop-graph-roles');
 const { stepExplanationPrompt } = await import('../src/main/step-explanation-channel');
 const { loadLoopGraph } = await import('../src/shared/loop-graph-load');
@@ -49,7 +50,7 @@ const arg = (name, fallback) => {
 };
 const phase = arg('--phase', 'final');
 // DSP-195: another case, plan and steps (defaults: DSP-194's connect case, plan and steps).
-const CASE = { connect: CONNECT_CASE, attach: ATTACH_CASE }[arg('--case', 'connect')];
+const CASE = { connect: CONNECT_CASE, attach: ATTACH_CASE, 'exec-debug': EXEC_DEBUG_CASE }[arg('--case', 'connect')];
 const planRecordArg = arg('--plan-record', '');
 const stepsArg = arg('--steps', 'W1.1,W1.5');
 const provider = arg('--provider', 'copilot');
@@ -160,7 +161,7 @@ function presentPrompt(profile, stepId, standardShort) {
   const focus = places[0];
   const envelope = {
     version: 1,
-    identity: { title: `Code walks · connect ${made.base.slice(0, 7)}→${made.target.slice(0, 7)}`, definitionPath: '', definitionHash: '', repository: made.repo, base: { sha: made.base, subject: 'base commit' }, target: { sha: made.target, subject: 'target commit' } },
+    identity: { title: `Code walks · ${CASE.name} ${made.base.slice(0, 7)}→${made.target.slice(0, 7)}`, definitionPath: '', definitionHash: '', repository: made.repo, base: { sha: made.base, subject: 'base commit' }, target: { sha: made.target, subject: 'target commit' } },
     language: 'en',
     subject: { kind: 'point', walkId: 'W1', stepId, placeIndex: 0 },
     selection: null,
@@ -237,6 +238,61 @@ if (phase === 'ablation') {
       ),
     ),
   );
+} else if (phase === 'calibration-196') {
+  // DSP-196, a calibration trial (an experiment on the built text, not product prompts): each
+  // profile's reader replaced by a definition of what the explanation is organised around, with a
+  // completion condition inside the same definition, and one sentence added to the shared scope
+  // rule. Everything else is the product's instruction at the current version. Baseline and variant
+  // for the loop writer (the walk plan's context) and for the profile switch (an existing
+  // explanation as material, fixed per step: the baseline writer's Standard text for Essentials and
+  // Teacher, the baseline writer's Essentials text for Standard). One sample per cell, a second
+  // for Essentials.
+  const { EXPLANATION_TASK } = await import('../src/shared/presentation-profiles');
+  const VARIANT_READER = {
+    essens: 'The reader is an experienced developer who wants to orient quickly. Organise the explanation around what this code is for and its most important effect in the flow: summarise several code operations into one meaningful action that helps this reader orient, rather than going through the operations; this reader reads the ordinary mechanics in the code. When the reader understands the step\'s task, its connection to the flow and the decisive consequence, the base explanation is done; further relevant facts are not automatically further things to tell here. A detail belongs in the first part when the main picture would otherwise mislead; mechanics this reader may want next go after the marker, or stay in the step that treats them. What the walk has already established need not be repeated, and more complex code may need more room.',
+    standard: 'The reader knows programming but not this code. Organise the explanation around how the central mechanism achieves the effect and how the parts work together, from a natural entry point rather than the parts in source order. The base explanation is done when the central mechanism is understandable; it does not go on through the rest of the surroundings. Place a project-specific name the first time it matters, and explain a language detail where the reader needs it to interpret the code; you need not teach every concept, nor add facts to be longer.',
+    pedagog: 'The reader can program but may not know this language, library or mechanism. Organise the explanation around the understanding this reader must build to grasp the mechanism: the concepts it rests on, the intermediate steps and, where it helps, a concrete example or comparison, tied to what the code does here. Develop the concepts that understanding needs and no others: do not inventory every line or teach every term, and do not add facts to be longer than Standard. Use what the walk has established: a short reminder with a reference in a later step, not the same foundation derived again. State what a primitive guarantees before an argument rests on it, and name a fault for what it is: unsynchronised concurrent access with a writer is a data race, not a stale value. A local explanation beats a detached lesson, and the text may take the room understanding needs.',
+  };
+  const SCOPE_ADDED = ' These are the reader\'s perspective, not headings or a checklist, and the same facts may appear in several profiles; no profile goes on only because the material holds more facts.';
+  const variant = (profile) => (prompt) => {
+    const reader = PROFILES[profile].reader[0];
+    const scope = EXPLANATION_TASK[3];
+    if (!prompt.includes(reader)) throw new Error(`the ${profile} reader is not in the prompt`);
+    if (!prompt.includes(scope)) throw new Error('the shared scope rule is not in the prompt');
+    return prompt.split(reader).join(VARIANT_READER[profile]).split(scope).join(scope + SCOPE_ADDED);
+  };
+  fs.writeFileSync(path.join(out, 'variant.json'), `${JSON.stringify({ baselineReaders: Object.fromEntries(['essens', 'standard', 'pedagog'].map((p) => [p, PROFILES[p].reader[0]])), variantReaders: VARIANT_READER, sharedScopeRule: EXPLANATION_TASK[3], addedToSharedScopeRule: SCOPE_ADDED.trim() }, null, 2)}\n`);
+  const PROFILE_IDS = ['essens', 'standard', 'pedagog'];
+  const samples = (profile) => (profile === 'essens' ? [1, 2] : [1]);
+  const name = (kind, profile, stepId, version, n) => `${kind}-${profile}-${stepId}-${version}-${String(n)}`;
+  // `--nobrief-only`: a diagnostic of the trial, the variant with the planner's briefs taken out
+  // (the step list's and this step's), for the Essentials writer only, two samples per step.
+  if (process.argv.includes('--nobrief-only')) {
+    const noBrief = (prompt) => {
+      const changed = withoutBriefs(prompt).replace(/^The planner's brief, written for every profile: .*$/m, '');
+      if (changed === prompt) throw new Error('no brief was taken out');
+      return changed;
+    };
+    await pool(STEPS.flatMap((stepId) => [1, 2].map((n) => () => ask(name('writer', 'essens', stepId, 'variant-nobrief', n), noBrief(variant('essens')(writerPrompt('essens', stepId))), `the loop writer, Essentials, ${stepId}, variant without the planner's briefs, sample ${String(n)}`))));
+  } else {
+  // The writer first; the baseline's first sample is the fixed material of the switch.
+  const writerTasks = [];
+  for (const profile of PROFILE_IDS) for (const stepId of STEPS) for (const n of samples(profile)) for (const version of ['baseline', 'variant']) {
+    const build = () => writerPrompt(profile, stepId);
+    writerTasks.push(() => ask(name('writer', profile, stepId, version, n), version === 'baseline' ? build() : variant(profile)(build()), `the loop writer, ${PROFILES[profile].promptName}, ${stepId}, ${version}, sample ${String(n)}`));
+  }
+  await pool(writerTasks);
+  const material = (profile, stepId) => {
+    const from = profile === 'standard' ? 'essens' : 'standard';
+    return shortOf(fs.readFileSync(path.join(out, 'answers', `${name('writer', from, stepId, 'baseline', 1)}.md`), 'utf8'));
+  };
+  const presentTasks = [];
+  for (const profile of PROFILE_IDS) for (const stepId of STEPS) for (const n of samples(profile)) for (const version of ['baseline', 'variant']) {
+    const build = () => presentPrompt(profile, stepId, material(profile, stepId));
+    presentTasks.push(() => ask(name('present', profile, stepId, version, n), version === 'baseline' ? build() : variant(profile)(build()), `${PROFILES[profile].promptName} as an alternative after the baseline ${profile === 'standard' ? 'Essentials' : 'Standard'} text, ${stepId}, ${version}, sample ${String(n)}`));
+  }
+  await pool(presentTasks);
+  }
 } else if (phase === 'v8-teacher') {
   // Teacher at version 8, for the before-picture: the version 9 prompts with the DSP-194 changes
   // turned back, exactly (the brief's label and the writer role's sentence; the profile section's

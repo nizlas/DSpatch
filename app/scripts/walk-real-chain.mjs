@@ -28,6 +28,7 @@ const { providerAdapters } = await import('../src/main/provider-adapters');
 const { copilotRuntimeInstalled } = await import('../src/adapter/copilot-sdk-adapter');
 const { CONNECT_CASE, makeSyntheticRepo } = await import('../tests/support/synthetic-walks');
 const { ATTACH_CASE } = await import('../tests/support/synthetic-attach');
+const { EXEC_DEBUG_CASE } = await import('../tests/support/synthetic-exec-debug');
 const { WRITING_CONTENT_RULES } = await import('../src/shared/review-agent');
 const { EXPLANATION_TASK, PRESENTATION_INSTRUCTION_VERSION } = await import('../src/shared/presentation-profiles');
 
@@ -75,7 +76,7 @@ const appDir = path.resolve(path.dirname(new URL(import.meta.url).pathname.repla
 const repoRoot = path.resolve(appDir, '..');
 const out = path.resolve(arg('--out', path.join(appDir, 'release', 'walk-real-chain', `${which}-${method}-${profile}-${String(Date.now())}`)));
 fs.mkdirSync(path.join(out, 'exchange'), { recursive: true });
-const CASES = { attach: ATTACH_CASE, connect: CONNECT_CASE };
+const CASES = { attach: ATTACH_CASE, connect: CONNECT_CASE, 'exec-debug': EXEC_DEBUG_CASE };
 const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp195-'));
 const repo = { workspace, ...makeSyntheticRepo(workspace, CASES[which]) };
 const log = (message) => {

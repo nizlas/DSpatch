@@ -1,0 +1,476 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · exec-debug fc8c0bd→5a0c464",
+    "en": "Code walks · exec-debug fc8c0bd→5a0c464"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dsp195-D9dOSH\\exec-debug",
+  "base": "fc8c0bd81794da95d3dcaab65693180814dc2bcf",
+  "target": "5a0c4648601339a8a534cfeac2c5c26a8f51d579",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Claude (opus) on 2026-11-10 21:25 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Standard profile (instruction version 10). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code and accepted them without a correction round. The reviewer is an agent: its acceptance approves nothing of the code.",
+    "en": "Prepared by Claude (opus) on 2026-11-10 21:25 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Standard profile (instruction version 10). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code and accepted them without a correction round. The reviewer is an agent: its acceptance approves nothing of the code."
+  },
+  "presentation": {
+    "profile": "standard",
+    "version": 10
+  },
+  "overviewSummary": {
+    "sv": "The VS Code debug configuration for the orders service changes from launching `orders.main` on the host to attaching to it inside the `orders-dev` dev container. A new VS Code task runs a new script, `scripts/start-debugger.sh`, before the attach. The script checks that the container is running and installs debugpy in it if it is missing. It creates the log folder and hands that folder to the host user. Then it starts the service under debugpy in the background, and debugpy waits for the editor. VS Code then connects to port 5678 and maps the workspace to `/workspace`.",
+    "en": "The VS Code debug configuration for the orders service changes from launching `orders.main` on the host to attaching to it inside the `orders-dev` dev container. A new VS Code task runs a new script, `scripts/start-debugger.sh`, before the attach. The script checks that the container is running and installs debugpy in it if it is missing. It creates the log folder and hands that folder to the host user. Then it starts the service under debugpy in the background, and debugpy waits for the editor. VS Code then connects to port 5678 and maps the workspace to `/workspace`."
+  },
+  "overview": {
+    "sv": "The VS Code debug configuration for the orders service changes from launching `orders.main` on the host to attaching to it inside the `orders-dev` dev container. A new VS Code task runs a new script, `scripts/start-debugger.sh`, before the attach. The script checks that the container is running and installs debugpy in it if it is missing. It creates the log folder and hands that folder to the host user. Then it starts the service under debugpy in the background, and debugpy waits for the editor. VS Code then connects to port 5678 and maps the workspace to `/workspace`.\n\nThe dev container comes from the unchanged `compose.yaml`. It runs `python:3.12-slim` as `orders-dev` with `sleep infinity`, bind-mounts the repository at `/workspace` and publishes ports 5678 and 8000. The new setup relies on these values in several places: the container name in the task environment and the script defaults, the port in the task environment, the script defaults, `connect` and the compose port mapping, and the `/workspace` root in `pathMappings`, the script and `orders/main.py`.\n\nThis change contains no tests and no recorded run. Everything in these walks was read from the configuration and the script, not seen running.",
+    "en": "The VS Code debug configuration for the orders service changes from launching `orders.main` on the host to attaching to it inside the `orders-dev` dev container. A new VS Code task runs a new script, `scripts/start-debugger.sh`, before the attach. The script checks that the container is running and installs debugpy in it if it is missing. It creates the log folder and hands that folder to the host user. Then it starts the service under debugpy in the background, and debugpy waits for the editor. VS Code then connects to port 5678 and maps the workspace to `/workspace`.\n\nThe dev container comes from the unchanged `compose.yaml`. It runs `python:3.12-slim` as `orders-dev` with `sleep infinity`, bind-mounts the repository at `/workspace` and publishes ports 5678 and 8000. The new setup relies on these values in several places: the container name in the task environment and the script defaults, the port in the task environment, the script defaults, `connect` and the compose port mapping, and the `/workspace` root in `pathMappings`, the script and `orders/main.py`.\n\nThis change contains no tests and no recorded run. Everything in these walks was read from the configuration and the script, not seen running."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "Starting \"Debug orders in the dev container\"",
+        "en": "Starting \"Debug orders in the dev container\""
+      },
+      "purpose": {
+        "sv": "Follow the F5 press from the launch configuration through the pre-launch task and the script into the container, and back to the editor's attach.",
+        "en": "Follow the F5 press from the launch configuration through the pre-launch task and the script into the container, and back to the editor's attach."
+      },
+      "question": {
+        "sv": "What happens, in order, from the moment the developer starts the new debug configuration until the debugger is attached to the running service?",
+        "en": "What happens, in order, from the moment the developer starts the new debug configuration until the debugger is attached to the running service?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "The debug configuration now attaches",
+            "en": "The debug configuration now attaches"
+          },
+          "summary": {
+            "sv": "The configuration changes from launching orders.main locally to attaching after a pre-launch task.",
+            "en": "The configuration changes from launching orders.main locally to attaching after a pre-launch task."
+          },
+          "body": {
+            "sv": "This is where the walk starts. The developer picks **\"Debug orders in the dev container\"** in VS Code's Run and Debug view and presses F5. This configuration replaces the earlier \"Run orders locally\". The file still holds only one configuration, so debugging on the developer's own machine is no longer offered.\n\nThe main change is the `request` type:\n\n- **Before, `launch`:** the Python debug extension (`type: \"debugpy\"`) started `orders.main` itself, as a module (`module`), in VS Code's integrated terminal (`console`). The program ran on the host, and the debugger owned its process.\n- **Now, `attach`:** VS Code starts nothing. It connects to a debugpy server that something else has already started. `module` and `console` are gone because no process is launched here.\n\nSo who starts the service? `preLaunchTask` names a task by its label. VS Code runs that task first and attaches only once the task has finished. **This file no longer starts anything. Whether a debugpy server is there to attach to depends entirely on the task.** The next step shows that task.\n\nKeep two settings in mind, because the last steps of this walk come back to them:\n\n- `connect` is where VS Code connects after the task: `localhost`, port `5678`.\n- `pathMappings` tells the debugger that the folder open in VS Code (`${workspaceFolder}`) is `/workspace` on the other side. This is what lets breakpoints set in the editor match the paths of the code that is actually running.",
+            "en": "This is where the walk starts. The developer picks **\"Debug orders in the dev container\"** in VS Code's Run and Debug view and presses F5. This configuration replaces the earlier \"Run orders locally\". The file still holds only one configuration, so debugging on the developer's own machine is no longer offered.\n\nThe main change is the `request` type:\n\n- **Before, `launch`:** the Python debug extension (`type: \"debugpy\"`) started `orders.main` itself, as a module (`module`), in VS Code's integrated terminal (`console`). The program ran on the host, and the debugger owned its process.\n- **Now, `attach`:** VS Code starts nothing. It connects to a debugpy server that something else has already started. `module` and `console` are gone because no process is launched here.\n\nSo who starts the service? `preLaunchTask` names a task by its label. VS Code runs that task first and attaches only once the task has finished. **This file no longer starts anything. Whether a debugpy server is there to attach to depends entirely on the task.** The next step shows that task.\n\nKeep two settings in mind, because the last steps of this walk come back to them:\n\n- `connect` is where VS Code connects after the task: `localhost`, port `5678`.\n- `pathMappings` tells the debugger that the folder open in VS Code (`${workspaceFolder}`) is `/workspace` on the other side. This is what lets breakpoints set in the editor match the paths of the code that is actually running."
+          },
+          "details": {
+            "sv": "This configuration doesn't say where the debugpy server runs. It names only a host and a port, and the remote root `/workspace` is the only hint that the code runs somewhere else. A later step shows how `localhost:5678` reaches a process inside the container. The port number is written here as a plain literal and is not shared with the task. That later step also compares the places where the port is set.",
+            "en": "This configuration doesn't say where the debugpy server runs. It names only a host and a port, and the remote root `/workspace` is the only hint that the code runs somewhere else. A later step shows how `localhost:5678` reaches a process inside the container. The port number is written here as a plain literal and is not shared with the task. That later step also compares the places where the port is set."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Debug configuration, From and To",
+                "en": "Debug configuration, From and To"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 5,
+                "end": 12,
+                "role": "walk",
+                "anchor": "\"preLaunchTask\": \"Start debugger in dev container\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "The pre-launch task runs the script",
+            "en": "The pre-launch task runs the script"
+          },
+          "summary": {
+            "sv": "A shell task with the matching label runs start-debugger.sh with the container name and port in its environment.",
+            "en": "A shell task with the matching label runs start-debugger.sh with the container name and port in its environment."
+          },
+          "body": {
+            "sv": "VS Code finds this task through the configuration's `preLaunchTask` value from the previous step. The match is on the exact `label` string, \"Start debugger in dev container\". The task is new in this change.\n\nThe task does three things:\n\n- **`type: \"shell\"`**: VS Code runs `command` in a terminal, here the `start-debugger.sh` script in the workspace's `scripts` folder.\n- **`options.env`** adds `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678` to the script's environment. The script reads these two values in the next step.\n- **`problemMatcher: []`** means VS Code doesn't scan the output for errors or watch for a \"ready\" signal.\n\n**Because the task has no background or ready signal, it counts as finished when the script exits, and the exit code alone decides success or failure.** If it succeeds, VS Code goes on to the attach set up in `connect` (step W1.1). If it fails, VS Code does not simply attach. Walk W2 follows that branch.\n\nThis matters for how the script ends. VS Code attaches as soon as the script returns. So the script must not keep running in the foreground, and it gives no confirmation that the debugger is actually listening. Step W1.7 shows how the script deals with this.",
+            "en": "VS Code finds this task through the configuration's `preLaunchTask` value from the previous step. The match is on the exact `label` string, \"Start debugger in dev container\". The task is new in this change.\n\nThe task does three things:\n\n- **`type: \"shell\"`**: VS Code runs `command` in a terminal, here the `start-debugger.sh` script in the workspace's `scripts` folder.\n- **`options.env`** adds `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678` to the script's environment. The script reads these two values in the next step.\n- **`problemMatcher: []`** means VS Code doesn't scan the output for errors or watch for a \"ready\" signal.\n\n**Because the task has no background or ready signal, it counts as finished when the script exits, and the exit code alone decides success or failure.** If it succeeds, VS Code goes on to the attach set up in `connect` (step W1.1). If it fails, VS Code does not simply attach. Walk W2 follows that branch.\n\nThis matters for how the script ends. VS Code attaches as soon as the script returns. So the script must not keep running in the foreground, and it gives no confirmation that the debugger is actually listening. Step W1.7 shows how the script deals with this."
+          },
+          "details": {
+            "sv": "The port appears twice as a literal: as `DEBUG_PORT` here and as `connect.port` in the debug configuration. Nothing ties the two together. If one is changed and the other is not, the attach targets a port nobody listens on.\n\nThe `command` is the script path itself, not `bash <path>`. To run it, the shell VS Code starts must honour the `#!/usr/bin/env bash` line, and the file must be executable. That holds for a typical Linux or macOS setup. On a Windows host with the default shell, the path would not run as a bash script. This is my reading of the configuration, not something I observed running.",
+            "en": "The port appears twice as a literal: as `DEBUG_PORT` here and as `connect.port` in the debug configuration. Nothing ties the two together. If one is changed and the other is not, the attach targets a port nobody listens on.\n\nThe `command` is the script path itself, not `bash <path>`. To run it, the shell VS Code starts must honour the `#!/usr/bin/env bash` line, and the file must be executable. That holds for a typical Linux or macOS setup. On a Windows host with the default shell, the path would not run as a bash script. This is my reading of the configuration, not something I observed running."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "The \"Start debugger in dev container\" task",
+                "en": "The \"Start debugger in dev container\" task"
+              },
+              "focus": {
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 4,
+                "end": 10,
+                "role": "walk",
+                "anchor": "\"command\": \"${workspaceFolder}/scripts/start-debugger.sh\""
+              },
+              "from": {
+                "label": {
+                  "sv": "preLaunchTask in the debug configuration",
+                  "en": "preLaunchTask in the debug configuration"
+                },
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 8,
+                "end": 8
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "The script checks that the container is running",
+            "en": "The script checks that the container is running"
+          },
+          "summary": {
+            "sv": "The script reads the container name and port, and stops with a hint if the container is not running.",
+            "en": "The script reads the container name and port, and stops with a hint if the container is not running."
+          },
+          "body": {
+            "sv": "Execution is now inside the script that the task started, with `DEV_CONTAINER` and `DEBUG_PORT` in its environment (step W1.2).\n\n**`set -euo pipefail`** makes the script strict for everything that follows:\n- `-e`: stop as soon as a command fails, outside of conditions such as `if`.\n- `-u`: treat use of an unset variable as an error.\n- `-o pipefail`: a pipeline fails if any command in it fails, not only the last one.\n\nBecause of `-e`, a failing `docker exec` in a later step ends the script with a non-zero code. As step W1.2 showed, that exit code is what VS Code judges the task by.\n\n`CONTAINER` and `PORT` use the `${VAR:-default}` form. They take the task's values when those are set and non-empty, and otherwise fall back to `orders-dev` and `5678`. These defaults are the same values the task passes, so running the script by hand gives the same result. The `:-` form also means `-u` never fires on these two names.\n\nThe running check asks Docker for the container's `.State.Running` field and compares the printed text with `true`. Both kinds of problem end up in the error branch:\n- **Container stopped:** `docker inspect` prints `false`.\n- **Container missing:** `docker inspect` fails. `2>/dev/null` throws away its error text, so the substitution yields an empty string.\n\nEither way the result is not `\"true\"`. The failure of `docker inspect` inside `$( … )` does not trigger `-e`, because it happens inside the `if` condition, and only the `[ … ]` test result counts there.\n\nThis walk continues where the container is running and the script moves on past the check. Walk W2 follows the branch that prints the hint and exits with 1. Before the script goes on, the next step looks at how `orders-dev` is defined.",
+            "en": "Execution is now inside the script that the task started, with `DEV_CONTAINER` and `DEBUG_PORT` in its environment (step W1.2).\n\n**`set -euo pipefail`** makes the script strict for everything that follows:\n- `-e`: stop as soon as a command fails, outside of conditions such as `if`.\n- `-u`: treat use of an unset variable as an error.\n- `-o pipefail`: a pipeline fails if any command in it fails, not only the last one.\n\nBecause of `-e`, a failing `docker exec` in a later step ends the script with a non-zero code. As step W1.2 showed, that exit code is what VS Code judges the task by.\n\n`CONTAINER` and `PORT` use the `${VAR:-default}` form. They take the task's values when those are set and non-empty, and otherwise fall back to `orders-dev` and `5678`. These defaults are the same values the task passes, so running the script by hand gives the same result. The `:-` form also means `-u` never fires on these two names.\n\nThe running check asks Docker for the container's `.State.Running` field and compares the printed text with `true`. Both kinds of problem end up in the error branch:\n- **Container stopped:** `docker inspect` prints `false`.\n- **Container missing:** `docker inspect` fails. `2>/dev/null` throws away its error text, so the substitution yields an empty string.\n\nEither way the result is not `\"true\"`. The failure of `docker inspect` inside `$( … )` does not trigger `-e`, because it happens inside the `if` condition, and only the `[ … ]` test result counts there.\n\nThis walk continues where the container is running and the script moves on past the check. Walk W2 follows the branch that prints the hint and exits with 1. Before the script goes on, the next step looks at how `orders-dev` is defined."
+          },
+          "details": {
+            "sv": "The check covers only one thing: that a container with this name exists and is running. It does not check that the container was created from this repository's compose file, or that port 5678 is published. Those properties come from the compose definition shown in the next step. The script assumes them and does not verify them.",
+            "en": "The check covers only one thing: that a container with this name exists and is running. It does not check that the container was created from this repository's compose file, or that port 5678 is published. Those properties come from the compose definition shown in the next step. The script assumes them and does not verify them."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Settings and running check",
+                "en": "Settings and running check"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 3,
+                "end": 11,
+                "role": "walk",
+                "anchor": "docker inspect -f '{{.State.Running}}' \"$CONTAINER\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "The container the script expects",
+            "en": "The container the script expects"
+          },
+          "summary": {
+            "sv": "compose.yaml defines orders-dev: the image, the /workspace bind mount, the published ports and an idle command.",
+            "en": "compose.yaml defines orders-dev: the image, the /workspace bind mount, the published ports and an idle command."
+          },
+          "body": {
+            "sv": "Here the walk steps out of the execution order for a moment. This is the compose service whose container the running check just looked for. The file is unchanged, but each new piece of configuration depends on one of its settings:\n\n- **`container_name: orders-dev`** fixes the container's name, so `docker inspect` and `docker exec` can find it by the `DEV_CONTAINER` value from the task (step W1.2). Without this line, Compose would generate a name from the project folder.\n- **`ports: \"5678:5678\"`** publishes container port 5678 on the host's port 5678. That is why the `connect` target `localhost:5678` from step W1.1 can reach a process inside the container. Port 8000 is published the same way, for the service itself.\n- **The bind mount `.:/workspace`** makes the repository folder on the host visible as `/workspace` in the container. It is the same files, not a copy. **This is the fact behind `pathMappings` (`${workspaceFolder}` ↔ `/workspace`):** a file the editor shows and a file the container runs are the same file under two paths. It also means anything the container writes under `/workspace` lands in the developer's own checkout.\n- **`working_dir: /workspace`** is also the directory that commands run with `docker exec` start in. That is how `-m orders.main` later finds the package without a path.\n- **`command: sleep infinity`** keeps the container alive while it does nothing. The service does not run on its own. It runs only when the script starts it with `docker exec`.\n\nTwo more facts to carry back to the script: the image is plain `python:3.12-slim`, and the service sets no `user`. Commands therefore run as the image's default user, root. The next two steps deal with each of these: installing debugpy, and setting the owner of the log folder.",
+            "en": "Here the walk steps out of the execution order for a moment. This is the compose service whose container the running check just looked for. The file is unchanged, but each new piece of configuration depends on one of its settings:\n\n- **`container_name: orders-dev`** fixes the container's name, so `docker inspect` and `docker exec` can find it by the `DEV_CONTAINER` value from the task (step W1.2). Without this line, Compose would generate a name from the project folder.\n- **`ports: \"5678:5678\"`** publishes container port 5678 on the host's port 5678. That is why the `connect` target `localhost:5678` from step W1.1 can reach a process inside the container. Port 8000 is published the same way, for the service itself.\n- **The bind mount `.:/workspace`** makes the repository folder on the host visible as `/workspace` in the container. It is the same files, not a copy. **This is the fact behind `pathMappings` (`${workspaceFolder}` ↔ `/workspace`):** a file the editor shows and a file the container runs are the same file under two paths. It also means anything the container writes under `/workspace` lands in the developer's own checkout.\n- **`working_dir: /workspace`** is also the directory that commands run with `docker exec` start in. That is how `-m orders.main` later finds the package without a path.\n- **`command: sleep infinity`** keeps the container alive while it does nothing. The service does not run on its own. It runs only when the script starts it with `docker exec`.\n\nTwo more facts to carry back to the script: the image is plain `python:3.12-slim`, and the service sets no `user`. Commands therefore run as the image's default user, root. The next two steps deal with each of these: installing debugpy, and setting the owner of the log folder."
+          },
+          "details": {
+            "sv": "The script does not start this container. The developer has to run `docker compose up -d dev` beforehand, as the error message in walk W2 says. The 5678 published here is the third place the debug port is written down, next to `DEBUG_PORT` in the task and `connect.port` in the debug configuration. All three have to agree, and nothing checks that they do.",
+            "en": "The script does not start this container. The developer has to run `docker compose up -d dev` beforehand, as the error message in walk W2 says. The 5678 published here is the third place the debug port is written down, next to `DEBUG_PORT` in the task and `connect.port` in the debug configuration. All three have to agree, and nothing checks that they do."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "The dev service",
+                "en": "The dev service"
+              },
+              "focus": {
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 2,
+                "end": 11,
+                "role": "walk",
+                "anchor": "container_name: orders-dev"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "debugpy is installed if missing",
+            "en": "debugpy is installed if missing"
+          },
+          "summary": {
+            "sv": "The script tests whether debugpy can be imported in the container and installs it with pip if it cannot.",
+            "en": "The script tests whether debugpy can be imported in the container and installs it with pip if it cannot."
+          },
+          "body": {
+            "sv": "The walk is back in the script, past a successful running check. Before debugpy can start the service, it has to exist in the container. The `python:3.12-slim` image does not include it (step W1.4), and nothing else in the repository installs it.\n\nThe test runs `python -c \"import debugpy\"` inside the container with `docker exec`:\n\n- **The import works:** the condition is false and nothing happens. This is the case on every run after the first, as long as the container is the same one.\n- **The import fails:** the script runs `pip install --quiet debugpy` in the container. The import's error text goes to `/dev/null`, so a missing module is not reported as an error in the task terminal.\n\nThe package goes into the container's own Python installation, as root. It does not go into `/workspace`. **So the install belongs to that container instance:** it survives stopping and starting the container, but it is gone once the container is removed and recreated, for example by `docker compose down` followed by `up`. The first F5 after that installs it again. That install needs network access from the container, and it adds the download time to the pre-launch task.\n\nThe `pip install` line is not part of a condition, so `set -e` applies to it. If the install fails, for example offline or with the package index unreachable, the script stops there. The task then fails, and VS Code does not attach (walk W2 shows how VS Code handles that). The import test inside the `if` does not trigger `-e`.",
+            "en": "The walk is back in the script, past a successful running check. Before debugpy can start the service, it has to exist in the container. The `python:3.12-slim` image does not include it (step W1.4), and nothing else in the repository installs it.\n\nThe test runs `python -c \"import debugpy\"` inside the container with `docker exec`:\n\n- **The import works:** the condition is false and nothing happens. This is the case on every run after the first, as long as the container is the same one.\n- **The import fails:** the script runs `pip install --quiet debugpy` in the container. The import's error text goes to `/dev/null`, so a missing module is not reported as an error in the task terminal.\n\nThe package goes into the container's own Python installation, as root. It does not go into `/workspace`. **So the install belongs to that container instance:** it survives stopping and starting the container, but it is gone once the container is removed and recreated, for example by `docker compose down` followed by `up`. The first F5 after that installs it again. That install needs network access from the container, and it adds the download time to the pre-launch task.\n\nThe `pip install` line is not part of a condition, so `set -e` applies to it. If the install fails, for example offline or with the package index unreachable, the script stops there. The task then fails, and VS Code does not attach (walk W2 shows how VS Code handles that). The import test inside the `if` does not trigger `-e`."
+          },
+          "details": {
+            "sv": "No version is pinned. Each fresh install gets whichever debugpy version the package index offers at that moment. The import test only checks that some debugpy is present, so it cannot tell whether that version suits the debugger extension in VS Code.",
+            "en": "No version is pinned. Each fresh install gets whichever debugpy version the package index offers at that moment. The import test only checks that some debugpy is present, so it cannot tell whether that version suits the debugger extension in VS Code."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Install debugpy once",
+                "en": "Install debugpy once"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 13,
+                "end": 16,
+                "role": "walk",
+                "anchor": "python -m pip install --quiet debugpy"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "The log folder is prepared for the host user",
+            "en": "The log folder is prepared for the host user"
+          },
+          "summary": {
+            "sv": "The script creates /workspace/logs in the container and changes its owner to the host user's uid and gid.",
+            "en": "The script creates /workspace/logs in the container and changes its owner to the host user's uid and gid."
+          },
+          "body": {
+            "sv": "Commands run in the container as root, since the compose service sets no `user` (step W1.4). `/workspace` is the developer's checkout on the host through the bind mount. So anything root creates there turns up in the repository owned by root, and on a Linux host the developer could not edit or delete it without `sudo`. This step deals with that for the log folder before the service starts.\n\nTwo `docker exec` calls do the work:\n\n1. `mkdir -p /workspace/logs` creates the folder. If it already exists, nothing happens and there is no error, so the step is safe on every run.\n2. `chown \"$(id -u):$(id -g)\" /workspace/logs` hands the folder to a user id and group id.\n\n**`$(id -u):$(id -g)` is expanded by the host shell that runs the script, before `docker exec` is called.** So the container receives the numbers of the developer's host user, for example `1000:1000`, not root's. Because of the bind mount, the host sees the folder with those numbers as the owner, so it belongs to the developer.\n\nThe `chown` has no `-R`. **It changes the owner of the folder itself, not of anything inside it.** A file already in `logs` keeps its owner, and a file created later is owned by whoever creates it. Step W1.9 shows which file the service writes there, and as which user.",
+            "en": "Commands run in the container as root, since the compose service sets no `user` (step W1.4). `/workspace` is the developer's checkout on the host through the bind mount. So anything root creates there turns up in the repository owned by root, and on a Linux host the developer could not edit or delete it without `sudo`. This step deals with that for the log folder before the service starts.\n\nTwo `docker exec` calls do the work:\n\n1. `mkdir -p /workspace/logs` creates the folder. If it already exists, nothing happens and there is no error, so the step is safe on every run.\n2. `chown \"$(id -u):$(id -g)\" /workspace/logs` hands the folder to a user id and group id.\n\n**`$(id -u):$(id -g)` is expanded by the host shell that runs the script, before `docker exec` is called.** So the container receives the numbers of the developer's host user, for example `1000:1000`, not root's. Because of the bind mount, the host sees the folder with those numbers as the owner, so it belongs to the developer.\n\nThe `chown` has no `-R`. **It changes the owner of the folder itself, not of anything inside it.** A file already in `logs` keeps its owner, and a file created later is owned by whoever creates it. Step W1.9 shows which file the service writes there, and as which user."
+          },
+          "details": {
+            "sv": "Both commands run outside any condition, so under `set -e` a failure of either stops the script and the task.\n\nMapping by number assumes the container sees the host's files with their real ids, as plain Docker on Linux does. With Docker Desktop on macOS or Windows, the file-sharing layer handles ownership itself, so the chown may have little visible effect there. That is general Docker behaviour; this repository doesn't show which setup is in use.",
+            "en": "Both commands run outside any condition, so under `set -e` a failure of either stops the script and the task.\n\nMapping by number assumes the container sees the host's files with their real ids, as plain Docker on Linux does. With Docker Desktop on macOS or Windows, the file-sharing layer handles ownership itself, so the chown may have little visible effect there. That is general Docker behaviour; this repository doesn't show which setup is in use."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Create and chown the log folder",
+                "en": "Create and chown the log folder"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 18,
+                "end": 21,
+                "role": "walk",
+                "anchor": "chown \"$(id -u):$(id -g)\" /workspace/logs"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.7",
+          "title": {
+            "sv": "The service starts detached under debugpy",
+            "en": "The service starts detached under debugpy"
+          },
+          "summary": {
+            "sv": "docker exec -d starts debugpy listening on the port, waiting for a client before it runs orders.main, and the script ends.",
+            "en": "docker exec -d starts debugpy listening on the port, waiting for a client before it runs orders.main, and the script ends."
+          },
+          "body": {
+            "sv": "This last line of the script hands the work over to another process. `docker exec -d` asks Docker to start a command in the container and returns as soon as Docker has accepted it, without waiting for the command to run or finish. The command started is:\n\n- `python -m debugpy` runs Python under the debugpy server rather than running the module directly.\n- `--listen \"0.0.0.0:$PORT\"` opens the debug port on all of the container's network interfaces. That is needed so that traffic arriving through the published port (step W1.4) reaches it, because a server bound only to the container's own `127.0.0.1` would not be reachable that way.\n- `--wait-for-client` holds the program back until a debugger connects.\n- `-m orders.main` is the module that runs once a debugger has connected. It is found from the container's working directory `/workspace`.\n\nAfter this line the script ends, normally with exit code 0, and the task from step W1.2 counts as successful. **From here two things run in parallel, each on its own:** VS Code goes on to the attach in the next step, and debugpy is starting up in the container. Nothing in the script or the task waits until debugpy is actually listening. Whether the attach finds it ready depends on timing that this code does not control.\n\n**Because the process runs detached, its output and errors do not reach the task terminal.** The exit code tells VS Code only that Docker accepted the command. Even if debugpy later fails to start, the task has already reported success.",
+            "en": "This last line of the script hands the work over to another process. `docker exec -d` asks Docker to start a command in the container and returns as soon as Docker has accepted it, without waiting for the command to run or finish. The command started is:\n\n- `python -m debugpy` runs Python under the debugpy server rather than running the module directly.\n- `--listen \"0.0.0.0:$PORT\"` opens the debug port on all of the container's network interfaces. That is needed so that traffic arriving through the published port (step W1.4) reaches it, because a server bound only to the container's own `127.0.0.1` would not be reachable that way.\n- `--wait-for-client` holds the program back until a debugger connects.\n- `-m orders.main` is the module that runs once a debugger has connected. It is found from the container's working directory `/workspace`.\n\nAfter this line the script ends, normally with exit code 0, and the task from step W1.2 counts as successful. **From here two things run in parallel, each on its own:** VS Code goes on to the attach in the next step, and debugpy is starting up in the container. Nothing in the script or the task waits until debugpy is actually listening. Whether the attach finds it ready depends on timing that this code does not control.\n\n**Because the process runs detached, its output and errors do not reach the task terminal.** The exit code tells VS Code only that Docker accepted the command. Even if debugpy later fails to start, the task has already reported success."
+          },
+          "details": {
+            "sv": "Some failures the code allows but does not report, from reading it rather than from a run:\n\n- **Running F5 a second time:** a debugpy process from an earlier run may still be running in the same container and holding the port. The new process then cannot listen, and the new run still reports success. VS Code may then end up connected to the old process, or it may fail to connect at all.\n- **A broken install or an import error in `orders.main`:** the error output goes nowhere visible. The developer sees only the result of the attach.\n\nThe detached process belongs to the container, not to the script or VS Code. It keeps running after the script exits, and it stops when the program ends or the container is stopped.",
+            "en": "Some failures the code allows but does not report, from reading it rather than from a run:\n\n- **Running F5 a second time:** a debugpy process from an earlier run may still be running in the same container and holding the port. The new process then cannot listen, and the new run still reports success. VS Code may then end up connected to the old process, or it may fail to connect at all.\n- **A broken install or an import error in `orders.main`:** the error output goes nowhere visible. The developer sees only the result of the attach.\n\nThe detached process belongs to the container, not to the script or VS Code. It keeps running after the script exits, and it stops when the program ends or the container is stopped."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Detached debugpy start",
+                "en": "Detached debugpy start"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 23,
+                "end": 24,
+                "role": "walk",
+                "anchor": "--wait-for-client -m orders.main"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.8",
+          "title": {
+            "sv": "VS Code attaches through the published port",
+            "en": "VS Code attaches through the published port"
+          },
+          "summary": {
+            "sv": "After the task exits, the editor connects to localhost:5678 and maps the workspace to /workspace.",
+            "en": "After the task exits, the editor connects to localhost:5678 and maps the workspace to /workspace."
+          },
+          "body": {
+            "sv": "Execution is back in VS Code. The pre-launch task reported success when the script exited (step W1.7), so VS Code goes on with the rest of the configuration from step W1.1. It now uses `connect` and `pathMappings`.\n\n**Connecting.** VS Code opens a connection to `localhost:5678` on the host. Compose publishes the container's port 5678 on that host port (step W1.4). Docker forwards the connection into the container, where debugpy listens on `0.0.0.0:5678`. Once it connects, debugpy's `--wait-for-client` is satisfied and `orders.main` is allowed to run, as the next step shows.\n\nThe port has to agree in three places that nothing ties together: `connect.port` here, `DEBUG_PORT` in the task, and the port mapping in compose. As noted in step W1.7, the task does not wait for debugpy to listen. So this connection attempt may come before the detached process is ready. Whether it then fails or succeeds on a retry depends on how the debugger extension handles that, which this code does not show.\n\n**Translating paths.** VS Code and debugpy name the same file differently. The editor uses host paths, while the program runs with container paths. `pathMappings` swaps the `${workspaceFolder}` prefix for `/workspace` in one direction and back in the other:\n\n- A breakpoint set in the editor on `orders/main.py` in the workspace folder is sent to debugpy as `/workspace/orders/main.py`. That path matches the file Python actually loaded, so the breakpoint binds.\n- When the program stops, debugpy reports frames with `/workspace/...` paths. VS Code maps them back and opens the matching file in the editor.\n\n**This works only because the bind mount makes both paths the same file** (step W1.4). The mapping translates names. It does not copy anything, and it does not check that the contents match.",
+            "en": "Execution is back in VS Code. The pre-launch task reported success when the script exited (step W1.7), so VS Code goes on with the rest of the configuration from step W1.1. It now uses `connect` and `pathMappings`.\n\n**Connecting.** VS Code opens a connection to `localhost:5678` on the host. Compose publishes the container's port 5678 on that host port (step W1.4). Docker forwards the connection into the container, where debugpy listens on `0.0.0.0:5678`. Once it connects, debugpy's `--wait-for-client` is satisfied and `orders.main` is allowed to run, as the next step shows.\n\nThe port has to agree in three places that nothing ties together: `connect.port` here, `DEBUG_PORT` in the task, and the port mapping in compose. As noted in step W1.7, the task does not wait for debugpy to listen. So this connection attempt may come before the detached process is ready. Whether it then fails or succeeds on a retry depends on how the debugger extension handles that, which this code does not show.\n\n**Translating paths.** VS Code and debugpy name the same file differently. The editor uses host paths, while the program runs with container paths. `pathMappings` swaps the `${workspaceFolder}` prefix for `/workspace` in one direction and back in the other:\n\n- A breakpoint set in the editor on `orders/main.py` in the workspace folder is sent to debugpy as `/workspace/orders/main.py`. That path matches the file Python actually loaded, so the breakpoint binds.\n- When the program stops, debugpy reports frames with `/workspace/...` paths. VS Code maps them back and opens the matching file in the editor.\n\n**This works only because the bind mount makes both paths the same file** (step W1.4). The mapping translates names. It does not copy anything, and it does not check that the contents match."
+          },
+          "details": {
+            "sv": "The mapping covers only files under the workspace. Code from outside it, such as the standard library or the pip-installed debugpy in the container, has `/usr/local/...` paths. Those have no host counterpart in this mapping, so the editor cannot open them as local files.",
+            "en": "The mapping covers only files under the workspace. Code from outside it, such as the standard library or the pip-installed debugpy in the container, has `/usr/local/...` paths. Those have no host counterpart in this mapping, so the editor cannot open them as local files."
+          },
+          "revisit": {
+            "sv": "The first step showed these lines as part of the new configuration. Here they are what VS Code actually does after the task: the connection target and how paths are translated.",
+            "en": "The first step showed these lines as part of the new configuration. Here they are what VS Code actually does after the task: the connection target and how paths are translated."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "connect and pathMappings",
+                "en": "connect and pathMappings"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 9,
+                "end": 12,
+                "role": "walk",
+                "anchor": "\"connect\": { \"host\": \"localhost\", \"port\": 5678 }"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.9",
+          "title": {
+            "sv": "The released service writes its log",
+            "en": "The released service writes its log"
+          },
+          "summary": {
+            "sv": "Once the client is attached, debugpy runs orders.main: main creates the log folder if needed, logs to orders.log and serves on 8000.",
+            "en": "Once the client is attached, debugpy runs orders.main: main creates the log folder if needed, logs to orders.log and serves on 8000."
+          },
+          "body": {
+            "sv": "This code runs in the container, in the debugpy process started in step W1.7. Once VS Code has connected (step W1.8), debugpy runs `orders.main` as a script. Its `__name__ == \"__main__\"` guard then calls `main`. The module itself is unchanged; only the way it is started is new.\n\n`main` does three things:\n\n1. `LOG_DIR.mkdir(exist_ok=True)` uses the same `/workspace/logs` that the script prepared in step W1.6. On this path the folder already exists, so the call does nothing. In particular, it does not create the folder as root.\n2. `logging.basicConfig(filename=…/\"orders.log\")` sets up a file handler, which opens `orders.log` for appending. If the file doesn't exist yet, the process creates it. Every request logged by `OrdersHandler` in `orders.http` ends up in this file.\n3. `serve(port=8000)` starts an `HTTPServer` on `0.0.0.0:8000`, published by compose (step W1.4), and blocks in `serve_forever`. From here on, the debug session stays open for as long as the service runs.\n\n**Who owns what:** the process runs as root (step W1.4), so a newly created `orders.log` is owned by root. The `chown` in step W1.6 changed only the folder. On a Linux host this means the developer owns `logs` but not `orders.log` inside it. Because the folder belongs to the developer, they can delete or rename the file. With the usual default permissions, though, they cannot write to it without root. If the file already existed from an earlier run, it keeps whatever owner it had. Whether this matches the comment in the script, \"so files the service writes there stay editable\", is for the reader to judge from these lines.\n\nBreakpoints set in the editor in `main` or in `OrdersHandler.do_GET` now bind through the path mapping from step W1.8. A request to `localhost:8000` that reaches `do_GET` stops there in VS Code.",
+            "en": "This code runs in the container, in the debugpy process started in step W1.7. Once VS Code has connected (step W1.8), debugpy runs `orders.main` as a script. Its `__name__ == \"__main__\"` guard then calls `main`. The module itself is unchanged; only the way it is started is new.\n\n`main` does three things:\n\n1. `LOG_DIR.mkdir(exist_ok=True)` uses the same `/workspace/logs` that the script prepared in step W1.6. On this path the folder already exists, so the call does nothing. In particular, it does not create the folder as root.\n2. `logging.basicConfig(filename=…/\"orders.log\")` sets up a file handler, which opens `orders.log` for appending. If the file doesn't exist yet, the process creates it. Every request logged by `OrdersHandler` in `orders.http` ends up in this file.\n3. `serve(port=8000)` starts an `HTTPServer` on `0.0.0.0:8000`, published by compose (step W1.4), and blocks in `serve_forever`. From here on, the debug session stays open for as long as the service runs.\n\n**Who owns what:** the process runs as root (step W1.4), so a newly created `orders.log` is owned by root. The `chown` in step W1.6 changed only the folder. On a Linux host this means the developer owns `logs` but not `orders.log` inside it. Because the folder belongs to the developer, they can delete or rename the file. With the usual default permissions, though, they cannot write to it without root. If the file already existed from an earlier run, it keeps whatever owner it had. Whether this matches the comment in the script, \"so files the service writes there stay editable\", is for the reader to judge from these lines.\n\nBreakpoints set in the editor in `main` or in `OrdersHandler.do_GET` now bind through the path mapping from step W1.8. A request to `localhost:8000` that reaches `do_GET` stops there in VS Code."
+          },
+          "details": {
+            "sv": "How the file is created comes from Python's standard library, not from this repository. `basicConfig` with `filename` builds a `FileHandler` in append mode, and that handler opens the file straight away. So `orders.log` is created as soon as `main` starts, even before the first request comes in. Its permission bits come from the process's umask in the container, which nothing in this repository sets. \"Usual default permissions\" above means the common `0644` result, not something this code guarantees.\n\n`LOG_DIR` is a fixed `/workspace/logs`, and `mkdir` is called without `parents=True`. The module therefore expects to run where `/workspace` exists. That holds in the container but usually not on a developer's host. This may be one reason the configuration that ran the module locally (step W1.1) was replaced, but nothing in the code says so.",
+            "en": "How the file is created comes from Python's standard library, not from this repository. `basicConfig` with `filename` builds a `FileHandler` in append mode, and that handler opens the file straight away. So `orders.log` is created as soon as `main` starts, even before the first request comes in. Its permission bits come from the process's umask in the container, which nothing in this repository sets. \"Usual default permissions\" above means the common `0644` result, not something this code guarantees.\n\n`LOG_DIR` is a fixed `/workspace/logs`, and `mkdir` is called without `parents=True`. The module therefore expects to run where `/workspace` exists. That holds in the container but usually not on a developer's host. This may be one reason the configuration that ran the module locally (step W1.1) was replaced, but nothing in the code says so."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "main: log folder, log file, server",
+                "en": "main: log folder, log file, server"
+              },
+              "focus": {
+                "path": "orders/main.py",
+                "side": "target",
+                "start": 6,
+                "end": 12,
+                "role": "walk",
+                "anchor": "LOG_DIR = Path(\"/workspace/logs\")"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "kind": "walk",
+      "title": {
+        "sv": "When the dev container is not running",
+        "en": "When the dev container is not running"
+      },
+      "purpose": {
+        "sv": "Follow the failing branch of the running check back to VS Code's pre-launch task handling.",
+        "en": "Follow the failing branch of the running check back to VS Code's pre-launch task handling."
+      },
+      "question": {
+        "sv": "What does the developer see if they start the debug configuration while orders-dev is stopped or missing?",
+        "en": "What does the developer see if they start the debug configuration while orders-dev is stopped or missing?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "The check fails and the script exits",
+            "en": "The check fails and the script exits"
+          },
+          "summary": {
+            "sv": "docker inspect does not report true, so the script prints how to start the container and exits with 1.",
+            "en": "docker inspect does not report true, so the script prints how to start the container and exits with 1."
+          },
+          "body": {
+            "sv": "This walk starts at the same running check as step W1.3, but now the condition is true: `docker inspect` did not print `true`. As step W1.3 showed, there are two ways to land here:\n\n- **The container is stopped:** `docker inspect` prints `false`.\n- **The container doesn't exist:** `docker inspect` fails, its error text is discarded, and the comparison sees an empty string.\n\nThe branch then does two things:\n\n1. `echo … >&2` writes the hint to stderr. In the task terminal, VS Code shows stderr like normal output. The hint names the container from `CONTAINER` and the command to fix it, `docker compose up -d dev`. That command uses the compose service name `dev` from step W1.4, not the container name, and needs to be run in the repository folder.\n2. `exit 1` ends the script with a non-zero code.\n\n**The script stops before its first `docker exec`.** debugpy is not installed, the log folder is not touched, and no debugpy process is started. The exit code 1 is the only signal VS Code acts on. The next step shows what VS Code does with it.",
+            "en": "This walk starts at the same running check as step W1.3, but now the condition is true: `docker inspect` did not print `true`. As step W1.3 showed, there are two ways to land here:\n\n- **The container is stopped:** `docker inspect` prints `false`.\n- **The container doesn't exist:** `docker inspect` fails, its error text is discarded, and the comparison sees an empty string.\n\nThe branch then does two things:\n\n1. `echo … >&2` writes the hint to stderr. In the task terminal, VS Code shows stderr like normal output. The hint names the container from `CONTAINER` and the command to fix it, `docker compose up -d dev`. That command uses the compose service name `dev` from step W1.4, not the container name, and needs to be run in the repository folder.\n2. `exit 1` ends the script with a non-zero code.\n\n**The script stops before its first `docker exec`.** debugpy is not installed, the log folder is not touched, and no debugpy process is started. The exit code 1 is the only signal VS Code acts on. The next step shows what VS Code does with it."
+          },
+          "details": {
+            "sv": "The test only checks the printed text, so other failures end up in this branch too: the Docker daemon is not running, the `docker` command is missing, or the user has no permission to reach Docker. In each of those cases `docker inspect` produces no `true`. Its error text is discarded, so the developer sees only the hint to start the container, which does not name the real cause. This follows from the code as written; I haven't observed it running.",
+            "en": "The test only checks the printed text, so other failures end up in this branch too: the Docker daemon is not running, the `docker` command is missing, or the user has no permission to reach Docker. In each of those cases `docker inspect` produces no `true`. Its error text is discarded, so the developer sees only the hint to start the container, which does not name the real cause. This follows from the code as written; I haven't observed it running."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Failing running check",
+                "en": "Failing running check"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 8,
+                "end": 11,
+                "role": "walk",
+                "anchor": "Start it with: docker compose up -d dev"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "The failed task blocks the attach",
+            "en": "The failed task blocks the attach"
+          },
+          "summary": {
+            "sv": "Because the pre-launch task ended with a non-zero exit code, VS Code does not go on to the attach.",
+            "en": "Because the pre-launch task ended with a non-zero exit code, VS Code does not go on to the attach."
+          },
+          "body": {
+            "sv": "The walk is back in VS Code, at the `preLaunchTask` link from step W1.1. The task has ended with exit code 1 from the previous step. As step W1.2 showed, the exit code is the only measure of success, because the task has no problem matcher and no ready signal.\n\nWhat follows is VS Code's general handling of a failed pre-launch task. It is not shown in this repository and was not observed running here:\n\n- By default, VS Code does not start the attach. It reports that the pre-launch task ended with exit code 1 and lets the developer choose whether to **abort**, **debug anyway** or **show errors**. The `debug.onTaskErrors` setting can make one of these choices automatic.\n- If the developer aborts, no debug session starts. The script's hint stays visible in the task terminal, and it is the one message that names the cause and the fix.\n- If the developer chooses **debug anyway**, VS Code tries the `connect` target `localhost:5678` regardless. Nothing in the container started debugpy (step W2.1), so nothing is listening. The connection is expected to fail with a connection error, and that error says nothing about the container.\n\n**The change works safely here only because the failure shows up as an exit code.** The script stops early, and VS Code's default reaction is to stop before attaching. As step W1.7 showed, a failure later in the detached start would not stop the attach in the same way.",
+            "en": "The walk is back in VS Code, at the `preLaunchTask` link from step W1.1. The task has ended with exit code 1 from the previous step. As step W1.2 showed, the exit code is the only measure of success, because the task has no problem matcher and no ready signal.\n\nWhat follows is VS Code's general handling of a failed pre-launch task. It is not shown in this repository and was not observed running here:\n\n- By default, VS Code does not start the attach. It reports that the pre-launch task ended with exit code 1 and lets the developer choose whether to **abort**, **debug anyway** or **show errors**. The `debug.onTaskErrors` setting can make one of these choices automatic.\n- If the developer aborts, no debug session starts. The script's hint stays visible in the task terminal, and it is the one message that names the cause and the fix.\n- If the developer chooses **debug anyway**, VS Code tries the `connect` target `localhost:5678` regardless. Nothing in the container started debugpy (step W2.1), so nothing is listening. The connection is expected to fail with a connection error, and that error says nothing about the container.\n\n**The change works safely here only because the failure shows up as an exit code.** The script stops early, and VS Code's default reaction is to stop before attaching. As step W1.7 showed, a failure later in the detached start would not stop the attach in the same way."
+          },
+          "details": {
+            "sv": "The problem matcher is empty, so the script's output is not turned into entries in the Problems panel. \"Show errors\" therefore has nothing structured to list, and the useful text is the task terminal output itself.",
+            "en": "The problem matcher is empty, so the script's output is not turned into entries in the Problems panel. \"Show errors\" therefore has nothing structured to list, and the useful text is the task terminal output itself."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "preLaunchTask link",
+                "en": "preLaunchTask link"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 8,
+                "end": 8,
+                "role": "walk",
+                "anchor": "\"preLaunchTask\": \"Start debugger in dev container\""
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+This task is the editor-side half of the link from the previous step (W1.1). VS Code finds it by its `label`, which must match the configuration's `preLaunchTask` string exactly. It then runs `start-debugger.sh` from the workspace on the host, not inside the container. The script does its container work through `docker exec`.
+
+The task passes two settings to the script as environment variables: `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678`. The script reads them in the next step (W1.3). **The port appears in two places:** here, and as `connect.port` in the debug configuration. Nothing ties the two values together, so a change to one has to be made in the other as well.
+
+<!-- dspatch:details -->
+- **When the attach starts:** the task has no `isBackground` and no problem matcher (`problemMatcher: []`). VS Code therefore waits for the task's process to exit and uses its exit code to decide whether to attach. This works only because the script ends quickly, after starting debugpy detached (W1.7). If the script fails, the attach does not happen, which walk W2 follows.
+- **The env values only repeat the script's defaults:** `start-debugger.sh` falls back to `orders-dev` and `5678` when the variables are unset. Setting them here makes the values visible next to the debug configuration but changes nothing at runtime.
+- **The script must be executable on the host:** `command` points straight at the script file, so it runs via its `#!/usr/bin/env bash` line. That needs the file to have execute permission and needs bash on the host. The file mode can't be read from these revisions. On a Windows host, the default task shell would not run a `.sh` path like this.
+- **This file is new:** the earlier revision has only `.vscode/launch.json`, so there was no task before this change.

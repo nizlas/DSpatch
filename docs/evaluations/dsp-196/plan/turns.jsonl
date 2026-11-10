@@ -1,0 +1,13 @@
+{"turn":"001","task":"plan-walks","status":"finished","chars":13219,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"002","task":"write-step","status":"finished","chars":1896,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"003","task":"write-step","status":"finished","chars":1828,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"004","task":"write-step","status":"finished","chars":2081,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"005","task":"write-step","status":"finished","chars":2158,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"006","task":"write-step","status":"finished","chars":1776,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"007","task":"write-step","status":"finished","chars":1747,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"008","task":"write-step","status":"finished","chars":2260,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"009","task":"write-step","status":"finished","chars":2096,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"010","task":"write-step","status":"finished","chars":2688,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"011","task":"write-step","status":"finished","chars":1526,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"012","task":"write-step","status":"finished","chars":1650,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}
+{"turn":"013","task":"review-walks","status":"finished","chars":1733,"modelReported":"claude-opus-5-5","event":["type","dspatchSessionId","dspatchRunId","at","rawProviderEvent","status"]}

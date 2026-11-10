@@ -1,0 +1,8 @@
+This is the script's guard: it decides which container the rest of the script works on, and it refuses to go further unless that container is already running. **The script never starts the container itself.** The developer has to bring it up beforehand, and the hint printed here (`docker compose up -d dev`) tells them how.
+
+`CONTAINER` and `PORT` come from `DEV_CONTAINER` and `DEBUG_PORT`. The task in W1.2 sets these to `orders-dev` and `5678`, and the script falls back to the same values when it is run without them. The running check uses `docker inspect`. If the container is stopped, or doesn't exist at all, the check fails and the script exits with 1. Walk W2 follows that failing branch back to VS Code. On the success path, the next step (W1.4) shows where `orders-dev` is defined.
+
+<!-- dspatch:details -->
+- **One check covers both cases.** `docker inspect`'s error output is thrown away (`2>/dev/null`). A missing container produces empty output, and a stopped one produces `false`. Both differ from `true`, so both cases print the same message.
+- **The port is set in more than one place.** `PORT` is only used later, as debugpy's listen port inside the container (W1.7). The host side is fixed separately: compose publishes `5678:5678`, and the debug configuration connects to `localhost:5678` (lines 8–9 of `compose.yaml` and line 9 of `.vscode/launch.json`, target). Changing `DEBUG_PORT` in the task alone would make the editor try to attach to the wrong port.
+- **Strict mode.** `set -euo pipefail` means any later `docker exec` that fails also stops the script with a non-zero code. That failure blocks the attach in the same way as the explicit `exit 1` here.
