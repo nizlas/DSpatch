@@ -1,0 +1,8 @@
+Here, `startSession` gives `Link` a function to call once the connection attempt settles, before it starts `connect`. That function reports **“session ready”** for `'connected'` and **“offline mode”** for `'gave-up'`; registering it does not report anything immediately. In the base revision, `startSession` just awaited `connect` and had no `report` parameter. The next step shows how `whenSettled` stores the callback.
+
+<!-- dspatch:details -->
+`Link.settle` schedules the stored callback with a timer, while `startSession` separately awaits the result of `connect`. So if the result is `'gave-up'`, this callback reports **“offline mode”**, and then the `if` here also reports **“retrying later”**. If `transport.open` rejects instead, `connect` does not reach `settle` on that path, so this callback is not invoked by `Link`; the rejection propagates through the `await` (W3.1–W3.2).
+
+```dspatch-references
+{"references":[{"label":"Callback registration and handling of the connect result","path":"src/session.ts","side":"target","start":3,"end":8},{"label":"Outcome type and callback storage","path":"src/link.ts","side":"target","start":5,"end":15},{"label":"When Link settles and invokes the callback","path":"src/link.ts","side":"target","start":22,"end":35},{"label":"Previous startSession signature and behavior","path":"src/session.ts","side":"base","start":3,"end":4},{"label":"Rejection path","step":"W3.1"},{"label":"Rejection reaching startSession","step":"W3.2"}],"insufficient":false}
+```

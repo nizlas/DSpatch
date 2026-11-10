@@ -1,0 +1,1025 @@
+{
+  "runId": "walk-c2330972-730b-4d92-ae24-f4aa596b82ec",
+  "graphId": "dspatch-walk-loop",
+  "graphVersionId": "graph-8e84007492c1b56f",
+  "roles": [
+    {
+      "id": "walk-planner",
+      "sourcePath": "docs/loop/roles/review/walk-planner.role.md"
+    },
+    {
+      "id": "walk-writer",
+      "sourcePath": "docs/loop/roles/review/walk-writer.role.md"
+    },
+    {
+      "id": "walk-reviewer",
+      "sourcePath": "docs/loop/roles/review/walk-reviewer.role.md"
+    }
+  ],
+  "recordPath": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-qVvgJ7\\reviews\\generated\\r-7cc26aa4e9ea48e5d9626690\\job-05f3dbf8-3064-4c72-982e-be08b16f9d0e.walk-loop\\record.jsonl",
+  "resultsDir": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-qVvgJ7\\reviews\\generated\\r-7cc26aa4e9ea48e5d9626690\\job-05f3dbf8-3064-4c72-982e-be08b16f9d0e.walk-loop\\results",
+  "status": "delivered",
+  "path": [
+    "plan",
+    "write",
+    "review",
+    "write",
+    "review",
+    "delivered"
+  ],
+  "first": {
+    "assessment": "The walks make the successful and give-up paths easy to follow, including the separate return and scheduled-callback reports. W1.4 overstates what the transport contract guarantees: it leaves the reader with an incomplete picture of how a request can end.",
+    "verdict": "rework",
+    "findings": [
+      {
+        "kind": "explanation",
+        "steps": [
+          "W1.4"
+        ],
+        "problem": "The step says the Promise<boolean> contract means connect awaits a true-or-false result for each request. It does not account for a rejected promise.",
+        "why": "The reader may infer that every unsuccessful request follows the false-result retry path. A rejection takes a different path and does not settle the link.",
+        "evidence": "In src/link.ts (target), lines 1–3 type open as Promise<boolean>, but line 21 awaits it without handling rejection. If it rejects, connect exits before the branch, retry, or settle calls at lines 22–29; startSession's await at src/session.ts (target), line 5 rejects, and its registered callback is not invoked.",
+        "reference": "Standard: keep the stated behavior accurate so the reader can follow the mechanism."
+      }
+    ]
+  },
+  "final": {
+    "assessment": "W1.4 now distinguishes a fulfilled true-or-false result from a rejected promise and explains what rejection does to the link and session. The walks otherwise let the Standard reader follow the successful and give-up paths, including the separate return and deferred callback reports; no significant shortcomings remain.",
+    "verdict": "accept",
+    "findings": []
+  },
+  "rounds": 1,
+  "replanned": false,
+  "rewritten": [
+    "W1.4"
+  ],
+  "turns": [
+    {
+      "node": "plan",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T17:12:25.878Z",
+      "endedAt": "2026-11-10T17:13:31.030Z",
+      "durationMs": 65152
+    },
+    {
+      "node": "plan",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T17:13:31.567Z",
+      "endedAt": "2026-11-10T17:13:51.004Z",
+      "durationMs": 19437
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.1",
+      "startedAt": "2026-11-10T17:13:51.824Z",
+      "endedAt": "2026-11-10T17:14:06.958Z",
+      "durationMs": 15134
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.2",
+      "startedAt": "2026-11-10T17:14:06.972Z",
+      "endedAt": "2026-11-10T17:14:11.627Z",
+      "durationMs": 4655
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.3",
+      "startedAt": "2026-11-10T17:14:11.640Z",
+      "endedAt": "2026-11-10T17:14:14.796Z",
+      "durationMs": 3156
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.4",
+      "startedAt": "2026-11-10T17:14:14.809Z",
+      "endedAt": "2026-11-10T17:14:17.916Z",
+      "durationMs": 3107
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.5",
+      "startedAt": "2026-11-10T17:14:17.931Z",
+      "endedAt": "2026-11-10T17:14:22.172Z",
+      "durationMs": 4241
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.6",
+      "startedAt": "2026-11-10T17:14:22.187Z",
+      "endedAt": "2026-11-10T17:14:26.399Z",
+      "durationMs": 4212
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W1.7",
+      "startedAt": "2026-11-10T17:14:26.413Z",
+      "endedAt": "2026-11-10T17:14:29.755Z",
+      "durationMs": 3342
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.1",
+      "startedAt": "2026-11-10T17:14:29.769Z",
+      "endedAt": "2026-11-10T17:14:34.069Z",
+      "durationMs": 4300
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.2",
+      "startedAt": "2026-11-10T17:14:34.084Z",
+      "endedAt": "2026-11-10T17:14:37.869Z",
+      "durationMs": 3785
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.3",
+      "startedAt": "2026-11-10T17:14:37.884Z",
+      "endedAt": "2026-11-10T17:14:42.314Z",
+      "durationMs": 4430
+    },
+    {
+      "node": "write",
+      "occurrence": 1,
+      "stepId": "W2.4",
+      "startedAt": "2026-11-10T17:14:42.328Z",
+      "endedAt": "2026-11-10T17:14:47.010Z",
+      "durationMs": 4682
+    },
+    {
+      "node": "review",
+      "occurrence": 1,
+      "startedAt": "2026-11-10T17:14:47.267Z",
+      "endedAt": "2026-11-10T17:15:18.699Z",
+      "durationMs": 31432
+    },
+    {
+      "node": "write",
+      "occurrence": 2,
+      "stepId": "W1.4",
+      "startedAt": "2026-11-10T17:15:18.751Z",
+      "endedAt": "2026-11-10T17:15:24.062Z",
+      "durationMs": 5311
+    },
+    {
+      "node": "review",
+      "occurrence": 2,
+      "startedAt": "2026-11-10T17:15:24.107Z",
+      "endedAt": "2026-11-10T17:15:31.900Z",
+      "durationMs": 7793
+    }
+  ],
+  "durationMs": 186105,
+  "usage": [
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7403,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 401,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1785,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 5615,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8510,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 6664,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7400,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1107,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 11007,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 2748,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8507,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 2497,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7677,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 70,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1785,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 5889,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7763,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 85,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7674,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 86,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7861,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 310,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7760,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 98,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8662,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 387,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7858,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 801,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8959,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7760,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1196,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 9506,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 96,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8956,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 9879,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 9503,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 373,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 10426,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 88,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 9876,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 10780,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 10423,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 354,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 11327,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 79,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 10777,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 11684,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 11324,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 357,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 12231,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 89,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 11681,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 12605,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 12228,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 374,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 13152,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 91,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 12602,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 13525,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 13149,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 373,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 14072,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 100,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 13522,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 14449,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 14069,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 377,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 14996,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 116,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 14446,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 15414,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 14993,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 418,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 15961,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 96,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 15411,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 16349,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 15958,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 388,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 16896,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 76,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 16346,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 17230,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 16893,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 334,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 17777,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 76,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 17227,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 6834,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 270,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1785,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 5046,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7383,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 335,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 6831,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 549,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8209,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1038,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 7380,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 826,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 9302,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1293,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 8206,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 1093,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 18372,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 152,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 17774,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 595,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 18919,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 103,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 18369,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 547,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 10938,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 218,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 6831,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 4104,
+      "source": "assistant.usage.cacheWriteTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 11551,
+      "source": "assistant.usage.inputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 314,
+      "source": "assistant.usage.outputTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 10935,
+      "source": "assistant.usage.cacheReadTokens"
+    },
+    {
+      "unit": "tokens",
+      "scope": "call",
+      "value": 613,
+      "source": "assistant.usage.cacheWriteTokens"
+    }
+  ]
+}

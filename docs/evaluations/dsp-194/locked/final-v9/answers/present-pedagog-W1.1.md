@@ -1,0 +1,8 @@
+Here, `report` is a function that sends a text message, and the callback translates `Link`’s `Outcome`—`'connected'` or `'gave-up'`—into the corresponding message. Registering the callback does not report immediately: it gives `Link` work to do if it later settles. `startSession` then waits for `connect`; in the next step, `whenSettled` stores that callback (W1.2).
+
+<!-- dspatch:details -->
+The callback report is separate from the result `startSession` receives from `connect`: after a `'gave-up'` result, `startSession` also reports `'retrying later'` (W2.5). In the base revision, `startSession` only awaited `connect`; this revision adds the `report` argument and settlement callback. One boundary to keep in mind: if `transport.open` rejects, the walk shows that `Link` does not settle, so this callback does not report an outcome (W3.1, W3.2).
+
+```dspatch-references
+{"references":[{"label":"Callback registration and outcome message mapping","path":"src/session.ts","side":"target","start":3,"end":5},{"label":"Outcome values and callback storage","path":"src/link.ts","side":"target","start":5,"end":15},{"label":"Earlier startSession implementation","path":"src/session.ts","side":"base","start":3,"end":4},{"label":"whenSettled stores one callback","step":"W1.2"},{"label":"Rejection leaves the loop without settling","step":"W3.1"},{"label":"startSession rejects with no report","step":"W3.2"},{"label":"Two reports after giving up","step":"W2.5"}],"insufficient":false}
+```

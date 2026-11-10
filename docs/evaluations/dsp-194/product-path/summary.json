@@ -1,0 +1,96 @@
+{
+  "provider": "copilot",
+  "model": "copilot-default",
+  "reference": "DSP-194 profile switch through the real windows, on Niclas's go-ahead",
+  "project": {
+    "case": "connect",
+    "base": "96519f13a3304837a28e8d8ecda65e6463ba9a76",
+    "target": "e226601e33aade7ebbbf5439b73521855237241f"
+  },
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-qVvgJ7",
+  "chosenSteps": {
+    "simple": {
+      "id": "W1.1",
+      "title": "",
+      "places": [
+        {
+          "path": "src/session.ts",
+          "side": "target",
+          "start": 3,
+          "end": 6
+        }
+      ]
+    },
+    "complex": {
+      "id": "W1.6",
+      "title": "",
+      "places": [
+        {
+          "path": "src/link.ts",
+          "side": "target",
+          "start": 32,
+          "end": 37
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "profile": "standard",
+      "key": "r-7cc26aa4e9ea48e5d9626690",
+      "jobId": "job-05f3dbf8-3064-4c72-982e-be08b16f9d0e",
+      "state": "done",
+      "startedAt": "2026-11-10T17:12:25.334Z",
+      "endedAt": "2026-11-10T17:15:31.968Z",
+      "definition": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-qVvgJ7\\reviews\\generated\\r-7cc26aa4e9ea48e5d9626690\\job-05f3dbf8-3064-4c72-982e-be08b16f9d0e.review.json"
+    }
+  ],
+  "switched": [
+    {
+      "stepId": "W1.1",
+      "profile": "essens",
+      "seconds": 28
+    },
+    {
+      "stepId": "W1.1",
+      "profile": "pedagog",
+      "seconds": 14
+    },
+    {
+      "stepId": "W1.6",
+      "profile": "essens",
+      "seconds": 6
+    },
+    {
+      "stepId": "W1.6",
+      "profile": "pedagog",
+      "seconds": 14
+    }
+  ],
+  "explanations": [
+    {
+      "stepId": "W1.1",
+      "profile": "essens",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.1",
+      "profile": "pedagog",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.6",
+      "profile": "essens",
+      "action": "present",
+      "status": "done"
+    },
+    {
+      "stepId": "W1.6",
+      "profile": "pedagog",
+      "action": "present",
+      "status": "done"
+    }
+  ]
+}

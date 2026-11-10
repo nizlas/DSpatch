@@ -1,0 +1,8 @@
+`settle` is reached after `connect` gets an outcome from an attempt, as in W1.4. It takes the registered callback and clears the registration before scheduling the callback, so that settlement consumes that registration rather than leaving it for another call. `setTimeout(..., 0)` asks JavaScript to run the callback in a later timer task; it does not call it immediately or guarantee it runs exactly zero milliseconds later. In the base revision, `connect` had no settlement callback.
+
+<!-- dspatch:details -->
+The callback closes over this call’s `outcome`, so it will report `'connected'` or `'gave-up'` even though `connect` has already returned that outcome to its caller. The timer does not wait for the callback to finish: `startSession` resumes after awaiting `connect` and handles the returned outcome, while the callback reports through `report` in the later step (W1.6). On the failure path, that means `startSession` can report `'retrying later'` before the timer reports `'offline mode'`.
+
+```dspatch-references
+{"references":[{"label":"Settlement and timer scheduling","path":"src/link.ts","side":"target","start":32,"end":38},{"label":"The callback registration","step":"W1.2"},{"label":"The successful outcome","step":"W1.4"},{"label":"How startSession handles the return and callback","step":"W1.6"},{"label":"connect before this change","path":"src/link.ts","side":"base","start":1,"end":11}],"insufficient":false}
+```

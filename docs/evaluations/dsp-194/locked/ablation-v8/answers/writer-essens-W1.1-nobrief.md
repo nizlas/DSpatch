@@ -1,0 +1,1 @@
+`startSession` registers its outcome-to-message callback before calling `link.connect`, so the callback is in place when `Link` settles. It maps `connected` to `session ready` and `gave-up` to `offline mode`; registration itself does not report anything. The awaited return is handled separately, and the next step shows where `Link` stores this callback.

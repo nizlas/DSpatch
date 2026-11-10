@@ -1,0 +1,4 @@
+After the successful branch in `connect` calls `settle('connected')`, `settle` takes the registered callback out of `onSettled` and clears the field before scheduling it. If no callback was registered, it schedules nothing. Otherwise, `setTimeout` queues the callback to run later, so it does not run inside `connect`; this is what lets `connect` return `'connected'` before the callback reports the result.
+
+<!-- dspatch:details -->
+The callback is one-shot because any later call to `settle` finds `onSettled` cleared, even if the first callback has not run yet. A zero-millisecond timer does not run immediately: it queues a timer task. Once `connect` returns, `startSession` can resume from its `await` as a microtask before that timer task runs; the next step follows that order to show when the reports occur.

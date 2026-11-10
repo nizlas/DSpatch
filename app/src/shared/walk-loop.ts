@@ -8,7 +8,7 @@
  * the roles in `docs/loop/roles/review/` decide the method; the engine (`runLoopGraph`) decides
  * the execution. Nothing here routes: the executor returns a node's declared outcome, and the
  * drawing says where it leads. The pedagogy is docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md
- * (version 1.1), through the same shared explanation task and profile readers every step
+ * (version 1.2), through the same shared explanation task and profile readers every step
  * explanation uses (`presentation-profiles.ts`, instruction version 7).
  */
 
@@ -438,7 +438,8 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     'The places above are shown beside your text; name functions, types and values in the prose, not these paths and lines.',
     ...(ref.step.together === undefined ? [] : [`Together: ${ref.step.together}`]),
     ...(ref.step.revisit === undefined ? [] : [`Revisit: ${ref.step.revisit}`]),
-    ...(brief === undefined ? [] : [`Brief: ${brief}`]),
+    // DSP-194: the planner writes the brief for every profile; it is orientation, and the profile selects from it.
+    ...(brief === undefined ? [] : [`The planner's brief, written for every profile: ${brief}`]),
     ...neighbour(before, 'The step before'),
     ...neighbour(after, 'The step after'),
   ];

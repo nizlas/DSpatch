@@ -1,0 +1,3 @@
+`startSession` now accepts a `report` function and registers a callback with `Link` before connecting. When called with an outcome, that callback reports `session ready` for `connected` and `offline mode` otherwise; the `Outcome` type’s other value is `gave-up` ([target: `src/link.ts`, line 5]). Registering the callback does not report anything immediately.
+
+`startSession` then awaits `link.connect(address)`. `Link.whenSettled` stores the callback for later; the next step shows where it is kept ([target: `src/link.ts`, lines 8–15]).

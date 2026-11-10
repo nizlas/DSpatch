@@ -53,8 +53,12 @@ export const LEGACY_PROFILE: PresentationProfile = 'original';
  * Raised when profile instructions change in meaning; stored with every step explanation and walk.
  * 8 (DSP-192, 10 November 2026): the profiles select at different levels; the prepared text is
  * material, not a content list; Standard's reader unchanged.
+ * 9 (DSP-194, 10 November 2026): Essentials says what a mechanism achieves rather than the
+ * operations that achieve it; a profile explanation of a step gets an answer format without the
+ * review question's content rules; the writer reads the planner's brief as orientation written
+ * for every profile. Standard's and Teacher's readers unchanged.
  */
-export const PRESENTATION_INSTRUCTION_VERSION = 8;
+export const PRESENTATION_INSTRUCTION_VERSION = 9;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -173,7 +177,7 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     id: 'essens',
     promptName: 'Essentials',
     reader: [
-      'The reader is an experienced developer who wants to understand quickly why this code is here, what main work happens, and which decisive conditions or consequences an accurate main picture needs. Choose a higher level of abstraction: normally do not describe every call, state flag, loop step, language detail or how each guard is implemented; this reader reads the ordinary mechanics in the code. Brevity comes from meaningful selection, not from packing the same details into fewer sentences. A detail belongs in the first part when the main behaviour needs it or leaving it out would mislead; further mechanics this reader may want next go after the marker, or stay in the step that treats them.',
+      'The reader is an experienced developer who wants to understand quickly why this code is here, what main work happens, and which decisive conditions or consequences an accurate main picture needs. Choose a higher level of abstraction: say what a mechanism achieves and what follows from it for the main behaviour, not the calls, state flags, loop steps, types, queues or guards that achieve it; this reader reads the ordinary mechanics in the code. Brevity comes from meaningful selection, not from packing the same details into fewer sentences. A detail belongs in the first part when the main behaviour needs it or leaving it out would mislead; further mechanics this reader may want next go after the marker, or stay in the step that treats them.',
     ],
     simpler: ['Plainer language and less jargon: the same point, said more directly.'],
   },
@@ -418,7 +422,7 @@ export function presentationPromptSection(section: PresentationSection): string 
     }
     lines.push(
       `## How to present (${profile.promptName})`,
-      `Explain this step for a reader who chose ${profile.promptName}. The first part is the short part the answer format below describes; the deepening goes after the marker line it names.`,
+      `Explain this step for a reader who chose ${profile.promptName}. The first part is what this reader reads at once; the deepening goes after the marker line the answer format below names.`,
       `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
       '',
       ...baseTextRules(profile, true),

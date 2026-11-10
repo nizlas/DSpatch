@@ -1,0 +1,1 @@
+`settle` takes the registered callback out of `Link` and clears the field before scheduling it with `setTimeout(..., 0)`. That defers the report instead of running it inside `connect`’s success branch, so `startSession` can resume from its `await` first; the timer callback reports afterward (W1.6).

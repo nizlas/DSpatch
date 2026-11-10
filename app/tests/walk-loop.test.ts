@@ -183,6 +183,9 @@ describe('the prompts', () => {
     const writer = writeStepPrompt({ role: role('write'), plan, stepId: 'W1.2', profile: 'pedagog', language: 'en', material, folder, fresh: true, rework: null });
     assert.ok(writer.includes('## Your role: walk-writer'));
     assert.ok(writer.includes('## How to explain the step (Teacher)'));
+    // DSP-194: the brief is the planner's orientation for every profile, and the role says the profile selects from it.
+    assert.ok(writer.includes("The planner's brief, written for every profile: Reached from start; what open answers."), 'the brief is labelled as written for every profile');
+    assert.match(writer, /the profile decides which of the brief's points this reader needs/);
     assert.ok(writer.includes('Explain this code to a person reviewing the change'), 'the shared explanation task');
     assert.ok(writer.includes('The reader can program but may not know this language'), 'the profile\'s reader');
     assert.ok(writer.includes('Make a transition comprehensible'), 'the walk reading rules');

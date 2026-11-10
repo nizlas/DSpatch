@@ -1,0 +1,1 @@
+`startSession` now accepts a `report` function and registers a callback with `Link` before awaiting `connect`. When `Link` later settles, the callback reports “session ready” for `connected` and “offline mode” for the other outcome. The next step follows where `Link` stores it.

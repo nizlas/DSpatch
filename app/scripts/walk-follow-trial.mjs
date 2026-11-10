@@ -1276,6 +1276,19 @@ async function main() {
   await poll('the saved Essentials explanation', async () => /SIMULATED Essentials/.test(await read(pc, `document.querySelector('.rv-step-panel')?.textContent ?? ''`)), 30_000);
   await delay(2500);
   check('Essentials again shows the saved explanation and asks for nothing', explanationEntries().length === 1 && repeatedPresents().length === 0, JSON.stringify(repeatedPresents()));
+  // DSP-194: a new explanation in the same profile, then back to the saved one; nothing else moves.
+  const turnsBefore = await read(pc, `document.querySelectorAll('.rv-discussion-turn').length`);
+  await read(pc, `${q('profile-regenerate')}?.click(); true`);
+  await poll('the regenerated Essentials explanation', async () => explanationEntries().filter((e) => e.stepId === steps[0] && e.profile === 'essens' && e.status === 'done').length === 2, 60_000);
+  const regenerated = explanationEntries().filter((e) => e.stepId === steps[0] && e.profile === 'essens');
+  const last = regenerated.at(-1);
+  check('New response asks once, as a regeneration of the saved Essentials explanation, at version 9', regenerated.length === 2 && last.action === 'regenerate' && last.parent === regenerated[0].id && last.instructionVersion === 9, JSON.stringify(regenerated.map((e) => ({ action: e.action, parent: e.parent, version: e.instructionVersion }))));
+  check('its prompt is the profile\'s, with the form of the answer only', /## Regenerating/.test(last.prompt ?? '') && !/Give the cause and effect behind the answer|Name what you could not read or find/.test(last.prompt ?? ''));
+  await read(pc, `${q('explanation-back')}?.click(); true`);
+  await delay(1500);
+  const shownEntry = await read(pc, `${q('profile-explanation')}?.dataset.entry ?? ''`);
+  check('back shows the saved explanation again, with no call', explanationEntries().length === 2 && shownEntry === regenerated[0].id, JSON.stringify({ shownEntry, saved: regenerated[0].id }));
+  check('nothing of the explanations is in Discussion, and the walk\'s steps are as prepared', (await read(pc, `document.querySelectorAll('.rv-discussion-turn').length`)) === turnsBefore && JSON.parse(await walk.ev(`JSON.stringify([...document.querySelectorAll('[data-ev^="walk-step-"]')].map((b)=>b.dataset.ev.slice('walk-step-'.length)))`)).join(',') === steps.join(','));
   await chooseProfileInPage(pc, 'standard');
   await delay(500);
 

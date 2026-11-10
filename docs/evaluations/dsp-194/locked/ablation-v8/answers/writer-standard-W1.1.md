@@ -1,0 +1,1 @@
+`startSession` now accepts a `report` function and registers a callback with `link.whenSettled` before connecting. When that callback later receives an outcome, it reports **“session ready”** for `'connected'` and **“offline mode”** otherwise; registration itself does not call `report`. Then `startSession` awaits `link.connect(address)`, continuing when that call returns.

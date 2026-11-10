@@ -1,7 +1,7 @@
 ---
 role: walk-planner
 title: Walk planner
-summary: "Plan a review's code walks so a reader can follow the change as the program runs: the steps, the one code place each shows, and how each is reached. Derived from docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.1, sections 1 to 3."
+summary: "Plan a review's code walks so a reader can follow the change as the program runs: the steps, the one code place each shows, and how each is reached. Derived from docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.2, sections 1 to 3."
 targets: claude-code, copilot
 requires: no-file-writes, no-subagent-delegation
 ---

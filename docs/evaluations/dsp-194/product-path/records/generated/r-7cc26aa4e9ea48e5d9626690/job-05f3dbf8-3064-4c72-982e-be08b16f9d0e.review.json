@@ -1,0 +1,512 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · connect 96519f1→e226601",
+    "en": "Code walks · connect 96519f1→e226601"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-project-VKFFEV\\connect",
+  "base": "96519f13a3304837a28e8d8ecda65e6463ba9a76",
+  "target": "e226601e33aade7ebbbf5439b73521855237241f",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Copilot (copilot-default) on 2026-11-10 17:15 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Standard profile (instruction version 9). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code; one correction round went to the writer (1 step(s) written again), and the reviewer's final assessment accepted the walks. The reviewer is an agent: its acceptance approves nothing of the code.",
+    "en": "Prepared by Copilot (copilot-default) on 2026-11-10 17:15 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Standard profile (instruction version 9). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code; one correction round went to the writer (1 step(s) written again), and the reviewer's final assessment accepted the walks. The reviewer is an agent: its acceptance approves nothing of the code."
+  },
+  "presentation": {
+    "profile": "standard",
+    "version": 9
+  },
+  "overviewSummary": {
+    "sv": "Link connections now retry up to a configurable limit, returning either `connected` or `gave-up`. A registered callback reports the settled outcome asynchronously, while `startSession` also reports when to retry later after giving up.",
+    "en": "Link connections now retry up to a configurable limit, returning either `connected` or `gave-up`. A registered callback reports the settled outcome asynchronously, while `startSession` also reports when to retry later after giving up."
+  },
+  "overview": {
+    "sv": "Link connections now retry up to a configurable limit, returning either `connected` or `gave-up`. A registered callback reports the settled outcome asynchronously, while `startSession` also reports when to retry later after giving up.",
+    "en": "Link connections now retry up to a configurable limit, returning either `connected` or `gave-up`. A registered callback reports the settled outcome asynchronously, while `startSession` also reports when to retry later after giving up."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "How does a successful connection become a session-ready report?",
+        "en": "How does a successful connection become a session-ready report?"
+      },
+      "purpose": {
+        "sv": "Follow a successful connection from session setup through the link and back to the deferred status callback.",
+        "en": "Follow a successful connection from session setup through the link and back to the deferred status callback."
+      },
+      "question": {
+        "sv": "When a transport opens successfully, how does that outcome reach the session reporter?",
+        "en": "When a transport opens successfully, how does that outcome reach the session reporter?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "Register before connecting",
+            "en": "Register before connecting"
+          },
+          "summary": {
+            "sv": "The session installs its outcome handler before awaiting the connection.",
+            "en": "The session installs its outcome handler before awaiting the connection."
+          },
+          "body": {
+            "sv": "`startSession` registers its outcome callback with `link.whenSettled` before calling and awaiting `link.connect`. That order matters: the handler is in place before the connection attempt can settle, while `await` separately lets `startSession` continue with the returned outcome. In the next step, `whenSettled` shows where the link keeps the handler.",
+            "en": "`startSession` registers its outcome callback with `link.whenSettled` before calling and awaiting `link.connect`. That order matters: the handler is in place before the connection attempt can settle, while `await` separately lets `startSession` continue with the returned outcome. In the next step, `whenSettled` shows where the link keeps the handler."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Session entry and connection request",
+                "en": "Session entry and connection request"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 3,
+                "end": 6,
+                "role": "walk",
+                "anchor": "link.whenSettled"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "Store the outcome handler",
+            "en": "Store the outcome handler"
+          },
+          "summary": {
+            "sv": "`whenSettled` keeps the callback for the next settled connection.",
+            "en": "`whenSettled` keeps the callback for the next settled connection."
+          },
+          "body": {
+            "sv": "`startSession` reaches `Link.whenSettled` before it calls `connect` (as established in W1.1). Here, `whenSettled` assigns the supplied function to `onSettled`, giving `Link` one callback slot to use when the connection settles. The callback’s `Outcome` parameter limits it to `connected` or `gave-up`; next, `connect` makes the attempt whose result will be passed to that handler.",
+            "en": "`startSession` reaches `Link.whenSettled` before it calls `connect` (as established in W1.1). Here, `whenSettled` assigns the supplied function to `onSettled`, giving `Link` one callback slot to use when the connection settles. The callback’s `Outcome` parameter limits it to `connected` or `gave-up`; next, `connect` makes the attempt whose result will be passed to that handler."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Callback registration",
+                "en": "Callback registration"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 13,
+                "end": 14,
+                "role": "walk",
+                "anchor": "this.onSettled = callback;"
+              },
+              "from": {
+                "label": {
+                  "sv": "Session callback registration",
+                  "en": "Session callback registration"
+                },
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 4
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "Await the transport",
+            "en": "Await the transport"
+          },
+          "summary": {
+            "sv": "`connect` asks the injected transport to open the address.",
+            "en": "`connect` asks the injected transport to open the address."
+          },
+          "body": {
+            "sv": "`startSession` awaits `Link.connect`, which resets the attempt count and asks the injected `transport` to open the address on each pass through the retry loop. Each pass waits for `open` to resolve before checking its boolean result, so the next branch acts on a completed response rather than merely a request. The transport’s contract defines that response; the next step follows it, then this loop handles the value.",
+            "en": "`startSession` awaits `Link.connect`, which resets the attempt count and asks the injected `transport` to open the address on each pass through the retry loop. Each pass waits for `open` to resolve before checking its boolean result, so the next branch acts on a completed response rather than merely a request. The transport’s contract defines that response; the next step follows it, then this loop handles the value."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Connection attempt",
+                "en": "Connection attempt"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 17,
+                "end": 21,
+                "role": "walk",
+                "anchor": "const open = await this.transport.open(address);"
+              },
+              "from": {
+                "label": {
+                  "sv": "Awaited connection",
+                  "en": "Awaited connection"
+                },
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 6,
+                "end": 6
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "Read the transport contract",
+            "en": "Read the transport contract"
+          },
+          "summary": {
+            "sv": "The injected transport resolves each open request to a boolean.",
+            "en": "The injected transport resolves each open request to a boolean."
+          },
+          "body": {
+            "sv": "The `Transport` interface declares that `open(address)` returns a `Promise<boolean>`; when it fulfills, `Link.connect` branches on the resulting `true` or `false`. A rejected promise is different: `connect` has no rejection handler here, so it exits before retrying or settling the link, and `startSession`’s awaited call rejects instead of reporting a connection outcome. Returning to `connect`, the next step follows the branch for a fulfilled `true` result.",
+            "en": "The `Transport` interface declares that `open(address)` returns a `Promise<boolean>`; when it fulfills, `Link.connect` branches on the resulting `true` or `false`. A rejected promise is different: `connect` has no rejection handler here, so it exits before retrying or settling the link, and `startSession`’s awaited call rejects instead of reporting a connection outcome. Returning to `connect`, the next step follows the branch for a fulfilled `true` result."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Transport interface",
+                "en": "Transport interface"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 1,
+                "end": 3,
+                "role": "walk",
+                "anchor": "open(address: string): Promise<boolean>;"
+              },
+              "from": {
+                "label": {
+                  "sv": "Transport open call",
+                  "en": "Transport open call"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 21,
+                "end": 21
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "Return on a successful open",
+            "en": "Return on a successful open"
+          },
+          "summary": {
+            "sv": "A true transport result settles the link as connected.",
+            "en": "A true transport result settles the link as connected."
+          },
+          "body": {
+            "sv": "After `transport.open` resolves `true` (W1.4), `Link.connect` takes the `if (open)` branch, calls `settle('connected')`, and returns `'connected'` immediately. It does not pause or make another attempt; `startSession` receives the returned outcome, while `settle` handles the callback separately. The next step follows how `settle` schedules that callback.",
+            "en": "After `transport.open` resolves `true` (W1.4), `Link.connect` takes the `if (open)` branch, calls `settle('connected')`, and returns `'connected'` immediately. It does not pause or make another attempt; `startSession` receives the returned outcome, while `settle` handles the callback separately. The next step follows how `settle` schedules that callback."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Successful connection branch",
+                "en": "Successful connection branch"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 22,
+                "end": 24,
+                "role": "walk",
+                "anchor": "if (open) {"
+              },
+              "from": {
+                "label": {
+                  "sv": "Transport result",
+                  "en": "Transport result"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 21,
+                "end": 21
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "Schedule the settlement callback",
+            "en": "Schedule the settlement callback"
+          },
+          "summary": {
+            "sv": "`settle` clears the stored handler and schedules it on a timer.",
+            "en": "`settle` clears the stored handler and schedules it on a timer."
+          },
+          "body": {
+            "sv": "After the successful branch calls `settle('connected')` (W1.5), `settle` takes the callback from `onSettled` and clears the field before scheduling it with `setTimeout`. This prevents that stored handler from being reused by another settlement; when present, it runs later with the outcome, not inline during `connect`. The next step returns to `startSession` to show what its handler reports.",
+            "en": "After the successful branch calls `settle('connected')` (W1.5), `settle` takes the callback from `onSettled` and clears the field before scheduling it with `setTimeout`. This prevents that stored handler from being reused by another settlement; when present, it runs later with the outcome, not inline during `connect`. The next step returns to `startSession` to show what its handler reports."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Settlement and callback scheduling",
+                "en": "Settlement and callback scheduling"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 32,
+                "end": 37,
+                "role": "walk",
+                "anchor": "const callback = this.onSettled;"
+              },
+              "from": {
+                "label": {
+                  "sv": "Connected settlement call",
+                  "en": "Connected settlement call"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 23,
+                "end": 23
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.7",
+          "title": {
+            "sv": "Translate the outcome for the session",
+            "en": "Translate the outcome for the session"
+          },
+          "summary": {
+            "sv": "The callback reports `session ready` for a connected outcome.",
+            "en": "The callback reports `session ready` for a connected outcome."
+          },
+          "body": {
+            "sv": "The timer scheduled by `Link.settle` invokes the handler registered by `startSession` (W1.1) with the settled `Outcome`. Here, the handler maps `'connected'` to `report('session ready')` and `'gave-up'` to `report('offline mode')`. For the successful path, `startSession` receives `'connected'` from `connect` but makes no additional report; its direct report is only for `'gave-up'`.",
+            "en": "The timer scheduled by `Link.settle` invokes the handler registered by `startSession` (W1.1) with the settled `Outcome`. Here, the handler maps `'connected'` to `report('session ready')` and `'gave-up'` to `report('offline mode')`. For the successful path, `startSession` receives `'connected'` from `connect` but makes no additional report; its direct report is only for `'gave-up'`."
+          },
+          "revisit": {
+            "sv": "This revisits the callback registration from the first step to show what the registered handler reports when invoked.",
+            "en": "This revisits the callback registration from the first step to show what the registered handler reports when invoked."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Session outcome callback",
+                "en": "Session outcome callback"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 5,
+                "role": "walk",
+                "anchor": "offline mode"
+              },
+              "from": {
+                "label": {
+                  "sv": "Scheduled callback invocation",
+                  "en": "Scheduled callback invocation"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 36,
+                "end": 36
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "kind": "walk",
+      "title": {
+        "sv": "What happens when the link gives up?",
+        "en": "What happens when the link gives up?"
+      },
+      "purpose": {
+        "sv": "Follow the false outcome through the retry limit, the direct retry-later report, and the separately scheduled offline-mode callback.",
+        "en": "Follow the false outcome through the retry limit, the direct retry-later report, and the separately scheduled offline-mode callback."
+      },
+      "question": {
+        "sv": "After every open attempt fails, how does the session report and defer its settled status?",
+        "en": "After every open attempt fails, how does the session report and defer its settled status?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "Take the failed-open branch",
+            "en": "Take the failed-open branch"
+          },
+          "summary": {
+            "sv": "A false transport result pauses before another attempt, until the limit is reached.",
+            "en": "A false transport result pauses before another attempt, until the limit is reached."
+          },
+          "body": {
+            "sv": "Returning to `Link.connect`’s `if (open)` branch, a `false` result skips the successful return and pauses for `attempts * 100` milliseconds before the loop checks its limit again. With the default `maxAttempts` of 3, the pauses grow with each failed attempt; after the final pause the loop ends, `connect` calls `settle('gave-up')` and returns `'gave-up'`. The callback registered by `startSession` is needed for that settlement; next, `settle` schedules it.",
+            "en": "Returning to `Link.connect`’s `if (open)` branch, a `false` result skips the successful return and pauses for `attempts * 100` milliseconds before the loop checks its limit again. With the default `maxAttempts` of 3, the pauses grow with each failed attempt; after the final pause the loop ends, `connect` calls `settle('gave-up')` and returns `'gave-up'`. The callback registered by `startSession` is needed for that settlement; next, `settle` schedules it."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Failed-open retry and give-up path",
+                "en": "Failed-open retry and give-up path"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 22,
+                "end": 29,
+                "role": "walk",
+                "anchor": "if (open) {"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "Schedule the gave-up callback",
+            "en": "Schedule the gave-up callback"
+          },
+          "summary": {
+            "sv": "`settle` clears the handler and schedules it with the `gave-up` outcome.",
+            "en": "`settle` clears the handler and schedules it with the `gave-up` outcome."
+          },
+          "body": {
+            "sv": "After the retries end, `Link.connect` calls `settle('gave-up')` (W2.1). `settle` takes and clears the registered callback, then uses `setTimeout` to invoke it later with `'gave-up'`; `connect` returns that outcome without waiting for the timer. `startSession` can therefore handle the returned value while the callback remains pending. In the next step, the session reports directly from that return.",
+            "en": "After the retries end, `Link.connect` calls `settle('gave-up')` (W2.1). `settle` takes and clears the registered callback, then uses `setTimeout` to invoke it later with `'gave-up'`; `connect` returns that outcome without waiting for the timer. `startSession` can therefore handle the returned value while the callback remains pending. In the next step, the session reports directly from that return."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Settlement and callback scheduling",
+                "en": "Settlement and callback scheduling"
+              },
+              "focus": {
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 32,
+                "end": 37,
+                "role": "walk",
+                "anchor": "const callback = this.onSettled;"
+              },
+              "from": {
+                "label": {
+                  "sv": "Gave-up settlement call",
+                  "en": "Gave-up settlement call"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 28,
+                "end": 28
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.3",
+          "title": {
+            "sv": "Report that the session will retry later",
+            "en": "Report that the session will retry later"
+          },
+          "summary": {
+            "sv": "The awaited result makes `startSession` report `retrying later`.",
+            "en": "The awaited result makes `startSession` report `retrying later`."
+          },
+          "body": {
+            "sv": "When `link.connect` resolves to `'gave-up'`, `startSession` reaches the matching `if` branch and immediately reports `'retrying later'`. This report comes from the awaited return, not the scheduled callback: as the previous step showed, `Link.settle` has already queued that callback separately. Next, the callback reports the deferred status.",
+            "en": "When `link.connect` resolves to `'gave-up'`, `startSession` reaches the matching `if` branch and immediately reports `'retrying later'`. This report comes from the awaited return, not the scheduled callback: as the previous step showed, `Link.settle` has already queued that callback separately. Next, the callback reports the deferred status."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Session give-up handling",
+                "en": "Session give-up handling"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 6,
+                "end": 8,
+                "role": "walk",
+                "anchor": "if (outcome === 'gave-up') {"
+              },
+              "from": {
+                "label": {
+                  "sv": "Gave-up return",
+                  "en": "Gave-up return"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 28,
+                "end": 29
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.4",
+          "title": {
+            "sv": "Report the deferred offline status",
+            "en": "Report the deferred offline status"
+          },
+          "summary": {
+            "sv": "The scheduled callback maps `gave-up` to `offline mode`.",
+            "en": "The scheduled callback maps `gave-up` to `offline mode`."
+          },
+          "body": {
+            "sv": "After the timer scheduled by `Link.settle` invokes the registered handler, `startSession` maps `'gave-up'` to `report('offline mode')`. This is a separate, deferred report from `'retrying later'`, which `startSession` makes when `link.connect` returns; the callback does not cause or wait for that direct report.",
+            "en": "After the timer scheduled by `Link.settle` invokes the registered handler, `startSession` maps `'gave-up'` to `report('offline mode')`. This is a separate, deferred report from `'retrying later'`, which `startSession` makes when `link.connect` returns; the callback does not cause or wait for that direct report."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Session outcome callback",
+                "en": "Session outcome callback"
+              },
+              "focus": {
+                "path": "src/session.ts",
+                "side": "target",
+                "start": 4,
+                "end": 5,
+                "role": "walk",
+                "anchor": "offline mode"
+              },
+              "from": {
+                "label": {
+                  "sv": "Scheduled callback invocation",
+                  "en": "Scheduled callback invocation"
+                },
+                "path": "src/link.ts",
+                "side": "target",
+                "start": 36,
+                "end": 36
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

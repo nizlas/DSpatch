@@ -1,0 +1,48 @@
+{
+  "phase": "v8-teacher",
+  "provider": "copilot",
+  "model": "(the provider default)",
+  "instructionVersion": 9,
+  "base": "4885a1c5e4b99e2b895b06f4faab1503ffcd84cf",
+  "target": "5372b34baeb0d4020eb758ba2f483d6215027c47",
+  "startedAt": "2026-11-10T17:11:43.482Z",
+  "runs": [
+    {
+      "name": "writer-pedagog-W1.5-v8",
+      "note": "the loop writer, Teacher, W1.5, at version 8",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 815,
+      "modelReported": null
+    },
+    {
+      "name": "writer-pedagog-W1.1-v8",
+      "note": "the loop writer, Teacher, W1.1, at version 8",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 538,
+      "modelReported": null
+    },
+    {
+      "name": "present-pedagog-W1.5-v8",
+      "note": "Teacher after the version 8 Standard, W1.5, at version 8",
+      "status": "finished",
+      "error": null,
+      "seconds": 19,
+      "chars": 1091,
+      "modelReported": null
+    },
+    {
+      "name": "present-pedagog-W1.1-v8",
+      "note": "Teacher after the version 8 Standard, W1.1, at version 8",
+      "status": "finished",
+      "error": null,
+      "seconds": 32,
+      "chars": 1505,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T17:12:15.795Z"
+}

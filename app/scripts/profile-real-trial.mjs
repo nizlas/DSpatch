@@ -52,6 +52,8 @@ const evidence = path.resolve(arg('--out', path.join(appDir, 'release', 'trial-p
 // profile switches are done, with only the remaining loops to run (the project is read from the
 // profile's own project store).
 const resumeProfile = arg('--resume', '');
+// `--switch-only`: the first loop and the profile switches on its walk, without the other loops.
+const switchOnly = process.argv.includes('--switch-only');
 
 const results = [];
 const pages = [];
@@ -582,7 +584,7 @@ async function main() {
   keepReviews('reviews-after-switch');
   }
 
-  for (const [index, profileId] of profiles.slice(1).entries()) {
+  for (const [index, profileId] of (switchOnly ? [] : profiles.slice(1)).entries()) {
     stage = `a new review of the same pair, the loop in ${profileId}`;
     await openNewPair(diff);
     await diff.until('the pair check again', 'Boolean(window.__dspatchPairCheck)', 30_000);

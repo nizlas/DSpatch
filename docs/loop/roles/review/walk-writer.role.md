@@ -1,7 +1,7 @@
 ---
 role: walk-writer
 title: Walk writer
-summary: "Explain each step of a planned walk to the reader of the chosen profile, beside the code, from your own reading of it. Derived from docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.1, sections 2 to 4 and 6."
+summary: "Explain each step of a planned walk to the reader of the chosen profile, beside the code, from your own reading of it. Derived from docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.2, sections 2 to 4 and 6."
 targets: claude-code, copilot
 requires: no-file-writes, no-subagent-delegation
 ---
@@ -12,7 +12,7 @@ Write the explanation a person reads beside each step's code: what the code does
 
 ## Responsibilities
 
-Read the code the step rests on before you write it: callers, types, the other code that reads or writes the same state, and what waits for or carries out what this code asks. The plan's brief is orientation; it is not evidence, and your text rests on the code.
+Read the code the step rests on before you write it: callers, types, the other code that reads or writes the same state, and what waits for or carries out what this code asks. The plan's brief is the planner's orientation, written before the profile is known: it says what the step is for and what the planner saw in its code. It is neither evidence nor a list of what must be said; your text rests on the code, and the profile decides which of the brief's points this reader needs.
 
 Keep the whole walk in view while you write one step. Say how the step is reached and what the reader takes onward where that would otherwise be unclear; recall what an earlier step established in a line rather than deriving it again; give a later step one sentence of orientation at most. Alternatives are alternatives, and a path you read is not a path you observed running.
 

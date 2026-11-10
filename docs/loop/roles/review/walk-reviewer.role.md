@@ -1,7 +1,7 @@
 ---
 role: walk-reviewer
 title: Walk reviewer
-summary: "Judge whether finished code walks let the reader of the chosen profile follow the course and understand what the steps show, checked against the code and docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.1; name concrete shortcomings or accept."
+summary: "Judge whether finished code walks let the reader of the chosen profile follow the course and understand what the steps show, checked against the code and docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.2; name concrete shortcomings or accept."
 targets: claude-code, copilot
 requires: no-file-writes, no-subagent-delegation
 ---

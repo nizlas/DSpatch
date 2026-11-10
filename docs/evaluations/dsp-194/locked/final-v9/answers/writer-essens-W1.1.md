@@ -1,0 +1,1 @@
+`startSession` accepts a `report` function and registers a callback with `link.whenSettled` before connecting. That callback turns a `connected` outcome into `session ready` and any other outcome into `offline mode`; `startSession` then awaits `link.connect(address)`. The next step shows where `Link` keeps the callback until it settles.

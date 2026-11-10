@@ -123,6 +123,22 @@ export const CODE_ANSWER_RULES = [
     'DSpatch checks every reference against its commit and shows it as a link. Set "insufficient": true when the code you could read does not settle the question.',
 ] as const;
 
+/**
+ * DSP-194: the answer format of a profile's explanation of a step (present and regenerate). The
+ * review question's format above carries content rules of its own (a risk said in the short part,
+ * cause and effect with real names, what could not be read named) that every profile then met
+ * outside its own section; for Essentials they pulled in what the profile leaves to the code. What
+ * belongs in an explanation is said once, in the profile's section; this is the form only.
+ */
+export const PRESENTATION_ANSWER_RULES = [
+  `Write the first part, which stands on its own. When there is real depth to add for this reader, put it after the first part, below a line holding only ${DETAILS_MARKER}; the person opens it with Show more. Do not write "Show more" yourself, and leave the line out when there is nothing to add.`,
+  'Use short paragraphs, a list for alternatives, and bold sparingly.',
+  'Do not narrate your search ("I read…", "Then I searched…"); give the explanation.',
+] as const;
+
+/** The form of the references block and the revision rule, for a profile's explanation with code access. */
+export const PRESENTATION_CODE_RULES = CODE_ANSWER_RULES.filter((rule) => rule.startsWith('Base and target') || rule.startsWith('End with the code'));
+
 /*
  * Where an answer's short part ends and its details begin: {@link DETAILS_MARKER}, defined with
  * the presentation policy (presentation-profiles.ts) and re-exported above, so the discussion's
@@ -817,7 +833,10 @@ export function buildEnvelopePrompt(
     parts.push(reading);
   }
   parts.push(`## Question\n${clip(question.trim(), ENVELOPE_LIMITS.questionChars)}`);
-  parts.push(['## How to answer', ...[...ANSWER_SHAPE_RULES, ...(code === null ? [] : CODE_ANSWER_RULES)].map((rule) => `- ${rule}`)].join('\n'));
+  // DSP-194: a profile's explanation of a step gets the form only; what to say is the profile's section's.
+  const profileExplanation = presentation !== null && presentation.profile !== 'original' && (presentation.mode === 'present' || presentation.mode === 'regenerate');
+  const answerRules = profileExplanation ? [...PRESENTATION_ANSWER_RULES, ...(code === null ? [] : PRESENTATION_CODE_RULES)] : [...ANSWER_SHAPE_RULES, ...(code === null ? [] : CODE_ANSWER_RULES)];
+  parts.push(['## How to answer', ...answerRules.map((rule) => `- ${rule}`)].join('\n'));
   if (code !== null) {
     parts.push(code.folder);
   }

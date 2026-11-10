@@ -1,0 +1,4 @@
+`settle` takes the registered callback out of `onSettled` before scheduling it, so this settlement can invoke that callback at most once; if none is registered, it schedules nothing. The callback runs in a later timer task, not inside `connect`.
+
+<!-- dspatch:details -->
+As established in W1.2, `onSettled` holds one callback. Copying it to a local variable lets `settle` clear the field while still scheduling that callback with the outcome. On the success path, `connect` then returns `'connected'`; its promise continuation resumes `startSession` before the timer task runs. W1.6 follows that order through to the report.

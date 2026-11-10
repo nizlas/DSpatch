@@ -1,0 +1,8 @@
+Target `startSession` adds a `report` callback and registers it before calling `link.connect`, so a settled outcome can produce a status: `connected` maps to `session ready`, and `gave-up` to `offline mode`. Unlike the base version, it can report status as well as await the connection result. A rejected `connect` is not covered: it never settles, so `startSession` rejects before reaching its later `if` ([W3.1–W3.2]).
+
+<!-- dspatch:details -->
+The return value is handled separately: after `connect` returns `gave-up`, `startSession` also reports `retrying later`. Because `Link.settle` defers the callback to a timer, `offline mode` can be reported afterward ([W1.5], [W2.5]).
+
+```dspatch-references
+{"references":[{"label":"Registers the callback before connecting","path":"src/session.ts","side":"target","start":3,"end":5},{"label":"The callback's outcome type and registration","path":"src/link.ts","side":"target","start":5,"end":15},{"label":"Connect settles or propagates a transport rejection","path":"src/link.ts","side":"target","start":17,"end":30},{"label":"Settlement defers the registered callback","path":"src/link.ts","side":"target","start":32,"end":38},{"label":"Previous startSession only awaited connect","path":"src/session.ts","side":"base","start":3,"end":5},{"label":"Callback timing","step":"W1.5"},{"label":"Give-up reports","step":"W2.5"},{"label":"Rejection behavior","step":"W3.1"},{"label":"Rejection behavior","step":"W3.2"}],"insufficient":false}
+```

@@ -1,0 +1,4 @@
+`settle` takes the registered callback out of `onSettled` and clears the field before scheduling it. If there is no callback, it does nothing; otherwise, it passes the outcome captured by this call to `setTimeout` with a zero-millisecond delay. This makes the callback one-shot and keeps it from running inside `connect`.
+
+<!-- dspatch:details -->
+Because the successful branch calls `settle` before returning, the timer is scheduled before `connect` returns `'connected'`. The `await` in `startSession` then resumes in a promise microtask; the timer callback runs later as a separate task. The next step follows that callback back to `startSession` to explain the report order.

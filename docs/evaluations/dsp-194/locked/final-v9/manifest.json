@@ -1,0 +1,102 @@
+{
+  "phase": "final",
+  "provider": "copilot",
+  "model": "(the provider default)",
+  "instructionVersion": 9,
+  "base": "2465eecaf0e0d745b944180b309ee80415f45429",
+  "target": "cd9363788e4a4f2af34f65fb5a4843916b8ac5c3",
+  "startedAt": "2026-11-10T17:09:45.846Z",
+  "runs": [
+    {
+      "name": "writer-standard-W1.1",
+      "note": "the loop writer, Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 278,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.5",
+      "note": "the loop writer, Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 678,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1",
+      "note": "the loop writer, Essentials, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 338,
+      "modelReported": null
+    },
+    {
+      "name": "writer-pedagog-W1.1",
+      "note": "the loop writer, Teacher, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 339,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.5",
+      "note": "the loop writer, Essentials, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 518,
+      "modelReported": null
+    },
+    {
+      "name": "writer-pedagog-W1.5",
+      "note": "the loop writer, Teacher, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 17,
+      "chars": 625,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.5",
+      "note": "Essentials as an alternative after this run's Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 21,
+      "chars": 821,
+      "modelReported": null
+    },
+    {
+      "name": "present-pedagog-W1.1",
+      "note": "Teacher as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 29,
+      "chars": 1488,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1",
+      "note": "Essentials as an alternative after this run's Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 30,
+      "chars": 1037,
+      "modelReported": null
+    },
+    {
+      "name": "present-pedagog-W1.5",
+      "note": "Teacher as an alternative after this run's Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 23,
+      "chars": 1437,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T17:10:59.575Z"
+}

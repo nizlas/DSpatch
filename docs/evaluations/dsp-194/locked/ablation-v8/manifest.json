@@ -1,0 +1,120 @@
+{
+  "phase": "ablation",
+  "provider": "copilot",
+  "model": "(the provider default)",
+  "instructionVersion": 8,
+  "base": "b663ce7024a5332987c5c00080a268aafaae7abb",
+  "target": "79c43a8b51de64f70cb38d744bdc5e41becd1b11",
+  "startedAt": "2026-11-10T17:05:33.162Z",
+  "runs": [
+    {
+      "name": "writer-standard-W1.1",
+      "note": "the loop writer, Standard, W1.1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 374,
+      "modelReported": null
+    },
+    {
+      "name": "writer-standard-W1.5",
+      "note": "the loop writer, Standard, W1.5",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 535,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1-nobrief",
+      "note": "the loop writer, Essentials, W1.1, with the planner's briefs taken out",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 355,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.5",
+      "note": "the loop writer, Essentials, W1.5, as built",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 582,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.1",
+      "note": "the loop writer, Essentials, W1.1, as built",
+      "status": "finished",
+      "error": null,
+      "seconds": 14,
+      "chars": 489,
+      "modelReported": null
+    },
+    {
+      "name": "writer-essens-W1.5-nobrief",
+      "note": "the loop writer, Essentials, W1.5, with the planner's briefs taken out",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 299,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1",
+      "note": "Essentials after this run's Standard, W1.1, as built",
+      "status": "finished",
+      "error": null,
+      "seconds": 22,
+      "chars": 1187,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.5",
+      "note": "Essentials after this run's Standard, W1.5, as built",
+      "status": "finished",
+      "error": null,
+      "seconds": 25,
+      "chars": 734,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-noformat",
+      "note": "Essentials after Standard, W1.1, with the answer format's content rules taken out",
+      "status": "finished",
+      "error": null,
+      "seconds": 23,
+      "chars": 1332,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.5-noformat",
+      "note": "Essentials after Standard, W1.5, with the answer format's content rules taken out",
+      "status": "finished",
+      "error": null,
+      "seconds": 18,
+      "chars": 745,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.5-notext",
+      "note": "Essentials after Standard, W1.5, with the walk's own text taken out",
+      "status": "finished",
+      "error": null,
+      "seconds": 26,
+      "chars": 1067,
+      "modelReported": null
+    },
+    {
+      "name": "present-essens-W1.1-notext",
+      "note": "Essentials after Standard, W1.1, with the walk's own text taken out",
+      "status": "finished",
+      "error": null,
+      "seconds": 39,
+      "chars": 1486,
+      "modelReported": null
+    }
+  ],
+  "endedAt": "2026-11-10T17:07:03.583Z"
+}
