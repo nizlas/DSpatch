@@ -57,10 +57,13 @@ jobs:
       - run: npm run package:client -- --linux deb --x64
         working-directory: app
       - name: Build isolated installed-package trial environment
+        # --network host: the build resolves names as the runner does. In the bridge network, name
+        # resolution inside the build failed repeatedly on 11 November 2026 while the runner's own
+        # apt and npm downloads worked.
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do
-            if docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package; then
+            if docker build --network host -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then

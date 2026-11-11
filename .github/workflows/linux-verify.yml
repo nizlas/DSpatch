@@ -234,7 +234,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package
+      # --network host, as in package.yml: name resolution in the build's bridge network failed on 11 November 2026.
+      - run: docker build --network host -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package
         working-directory: app
       - name: The published release, in clean containers
         run: node scripts/trial-package/release.mjs --published

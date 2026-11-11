@@ -2,9 +2,12 @@
 # DSpatch sources. One image, two roles: `tester` installs the .deb, `hostuser` is the remote
 # account. See run.mjs.
 FROM ubuntu:24.04
+# `--error-on=any`: apt-get update otherwise exits 0 when every index fails to download (only
+# warnings), so a name-resolution outage went straight on to a failing install and was never
+# retried (the v0.1.21 package runs of 11 November 2026).
 RUN set -eux; \
   for attempt in 1 2 3 4 5; do \
-    apt-get update -o Acquire::Retries=5 && break; \
+    apt-get update -o Acquire::Retries=5 --error-on=any && break; \
     if [ "$attempt" -eq 5 ]; then \
       exit 1; \
     fi; \
