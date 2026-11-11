@@ -6,7 +6,7 @@ The previous step chose the debug configuration. This step names the task that r
 
 ## The code of this step
 
-`.vscode/tasks.json`, target revision, lines 4–10 (the file does not exist in the base revision):
+`.vscode/tasks.json`, target revision, lines 4–10:
 
 ```
  4 |     {

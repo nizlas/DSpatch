@@ -15,7 +15,7 @@ The previous step chose the debug configuration. This step names the task that r
 
 ## The code of this step
 
-`.vscode/tasks.json`, target revision, lines 4–10 (the file does not exist in the base revision):
+`.vscode/tasks.json`, target revision, lines 4–10:
 
 ```
  4 |     {
@@ -46,7 +46,7 @@ Answer in plain English text. It is shown beside the code.
 - an example answer.
 
 **Choices to check in your reading:**
-- **The base revision.** The line "(the file does not exist in the base revision)" states where the code is, as the other steps' places do. It can be dropped.
+- **The base revision.** The parenthesis "(the file does not exist in the base revision)" was removed on Niclas's instruction before the run; the prompt above is the one that was sent.
 - **The task marker.** The `DSPATCH-REVIEW-TASK:` line that DSpatch's job service puts first is left out, since no job service reads this call.
 
 ## 2. What else reaches the model
