@@ -58,3 +58,28 @@ The follow trial with the simulated provider could not run. It drives the window
 - **Reviewer:** its behaviour on a too-long Essentials text was not observed.
 - **Show more:** it still tends towards lists.
 - **No release** was made; Niclas judges the form first.
+
+## Final check before release (11 November 2026)
+
+**The overclaim about VS Code.**
+- **The claim is wrong.** The profile switch's W1.2 said VS Code attaches "only if the exit code is zero". VS Code's own source defines `debug.onTaskErrors` with the values `debugAnyway`, `showErrors`, `prompt` and `abort`, default `prompt` (`src/vs/workbench/contrib/debug/browser/debug.contribution.ts` in microsoft/vscode). So a failed pre-launch task normally asks the person, who can debug anyway.
+- **Its source is the material, not the instructions.** The switch was given the run's own Standard text as material, which says "Only a successful exit lets the configuration … go on to its attach". The planner's brief said "judges it by the exit code. Then it attaches."
+- **Not a product cause.** The behaviour is VS Code's, not the code's, and the same belief turns up in the one-call walk's W1.3 ("the attach does not go ahead"). It is the model's knowledge, not an instruction. It is recorded here as a generated factual error; no rule was added, and no saved answer was edited.
+
+**The follow trial in an undisturbed environment.** Linux CI's `profiles` job runs `walk-follow-trial.mjs` under Xvfb. On f326ca9 (run 43100697122) it passed 73 checks, including:
+- the switch to Essentials and its Show more;
+- New response as a regeneration of the saved Essentials explanation at version 12;
+- the return to the saved explanation with no new call;
+- no profile explanation in Discussion, and no generation detail in the diff view.
+
+That trial prepares its walk in Standard. So the Essentials walk itself was checked in the window trial with Claude (`window-final/`, 30 checks passed), which adds two checks. Show more opens and closes the deepening in both profiles. The Essentials short part has no summary line above it and no "Why it matters" (W1.2 and W1.5).
+
+**The loop reviewer on a long Essentials text** (`reviewer/`). It was given the version 11 Essentials text of W1.7, a flag-by-flag walkthrough, with the locked plan and the code. Its verdict was `rework`, with the finding "The first part is a full walkthrough, not an Essentials orientation". It proposed a core of about two sentences, placed the listen address and flag details after the marker, and said the content was correct. It treated two sentences as a guideline, not a count. Its other findings concern the steps the probe gave no text, an artefact of giving it one step only. No change to the reviewer was needed.
+
+**The flow.**
+- **The loop walk** says how each step is reached ("This is the task that `preLaunchTask` names", "Still on the host", "Once the task has finished"). It marks the branch ("walk W2 follows the case where it isn't"), and it marks the return to the branch point and to the editor ("This is the same guard as in the first walk, now with the container stopped", "Back in the editor").
+- **The one-call walk** keeps the chain from W1.1 to W1.6 connected, and its side walks have their own titles and purposes.
+
+No gap was found that needed an addition.
+
+**Show more.** The deepenings checked are short, belong to their step and do not repeat each other across a walk. One stray line was found. The final window trial's W1.5 ends with "The log-folder commands just before this are covered in the next item.", a reference that does not fit there. It is recorded, not corrected, as a single generated slip. No format rule was added.

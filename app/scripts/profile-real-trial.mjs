@@ -530,8 +530,17 @@ async function seeStep(pc, step, label) {
     shown.behind = await read(pc, "(() => { const box = document.querySelector('[data-ev=\"profile-explanation\"]') ?? document.querySelector('[data-ev=\"step-prepared-explanation\"]'); return box.querySelector('[data-ev=\"answer-details\"]')?.innerText.trim() ?? ''; })()");
     await client.main.shot(pc, path.join(evidence, `${name}-show-more.png`));
     await read(pc, "(() => { const box = document.querySelector('[data-ev=\"profile-explanation\"]') ?? document.querySelector('[data-ev=\"step-prepared-explanation\"]'); box.querySelector('[data-ev=\"answer-show-more\"]').click(); return true; })()");
+    await delay(400);
+    // DSP-199: Show more closes the deepening again.
+    const closed = await read(pc, "(() => { const box = document.querySelector('[data-ev=\"profile-explanation\"]') ?? document.querySelector('[data-ev=\"step-prepared-explanation\"]'); return box.querySelector('[data-ev=\"answer-details\"]') === null; })()");
+    check(`${step.id} (${label}): Show more opens the deepening and closes it again`, (shown.behind ?? '') !== '' && closed === true, JSON.stringify({ behind: (shown.behind ?? '').length, closed }));
   }
   fs.writeFileSync(path.join(evidence, `${name}.md`), `# ${step.id} ${step.title} (${label})\n\n## Before Show more\n\n${shown.before ?? '(not found)'}\n\n## Behind Show more\n\n${shown.behind ?? '(no Show more)'}\n`);
+  // DSP-199: an Essentials walk from version 12 on shows its short part with no summary line above it and no "Why it matters".
+  if (label === 'essens-prepared') {
+    const extra = JSON.parse(await read(pc, "JSON.stringify((() => { const box = document.querySelector('[data-ev=\"step-prepared-explanation\"]'); return { summary: box?.querySelector('.rv-summary') !== null && box !== null, why: box?.querySelector('[data-ev=\"step-why\"]') !== null && box !== null }; })())") ?? '{}');
+    check(`${step.id}: the Essentials short part has no summary line above it and no "Why it matters"`, extra.summary === false && extra.why === false, JSON.stringify(extra));
+  }
   if (label.endsWith('-prepared') && shown.why !== null && shown.hasMore) check(`${step.id}: "Why it matters" stands before the Show more control`, shown.whyBeforeMore === true, JSON.stringify({ whyBeforeMore: shown.whyBeforeMore }));
   check(`${step.id} (${label}): the Step panel shows the explanation`, read1 !== null && (read1.before ?? '') !== '', JSON.stringify({ kind: read1?.kind, chars: read1?.before?.length }));
   seen.push({ ...shown, before: shown.before?.length ?? 0, behind: shown.behind?.length ?? 0 });

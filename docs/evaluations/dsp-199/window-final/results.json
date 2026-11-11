@@ -1,0 +1,216 @@
+{
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the build is there",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-11T22:06:56.481Z"
+    },
+    {
+      "stage": "preflight",
+      "what": "the disposable project holds the exec-debug case",
+      "ok": true,
+      "detail": "{\"base\":\"4f60c3dcbdc82c4398adee76bd7c64b73b81a735\",\"target\":\"8b10a753401dbca8feaf61ad7580a9cae52dc790\"}",
+      "at": "2026-11-11T22:06:56.906Z"
+    },
+    {
+      "stage": "preflight",
+      "what": "the profile lists the project",
+      "ok": true,
+      "detail": "null",
+      "at": "2026-11-11T22:06:56.914Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the start page shows the agent",
+      "ok": true,
+      "detail": "claude",
+      "at": "2026-11-11T22:06:58.117Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the workspace opened on the project",
+      "ok": true,
+      "detail": "exec-debug",
+      "at": "2026-11-11T22:06:58.754Z"
+    },
+    {
+      "stage": "the workspace and the review window",
+      "what": "the review of the pair is open",
+      "ok": true,
+      "detail": "r-fad6f66e20b63ceb875cb773",
+      "at": "2026-11-11T22:06:59.286Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "claude can be chosen as the agent",
+      "ok": true,
+      "detail": "{\"disabled\":false,\"title\":\"\",\"text\":\"Claude\"}",
+      "at": "2026-11-11T22:06:59.457Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "the model control is a select listing opus",
+      "ok": true,
+      "detail": "",
+      "at": "2026-11-11T22:06:59.612Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "the picker holds claude, opus, essens, single",
+      "ok": true,
+      "detail": "{\"provider\":\"claude\",\"model\":\"opus\",\"explanations\":\"essens\",\"method\":\"single\",\"note\":\"\"}",
+      "at": "2026-11-11T22:06:59.923Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "the one-call preparation started in essens",
+      "ok": true,
+      "detail": "Preparing code walks with Claude (opus)…Stop",
+      "at": "2026-11-11T22:07:00.094Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "the essens loop ended as done (1 min)",
+      "ok": true,
+      "detail": "{\"settled\":\"done\",\"job\":{\"id\":\"job-ff1e4a5c-5432-43fe-8b55-f4e951164498\",\"state\":\"done\",\"note\":\"2 walk(s) and 0 reading(s), 9 step(s). 16 changed line(s) are in none of them.\",\"detail\":\"\",\"method\":\"single\",\"provider\":\"claude\",\"model\":\"opus\",\"presentation\":{\"profile\":\"essens\",\"version\":12}}}",
+      "at": "2026-11-11T22:07:50.184Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "the loop wrote the walk definition",
+      "ok": true,
+      "detail": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-iYxIeE\\reviews\\generated\\r-fad6f66e20b63ceb875cb773\\job-ff1e4a5c-5432-43fe-8b55-f4e951164498.review.json",
+      "at": "2026-11-11T22:07:50.199Z"
+    },
+    {
+      "stage": "the loop in essens",
+      "what": "a simple and a complex step were found by their places",
+      "ok": true,
+      "detail": "{\"simple\":{\"id\":\"W1.2\",\"title\":\"\",\"places\":[{\"path\":\".vscode/tasks.json\",\"side\":\"target\",\"start\":4,\"end\":10}]},\"complex\":{\"id\":\"W1.5\",\"title\":\"\",\"places\":[{\"path\":\"scripts/start-debugger.sh\",\"side\":\"target\",\"start\":23,\"end\":24}]},\"all\":[\"W1.1 \",\"W1.2 \",\"W1.3 \",\"W1.4 \",\"W1.5 \",\"W1.6 \",\"W1.7 \",\"W2.1 \",\"W2.2 \"]}",
+      "at": "2026-11-11T22:07:50.200Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.2 (essens-prepared): Show more opens the deepening and closes it again",
+      "ok": true,
+      "detail": "{\"behind\":420,\"closed\":true}",
+      "at": "2026-11-11T22:07:53.178Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.2: the Essentials short part has no summary line above it and no \"Why it matters\"",
+      "ok": true,
+      "detail": "{\"summary\":false,\"why\":false}",
+      "at": "2026-11-11T22:07:53.181Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.2 (essens-prepared): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"step-prepared-explanation\",\"chars\":148}",
+      "at": "2026-11-11T22:07:53.181Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "standard is chosen for reading W1.2",
+      "ok": true,
+      "detail": "standard",
+      "at": "2026-11-11T22:07:53.183Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "the standard explanation of W1.2 arrived (24 s)",
+      "ok": true,
+      "detail": "{\"status\":\"done\",\"action\":\"present\",\"error\":null}",
+      "at": "2026-11-11T22:08:17.318Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.2 (standard-alternative): Show more opens the deepening and closes it again",
+      "ok": true,
+      "detail": "{\"behind\":1134,\"closed\":true}",
+      "at": "2026-11-11T22:08:19.986Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.2 (standard-alternative): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"profile-explanation\",\"chars\":1823}",
+      "at": "2026-11-11T22:08:19.988Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.5 (essens-prepared): Show more opens the deepening and closes it again",
+      "ok": true,
+      "detail": "{\"behind\":609,\"closed\":true}",
+      "at": "2026-11-11T22:08:23.634Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.5: the Essentials short part has no summary line above it and no \"Why it matters\"",
+      "ok": true,
+      "detail": "{\"summary\":false,\"why\":false}",
+      "at": "2026-11-11T22:08:23.639Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.5 (essens-prepared): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"step-prepared-explanation\",\"chars\":218}",
+      "at": "2026-11-11T22:08:23.639Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "standard is chosen for reading W1.5",
+      "ok": true,
+      "detail": "standard",
+      "at": "2026-11-11T22:08:23.641Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "the standard explanation of W1.5 arrived (24 s)",
+      "ok": true,
+      "detail": "{\"status\":\"done\",\"action\":\"present\",\"error\":null}",
+      "at": "2026-11-11T22:08:47.843Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.5 (standard-alternative): Show more opens the deepening and closes it again",
+      "ok": true,
+      "detail": "{\"behind\":1753,\"closed\":true}",
+      "at": "2026-11-11T22:08:50.515Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "W1.5 (standard-alternative): the Step panel shows the explanation",
+      "ok": true,
+      "detail": "{\"kind\":\"profile-explanation\",\"chars\":1596}",
+      "at": "2026-11-11T22:08:50.524Z"
+    },
+    {
+      "stage": "the reading profile switched after the loop: Essentials and Teacher on the two steps",
+      "what": "exactly the asked explanations were made: two steps, two profiles each",
+      "ok": true,
+      "detail": "[\"W1.2:standard:present:done\",\"W1.5:standard:present:done\"]",
+      "at": "2026-11-11T22:08:52.041Z"
+    },
+    {
+      "stage": "summary",
+      "what": "summary written",
+      "ok": true,
+      "detail": "<home>\\development\\DSpatch\\app\\release\\trial-profile-real\\dsp199-final-window\\summary.json",
+      "at": "2026-11-11T22:08:52.065Z"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "34204"
+    }
+  ],
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-iYxIeE",
+  "project": "<home>\\AppData\\Local\\Temp\\dspatch-profile-real-project-fFwPxl\\exec-debug",
+  "evidence": "<home>\\development\\DSpatch\\app\\release\\trial-profile-real\\dsp199-final-window"
+}

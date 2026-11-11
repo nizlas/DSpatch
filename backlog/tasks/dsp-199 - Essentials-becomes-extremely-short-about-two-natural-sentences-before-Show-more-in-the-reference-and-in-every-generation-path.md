@@ -3,7 +3,7 @@ id: DSP-199
 title: >-
   Essentials becomes extremely short: about two natural sentences before Show
   more, in the reference and in every generation path
-status: Review
+status: In Progress
 assignee: []
 created_date: '2026-11-11 20:48'
 updated_date: '2026-11-11 21:09'
@@ -64,5 +64,12 @@ Niclas's decision of 11 November 2026, implemented at instruction version 12; ve
 
 Commit f326ca9; linux-verify run 43100697122 green (dock, profiles, governor, provider tests, windows, tests).
 
-No release, as asked: Niclas judges the form first.
+**Final check (Niclas's follow-up, 11 November 2026):**
+- The profile switch's "only if the exit code is zero" is a generated factual error: VS Code's debug.onTaskErrors defaults to prompt. Its source was the run's own Standard text, given as material, and the same belief recurs in the one-call walk's W1.3. It is documented, not corrected by a rule.
+- The follow trial passed 73 checks under Xvfb in Linux CI on f326ca9. The window trial with Claude passed 30 checks, including Show more opening and closing and the Essentials short part with no summary line and no Why it matters.
+- The loop reviewer, given the version 11 Essentials walkthrough of W1.7, returned rework with "The first part is a full walkthrough, not an Essentials orientation" and proposed about two sentences, with details after the marker. No reviewer change was needed.
+- The walks' transitions remain followable; no addition was needed.
+- Show more: one stray line documented; no format rule added.
+
+Released as 0.1.22 on Niclas's authorisation (see the release record below).
 <!-- SECTION:NOTES:END -->

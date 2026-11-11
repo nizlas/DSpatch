@@ -1,0 +1,21 @@
+{
+  "phase": "reviewer-199",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 12,
+  "base": "1e87b577d950b87acb819cc2f817d1f2cf0b995b",
+  "target": "a91a56c9c03c2d523250d03b02abd7fe0aef3964",
+  "startedAt": "2026-11-11T22:05:08.699Z",
+  "runs": [
+    {
+      "name": "reviewer-essens-W1.7",
+      "note": "the loop reviewer at version 12 on an existing Essentials walkthrough of W1.7",
+      "status": "finished",
+      "error": null,
+      "seconds": 24,
+      "chars": 3890,
+      "modelReported": "claude-opus-5-5"
+    }
+  ],
+  "endedAt": "2026-11-11T22:05:32.520Z"
+}

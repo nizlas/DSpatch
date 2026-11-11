@@ -430,6 +430,23 @@ if (phase === 'ablation') {
     }
   }
   console.log(`snapshot in ${dir}`);
+} else if (phase === 'reviewer-199') {
+  // DSP-199: the product's loop reviewer, as it is now, given one existing Essentials text that is a
+  // detailed walkthrough (--text, split at the marker into the first part and the deepening) for
+  // the steps named, with the locked plan and the code. One call; the prompt and answer are kept.
+  const { reviewPrompt, readReviewAnswer } = await import('../src/shared/walk-loop');
+  const reviewer = resolveRole(loaded.graph.nodes.find((node) => node.id === 'review').role);
+  const text = fs.readFileSync(path.resolve(arg('--text', '')), 'utf8');
+  const [body, details = ''] = text.split(DETAILS_MARKER);
+  const texts = new Map([[STEPS[0], { body: body.trim(), details: details.trim() }]]);
+  const prompt = reviewPrompt({ role: reviewer, plan, texts, profile: 'essens', language: 'en', material, folder, final: false, earlier: null, fresh: true });
+  const answer = await ask(`reviewer-essens-${STEPS[0]}`, prompt, `the loop reviewer at version ${String(PRESENTATION_INSTRUCTION_VERSION)} on an existing Essentials walkthrough of ${STEPS[0]}`);
+  const fenced = /```json\s*([\s\S]*?)```/.exec(answer)?.[1] ?? answer.slice(answer.indexOf('{'), answer.lastIndexOf('}') + 1);
+  let parsed = null;
+  try { parsed = JSON.parse(fenced); } catch { parsed = null; }
+  const read = parsed === null ? null : readReviewAnswer(parsed, new Set(STEPS), false);
+  fs.writeFileSync(path.join(out, 'review.json'), `${JSON.stringify({ parsed, read: read?.review ?? null, problems: read?.problems ?? ['unreadable'] }, null, 2)}\n`);
+  console.log(JSON.stringify({ verdict: read?.review?.verdict ?? null, findings: read?.review?.findings?.length ?? null }));
 } else if (phase === 'v8-teacher') {
   // Teacher at version 8, for the before-picture: the version 9 prompts with the DSP-194 changes
   // turned back, exactly (the brief's label and the writer role's sentence; the profile section's
