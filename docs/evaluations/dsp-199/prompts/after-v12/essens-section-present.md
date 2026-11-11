@@ -1,0 +1,27 @@
+## How to present (Essentials)
+Explain this step for a reader who chose Essentials. The first part is what this reader reads at once; the deepening goes after the marker line the answer format below names.
+Instruction version: 12
+
+Every explanation:
+- Explain this code to a person reviewing the change, who reads your text beside the code itself: what this reader needs in order to understand the step and judge the change. Which of what the code does here, why it matters for the change, how it connects to what the reader has seen and will see, and what decides the outcome (a condition, a risk, work only requested or reused) this reader needs, and at what level, the reader's profile decides.
+- Read the code you rest on before you write: callers, types, the other code that reads or writes the same state, and what waits for or carries out what this code asks. Do not infer the architecture from names, and do not present what you have not read. The code decides, also where the prepared explanation or an earlier answer says more than the code supports; then say plainly what the code does.
+- Add understanding beyond what the lines and their comments already say: do not retell statements in prose, and keep what the code shows apart from an interpretation of why it is written so. Be exact about guarantees: a lock protects only the accesses under it, a notification is not a completed hand-over, a private method is not proof that nothing else calls it. When a part cannot be read, explain the general concept and say what cannot be established about this implementation.
+- There is no required form, and the Essentials reader sets the size of the first part. Point at the code you rest on with references, so the person can open it.
+- A profile changes which of the relevant material is selected and at what level it is explained, not what is true of the code or what the review has decided: state nothing the code does not support, treat a new observation of yours as an observation rather than a verified fact, and change no decision of the review. The review's findings stay in the review's state; an explanation need not restate them.
+- The prepared explanation and earlier answers given to you are material, not a list of what must be said: the code decides what is true, and the profile decides what this reader needs to understand it. Present this step; do not start a new broad review and do not retell the whole discussion. An important objection may be summarised in one line that points to its thread.
+
+Essentials:
+- The reader is an experienced developer who sees the code beside your text and can always open Show more. Extreme brevity is the primary goal: the first part aims at about two natural sentences on what this step accomplishes and its central role or relationship in the flow. Adapt to the size of the code only where you must; a very large piece of code can need more, but the first part still gives only the main picture, and two long sentences that pack in a walkthrough do not meet it. Leave out the calls, flags, fields, mechanisms, every condition and the failure paths: the reader sees them in the code, and what is worth reading of them goes after the marker. Choosing what to leave out is the job. What the first part says must be correct, not comprehensive: make an overreaching claim precise rather than adding reservations.
+
+After the marker:
+- After the marker line comes the deepening only, when there is something worth reading for this reader: a coherent continuation of the main picture, with the mechanics, conditions or special cases that matter and the evidence and references for them. It is not an inventory of everything you read, and nothing said above the line is said again below it. Leave the line out when there is nothing worth adding.
+
+## Where this step is in the walk
+Walk: Walk
+1. [W1.1] One (code: a.ts 1–2 (To))
+2. [W1.2] Two (code: b.ts 3–4 (To))  <- this step
+
+- The walk shows the code of each step beside its explanation: in the prose, name functions, types, variables and settings rather than file names, paths or line numbers; the references block, when one is asked for, still names files and lines.
+- Place this step in the walk only as far as its role needs: "here" for this step's code, and "in the next step", "in a later step" or "as we saw earlier" only where the walk's order makes it true. Do not preview or recall other steps beyond a phrase, and make a transition explicit only where the step's role would otherwise be misread; more of the course can go after the marker. What depends on timing, scheduling or callers outside the change is said as what the code allows, never as something observed to run.
+- Write only from what the reader can see: do not refer to the prepared explanation, the instructions or other text given to you but not shown (no "the prepared summary says"); where the code contradicts it, simply say what the code does.
+- When a references block is asked for and you point the reader at another step of this walk or of another walk of this review, put an entry with only its id in the references block, for example {"label": "Where the option is declared", "step": "W1.2"}, instead of naming its file and lines; use the ids in brackets above. Use file and line references for code no step shows.

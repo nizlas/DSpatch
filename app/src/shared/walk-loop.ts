@@ -14,13 +14,13 @@
 
 import type { ResolvedRole } from './loop-graph';
 import {
-  DEEPENING_RULES,
+  deepeningRulesFor,
   DETAILS_MARKER,
-  EXPLANATION_TASK,
+  explanationTaskFor,
   PRESENTATION_INSTRUCTION_VERSION,
   PROFILES,
   SAME_FACTS_RULES,
-  WALK_READING_RULES,
+  walkReadingRulesFor,
   type PublicProfile,
 } from './presentation-profiles';
 import {
@@ -440,7 +440,8 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     ...(ref.step.together === undefined ? [] : [`Together: ${ref.step.together}`]),
     ...(ref.step.revisit === undefined ? [] : [`Revisit: ${ref.step.revisit}`]),
     // DSP-194: the planner writes the brief for every profile; it is orientation, and the profile selects from it.
-    ...(brief === undefined ? [] : [`The planner's brief, written for every profile: ${brief}`]),
+    // DSP-199: in Essentials the brief is material to select from, not what the first part must hold.
+    ...(brief === undefined ? [] : [input.profile === 'essens' ? `The planner's notes on this step, written for every profile: material to select from, most of which belongs in the code or after the marker rather than in the first part: ${brief}` : `The planner's brief, written for every profile: ${brief}`]),
     ...neighbour(before, 'The step before'),
     ...neighbour(after, 'The step after'),
   ];
@@ -471,14 +472,14 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     `## How to explain the step (${profile.promptName})`,
     `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
     'Every explanation:',
-    ...EXPLANATION_TASK.map((rule) => `- ${rule}`),
+    ...explanationTaskFor(profile).map((rule) => `- ${rule}`),
     ...SAME_FACTS_RULES.map((rule) => `- ${rule}`),
     '',
     `${profile.promptName}:`,
     ...profile.reader.map((rule) => `- ${rule}`),
     '',
     'Every step is read beside its code, in the walk\'s order:',
-    ...WALK_READING_RULES.map((rule) => `- ${rule}`),
+    ...walkReadingRulesFor(profile).map((rule) => `- ${rule}`),
     '',
     `## How to write (${languageLine(input.language)})`,
     // DSP-195: the reader and what the step says are the profile's (the shared task and the reader above); the rules here are the form.
@@ -486,7 +487,7 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
     '',
     '## Answer format',
     `Answer with the explanation of the step only, in Markdown: no JSON, no heading with the step\'s title or id, no restatement of the places. First the part the person reads at once. When there is real depth to add, put it after a line holding only ${DETAILS_MARKER}; the person opens it with Show more.`,
-    ...DEEPENING_RULES.map((rule) => `- ${rule}`),
+    ...deepeningRulesFor(profile).map((rule) => `- ${rule}`),
     '',
     folderSection(input.material, input.folder, WRITER_PLACE_NAMING),
     '',
@@ -525,6 +526,21 @@ const REVIEW_ANSWER_EXAMPLE = {
   ],
 };
 
+/**
+ * DSP-199: what the reviewer judges of an Essentials text (the reference's version 1.3, sections 4
+ * and 6): the short part apart from what follows the marker, as a very short orientation that must
+ * be correct but need not be comprehensive. A missing detail is not by itself a finding, and a
+ * correct but detailed walkthrough is not an Essentials first part. The facts are checked as before.
+ */
+export const ESSENTIALS_REVIEW_CHECKS = [
+  '- Can the reader place each step in the walk\'s course: what it does there and where the walk goes next? A transition the step\'s role needs must not be wrong; the rest of the course may follow the marker.',
+  '- Is what the text claims true of the code? Read the code behind each step with your tools before you judge; a confident sentence is not evidence.',
+  '- Judge the first part apart from what follows the marker. Does it give this reader a very short, comprehensible orientation, about two natural sentences on what the step accomplishes and its central role? Is any extra length justified by the size of the step, or has detail leaked in? A correct but detailed walkthrough is not an Essentials first part.',
+  '- Does the first part leave a wrong picture of the step\'s role? Correct an overreaching claim by making it precise, not by adding reservations. A detail, condition, risk or failure path that is missing is not by itself a finding; one you would ask for can go after the marker, and the review\'s findings stay in the review.',
+  '- Is the part after the marker a coherent deepening rather than an inventory of what was read, and does it avoid repeating the first part?',
+  '- Is an important new implementation walked rather than left behind a function name, and are alternatives presented as alternatives, never as one run?',
+] as const;
+
 /** The reviewer's call over the finished walks: the texts as the person will read them, judged against the code. */
 export function reviewPrompt(input: ReviewPromptInput): string {
   const profile = PROFILES[input.profile];
@@ -551,14 +567,19 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     ...profile.reader.map((rule) => `- ${rule}`),
     '',
     '## What to judge',
-    '- Can the reader follow the course: at each step, how it is reached and what the caller needs, what a return brings back, that an alternative outcome is back at the branch point, what starts a worker or callback and which context is followed, and when the teaching order differs from the execution order?',
-    // DSP-195: the check names no content list of its own; what this reader needs of a place is the profile's.
-    '- Is every code place a step shows explained there, at this reader\'s level, so that this reader understands what it contributes to the change? Naming a function or showing its lines is not explaining it.',
-    '- Is what the text claims true of the code? Read the code behind each step with your tools before you judge; a confident sentence is not evidence.',
-    '- Does the text give this reader the help the profile is for: for Essentials an accurate main picture at a higher level of abstraction, chosen rather than compressed; for Standard the mechanism made understandable; for Teacher the concepts and intermediate reasoning built where this step needs them? Do not ask Essentials for the mechanics it left out unless their absence makes the main picture misleading, and do not ask Teacher for more detail to make the text longer.',
-    '- Is the first part calibrated for this reader: enough to stand on its own, but not so dense or verbose that the main point is hard to see? A short part that is too thin or too crowded for this profile is an explanation shortcoming.',
-    '- Is the part after Show more a deepening that continues the first part, not a repetition of it?',
-    '- Is an important new implementation walked rather than left behind a function name, and are alternatives presented as alternatives, never as one run?',
+    // DSP-199: Essentials gets checks of its own, for the short part apart from what follows the marker.
+    ...(input.profile === 'essens'
+      ? ESSENTIALS_REVIEW_CHECKS
+      : [
+        '- Can the reader follow the course: at each step, how it is reached and what the caller needs, what a return brings back, that an alternative outcome is back at the branch point, what starts a worker or callback and which context is followed, and when the teaching order differs from the execution order?',
+        // DSP-195: the check names no content list of its own; what this reader needs of a place is the profile's.
+        '- Is every code place a step shows explained there, at this reader\'s level, so that this reader understands what it contributes to the change? Naming a function or showing its lines is not explaining it.',
+        '- Is what the text claims true of the code? Read the code behind each step with your tools before you judge; a confident sentence is not evidence.',
+        '- Does the text give this reader the help the profile is for: for Essentials an accurate main picture at a higher level of abstraction, chosen rather than compressed; for Standard the mechanism made understandable; for Teacher the concepts and intermediate reasoning built where this step needs them? Do not ask Essentials for the mechanics it left out unless their absence makes the main picture misleading, and do not ask Teacher for more detail to make the text longer.',
+        '- Is the first part calibrated for this reader: enough to stand on its own, but not so dense or verbose that the main point is hard to see? A short part that is too thin or too crowded for this profile is an explanation shortcoming.',
+        '- Is the part after Show more a deepening that continues the first part, not a repetition of it?',
+        '- Is an important new implementation walked rather than left behind a function name, and are alternatives presented as alternatives, never as one run?',
+        ]),
     'Report only shortcomings that matter to the reader\'s understanding, each concrete: the steps it concerns, what falls short, why it matters, and what in the code shows it. A finding about which walks, steps or places exist is "structure" and goes to the planner; one about a step\'s text is "explanation" and goes to the writer. A statement about the code that is not true is a shortcoming whatever its size, since the person checks the code through these texts: name it as a finding with the correct reading, even when the rest of the step is right. Different good explanations are acceptable: accept without changes when nothing false and nothing significant falls short, and never ask for a change on a matter of style or preference.',
     ...(input.final
       ? [

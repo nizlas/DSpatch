@@ -38,6 +38,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { CONNECT_CASE, makeSyntheticRepo } from '../tests/support/synthetic-walks';
 import { ATTACH_CASE } from '../tests/support/synthetic-attach';
+import { EXEC_DEBUG_CASE } from '../tests/support/synthetic-exec-debug';
 import { ProjectStore } from '../src/main/project-store';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -61,8 +62,8 @@ const resumeProfile = arg('--resume', '');
 // `--switch-only`: the first loop and the profile switches on its walk, without the other loops.
 const switchOnly = process.argv.includes('--switch-only');
 // DSP-195: the case and the preparation method.
-const CASE = { connect: CONNECT_CASE, attach: ATTACH_CASE }[arg('--case', 'connect')];
-if (CASE === undefined) throw new Error('--case is connect or attach');
+const CASE = { connect: CONNECT_CASE, attach: ATTACH_CASE, 'exec-debug': EXEC_DEBUG_CASE }[arg('--case', 'connect')];
+if (CASE === undefined) throw new Error('--case is connect, attach or exec-debug');
 const method = arg('--method', 'loop');
 if (method !== 'loop' && method !== 'single') throw new Error('--method is loop or single');
 
@@ -385,6 +386,12 @@ const covers = (step, file, line) => step.places.some((place) => place.side !== 
 
 /** The simple step (the registration in startSession) and the complex one (settle), by their places. */
 function chooseSteps(steps) {
+  if (CASE === EXEC_DEBUG_CASE) {
+    // DSP-199: the pre-launch task (a simple step) and the detached start under the debugger (a larger one).
+    const simple = steps.find((step) => covers(step, '.vscode/tasks.json', 5)) ?? steps[0] ?? null;
+    const complex = steps.find((step) => covers(step, 'scripts/start-debugger.sh', 24) && step.id !== simple?.id) ?? steps.find((step) => step.id !== simple?.id) ?? null;
+    return { simple, complex };
+  }
   if (CASE === ATTACH_CASE) {
     // DSP-195: the attach configuration (the observed step) and the step where VS Code connects to
     // the listener the container starts, where several mechanisms meet.

@@ -15,6 +15,7 @@ import {
   DEFAULT_PROFILE,
   DETAILS_MARKER,
   DETAILS_PART_RULE,
+  DEEPENING_RULES,
   EXPLANATION_TASK,
   MORE_RULES,
   PRESENTATION_INSTRUCTION_VERSION,
@@ -31,7 +32,9 @@ import {
   isPublicProfile,
   presentationFrom,
   WALK_READING_RULES,
+  explanationTaskFor,
   outlineFrom,
+  walkReadingRulesFor,
   presentationPromptSection,
   readingContextSection,
   walkExplanationSection,
@@ -50,7 +53,7 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 11);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 12);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
@@ -100,14 +103,15 @@ describe('one policy in the prompt (DSP-181)', () => {
       const section = presentationPromptSection({ profile: id, mode: 'present', shown: [] }) ?? '';
       assert.match(section, new RegExp(`^## How to present \\(${PROFILE_PROMPT_NAMES[id]}\\)`));
       assert.match(section, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
-      for (const rule of [...EXPLANATION_TASK, ...SAME_FACTS_RULES, ...PROFILES[id].reader]) {
+      for (const rule of [...explanationTaskFor(PROFILES[id]), ...SAME_FACTS_RULES, ...PROFILES[id].reader]) {
         assert.equal(count(section, rule), 1, `once: ${rule.slice(0, 40)}`);
       }
       // DSP-188: no sentence count, no identifier count and no prescribed form (docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md, sections 4 and 6).
       assert.ok(!/\b(two|three|four|five|six|ten) sentences\b/i.test(section), `${id}: no sentence count`);
       assert.ok(!/Length:|sentence quota|at most one or two identifiers|word budget/i.test(section), `${id}: no quota`);
       assert.ok(!/bullet points are welcome|mandatory heading/i.test(section), `${id}: no prescribed form`);
-      assert.match(section, /There is no length to hit and no required form/);
+      // DSP-199: Essentials states its size as a guideline of its own (about two natural sentences); Standard and Teacher have no length to hit.
+      assert.match(section, id === 'essens' ? /There is no required form, and the Essentials reader sets the size of the first part/ : /There is no length to hit and no required form/);
       // The contract of the marker is the answer format's business: said there, once, not here again.
       assert.ok(!section.includes(DETAILS_MARKER), 'the marker is named by the answer format, not twice');
       assert.ok(!/Then the line that starts Show more/.test(section), 'no instruction to write a "Show more" line');
@@ -119,8 +123,11 @@ describe('one policy in the prompt (DSP-181)', () => {
     const essentials = presentationPromptSection({ profile: 'essens', mode: 'present', shown: [] }) ?? '';
     const standard = presentationPromptSection({ profile: 'standard', mode: 'present', shown: [] }) ?? '';
     const teacher = presentationPromptSection({ profile: 'pedagog', mode: 'present', shown: [] }) ?? '';
-    assert.match(essentials, /experienced developer who wants to understand quickly why this code is here/);
-    assert.match(essentials, /Brevity comes from meaningful selection, not from packing the same details into fewer sentences/);
+    // DSP-199 (Niclas's decision, 11 November 2026): Essentials is extremely short, correct but not comprehensive.
+    assert.match(essentials, /Extreme brevity is the primary goal: the first part aims at about two natural sentences/);
+    assert.match(essentials, /two long sentences that pack in a walkthrough do not meet it/);
+    assert.match(essentials, /make an overreaching claim precise rather than adding reservations/);
+    assert.ok(!essentials.includes(EXPLANATION_TASK[3]) && !essentials.includes(DEEPENING_RULES[0]), 'Essentials gets its own scope rule and deepening, not the shared ones beside them');
     assert.match(standard, /knows programming but not this code/);
     assert.match(standard, /how the parts work together and why their relationship matters/);
     assert.match(standard, /Keep the first part compact enough that the mechanism stays in view/);
@@ -192,7 +199,7 @@ describe('one policy in the prompt (DSP-181)', () => {
       const present = presentationPromptSection({ profile: id, mode: 'present', shown: [], walk: null }) ?? '';
       const regenerate = presentationPromptSection({ profile: id, mode: 'regenerate', shown: [{ label: 'Before', text: 'A.' }], walk: null }) ?? '';
       for (const section of [walk, present, regenerate]) {
-        for (const rule of [...EXPLANATION_TASK, ...PROFILES[id].reader, ...WALK_READING_RULES]) {
+        for (const rule of [...explanationTaskFor(PROFILES[id]), ...PROFILES[id].reader, ...walkReadingRulesFor(PROFILES[id])]) {
           assert.equal(count(section, rule), 1, `${id}: ${rule.slice(0, 40)}`);
         }
         assert.match(section, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
@@ -202,7 +209,7 @@ describe('one policy in the prompt (DSP-181)', () => {
         const section = presentationPromptSection({ profile: id, mode, shown: [{ label: 'Shown', text: 'A.' }], walk: null }) ?? '';
         assert.ok(section.includes(PROFILES[id].reader[0] ?? '-'), `${mode} keeps the profile's reader`);
         assert.ok(section.includes(EXPLANATION_TASK[2]), `${mode} keeps the shared task`);
-        for (const rule of WALK_READING_RULES) {
+        for (const rule of walkReadingRulesFor(PROFILES[id])) {
           assert.equal(count(section, rule), 1, `${mode}: the walk-relative rules`);
         }
       }

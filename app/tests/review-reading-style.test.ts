@@ -58,6 +58,9 @@ describe('one reading typography (DSP-181)', () => {
     assert.equal((view.match(/rv-explanation rv-reading rv-prepared/g) ?? []).length, 3, 'the prepared body (with or without a deepening) and its why');
     // DSP-195: "Why it matters" is base text, read before the Show more control, not after it.
     assert.match(view, /<ShortThenMore\s+short=\{pick\(step\.body, lang\)\}\s+base=\{<WhyItMatters /, 'the why is passed as base text, before the control');
+    // DSP-199: an Essentials walk from instruction version 12 on shows no separate summary above its short part; older walks as they were.
+    assert.match(view, /pick\(step\.summary, lang\) !== '' && !\(walkPresentation\?\.profile === 'essens' && walkPresentation\.version >= 12\)/, 'the summary is left out only for a version 12 Essentials walk');
+    assert.match(view, /walkPresentation=\{bundle\.definition\.presentation\}/, 'the step panel is told the walk\'s profile and version');
     assert.match(answer, /<Markdown text=\{short\} \/>\s*\{base\}\s*\{open && /, 'the base text sits between the short part and the details and toggles');
     assert.ok(!/rv-profile-explanation[^"]*rv-prepared/.test(view), 'an alternative never keeps hard line breaks');
     assert.match(answer, /className="rv-answer rv-reading"/, 'every discussion answer, under a step or in the thread');

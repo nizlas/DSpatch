@@ -1,0 +1,476 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · exec-debug baba2c6→4916a80",
+    "en": "Code walks · exec-debug baba2c6→4916a80"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dsp195-o7cUWM\\exec-debug",
+  "base": "baba2c69c8f5bd5f359edb09d32ec66316806ad6",
+  "target": "4916a8041ce4b85a3b147dece00cb5a9d3270449",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Claude (opus) on 2026-11-11 21:00 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 12). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code and accepted them without a correction round. The reviewer is an agent: its acceptance approves nothing of the code.",
+    "en": "Prepared by Claude (opus) on 2026-11-11 21:00 UTC, through the planner, writer and reviewer loop. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 12). The planner planned the walks, the writer explained each step in its own call, and the reviewer judged them against the code and accepted them without a correction round. The reviewer is an agent: its acceptance approves nothing of the code."
+  },
+  "presentation": {
+    "profile": "essens",
+    "version": 12
+  },
+  "overviewSummary": {
+    "sv": "The change stops the editor's debug configuration from running the orders service directly on the host. Instead, pressing F5 now runs a pre-launch task with a new shell script. The script checks that the `orders-dev` container is running, installs debugpy in it if needed, creates `/workspace/logs` and hands it to the host user, then starts `orders.main` under debugpy, detached, waiting for a client on port 5678. The debug configuration then attaches to that port and maps the host workspace to `/workspace` in the container.",
+    "en": "The change stops the editor's debug configuration from running the orders service directly on the host. Instead, pressing F5 now runs a pre-launch task with a new shell script. The script checks that the `orders-dev` container is running, installs debugpy in it if needed, creates `/workspace/logs` and hands it to the host user, then starts `orders.main` under debugpy, detached, waiting for a client on port 5678. The debug configuration then attaches to that port and maps the host workspace to `/workspace` in the container."
+  },
+  "overview": {
+    "sv": "The change stops the editor's debug configuration from running the orders service directly on the host. Instead, pressing F5 now runs a pre-launch task with a new shell script. The script checks that the `orders-dev` container is running, installs debugpy in it if needed, creates `/workspace/logs` and hands it to the host user, then starts `orders.main` under debugpy, detached, waiting for a client on port 5678. The debug configuration then attaches to that port and maps the host workspace to `/workspace` in the container.\n\nThe container comes from the unchanged `compose.yaml`. It runs `python:3.12-slim` as `orders-dev`, bind-mounts the repository at `/workspace`, publishes ports 5678 and 8000 and only sleeps. So the service exists in the container only when this script starts it.\n\nThree work contexts are involved: the editor on the host, the task's shell and its `docker` commands on the host, and the processes inside the container. The detached debugpy process keeps running in the container after the script has returned.\n\nThe diff records `scripts/start-debugger.sh` as `new file mode 100644`, meaning it is not executable, while the task runs it as a command.",
+    "en": "The change stops the editor's debug configuration from running the orders service directly on the host. Instead, pressing F5 now runs a pre-launch task with a new shell script. The script checks that the `orders-dev` container is running, installs debugpy in it if needed, creates `/workspace/logs` and hands it to the host user, then starts `orders.main` under debugpy, detached, waiting for a client on port 5678. The debug configuration then attaches to that port and maps the host workspace to `/workspace` in the container.\n\nThe container comes from the unchanged `compose.yaml`. It runs `python:3.12-slim` as `orders-dev`, bind-mounts the repository at `/workspace`, publishes ports 5678 and 8000 and only sleeps. So the service exists in the container only when this script starts it.\n\nThree work contexts are involved: the editor on the host, the task's shell and its `docker` commands on the host, and the processes inside the container. The detached debugpy process keeps running in the container after the script has returned.\n\nThe diff records `scripts/start-debugger.sh` as `new file mode 100644`, meaning it is not executable, while the task runs it as a command."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "What happens when the developer starts \"Debug orders in the dev container\"",
+        "en": "What happens when the developer starts \"Debug orders in the dev container\""
+      },
+      "purpose": {
+        "sv": "Follow F5 from the debug configuration through the task and the script into the container, and back to the attach.",
+        "en": "Follow F5 from the debug configuration through the task and the script into the container, and back to the attach."
+      },
+      "question": {
+        "sv": "How does pressing F5 lead to an editor attached to the orders service inside the container?",
+        "en": "How does pressing F5 lead to an editor attached to the orders service inside the container?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "The debug configuration now attaches",
+            "en": "The debug configuration now attaches"
+          },
+          "summary": {
+            "sv": "The configuration changes from launching orders.main locally to attaching to port 5678, after a pre-launch task.",
+            "en": "The configuration changes from launching orders.main locally to attaching to port 5678, after a pre-launch task."
+          },
+          "body": {
+            "sv": "This is where F5 starts. The configuration no longer starts `orders.main` on the host. It now **attaches** to a debugger that must already be listening, and its `preLaunchTask` names the task that sets that listener up before the attach.",
+            "en": "This is where F5 starts. The configuration no longer starts `orders.main` on the host. It now **attaches** to a debugger that must already be listening, and its `preLaunchTask` names the task that sets that listener up before the attach."
+          },
+          "details": {
+            "sv": "In the base version, this file's only configuration was \"Run orders locally\". It used `request: \"launch\"` with `module: \"orders.main\"` and `console: \"integratedTerminal\"`, so the editor started the service itself on the host. That configuration has been replaced, not added to, so the change leaves no local-run configuration.\n\nWith `request: \"attach\"`, the editor starts no process. It only connects. Something else has to provide the debugpy listener. The `preLaunchTask` value, \"Start debugger in dev container\", has to match a task label exactly, and the editor runs that task before it tries to attach. In the next step, that label leads to the task in the repository's tasks file. `connect` and `pathMappings` are covered in a later step.",
+            "en": "In the base version, this file's only configuration was \"Run orders locally\". It used `request: \"launch\"` with `module: \"orders.main\"` and `console: \"integratedTerminal\"`, so the editor started the service itself on the host. That configuration has been replaced, not added to, so the change leaves no local-run configuration.\n\nWith `request: \"attach\"`, the editor starts no process. It only connects. Something else has to provide the debugpy listener. The `preLaunchTask` value, \"Start debugger in dev container\", has to match a task label exactly, and the editor runs that task before it tries to attach. In the next step, that label leads to the task in the repository's tasks file. `connect` and `pathMappings` are covered in a later step."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Debug configuration (attach with preLaunchTask)",
+                "en": "Debug configuration (attach with preLaunchTask)"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 5,
+                "end": 12,
+                "role": "walk",
+                "anchor": "\"preLaunchTask\": \"Start debugger in dev container\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "The pre-launch task runs the script on the host",
+            "en": "The pre-launch task runs the script on the host"
+          },
+          "summary": {
+            "sv": "A shell task with the matching label runs start-debugger.sh with DEV_CONTAINER and DEBUG_PORT set.",
+            "en": "A shell task with the matching label runs start-debugger.sh with DEV_CONTAINER and DEBUG_PORT set."
+          },
+          "body": {
+            "sv": "This is the task that `preLaunchTask` names, matched by its label. It runs `start-debugger.sh` in a shell **on the host**, not in the container, and passes the container name `orders-dev` and port `5678` as `DEV_CONTAINER` and `DEBUG_PORT`. The editor waits until the command exits before it attaches.",
+            "en": "This is the task that `preLaunchTask` names, matched by its label. It runs `start-debugger.sh` in a shell **on the host**, not in the container, and passes the container name `orders-dev` and port `5678` as `DEV_CONTAINER` and `DEBUG_PORT`. The editor waits until the command exits before it attaches."
+          },
+          "details": {
+            "sv": "- **When the editor counts the task as done.** `problemMatcher: []` means the editor doesn't scan the output for a \"ready\" signal, so it treats the task as finished when the command exits. The script therefore has to return instead of keeping the service in the foreground. Its last line does that by starting debugpy detached, covered in a later step. The exit code is the only success or failure signal. Walk W2 follows the failure case.\n- **Two values that must match elsewhere.** `DEV_CONTAINER` and `DEBUG_PORT` repeat values that appear in other places: the container name from the compose file and the port in the attach configuration's `connect`. The script also has its own defaults for both, shown in the next step.\n- **Point to check: how the script is started.** `command` points straight at the script file. The script starts with `#!/usr/bin/env bash`, so starting it directly needs the file's executable bit on the host. If the script is committed with mode 100644 (not executable), a fresh checkout may refuse to run it until the mode is fixed or the command calls `bash` explicitly. This is a reading of the configuration; it hasn't been observed running.",
+            "en": "- **When the editor counts the task as done.** `problemMatcher: []` means the editor doesn't scan the output for a \"ready\" signal, so it treats the task as finished when the command exits. The script therefore has to return instead of keeping the service in the foreground. Its last line does that by starting debugpy detached, covered in a later step. The exit code is the only success or failure signal. Walk W2 follows the failure case.\n- **Two values that must match elsewhere.** `DEV_CONTAINER` and `DEBUG_PORT` repeat values that appear in other places: the container name from the compose file and the port in the attach configuration's `connect`. The script also has its own defaults for both, shown in the next step.\n- **Point to check: how the script is started.** `command` points straight at the script file. The script starts with `#!/usr/bin/env bash`, so starting it directly needs the file's executable bit on the host. If the script is committed with mode 100644 (not executable), a fresh checkout may refuse to run it until the mode is fixed or the command calls `bash` explicitly. This is a reading of the configuration; it hasn't been observed running."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Task definition",
+                "en": "Task definition"
+              },
+              "focus": {
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 4,
+                "end": 10,
+                "role": "walk",
+                "anchor": "\"label\": \"Start debugger in dev container\""
+              },
+              "from": {
+                "label": {
+                  "sv": "preLaunchTask that names this task",
+                  "en": "preLaunchTask that names this task"
+                },
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 8,
+                "end": 8
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "Settings and the running-container guard",
+            "en": "Settings and the running-container guard"
+          },
+          "summary": {
+            "sv": "The script reads the container and port with defaults and stops if the container is not running.",
+            "en": "The script reads the container and port with defaults and stops if the container is not running."
+          },
+          "body": {
+            "sv": "Still on the host, the script picks up the container name and port, falling back to `orders-dev` and `5678` when they aren't set. It then makes sure that container is running before it touches it. In this walk the container is running, so the script goes on; walk W2 follows the case where it isn't.",
+            "en": "Still on the host, the script picks up the container name and port, falling back to `orders-dev` and `5678` when they aren't set. It then makes sure that container is running before it touches it. In this walk the container is running, so the script goes on; walk W2 follows the case where it isn't."
+          },
+          "details": {
+            "sv": "- **Strict mode.** `set -euo pipefail` makes the script stop at the first failing command, at any use of an unset variable, and at any failure inside a pipeline. A failed `docker exec` later on therefore ends the task with a non-zero exit, which the editor sees.\n- **How the guard works.** `docker inspect -f '{{.State.Running}}'` prints `true` or `false` for a container that exists. For a missing container it fails, with its error output thrown away. Anything other than exactly `true` takes the exit-1 branch. Because the check sits inside an `if` test, the failing `docker inspect` doesn't trigger `set -e`; the branch handles it.\n- **One port, four places.** The defaults repeat the values the task already sets, so these two settings matter only when the script runs outside the task. The port appears in four places that must agree: the task's `DEBUG_PORT`, this default, the `5678:5678` mapping in the compose file (lines 8–9 of `compose.yaml` on the target side), and `connect.port` in the attach configuration. The container name must also match `container_name: orders-dev` there.",
+            "en": "- **Strict mode.** `set -euo pipefail` makes the script stop at the first failing command, at any use of an unset variable, and at any failure inside a pipeline. A failed `docker exec` later on therefore ends the task with a non-zero exit, which the editor sees.\n- **How the guard works.** `docker inspect -f '{{.State.Running}}'` prints `true` or `false` for a container that exists. For a missing container it fails, with its error output thrown away. Anything other than exactly `true` takes the exit-1 branch. Because the check sits inside an `if` test, the failing `docker inspect` doesn't trigger `set -e`; the branch handles it.\n- **One port, four places.** The defaults repeat the values the task already sets, so these two settings matter only when the script runs outside the task. The port appears in four places that must agree: the task's `DEBUG_PORT`, this default, the `5678:5678` mapping in the compose file (lines 8–9 of `compose.yaml` on the target side), and `connect.port` in the attach configuration. The container name must also match `container_name: orders-dev` there."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Defaults and container check",
+                "en": "Defaults and container check"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 3,
+                "end": 11,
+                "role": "walk",
+                "anchor": "docker inspect -f '{{.State.Running}}'"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "debugpy is installed into the container on demand",
+            "en": "debugpy is installed into the container on demand"
+          },
+          "summary": {
+            "sv": "If importing debugpy fails in the container, pip installs it there.",
+            "en": "If importing debugpy fails in the container, pip installs it there."
+          },
+          "body": {
+            "sv": "The script makes sure debugpy is available **inside the container**, which runs the plain `python:3.12-slim` image without it. It installs debugpy only when the import check fails, so normally just the first run in a fresh container pays for the install.",
+            "en": "The script makes sure debugpy is available **inside the container**, which runs the plain `python:3.12-slim` image without it. It installs debugpy only when the import check fails, so normally just the first run in a fresh container pays for the install."
+          },
+          "details": {
+            "sv": "Both `docker exec` commands run the container's Python, not the host's. The host doesn't need debugpy for this, and its Python environment isn't involved.\n\nThe install lands in the container's own filesystem, in the image's site-packages, not under the bind-mounted `/workspace`. The repository contains no requirements file or Dockerfile that adds debugpy. So the install lasts as long as that container exists: it survives stopping and starting the same container, but a recreated container (for example after `docker compose down`) installs it again on the next F5. That install needs network access from the container. If it fails, `set -e` from the previous step ends the script with an error before anything is started.",
+            "en": "Both `docker exec` commands run the container's Python, not the host's. The host doesn't need debugpy for this, and its Python environment isn't involved.\n\nThe install lands in the container's own filesystem, in the image's site-packages, not under the bind-mounted `/workspace`. The repository contains no requirements file or Dockerfile that adds debugpy. So the install lasts as long as that container exists: it survives stopping and starting the same container, but a recreated container (for example after `docker compose down`) installs it again on the next F5. That install needs network access from the container. If it fails, `set -e` from the previous step ends the script with an error before anything is started."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Conditional debugpy install",
+                "en": "Conditional debugpy install"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 13,
+                "end": 16,
+                "role": "walk",
+                "anchor": "python -m pip install --quiet debugpy"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "The log folder is created and given to the host user",
+            "en": "The log folder is created and given to the host user"
+          },
+          "summary": {
+            "sv": "The script creates /workspace/logs in the container and chowns it to the host user's uid:gid.",
+            "en": "The script creates /workspace/logs in the container and chowns it to the host user's uid:gid."
+          },
+          "body": {
+            "sv": "The script creates the log folder inside the container and **makes the host user its owner**. Because `/workspace` is the bind-mounted repository, the folder also shows up in the developer's checkout. This sets the owner of the folder only; whether the log file the service later writes there can be edited from the host comes up again in a later step.",
+            "en": "The script creates the log folder inside the container and **makes the host user its owner**. Because `/workspace` is the bind-mounted repository, the folder also shows up in the developer's checkout. This sets the owner of the folder only; whether the log file the service later writes there can be edited from the host comes up again in a later step."
+          },
+          "details": {
+            "sv": "`$(id -u):$(id -g)` is expanded by the host shell before `docker exec` starts. So `chown` inside the container receives the host user's numeric ids, not the container user's.\n\nThe container runs as root because the compose file sets no `user:`, and `python:3.12-slim` defaults to root. That is why the folder would otherwise be root-owned.\n\nThe comment says files the service writes there \"stay editable\". The code doesn't give that guarantee. `chown` changes the folder alone, and files created inside it later get the creating process's owner, which here is root. What the folder's owner can do with those files depends on their permission bits, so the question stays open until `main()` writes `orders.log`.\n\nOn Docker Desktop, how bind mounts handle file ownership can differ from Linux. This is a general point; the repository doesn't show which setup is used.",
+            "en": "`$(id -u):$(id -g)` is expanded by the host shell before `docker exec` starts. So `chown` inside the container receives the host user's numeric ids, not the container user's.\n\nThe container runs as root because the compose file sets no `user:`, and `python:3.12-slim` defaults to root. That is why the folder would otherwise be root-owned.\n\nThe comment says files the service writes there \"stay editable\". The code doesn't give that guarantee. `chown` changes the folder alone, and files created inside it later get the creating process's owner, which here is root. What the folder's owner can do with those files depends on their permission bits, so the question stays open until `main()` writes `orders.log`.\n\nOn Docker Desktop, how bind mounts handle file ownership can differ from Linux. This is a general point; the repository doesn't show which setup is used."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "mkdir and chown of the log folder",
+                "en": "mkdir and chown of the log folder"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 18,
+                "end": 21,
+                "role": "walk",
+                "anchor": "chown \"$(id -u):$(id -g)\" /workspace/logs"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "The service starts detached under debugpy",
+            "en": "The service starts detached under debugpy"
+          },
+          "summary": {
+            "sv": "docker exec -d starts debugpy with --wait-for-client in the container and returns at once; the script and the task end.",
+            "en": "docker exec -d starts debugpy with --wait-for-client in the container and returns at once; the script and the task end."
+          },
+          "body": {
+            "sv": "This is where the work leaves the script. `docker exec -d` starts debugpy as a separate process **inside the container**, and debugpy holds back `orders.main` until a debugger connects. `docker exec` returns immediately, so the script exits successfully and the editor counts the pre-launch task as done.",
+            "en": "This is where the work leaves the script. `docker exec -d` starts debugpy as a separate process **inside the container**, and debugpy holds back `orders.main` until a debugger connects. `docker exec` returns immediately, so the script exits successfully and the editor counts the pre-launch task as done."
+          },
+          "details": {
+            "sv": "After this line nothing on the host is tied to the debugpy process. It keeps running in the container when the host shell exits. debugpy listens on `0.0.0.0` at `$PORT` inside the container, so it is reachable through the published port shown in the next step. With `--wait-for-client`, it runs `orders.main` only once a client attaches.\n\n`docker exec -d` reports success once the process has been started, not once debugpy is listening or has started without error. Three points follow from the code and are worth checking; they are not observed behaviour:\n\n- **Timing.** Nothing in the script waits for the port to accept connections. The editor may try to attach before debugpy listens. Whether that fails or is retried depends on the editor's attach behaviour.\n- **A second F5.** The script doesn't stop or look for an earlier debugpy process. If an earlier run is still alive, it still holds `$PORT` and, once `main()` runs, port 8000 as well (`serve(port=8000)` in `orders/main.py` on the target side). A new start would then fail to bind, or the editor might attach to the old process.\n- **Silent failures.** Any error from the detached process, such as a bind failure or an import error, appears neither in the task's output nor in its exit code.",
+            "en": "After this line nothing on the host is tied to the debugpy process. It keeps running in the container when the host shell exits. debugpy listens on `0.0.0.0` at `$PORT` inside the container, so it is reachable through the published port shown in the next step. With `--wait-for-client`, it runs `orders.main` only once a client attaches.\n\n`docker exec -d` reports success once the process has been started, not once debugpy is listening or has started without error. Three points follow from the code and are worth checking; they are not observed behaviour:\n\n- **Timing.** Nothing in the script waits for the port to accept connections. The editor may try to attach before debugpy listens. Whether that fails or is retried depends on the editor's attach behaviour.\n- **A second F5.** The script doesn't stop or look for an earlier debugpy process. If an earlier run is still alive, it still holds `$PORT` and, once `main()` runs, port 8000 as well (`serve(port=8000)` in `orders/main.py` on the target side). A new start would then fail to bind, or the editor might attach to the old process.\n- **Silent failures.** Any error from the detached process, such as a bind failure or an import error, appears neither in the task's output nor in its exit code."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Detached debugpy start",
+                "en": "Detached debugpy start"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 23,
+                "end": 24,
+                "role": "walk",
+                "anchor": "docker exec -d \"$CONTAINER\" python -m debugpy"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.7",
+          "title": {
+            "sv": "How localhost:5678 and /workspace reach the container",
+            "en": "How localhost:5678 and /workspace reach the container"
+          },
+          "summary": {
+            "sv": "compose.yaml publishes port 5678 and bind-mounts the repository at /workspace, which the attach relies on.",
+            "en": "compose.yaml publishes port 5678 and bind-mounts the repository at /workspace, which the attach relies on."
+          },
+          "body": {
+            "sv": "This unchanged compose service is what the debugging setup relies on. It publishes the container's port 5678 on the host, so the editor's `localhost:5678` reaches debugpy, and it **mounts the repository at `/workspace`**, so the container runs the same files the developer edits.",
+            "en": "This unchanged compose service is what the debugging setup relies on. It publishes the container's port 5678 on the host, so the editor's `localhost:5678` reaches debugpy, and it **mounts the repository at `/workspace`**, so the container runs the same files the developer edits."
+          },
+          "details": {
+            "sv": "How each setting is used by the earlier steps:\n\n- `container_name: orders-dev` gives the fixed name that the task's `DEV_CONTAINER` and the script's default use. A container started under another name fails the running-container check.\n- `working_dir: /workspace` is the default directory for `docker exec`. Python's `-m` puts that directory on the import path, which is why `-m orders.main` finds the `orders` package in the mounted repository.\n- `command: sleep infinity` only keeps the container alive. The developer starts it once with `docker compose up -d dev`, and the script then adds processes to it.\n- The `\"8000:8000\"` mapping publishes the port that `main()` serves on, so the running service can be reached from the host too.\n\nThe base revision already had both port mappings and the mount. This change relies on them rather than adding them.",
+            "en": "How each setting is used by the earlier steps:\n\n- `container_name: orders-dev` gives the fixed name that the task's `DEV_CONTAINER` and the script's default use. A container started under another name fails the running-container check.\n- `working_dir: /workspace` is the default directory for `docker exec`. Python's `-m` puts that directory on the import path, which is why `-m orders.main` finds the `orders` package in the mounted repository.\n- `command: sleep infinity` only keeps the container alive. The developer starts it once with `docker compose up -d dev`, and the script then adds processes to it.\n- The `\"8000:8000\"` mapping publishes the port that `main()` serves on, so the running service can be reached from the host too.\n\nThe base revision already had both port mappings and the mount. This change relies on them rather than adding them."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Dev service: name, mount, ports",
+                "en": "Dev service: name, mount, ports"
+              },
+              "focus": {
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 2,
+                "end": 11,
+                "role": "walk",
+                "anchor": "container_name: orders-dev"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.8",
+          "title": {
+            "sv": "The editor attaches and maps paths",
+            "en": "The editor attaches and maps paths"
+          },
+          "summary": {
+            "sv": "After the task, the editor connects to localhost:5678 and maps the workspace folder to /workspace.",
+            "en": "After the task, the editor connects to localhost:5678 and maps the workspace folder to /workspace."
+          },
+          "body": {
+            "sv": "Once the task has finished, the editor connects to `localhost:5678`, which the published port forwards to debugpy in the container. `pathMappings` translates between the editor's `${workspaceFolder}` and the container's `/workspace`, **the same pairing as the bind mount**, so breakpoints set in host files land on the files the container runs.",
+            "en": "Once the task has finished, the editor connects to `localhost:5678`, which the published port forwards to debugpy in the container. `pathMappings` translates between the editor's `${workspaceFolder}` and the container's `/workspace`, **the same pairing as the bind mount**, so breakpoints set in host files land on the files the container runs."
+          },
+          "details": {
+            "sv": "The translation works in both directions. Breakpoints in a host file are sent to debugpy as `/workspace/...` paths, and stack frames that debugpy reports under `/workspace/...` open as the matching host files. The mapping is correct only while `${workspaceFolder}` is the folder that holds the compose file, since the mount's `.` is the repository root. If the editor opens a parent or child folder, the mapping no longer matches the mount and breakpoints can go unbound.\n\nOnce the editor attaches, debugpy stops waiting and runs `orders.main` inside the container. The next step follows that.",
+            "en": "The translation works in both directions. Breakpoints in a host file are sent to debugpy as `/workspace/...` paths, and stack frames that debugpy reports under `/workspace/...` open as the matching host files. The mapping is correct only while `${workspaceFolder}` is the folder that holds the compose file, since the mount's `.` is the repository root. If the editor opens a parent or child folder, the mapping no longer matches the mount and breakpoints can go unbound.\n\nOnce the editor attaches, debugpy stops waiting and runs `orders.main` inside the container. The next step follows that."
+          },
+          "revisit": {
+            "sv": "The first step showed the switch to attach; here the connection target and the path translation are read against compose.yaml.",
+            "en": "The first step showed the switch to attach; here the connection target and the path translation are read against compose.yaml."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "connect and pathMappings",
+                "en": "connect and pathMappings"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 9,
+                "end": 12,
+                "role": "walk",
+                "anchor": "\"remoteRoot\": \"/workspace\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.9",
+          "title": {
+            "sv": "main() runs in the container and writes the log",
+            "en": "main() runs in the container and writes the log"
+          },
+          "summary": {
+            "sv": "The unchanged main() creates /workspace/logs if needed, logs to orders.log and serves on port 8000.",
+            "en": "The unchanged main() creates /workspace/logs if needed, logs to orders.log and serves on port 8000."
+          },
+          "body": {
+            "sv": "This is the service itself, running in the container process that debugpy started once the editor attached. `main()` creates the log folder if it doesn't exist, writes `orders.log` into it, and serves HTTP on port 8000, which the compose file publishes. Here the question from the log-folder step comes back: **the host user owns the folder, but the service, running as root, creates the file**.",
+            "en": "This is the service itself, running in the container process that debugpy started once the editor attached. `main()` creates the log folder if it doesn't exist, writes `orders.log` into it, and serves HTTP on port 8000, which the compose file publishes. Here the question from the log-folder step comes back: **the host user owns the folder, but the service, running as root, creates the file**."
+          },
+          "details": {
+            "sv": "`LOG_DIR.mkdir(exist_ok=True)` would create `/workspace/logs` without the script's help. So the script's `mkdir` matters only so that its `chown` has a folder to act on.\n\n`logging.basicConfig(filename=...)` opens `orders.log` from inside the container process, so the file gets that process's owner, not the folder's. Whether the developer can edit it from the host depends on the file's own permission bits and on how the bind mount maps ownership, and neither is set anywhere in this repository. Owning the folder lets the host user rename or delete entries in it. That isn't the same as being able to write into a root-owned file. The script's comment says the files \"stay editable\", and that claim rests on this distinction.\n\n`serve(port=8000)` runs `HTTPServer(...).serve_forever()` (`orders/http.py` on the target side), so the process keeps running until something stops it. That makes the earlier question about a second F5 relevant while this process is alive.",
+            "en": "`LOG_DIR.mkdir(exist_ok=True)` would create `/workspace/logs` without the script's help. So the script's `mkdir` matters only so that its `chown` has a folder to act on.\n\n`logging.basicConfig(filename=...)` opens `orders.log` from inside the container process, so the file gets that process's owner, not the folder's. Whether the developer can edit it from the host depends on the file's own permission bits and on how the bind mount maps ownership, and neither is set anywhere in this repository. Owning the folder lets the host user rename or delete entries in it. That isn't the same as being able to write into a root-owned file. The script's comment says the files \"stay editable\", and that claim rests on this distinction.\n\n`serve(port=8000)` runs `HTTPServer(...).serve_forever()` (`orders/http.py` on the target side), so the process keeps running until something stops it. That makes the earlier question about a second F5 relevant while this process is alive."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "main(): log setup and serve",
+                "en": "main(): log setup and serve"
+              },
+              "focus": {
+                "path": "orders/main.py",
+                "side": "target",
+                "start": 6,
+                "end": 12,
+                "role": "walk",
+                "anchor": "logging.basicConfig(filename=LOG_DIR / \"orders.log\""
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "kind": "walk",
+      "title": {
+        "sv": "What happens when the dev container is not running",
+        "en": "What happens when the dev container is not running"
+      },
+      "purpose": {
+        "sv": "Follow the failing branch of the container guard back to the editor.",
+        "en": "Follow the failing branch of the container guard back to the editor."
+      },
+      "question": {
+        "sv": "What does the developer see if they press F5 before `docker compose up -d dev`?",
+        "en": "What does the developer see if they press F5 before `docker compose up -d dev`?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "The guard fails and the script exits 1",
+            "en": "The guard fails and the script exits 1"
+          },
+          "summary": {
+            "sv": "docker inspect gives no \"true\", so the script prints how to start the container and exits with status 1.",
+            "en": "docker inspect gives no \"true\", so the script prints how to start the container and exits with status 1."
+          },
+          "body": {
+            "sv": "This is the same guard as in the first walk, now with the container stopped or missing. The script prints how to start the container and exits with status 1 before it touches the container, so **the pre-launch task fails** and no debugger is started.",
+            "en": "This is the same guard as in the first walk, now with the container stopped or missing. The script prints how to start the container and exits with status 1 before it touches the container, so **the pre-launch task fails** and no debugger is started."
+          },
+          "details": {
+            "sv": "For a stopped container, `docker inspect` prints `false`. For a missing one, it fails, and `2>/dev/null` discards its error. Either way the result isn't `true`.\n\nThe same branch also catches cases the message doesn't describe, because the discarded error was the only clue:\n\n- the Docker daemon isn't reachable;\n- `docker` isn't installed on the host;\n- the container runs under a different name than `DEV_CONTAINER`.\n\nIn all of these the developer sees the same hint to run `docker compose up -d dev`.\n\nThe message goes to stderr in the task's terminal, and the exit code is the only signal the editor gets. The next step shows what the editor does with it.",
+            "en": "For a stopped container, `docker inspect` prints `false`. For a missing one, it fails, and `2>/dev/null` discards its error. Either way the result isn't `true`.\n\nThe same branch also catches cases the message doesn't describe, because the discarded error was the only clue:\n\n- the Docker daemon isn't reachable;\n- `docker` isn't installed on the host;\n- the container runs under a different name than `DEV_CONTAINER`.\n\nIn all of these the developer sees the same hint to run `docker compose up -d dev`.\n\nThe message goes to stderr in the task's terminal, and the exit code is the only signal the editor gets. The next step shows what the editor does with it."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Not-running branch",
+                "en": "Not-running branch"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 8,
+                "end": 11,
+                "role": "walk",
+                "anchor": "is not running. Start it with: docker compose up -d dev"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "The failed pre-launch task stops the attach",
+            "en": "The failed pre-launch task stops the attach"
+          },
+          "summary": {
+            "sv": "The task's non-zero exit is reported back to the debug configuration that required it.",
+            "en": "The task's non-zero exit is reported back to the debug configuration that required it."
+          },
+          "body": {
+            "sv": "Back in the editor, the pre-launch task has ended with exit code 1. What happens next is decided by the editor, not by code in this repository. Usually it reports the failed task and doesn't attach, so **the developer has to start the container and press F5 again**. The base \"Run orders locally\" configuration could never fail this way, because it needed no container.",
+            "en": "Back in the editor, the pre-launch task has ended with exit code 1. What happens next is decided by the editor, not by code in this repository. Usually it reports the failed task and doesn't attach, so **the developer has to start the container and press F5 again**. The base \"Run orders locally\" configuration could never fail this way, because it needed no container."
+          },
+          "details": {
+            "sv": "Because the task has `problemMatcher: []`, the editor has nothing structured to show. The failure appears only as the exit code and the script's message in the task terminal, which tells the developer to run `docker compose up -d dev`.\n\nEditors commonly let the user debug anyway after a failed pre-launch task. If the developer does that here, the attach to `localhost:5678` has nothing to connect to: the container that would publish the port isn't running, and no debugpy was started in it.",
+            "en": "Because the task has `problemMatcher: []`, the editor has nothing structured to show. The failure appears only as the exit code and the script's message in the task terminal, which tells the developer to run `docker compose up -d dev`.\n\nEditors commonly let the user debug anyway after a failed pre-launch task. If the developer does that here, the attach to `localhost:5678` has nothing to connect to: the container that would publish the port isn't running, and no debugpy was started in it."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "preLaunchTask dependency",
+                "en": "preLaunchTask dependency"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 7,
+                "end": 8,
+                "role": "walk",
+                "anchor": "\"preLaunchTask\": \"Start debugger in dev container\""
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+The `preLaunchTask` value in the debug configuration names this task by its `label`. The task runs the start script and gives it the container name and debug port as environment variables, which the script reads in the next step. **Because this is an ordinary task that finishes when the script exits, VS Code waits for the script to exit and only then attaches.**
+
+<!-- dspatch:details -->
+- **Matching by name:** VS Code finds the task by its exact `label` text. If the label or the `preLaunchTask` value is renamed and the other is not, the task cannot be found.
+- **When the task counts as done:** the task is not marked as a background task, and its `problemMatcher` is empty. VS Code therefore treats it as finished when the script exits, and judges success or failure by the exit code alone. The script's own output is not checked.
+- **Where the port is set:** `DEBUG_PORT` is `5678` here. The same number is written separately in `connect` in the debug configuration and in the ports in compose.yaml. Nothing ties these three places together.
+- **How the script is run:** `command` points straight at the `.sh` file. That only works if the file is executable and the shell can run a bash script. This change sets no Windows-specific variant of the task.

@@ -28,6 +28,7 @@ import {
   readPlanAnswer,
   readReviewAnswer,
   reviewOutcomeOf,
+  ESSENTIALS_REVIEW_CHECKS,
   reviewPrompt,
   stepRefsOf,
   stepSignature,
@@ -192,7 +193,8 @@ describe('the prompts', () => {
     assert.ok(writer.includes('## This step: W1.2 Connect'));
     assert.ok(writer.includes('Brief: Reached from start'));
     assert.ok(writer.includes('The step before: W1.1 Start'));
-    assert.ok(!/\b(two|four to six|ten) sentences\b/i.test(writer), 'no sentence quota');
+    // DSP-199: the role states Essentials' guideline of about two sentences; no profile gets an exact count or another length.
+    assert.ok(!/\b(four to six|ten) sentences\b|(exactly|at most) (one|two|three) sentences/i.test(writer), 'no sentence quota');
     assert.ok(!/at most (one|two) identifiers/i.test(writer), 'no identifier limit');
     // DSP-195: the reader and what the step says are the profile's; the writing rules are the form.
     for (const rule of WRITING_CONTENT_RULES) assert.ok(!writer.includes(rule), `no profile-blind content rule in the writer: ${rule.slice(0, 40)}`);
@@ -210,9 +212,17 @@ describe('the prompts', () => {
     assert.ok(reviewer.includes('#### W1.2 Connect'));
     assert.ok(reviewer.includes('Second.') && reviewer.includes('Show more:\nDeeper.'));
     assert.ok(reviewer.includes('never ask for a change on a matter of style'));
-    // DSP-195: the place check asks for the reader's level, not for a content list of its own.
-    assert.ok(reviewer.includes('at this reader\'s level, so that this reader understands what it contributes to the change'));
-    assert.ok(reviewer.includes('not so dense or verbose that the main point is hard to see'));
+    // DSP-199: Essentials is judged by checks of its own: the short part apart from Show more, a missing detail no finding, the facts as before.
+    for (const check of ESSENTIALS_REVIEW_CHECKS) assert.ok(reviewer.includes(check), check.slice(0, 50));
+    assert.ok(reviewer.includes('Judge the first part apart from what follows the marker'));
+    assert.ok(reviewer.includes('A detail, condition, risk or failure path that is missing is not by itself a finding'));
+    assert.ok(reviewer.includes('Is what the text claims true of the code?'));
+    assert.ok(!reviewer.includes('Is every code place a step shows explained there'), 'no per-place check for Essentials');
+    // Standard keeps its checks, including DSP-195's place check and DSP-197's calibration.
+    const standardReviewer = reviewPrompt({ role: role('review'), plan, texts, profile: 'standard', language: 'en', material, folder, final: false, earlier: null, fresh: true });
+    assert.ok(standardReviewer.includes('at this reader\'s level, so that this reader understands what it contributes to the change'));
+    assert.ok(standardReviewer.includes('not so dense or verbose that the main point is hard to see'));
+    assert.ok(!standardReviewer.includes('Judge the first part apart from what follows the marker'));
     assert.ok(!reviewer.includes('what it does here, why it matters for the change, and what decides the outcome'));
     assert.ok(!reviewer.includes('## The final assessment'));
     const final = reviewPrompt({ role: role('review'), plan, texts, profile: 'essens', language: 'en', material, folder, final: true, earlier: { assessment: '', verdict: 'rework', findings: [{ kind: 'explanation', steps: ['W1.2'], problem: 'Thin.', why: '', evidence: '', reference: '' }] }, fresh: false });

@@ -1,0 +1,467 @@
+{
+  "format": "dspatch-review/2",
+  "title": {
+    "sv": "Code walks · exec-debug baba2c6→4916a80",
+    "en": "Code walks · exec-debug baba2c6→4916a80"
+  },
+  "repository": "<home>\\AppData\\Local\\Temp\\dsp195-U0eEBo\\exec-debug",
+  "base": "baba2c69c8f5bd5f359edb09d32ec66316806ad6",
+  "target": "4916a8041ce4b85a3b147dece00cb5a9d3270449",
+  "teachingMode": "Generated",
+  "provenance": {
+    "sv": "Prepared by Claude (opus) on 2026-11-11 20:58 UTC. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 12).",
+    "en": "Prepared by Claude (opus) on 2026-11-11 20:58 UTC. It read the two commits with its own read-only tools. DSpatch checked that every place exists at its commit; it did not check the explanations. A walk is not a review and approves nothing. The step explanations are written in the Essentials profile (instruction version 12)."
+  },
+  "presentation": {
+    "profile": "essens",
+    "version": 12
+  },
+  "overviewSummary": {
+    "sv": "The change replaces the editor's local \"Run orders locally\" launch configuration with one that attaches to the orders service inside the already-running `orders-dev` container. Before attaching, VS Code runs a new task, which calls `scripts/start-debugger.sh`. The script checks that the container is running, installs debugpy in it if it is missing, creates the bind-mounted `/workspace/logs` folder and hands it to the host user, and then starts `orders.main` under debugpy in the background. debugpy waits for the editor to connect before `main` runs.",
+    "en": "The change replaces the editor's local \"Run orders locally\" launch configuration with one that attaches to the orders service inside the already-running `orders-dev` container. Before attaching, VS Code runs a new task, which calls `scripts/start-debugger.sh`. The script checks that the container is running, installs debugpy in it if it is missing, creates the bind-mounted `/workspace/logs` folder and hands it to the host user, and then starts `orders.main` under debugpy in the background. debugpy waits for the editor to connect before `main` runs."
+  },
+  "overview": {
+    "sv": "The change replaces the editor's local \"Run orders locally\" launch configuration with one that attaches to the orders service inside the already-running `orders-dev` container. Before attaching, VS Code runs a new task, which calls `scripts/start-debugger.sh`. The script checks that the container is running, installs debugpy in it if it is missing, creates the bind-mounted `/workspace/logs` folder and hands it to the host user, and then starts `orders.main` under debugpy in the background. debugpy waits for the editor to connect before `main` runs.\n\nThe dev container comes from `compose.yaml`, which this change leaves alone. It runs `python:3.12-slim` as root, bind-mounts the repository at `/workspace`, publishes ports 5678 and 8000, and only sleeps. The service is never started by the container itself: from now on the script starts it, through `docker exec`.\n\nThe old configuration ran `orders.main` on the host, and the change removes it. The new configuration is the only one left.",
+    "en": "The change replaces the editor's local \"Run orders locally\" launch configuration with one that attaches to the orders service inside the already-running `orders-dev` container. Before attaching, VS Code runs a new task, which calls `scripts/start-debugger.sh`. The script checks that the container is running, installs debugpy in it if it is missing, creates the bind-mounted `/workspace/logs` folder and hands it to the host user, and then starts `orders.main` under debugpy in the background. debugpy waits for the editor to connect before `main` runs.\n\nThe dev container comes from `compose.yaml`, which this change leaves alone. It runs `python:3.12-slim` as root, bind-mounts the repository at `/workspace`, publishes ports 5678 and 8000, and only sleeps. The service is never started by the container itself: from now on the script starts it, through `docker exec`.\n\nThe old configuration ran `orders.main` on the host, and the change removes it. The new configuration is the only one left."
+  },
+  "checks": [],
+  "walks": [
+    {
+      "id": "W1",
+      "kind": "walk",
+      "title": {
+        "sv": "What happens when the user starts debugging",
+        "en": "What happens when the user starts debugging"
+      },
+      "purpose": {
+        "sv": "Follow the chain from the launch configuration through the task and the script to the editor attaching to debugpy.",
+        "en": "Follow the chain from the launch configuration through the task and the script to the editor attaching to debugpy."
+      },
+      "question": {
+        "sv": "What runs, and in what order, when the user picks \"Debug orders in the dev container\"?",
+        "en": "What runs, and in what order, when the user picks \"Debug orders in the dev container\"?"
+      },
+      "steps": [
+        {
+          "id": "W1.1",
+          "title": {
+            "sv": "The attach configuration",
+            "en": "The attach configuration"
+          },
+          "summary": {
+            "sv": "Launch becomes attach",
+            "en": "Launch becomes attach"
+          },
+          "body": {
+            "sv": "The configuration no longer starts Python itself. It attaches to a debugpy server on `localhost:5678`, and before that, `preLaunchTask` makes VS Code run a task found by its label.",
+            "en": "The configuration no longer starts Python itself. It attaches to a debugpy server on `localhost:5678`, and before that, `preLaunchTask` makes VS Code run a task found by its label."
+          },
+          "details": {
+            "sv": "The old configuration launched `orders.main` on the host in the integrated terminal. That way of running the service is gone, and no configuration replaces it.\n\n`pathMappings` maps the workspace folder to `/workspace`, the bind mount in `compose.yaml`. This lets breakpoints set in host files match the paths that the code inside the container reports.",
+            "en": "The old configuration launched `orders.main` on the host in the integrated terminal. That way of running the service is gone, and no configuration replaces it.\n\n`pathMappings` maps the workspace folder to `/workspace`, the bind mount in `compose.yaml`. This lets breakpoints set in host files match the paths that the code inside the container reports."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Debug configuration, From and To",
+                "en": "Debug configuration, From and To"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 5,
+                "end": 12,
+                "role": "walk",
+                "anchor": "\"preLaunchTask\": \"Start debugger in dev container\""
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.2",
+          "title": {
+            "sv": "The task that runs the script",
+            "en": "The task that runs the script"
+          },
+          "summary": {
+            "sv": "Shell task with container and port",
+            "en": "Shell task with container and port"
+          },
+          "body": {
+            "sv": "The task runs the script as a shell command and passes the container name and the debug port in as environment variables. VS Code starts the attach only after this task has finished.",
+            "en": "The task runs the script as a shell command and passes the container name and the debug port in as environment variables. VS Code starts the attach only after this task has finished."
+          },
+          "details": {
+            "sv": "The task is not marked `isBackground`, so VS Code waits for the script to exit. That is why the script must return quickly, which is what the detached start in a later step does.\n\nThe command runs the script file directly. The diff adds `scripts/start-debugger.sh` with mode `100644`, without the executable bit. Unless the bit is set some other way, a shell on Linux or macOS refuses to run the file directly.",
+            "en": "The task is not marked `isBackground`, so VS Code waits for the script to exit. That is why the script must return quickly, which is what the detached start in a later step does.\n\nThe command runs the script file directly. The diff adds `scripts/start-debugger.sh` with mode `100644`, without the executable bit. Unless the bit is set some other way, a shell on Linux or macOS refuses to run the file directly."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Task definition",
+                "en": "Task definition"
+              },
+              "focus": {
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 4,
+                "end": 10,
+                "role": "walk",
+                "anchor": "\"label\": \"Start debugger in dev container\""
+              },
+              "from": {
+                "label": {
+                  "sv": "preLaunchTask names this label",
+                  "en": "preLaunchTask names this label"
+                },
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 8,
+                "end": 8
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.3",
+          "title": {
+            "sv": "Stop early if the container is down",
+            "en": "Stop early if the container is down"
+          },
+          "summary": {
+            "sv": "Container running check",
+            "en": "Container running check"
+          },
+          "body": {
+            "sv": "The script asks Docker whether the container is running and stops with a hint if it is not. Because the task then fails, the attach does not go ahead.",
+            "en": "The script asks Docker whether the container is running and stops with a hint if it is not. Because the task then fails, the attach does not go ahead."
+          },
+          "details": {
+            "sv": "`docker inspect` errors are discarded, so a container that does not exist gives the same message as one that is stopped. `set -euo pipefail` near the top makes any later failing `docker exec` stop the script as well.",
+            "en": "`docker inspect` errors are discarded, so a container that does not exist gives the same message as one that is stopped. `set -euo pipefail` near the top makes any later failing `docker exec` stop the script as well."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Running check",
+                "en": "Running check"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 8,
+                "end": 11,
+                "role": "walk",
+                "anchor": "docker inspect -f"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.4",
+          "title": {
+            "sv": "Install debugpy on first use",
+            "en": "Install debugpy on first use"
+          },
+          "summary": {
+            "sv": "One-time debugpy install",
+            "en": "One-time debugpy install"
+          },
+          "body": {
+            "sv": "If `import debugpy` fails inside the container, the script installs debugpy with pip. Later runs skip this step.",
+            "en": "If `import debugpy` fails inside the container, the script installs debugpy with pip. Later runs skip this step."
+          },
+          "details": {
+            "sv": "The install lives only in the container's writable layer. Recreating the container (for example with `docker compose down`) removes it, and the next run installs it again. The install needs network access from the container.",
+            "en": "The install lives only in the container's writable layer. Recreating the container (for example with `docker compose down`) removes it, and the next run installs it again. The install needs network access from the container."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Conditional pip install",
+                "en": "Conditional pip install"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 13,
+                "end": 16,
+                "role": "walk",
+                "anchor": "import debugpy"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.5",
+          "title": {
+            "sv": "Start the service under debugpy, detached",
+            "en": "Start the service under debugpy, detached"
+          },
+          "summary": {
+            "sv": "Detached debugpy start",
+            "en": "Detached debugpy start"
+          },
+          "body": {
+            "sv": "`docker exec -d` starts `orders.main` under debugpy and returns at once, so the script and the task finish. Thanks to `--wait-for-client`, debugpy holds `main` back until the editor connects.",
+            "en": "`docker exec -d` starts `orders.main` under debugpy and returns at once, so the script and the task finish. Thanks to `--wait-for-client`, debugpy holds `main` back until the editor connects."
+          },
+          "details": {
+            "sv": "Because the start is detached, the script never learns whether debugpy actually started or began listening. Its output stays inside the container. Two cases the code allows:\n\n- The task finishes as soon as `docker exec -d` returns, which can be before debugpy is listening. The attach can then hit a port that is not open yet. Nothing in the script waits for the port.\n- If a debug session from an earlier run is still alive in the container, the new process cannot bind port 5678 (and the service cannot bind port 8000). That failure is invisible here, because the error goes to the detached process.",
+            "en": "Because the start is detached, the script never learns whether debugpy actually started or began listening. Its output stays inside the container. Two cases the code allows:\n\n- The task finishes as soon as `docker exec -d` returns, which can be before debugpy is listening. The attach can then hit a port that is not open yet. Nothing in the script waits for the port.\n- If a debug session from an earlier run is still alive in the container, the new process cannot bind port 5678 (and the service cannot bind port 8000). That failure is invisible here, because the error goes to the detached process."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Detached debugpy start",
+                "en": "Detached debugpy start"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 23,
+                "end": 24,
+                "role": "walk",
+                "anchor": "docker exec -d"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W1.6",
+          "title": {
+            "sv": "The editor attaches",
+            "en": "The editor attaches"
+          },
+          "summary": {
+            "sv": "Attach through the published port",
+            "en": "Attach through the published port"
+          },
+          "body": {
+            "sv": "Once the task is done, VS Code connects to `localhost:5678`. That port reaches debugpy only because `compose.yaml` publishes container port 5678 on the same host port.",
+            "en": "Once the task is done, VS Code connects to `localhost:5678`. That port reaches debugpy only because `compose.yaml` publishes container port 5678 on the same host port."
+          },
+          "details": {
+            "sv": "debugpy listens on `0.0.0.0` inside the container, which is what makes the published port reachable. After the editor connects, `main` runs and serves HTTP on port 8000, which compose also publishes.",
+            "en": "debugpy listens on `0.0.0.0` inside the container, which is what makes the published port reachable. After the editor connects, `main` runs and serves HTTP on port 8000, which compose also publishes."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Port publishing in the dev service",
+                "en": "Port publishing in the dev service"
+              },
+              "focus": {
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 8,
+                "end": 10,
+                "role": "walk",
+                "anchor": "\"5678:5678\""
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "kind": "walk",
+      "title": {
+        "sv": "Who owns the log files",
+        "en": "Who owns the log files"
+      },
+      "purpose": {
+        "sv": "See what the chown in the script covers and what the service then writes as root.",
+        "en": "See what the chown in the script covers and what the service then writes as root."
+      },
+      "question": {
+        "sv": "Does handing the logs folder to the host user keep the service's log files editable on the host?",
+        "en": "Does handing the logs folder to the host user keep the service's log files editable on the host?"
+      },
+      "steps": [
+        {
+          "id": "W2.1",
+          "title": {
+            "sv": "Create and hand over the logs folder",
+            "en": "Create and hand over the logs folder"
+          },
+          "summary": {
+            "sv": "chown of the folder only",
+            "en": "chown of the folder only"
+          },
+          "body": {
+            "sv": "Before starting the service, the script creates `/workspace/logs` as root and changes the owner of the folder to the host user's IDs. Only the folder changes owner, not files that are created in it later.",
+            "en": "Before starting the service, the script creates `/workspace/logs` as root and changes the owner of the folder to the host user's IDs. Only the folder changes owner, not files that are created in it later."
+          },
+          "details": {
+            "sv": "`id -u` and `id -g` run on the host, inside the script, not in the container. Owning the folder lets the host user add, rename and delete files in it. It does not change who owns a file that a root process creates there.\n\nOn Docker Desktop (Windows or macOS), file ownership on bind mounts is handled by the file-sharing layer, so this step may have no visible effect there.",
+            "en": "`id -u` and `id -g` run on the host, inside the script, not in the container. Owning the folder lets the host user add, rename and delete files in it. It does not change who owns a file that a root process creates there.\n\nOn Docker Desktop (Windows or macOS), file ownership on bind mounts is handled by the file-sharing layer, so this step may have no visible effect there."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "mkdir and chown",
+                "en": "mkdir and chown"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 18,
+                "end": 21,
+                "role": "walk",
+                "anchor": "chown"
+              }
+            }
+          ]
+        },
+        {
+          "id": "W2.2",
+          "title": {
+            "sv": "The service writes its log as root",
+            "en": "The service writes its log as root"
+          },
+          "summary": {
+            "sv": "orders.log created by root",
+            "en": "orders.log created by root"
+          },
+          "body": {
+            "sv": "`main` opens `orders.log` in that folder. Because `docker exec` runs as root by default, the file is created owned by root. So, going by the code, the log file itself is not editable by the host user on a native Linux bind mount, which is what the script's comment promises.",
+            "en": "`main` opens `orders.log` in that folder. Because `docker exec` runs as root by default, the file is created owned by root. So, going by the code, the log file itself is not editable by the host user on a native Linux bind mount, which is what the script's comment promises."
+          },
+          "details": {
+            "sv": "The `LOG_DIR.mkdir(exist_ok=True)` call here makes the script's `mkdir` redundant, but harmless. The script would need to start the service as the host user, for example with `docker exec -u`, or change the owner of the files afterwards, for the comment to hold for the files themselves.",
+            "en": "The `LOG_DIR.mkdir(exist_ok=True)` call here makes the script's `mkdir` redundant, but harmless. The script would need to start the service as the host user, for example with `docker exec -u`, or change the owner of the files afterwards, for the comment to hold for the files themselves."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Log setup in main",
+                "en": "Log setup in main"
+              },
+              "focus": {
+                "path": "orders/main.py",
+                "side": "target",
+                "start": 9,
+                "end": 12,
+                "role": "walk",
+                "anchor": "logging.basicConfig"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "W3",
+      "kind": "walk",
+      "title": {
+        "sv": "Where the debug port is decided",
+        "en": "Where the debug port is decided"
+      },
+      "purpose": {
+        "sv": "See that port 5678 is written in four places and that only two of them read each other.",
+        "en": "See that port 5678 is written in four places and that only two of them read each other."
+      },
+      "question": {
+        "sv": "Can the debug port be changed in one place?",
+        "en": "Can the debug port be changed in one place?"
+      },
+      "steps": [
+        {
+          "id": "W3.1",
+          "title": {
+            "sv": "Port in the task, launch configuration, script and compose file",
+            "en": "Port in the task, launch configuration, script and compose file"
+          },
+          "summary": {
+            "sv": "Four copies of 5678",
+            "en": "Four copies of 5678"
+          },
+          "body": {
+            "sv": "The task's `DEBUG_PORT` reaches the script, but the attach configuration hard-codes 5678 and `compose.yaml` publishes only 5678. Changing `DEBUG_PORT` alone would make debugpy listen on a port that the editor never connects to and that the container does not publish.",
+            "en": "The task's `DEBUG_PORT` reaches the script, but the attach configuration hard-codes 5678 and `compose.yaml` publishes only 5678. Changing `DEBUG_PORT` alone would make debugpy listen on a port that the editor never connects to and that the container does not publish."
+          },
+          "details": {
+            "sv": "The container name is in the same situation. The task's `DEV_CONTAINER` must match `container_name` in `compose.yaml`, and the script's error message tells the user to start the `dev` service by name. The values agree today.",
+            "en": "The container name is in the same situation. The task's `DEV_CONTAINER` must match `container_name` in `compose.yaml`, and the script's error message tells the user to start the `dev` service by name. The values agree today."
+          },
+          "together": {
+            "sv": "The port only works when all four copies agree, which is easiest to see side by side.",
+            "en": "The port only works when all four copies agree, which is easiest to see side by side."
+          },
+          "places": [
+            {
+              "id": "P1",
+              "label": {
+                "sv": "Task env",
+                "en": "Task env"
+              },
+              "focus": {
+                "path": ".vscode/tasks.json",
+                "side": "target",
+                "start": 8,
+                "end": 8,
+                "role": "walk",
+                "anchor": "\"DEBUG_PORT\": \"5678\""
+              }
+            },
+            {
+              "id": "P2",
+              "label": {
+                "sv": "Script default",
+                "en": "Script default"
+              },
+              "focus": {
+                "path": "scripts/start-debugger.sh",
+                "side": "target",
+                "start": 5,
+                "end": 6,
+                "role": "walk",
+                "anchor": "PORT=\"${DEBUG_PORT:-5678}\""
+              }
+            },
+            {
+              "id": "P3",
+              "label": {
+                "sv": "Attach target",
+                "en": "Attach target"
+              },
+              "focus": {
+                "path": ".vscode/launch.json",
+                "side": "target",
+                "start": 9,
+                "end": 9,
+                "role": "walk",
+                "anchor": "\"port\": 5678"
+              }
+            },
+            {
+              "id": "P4",
+              "label": {
+                "sv": "Published port",
+                "en": "Published port"
+              },
+              "focus": {
+                "path": "compose.yaml",
+                "side": "target",
+                "start": 9,
+                "end": 9,
+                "role": "walk",
+                "anchor": "\"5678:5678\""
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

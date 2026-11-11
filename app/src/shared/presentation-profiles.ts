@@ -64,8 +64,14 @@ export const LEGACY_PROFILE: PresentationProfile = 'original';
  * 11 (DSP-197, 11 November 2026): profile fit is judged explicitly for both over- and under-density:
  * the short part stays readable for the chosen profile, secondary detail moves behind Show more, and
  * reviewer criteria may reject a text that is too verbose or too dense for that profile's reader.
+ * 12 (DSP-199, 11 November 2026): Niclas's decision that Essentials is extremely short: its first
+ * part aims at about two natural sentences, correct but not comprehensive, with depth after the
+ * marker. Essentials replaces the shared scope rule, the walk's transition rules and the Show more
+ * contract with its own (ProfileDefinition.own); in a one-call walk its summary is a few words and
+ * its why is empty, and the loop's writer and reviewer get the same definition. Standard and
+ * Teacher are unchanged.
  */
-export const PRESENTATION_INSTRUCTION_VERSION = 11;
+export const PRESENTATION_INSTRUCTION_VERSION = 12;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -171,6 +177,21 @@ export interface ProfileDefinition {
   readonly reader: readonly string[];
   /** How this profile explains more simply. */
   readonly simpler: readonly string[];
+  /**
+   * DSP-199: shared rules this profile replaces with its own, so that one definition holds for the
+   * profile instead of a shared rule beside it asking for the opposite. `scope` replaces the last
+   * line of {@link EXPLANATION_TASK}, `deepening` the {@link DEEPENING_RULES}, `walkDetails` the
+   * {@link WALK_DETAILS_RULE}, `walkReading` the {@link WALK_READING_RULES}. Absent for Standard
+   * and Teacher, whose prompts stay as they were.
+   */
+  readonly own?: {
+    readonly scope: string;
+    readonly deepening: string;
+    readonly walkDetails: string;
+    readonly walkReading: readonly string[];
+    /** How a one-call walk's fields are written in this profile, said where the section names them. */
+    readonly walkFields: string;
+  };
 }
 
 export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> = {
@@ -184,9 +205,21 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     id: 'essens',
     promptName: 'Essentials',
     reader: [
-      'The reader is an experienced developer who wants to understand quickly why this code is here, what main work happens, and which decisive conditions or consequences an accurate main picture needs. Choose a higher level of abstraction: say what a mechanism achieves and what follows from it for the main behaviour, not the calls, state flags, loop steps, types, queues or guards that achieve it; this reader reads the ordinary mechanics in the code. Brevity comes from meaningful selection, not from packing the same details into fewer sentences. A detail belongs in the first part when the main behaviour needs it or leaving it out would mislead; further mechanics this reader may want next go after the marker, or stay in the step that treats them.',
+      // DSP-199 (Niclas's decision, 11 November 2026; the reference's version 1.3, section 4).
+      `The reader is an experienced developer who sees the code beside your text and can always open Show more. Extreme brevity is the primary goal: the first part aims at about two natural sentences on what this step accomplishes and its central role or relationship in the flow. Adapt to the size of the code only where you must; a very large piece of code can need more, but the first part still gives only the main picture, and two long sentences that pack in a walkthrough do not meet it. Leave out the calls, flags, fields, mechanisms, every condition and the failure paths: the reader sees them in the code, and what is worth reading of them goes after the marker. Choosing what to leave out is the job. What the first part says must be correct, not comprehensive: make an overreaching claim precise rather than adding reservations.`,
     ],
     simpler: ['Plainer language and less jargon: the same point, said more directly.'],
+    own: {
+      scope: 'There is no required form, and the Essentials reader sets the size of the first part. Point at the code you rest on with references, so the person can open it.',
+      deepening: 'After the marker line comes the deepening only, when there is something worth reading for this reader: a coherent continuation of the main picture, with the mechanics, conditions or special cases that matter and the evidence and references for them. It is not an inventory of everything you read, and nothing said above the line is said again below it. Leave the line out when there is nothing worth adding.',
+      walkDetails: '"details" is the deepening the person opens with Show more, only when there is something worth reading: a coherent continuation of the main picture, not an inventory of what you read and not a repetition of "body". Leave it empty when there is nothing worth adding.',
+      walkReading: [
+        'The walk shows the code of each step beside its explanation: in the prose, name functions, types, variables and settings rather than file names, paths or line numbers; the references block, when one is asked for, still names files and lines.',
+        `Place this step in the walk only as far as its role needs: "here" for this step's code, and "in the next step", "in a later step" or "as we saw earlier" only where the walk's order makes it true. Do not preview or recall other steps beyond a phrase, and make a transition explicit only where the step's role would otherwise be misread; more of the course can go after the marker. What depends on timing, scheduling or callers outside the change is said as what the code allows, never as something observed to run.`,
+        'Write only from what the reader can see: do not refer to the prepared explanation, the instructions or other text given to you but not shown (no "the prepared summary says"); where the code contradicts it, simply say what the code does.',
+      ],
+      walkFields: `For each step, "body" is the first part the person reads and "details" its deepening behind Show more. In Essentials, "summary" is only a few words naming the step, since the body is the summary, and "why" stays empty.`,
+    },
   },
   standard: {
     id: 'standard',
@@ -205,6 +238,21 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     simpler: ['Try a simpler way in: a concrete case, a better analogy, or the effect as seen from the caller, before the mechanism.'],
   },
 };
+
+/** DSP-199: the shared task as this profile gets it, with its own scope rule where it has one. */
+export function explanationTaskFor(profile: ProfileDefinition): readonly string[] {
+  return profile.own === undefined ? EXPLANATION_TASK : [...EXPLANATION_TASK.slice(0, 3), profile.own.scope];
+}
+
+/** DSP-199: what comes after the marker line, as this profile gets it. */
+export function deepeningRulesFor(profile: ProfileDefinition): readonly string[] {
+  return profile.own === undefined ? DEEPENING_RULES : [profile.own.deepening];
+}
+
+/** DSP-199: how an explanation reads beside the walk, as this profile gets it. */
+export function walkReadingRulesFor(profile: ProfileDefinition | null): readonly string[] {
+  return profile?.own === undefined ? WALK_READING_RULES : profile.own.walkReading;
+}
 
 /**
  * Explain more simply (DSP-176, DSP-181), in every profile: fewer concepts at once, not more
@@ -355,7 +403,8 @@ export function outlineFrom(raw: unknown): WalkOutline | null {
 }
 
 /** The walk's outline and the walk-relative rules, as a prompt section. */
-export function walkOutlineSection(outline: WalkOutline | null): string {
+/** The walk's outline and its reading rules; the profile's own rules where it has them (DSP-199). */
+export function walkOutlineSection(outline: WalkOutline | null, profile: PresentationProfile | null = null): string {
   const lines = ['## Where this step is in the walk'];
   if (outline !== null) {
     lines.push(`Walk: ${outline.walkTitle === '' ? '(untitled)' : outline.walkTitle}`);
@@ -373,7 +422,7 @@ export function walkOutlineSection(outline: WalkOutline | null): string {
       lines.push('');
     }
   }
-  lines.push(...bullets(WALK_READING_RULES));
+  lines.push(...bullets(walkReadingRulesFor(profile === null ? null : PROFILES[profile])));
   if (outline !== null && outline.steps.some((step) => step.id !== undefined)) {
     lines.push(`- ${STEP_REFERENCE_RULE}`);
   }
@@ -406,12 +455,12 @@ const bullets = (rules: readonly string[]): string[] => rules.map((rule) => `- $
 
 /** The reader's profile and the shared task, for a deepening, a simplification or a selection. */
 function readerLine(profile: ProfileDefinition): string[] {
-  return profile.id === 'original' ? bullets(EXPLANATION_TASK) : [`- The reader's profile: ${profile.promptName}. ${profile.reader.join(' ')}`, ...bullets(EXPLANATION_TASK)];
+  return profile.id === 'original' ? bullets(EXPLANATION_TASK) : [`- The reader's profile: ${profile.promptName}. ${profile.reader.join(' ')}`, ...bullets(explanationTaskFor(profile))];
 }
 
 /** The task, the boundary and the profile's addition: the same for walk generation, an explanation and a regeneration. */
 function baseTextRules(profile: ProfileDefinition, withBoundary: boolean): string[] {
-  return ['Every explanation:', ...bullets(EXPLANATION_TASK), ...(withBoundary ? bullets(SAME_FACTS_RULES) : []), '', `${profile.promptName}:`, ...bullets(profile.reader)];
+  return ['Every explanation:', ...bullets(explanationTaskFor(profile)), ...(withBoundary ? bullets(SAME_FACTS_RULES) : []), '', `${profile.promptName}:`, ...bullets(profile.reader)];
 }
 
 /**
@@ -420,7 +469,7 @@ function baseTextRules(profile: ProfileDefinition, withBoundary: boolean): strin
  */
 export function presentationPromptSection(section: PresentationSection): string | null {
   const profile = PROFILES[section.profile];
-  const walk = section.walk === undefined ? [] : ['', walkOutlineSection(section.walk)];
+  const walk = section.walk === undefined ? [] : ['', walkOutlineSection(section.walk, section.profile)];
   const lines: string[] = [];
   const last = section.shown.at(-1);
   if (section.mode === 'present' || section.mode === 'regenerate') {
@@ -435,7 +484,7 @@ export function presentationPromptSection(section: PresentationSection): string 
       ...baseTextRules(profile, true),
       '',
       'After the marker:',
-      ...bullets(DEEPENING_RULES),
+      ...bullets(deepeningRulesFor(profile)),
       ...walk,
     );
     if (section.mode === 'regenerate' && last !== undefined) {
@@ -515,14 +564,14 @@ export function walkExplanationSection(profile: PublicProfile): string {
   const definition = PROFILES[profile];
   return [
     `## How to explain the steps (${definition.promptName})`,
-    `The person reads the walks in the ${definition.promptName} profile. Write each step's "summary", "body", "why" and "details" for that reader. This section decides how the steps are explained, nothing else: which walks, readings, steps and places you produce, their titles, questions and purposes, and the change's own summary and background follow the sections above and stay concise, whatever the profile.`,
+    `The person reads the walks in the ${definition.promptName} profile. Write each step's "summary", "body", "why" and "details" for that reader.${definition.own === undefined ? '' : ` ${definition.own.walkFields}`} This section decides how the steps are explained, nothing else: which walks, readings, steps and places you produce, their titles, questions and purposes, and the change's own summary and background follow the sections above and stay concise, whatever the profile.`,
     `Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`,
     '',
     ...baseTextRules(definition, false),
     '',
     'Every step is read beside its code, in the walk\'s order:',
-    ...bullets(WALK_READING_RULES),
+    ...bullets(walkReadingRulesFor(definition)),
     '',
-    `- ${WALK_DETAILS_RULE}`,
+    `- ${definition.own?.walkDetails ?? WALK_DETAILS_RULE}`,
   ].join('\n');
 }

@@ -2103,6 +2103,7 @@ function OpenReview({
                   }}
                   onOpenEvidence={goAway}
                   quoteText={quote?.text ?? ''}
+                  walkPresentation={bundle.definition.presentation}
                 />
               )}
               {away !== null && current !== null && (
@@ -3663,6 +3664,7 @@ function StepPanel({
   codeQuestion,
   quoteText,
   explanation,
+  walkPresentation,
 }: {
   /** DSP-184: the step's explanation in the profile chosen, from its own store, and what can be asked. */
   readonly explanation: StepExplanationView;
@@ -3682,6 +3684,8 @@ function StepPanel({
   readonly onOpenEvidence: (location: CodeLocation) => void;
   /** What is selected to ask about in the window, if anything: Explain this explains it. */
   readonly quoteText: string;
+  /** DSP-199: the profile and instruction version the walk's own explanations were written in. */
+  readonly walkPresentation?: { readonly profile: string; readonly version: number };
 }): JSX.Element {
   const [sources, setSources] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
@@ -3812,7 +3816,8 @@ function StepPanel({
         </div>
       ) : (
         <div className="rv-walk-explanation" data-ev="step-prepared-explanation">
-          {pick(step.summary, lang) !== '' && (
+          {/* DSP-199: an Essentials walk from instruction version 12 on has no summary above its short part: the body is the summary. */}
+          {pick(step.summary, lang) !== '' && !(walkPresentation?.profile === 'essens' && walkPresentation.version >= 12) && (
             <p className="rv-summary" data-quote-source="explanation" data-quote-origin={origin}>
               <Inline text={pick(step.summary, lang)} />
             </p>

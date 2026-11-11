@@ -1,0 +1,6 @@
+This is where F5 starts. The configuration no longer starts `orders.main` on the host. It now **attaches** to a debugger that must already be listening, and its `preLaunchTask` names the task that sets that listener up before the attach.
+
+<!-- dspatch:details -->
+In the base version, this file's only configuration was "Run orders locally". It used `request: "launch"` with `module: "orders.main"` and `console: "integratedTerminal"`, so the editor started the service itself on the host. That configuration has been replaced, not added to, so the change leaves no local-run configuration.
+
+With `request: "attach"`, the editor starts no process. It only connects. Something else has to provide the debugpy listener. The `preLaunchTask` value, "Start debugger in dev container", has to match a task label exactly, and the editor runs that task before it tries to attach. In the next step, that label leads to the task in the repository's tasks file. `connect` and `pathMappings` are covered in a later step.

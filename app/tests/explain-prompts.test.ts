@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
-import { EXPLANATION_TASK, PRESENTATION_INSTRUCTION_VERSION, PROFILES } from '../src/shared/presentation-profiles';
+import { EXPLANATION_TASK, PRESENTATION_INSTRUCTION_VERSION, PROFILES, explanationTaskFor } from '../src/shared/presentation-profiles';
 import { buildExplanationPrompts, type BuiltPrompts } from './support/explain-prompts';
 
 let built: BuiltPrompts;
@@ -39,11 +39,14 @@ describe('the exact explanation prompts of the synthetic work-queue case (struct
   });
 
   it('every profile is given the shared task: read the code it rests on, say what the reader needs to judge the step, keep what cannot be established apart', () => {
-    for (const prompt of Object.values(built.prompts)) {
-      for (const rule of EXPLANATION_TASK) {
-        assert.ok(prompt.includes(rule));
+    // DSP-199: Essentials replaces the shared scope rule with its own; the rest of the shared task is every profile's.
+    const byName = { Essentials: PROFILES.essens, Standard: PROFILES.standard, Teacher: PROFILES.pedagog } as const;
+    for (const [name, prompt] of Object.entries(built.prompts)) {
+      for (const rule of explanationTaskFor(byName[name as keyof typeof byName] ?? PROFILES.standard)) {
+        assert.ok(prompt.includes(rule), `${name}: ${rule.slice(0, 40)}`);
       }
     }
+    assert.ok(!(built.prompts['Essentials'] ?? '').includes(EXPLANATION_TASK[3]), 'Essentials does not get the shared scope rule beside its own');
   });
 
   it('only Teacher is asked to build the concepts the reader needs; no profile is given a sentence or identifier count (DSP-188)', () => {

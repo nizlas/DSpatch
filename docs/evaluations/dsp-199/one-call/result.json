@@ -1,0 +1,112 @@
+{
+  "which": "exec-debug",
+  "method": "single",
+  "profile": "essens",
+  "provider": "claude",
+  "model": "opus",
+  "job": {
+    "id": "job-4c44512b-2aab-41f2-83ac-30e31974a9b2",
+    "kind": "walks",
+    "state": "done",
+    "provider": "claude",
+    "model": "opus",
+    "startedAt": "2026-11-11T20:57:33.165Z",
+    "endedAt": "2026-11-11T20:58:23.140Z",
+    "note": "3 walk(s) and 0 reading(s), 9 step(s). 17 changed line(s) are in none of them.",
+    "detail": "",
+    "scope": null,
+    "result": null,
+    "definitionPath": "<home>\\development\\DSpatch\\app\\release\\walk-real-chain\\dsp199-exec-single-essens\\records\\generated\\r-ec70c6b1a492dc2a449b89c2\\job-4c44512b-2aab-41f2-83ac-30e31974a9b2.review.json",
+    "uncovered": [
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 5,
+        "end": 5
+      },
+      {
+        "kind": "lines",
+        "side": "base",
+        "path": ".vscode/launch.json",
+        "start": 7,
+        "end": 9
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 1,
+        "end": 3
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": ".vscode/tasks.json",
+        "start": 11,
+        "end": 12
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "scripts/start-debugger.sh",
+        "start": 1,
+        "end": 4
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "scripts/start-debugger.sh",
+        "start": 7,
+        "end": 7
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "scripts/start-debugger.sh",
+        "start": 12,
+        "end": 12
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "scripts/start-debugger.sh",
+        "start": 17,
+        "end": 17
+      },
+      {
+        "kind": "lines",
+        "side": "target",
+        "path": "scripts/start-debugger.sh",
+        "start": 22,
+        "end": 22
+      }
+    ],
+    "material": {
+      "base": "baba2c69c8f5bd5f359edb09d32ec66316806ad6",
+      "target": "4916a8041ce4b85a3b147dece00cb5a9d3270449",
+      "files": 12,
+      "skipped": [],
+      "skippedCount": 0
+    },
+    "investigation": {
+      "reads": [
+        "target/compose.yaml",
+        "target/orders/main.py",
+        "target/orders/http.py",
+        "target/.vscode/launch.json"
+      ],
+      "searches": [
+        "Glob target/**/*",
+        "Glob base/**/*"
+      ],
+      "refused": 0,
+      "refusedCalls": []
+    },
+    "presentation": {
+      "profile": "essens",
+      "version": 12
+    },
+    "method": "single"
+  }
+}

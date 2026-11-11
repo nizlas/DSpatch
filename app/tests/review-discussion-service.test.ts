@@ -796,7 +796,7 @@ test('step explanations: no discussion entry and no discussion turn; their own s
     assert.ok(explainer !== undefined);
     const prompt = explainer.sent[0] ?? '';
     assert.match(prompt, /## How to present \(Essentials\)/);
-    assert.match(prompt, /Instruction version: 11/);
+    assert.match(prompt, /Instruction version: 12/);
     // DSP-194: a profile's explanation gets the form of the answer only; the review question's content rules are not in it.
     assert.doesNotMatch(prompt, /Give the cause and effect behind the answer|Name what you could not read or find|An uncertainty or risk that changes the answer is said in this part/);
     assert.match(prompt, /Write the first part, which stands on its own./);
@@ -821,7 +821,7 @@ test('step explanations: no discussion entry and no discussion turn; their own s
     assert.equal(entries.length, 1);
     assert.equal(entries[0]?.status, 'done');
     assert.equal(entries[0]?.trigger, 'auto');
-    assert.equal(entries[0]?.instructionVersion, 11);
+    assert.equal(entries[0]?.instructionVersion, 12);
     assert.equal(entries[0]?.prompt, prompt, 'the exact prompt is kept with the explanation');
     assert.ok(events.some((event) => event.kind === 'explanation' && event.entry.prompt === undefined), 'windows get no prompt');
     // The discussion holds only the person's question.

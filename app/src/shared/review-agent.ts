@@ -368,10 +368,11 @@ export function walksPrompt(material: AnalysisMaterial, folder: AgentMaterial, l
             steps: [
               {
                 title: 'Short step title',
-                summary: 'A short line: what happens here.',
+                // DSP-199: in Essentials the body is the summary, and nothing is added above or after it.
+                summary: profile === 'essens' ? 'A few words naming the step; in Essentials the body is the summary.' : 'A short line: what happens here.',
                 // DSP-195: with a profile, the fields are described by what they are, not by a content list of their own.
                 body: profile === null ? 'The explanation in Markdown: what happens, why, what to notice in the code. Short paragraphs, bullets where they help.' : 'The step\'s explanation in Markdown, for the reader named under "How to explain the steps".',
-                why: profile === null ? 'Optional: the consequence, if it needs saying apart from the body.' : 'Optional: a consequence this reader needs said apart from the body; usually empty.',
+                why: profile === null ? 'Optional: the consequence, if it needs saying apart from the body.' : profile === 'essens' ? 'Empty in Essentials.' : 'Optional: a consequence this reader needs said apart from the body; usually empty.',
                 details: 'Optional: the deepening the person opens with Show more, in Markdown. Empty when there is nothing to add.',
                 places: [
                   {

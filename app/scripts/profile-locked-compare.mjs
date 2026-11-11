@@ -405,6 +405,31 @@ if (phase === 'ablation') {
     const built = writerPrompt('essens', stepId);
     return ask(`writer-essens-${stepId}-${version}-${String(i + 1)}`, version === 'B' ? toB(built) : built, `the loop writer, Essentials, ${stepId}, ${version === 'A' ? 'the product\'s prompt' : 'the replacing writing task'}, sample ${String(i + 1)}`);
   }))));
+} else if (phase === 'snapshot-199') {
+  // DSP-199: every prompt a profile's explanation can be built into, with no model call, so that a
+  // change to one profile can be shown to leave the others' prompts as they were.
+  const { walksPrompt } = await import('../src/shared/review-agent');
+  const { reviewPrompt } = await import('../src/shared/walk-loop');
+  const { presentationPromptSection, walkExplanationSection } = await import('../src/shared/presentation-profiles');
+  const reviewer = resolveRole(loaded.graph.nodes.find((node) => node.id === 'review').role);
+  const dir = path.join(out, 'snapshot');
+  fs.mkdirSync(dir, { recursive: true });
+  const stepId = STEPS[0];
+  const earlier = 'An earlier explanation of this step.';
+  const outline = { walkTitle: 'Walk', steps: [{ id: 'W1.1', title: 'One', places: ['a.ts 1–2 (To)'] }, { id: 'W1.2', title: 'Two', places: ['b.ts 3–4 (To)'] }], current: 1 };
+  for (const profile of arg('--profiles', 'essens,standard,pedagog').split(',')) {
+    const write = (name, text) => fs.writeFileSync(path.join(dir, `${profile}-${name}.md`), text ?? '(none)');
+    write('walk-section', walkExplanationSection(profile));
+    write('one-call', walksPrompt(material, folder, 'en', profile));
+    write('loop-writer', writerPrompt(profile, stepId));
+    write('loop-reviewer', reviewPrompt({ role: reviewer, plan, texts: new Map([[stepId, { body: earlier, details: 'Deeper.' }]]), profile, language: 'en', material, folder, final: false, earlier: null, fresh: true }));
+    write('profile-switch', presentPrompt(profile, stepId, earlier));
+    write('regenerate', presentPrompt(profile, stepId, earlier, 'regenerate', [{ label: 'The explanation of the step', text: earlier }]));
+    for (const mode of ['present', 'regenerate', 'more', 'simpler', 'explain']) {
+      write(`section-${mode}`, presentationPromptSection({ profile, mode, shown: mode === 'present' ? [] : [{ label: 'Shown', text: earlier }], walk: outline }));
+    }
+  }
+  console.log(`snapshot in ${dir}`);
 } else if (phase === 'v8-teacher') {
   // Teacher at version 8, for the before-picture: the version 9 prompts with the DSP-194 changes
   // turned back, exactly (the brief's label and the writer role's sentence; the profile section's

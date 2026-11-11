@@ -12,7 +12,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { simulatedReviewTask } from '../src/main/presentation-review-tasks';
-import { EXPLANATION_TASK, walkOutlineSection, PRESENTATION_INSTRUCTION_VERSION, PROFILES, PROFILE_PROMPT_NAMES, PUBLIC_PROFILES, WALK_DETAILS_RULE, walkExplanationSection, type PublicProfile } from '../src/shared/presentation-profiles';
+import { EXPLANATION_TASK, explanationTaskFor, walkOutlineSection, PRESENTATION_INSTRUCTION_VERSION, PROFILES, PROFILE_PROMPT_NAMES, PUBLIC_PROFILES, WALK_DETAILS_RULE, walkExplanationSection, type PublicProfile } from '../src/shared/presentation-profiles';
 import { answerJson, crowdedStepProblems, definitionFrom, readWalksAnswer, type ProposedWalks } from '../src/shared/review-agent';
 import { parseReviewDefinition, stepContentHash } from '../src/shared/review-model';
 import { jobFrom } from '../src/shared/review-pair';
@@ -29,12 +29,16 @@ describe('the walk generator\'s section (DSP-181)', () => {
       assert.match(section, /Write each step's "summary", "body", "why" and "details" for that reader/);
       assert.match(section, /which walks, readings, steps and places you produce, their titles, questions and purposes, and the change's own summary and background follow the sections above and stay concise, whatever the profile/);
       assert.match(section, new RegExp(`Instruction version: ${String(PRESENTATION_INSTRUCTION_VERSION)}`));
-      for (const rule of [...EXPLANATION_TASK, ...PROFILES[id].reader]) {
+      for (const rule of [...explanationTaskFor(PROFILES[id]), ...PROFILES[id].reader]) {
         assert.ok(section.includes(rule));
       }
       assert.ok(!/Length:|\b(two|five|ten) sentences\b/.test(section), 'no length guideline (DSP-188)');
-      assert.ok(section.includes(WALK_DETAILS_RULE));
+      assert.ok(section.includes(PROFILES[id].own?.walkDetails ?? WALK_DETAILS_RULE));
     }
+    // DSP-199: in Essentials the body is the summary, why stays empty, and Show more is no inventory.
+    const essentials = walkExplanationSection('essens');
+    assert.match(essentials, /"summary" is only a few words naming the step, since the body is the summary, and "why" stays empty/);
+    assert.ok(!essentials.includes(WALK_DETAILS_RULE) && !essentials.includes(EXPLANATION_TASK[3]));
   });
 });
 

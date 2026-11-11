@@ -1,0 +1,6 @@
+The script makes sure debugpy is available **inside the container**, which runs the plain `python:3.12-slim` image without it. It installs debugpy only when the import check fails, so normally just the first run in a fresh container pays for the install.
+
+<!-- dspatch:details -->
+Both `docker exec` commands run the container's Python, not the host's. The host doesn't need debugpy for this, and its Python environment isn't involved.
+
+The install lands in the container's own filesystem, in the image's site-packages, not under the bind-mounted `/workspace`. The repository contains no requirements file or Dockerfile that adds debugpy. So the install lasts as long as that container exists: it survives stopping and starting the same container, but a recreated container (for example after `docker compose down`) installs it again on the next F5. That install needs network access from the container. If it fails, `set -e` from the previous step ends the script with an error before anything is started.
