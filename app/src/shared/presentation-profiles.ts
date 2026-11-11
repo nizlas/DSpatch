@@ -61,8 +61,11 @@ export const LEGACY_PROFILE: PresentationProfile = 'original';
  * choice and level to the profile; a profiled walk prompt and the loop writer no longer get the
  * writing rules' reader and content rules (only their form rules), and the one-call schema describes
  * its fields without a content list; the loop reviewer's place check asks for the reader's level.
+ * 11 (DSP-197, 11 November 2026): profile fit is judged explicitly for both over- and under-density:
+ * the short part stays readable for the chosen profile, secondary detail moves behind Show more, and
+ * reviewer criteria may reject a text that is too verbose or too dense for that profile's reader.
  */
-export const PRESENTATION_INSTRUCTION_VERSION = 10;
+export const PRESENTATION_INSTRUCTION_VERSION = 11;
 
 /** The English names, as prompts say them; the window shows the names of its own language. */
 export const PROFILE_PROMPT_NAMES: Readonly<Record<PresentationProfile, string>> = {
@@ -129,7 +132,7 @@ export const EXPLANATION_TASK = [
   'Explain this code to a person reviewing the change, who reads your text beside the code itself: what this reader needs in order to understand the step and judge the change. Which of what the code does here, why it matters for the change, how it connects to what the reader has seen and will see, and what decides the outcome (a condition, a risk, work only requested or reused) this reader needs, and at what level, the reader\'s profile decides.',
   'Read the code you rest on before you write: callers, types, the other code that reads or writes the same state, and what waits for or carries out what this code asks. Do not infer the architecture from names, and do not present what you have not read. The code decides, also where the prepared explanation or an earlier answer says more than the code supports; then say plainly what the code does.',
   'Add understanding beyond what the lines and their comments already say: do not retell statements in prose, and keep what the code shows apart from an interpretation of why it is written so. Be exact about guarantees: a lock protects only the accesses under it, a notification is not a completed hand-over, a private method is not proof that nothing else calls it. When a part cannot be read, explain the general concept and say what cannot be established about this implementation.',
-  'Let the scope follow the code and the reader: a simple step is said in a few words in every profile, and a step where several mechanisms interact takes the room understanding needs. There is no length to hit and no required form; use a paragraph, a list or a small code excerpt where it helps, and let every sentence add understanding. Point at the code you rest on with references, so the person can open it.',
+  'Let the scope follow the code and the reader: a simple step is said in a few words in every profile, and a step where several mechanisms interact takes the room understanding needs. There is no length to hit and no required form; use a paragraph, a list or a small code excerpt where it helps, and let every sentence add understanding. Keep the first part readable for this reader: when the main point is already clear, move secondary detail to the part after the marker rather than crowding the first part. Point at the code you rest on with references, so the person can open it.',
 ] as const;
 
 /** What comes after the marker line, in every profile: the technical contract of Show more. */
@@ -189,7 +192,7 @@ export const PROFILES: Readonly<Record<PresentationProfile, ProfileDefinition>> 
     id: 'standard',
     promptName: 'Standard',
     reader: [
-      'The reader knows programming but not this code: make the central mechanism understandable, how the parts work together and why their relationship matters, from a natural entry point into what makes the behaviour understandable rather than the parts in source order. Place a project-specific name the first time it matters, and explain a language detail where the reader needs it to interpret the code; you need not teach every concept, nor add facts to be longer.',
+      'The reader knows programming but not this code: make the central mechanism understandable, how the parts work together and why their relationship matters, from a natural entry point into what makes the behaviour understandable rather than the parts in source order. Place a project-specific name the first time it matters, and explain a language detail where the reader needs it to interpret the code; you need not teach every concept, nor add facts to be longer. Keep the first part compact enough that the mechanism stays in view: examples or side mechanics that do not change that understanding belong after the marker.',
     ],
     simpler: ['Break the difficult connection into its parts and explain the concepts that are needed to follow it, one at a time.'],
   },

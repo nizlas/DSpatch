@@ -212,6 +212,7 @@ describe('the prompts', () => {
     assert.ok(reviewer.includes('never ask for a change on a matter of style'));
     // DSP-195: the place check asks for the reader's level, not for a content list of its own.
     assert.ok(reviewer.includes('at this reader\'s level, so that this reader understands what it contributes to the change'));
+    assert.ok(reviewer.includes('not so dense or verbose that the main point is hard to see'));
     assert.ok(!reviewer.includes('what it does here, why it matters for the change, and what decides the outcome'));
     assert.ok(!reviewer.includes('## The final assessment'));
     const final = reviewPrompt({ role: role('review'), plan, texts, profile: 'essens', language: 'en', material, folder, final: true, earlier: { assessment: '', verdict: 'rework', findings: [{ kind: 'explanation', steps: ['W1.2'], problem: 'Thin.', why: '', evidence: '', reference: '' }] }, fresh: false });

@@ -50,7 +50,7 @@ describe('the profiles (DSP-181)', () => {
     assert.equal(DEFAULT_PROFILE, 'standard');
     assert.ok(isProfile('original') && isProfile('standard') && !isProfile('essentials'));
     assert.ok(!isPublicProfile('original') && isPublicProfile('pedagog'));
-    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 10);
+    assert.equal(PRESENTATION_INSTRUCTION_VERSION, 11);
   });
 
   it('are named and described in the window\'s language over stable ids; prompts use the English names', () => {
@@ -123,6 +123,7 @@ describe('one policy in the prompt (DSP-181)', () => {
     assert.match(essentials, /Brevity comes from meaningful selection, not from packing the same details into fewer sentences/);
     assert.match(standard, /knows programming but not this code/);
     assert.match(standard, /how the parts work together and why their relationship matters/);
+    assert.match(standard, /Keep the first part compact enough that the mechanism stays in view/);
     assert.match(teacher, /may not know this language, library or mechanism/);
     assert.match(teacher, /concrete example or comparison/);
     assert.match(teacher, /data race, not a stale value/);
