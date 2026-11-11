@@ -62,5 +62,7 @@ Niclas's decision of 11 November 2026, implemented at instruction version 12; ve
 
 **Checks:** typecheck and build. Targeted tests 134 pass; presentation 317, loop 675; review 349 plus the known Windows failure in review-context.test.ts. The window trial passed 24 checks. The follow trial (simulated provider, real input) could not run: another full-screen application was in front on the desktop; its screen pictures were deleted. Regeneration and the return to a saved text were therefore not exercised in real windows here; regeneration was not run live.
 
+Commit f326ca9; linux-verify run 43100697122 green (dock, profiles, governor, provider tests, windows, tests).
+
 No release, as asked: Niclas judges the form first.
 <!-- SECTION:NOTES:END -->
