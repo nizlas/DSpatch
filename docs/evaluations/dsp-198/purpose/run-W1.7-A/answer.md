@@ -1,0 +1,3 @@
+This line starts the orders service inside the running dev container, but holds it back until the editor connects. The script returns right away. The service then waits in the background, so the editor can attach (W1.8) before any of `orders.main` runs, including its startup code.
+
+**Condition:** this only works while the debug port matches everywhere, and the defaults all use 5678. `compose.yaml` publishes only `5678:5678`, and `.vscode/launch.json` connects to `localhost:5678`. The script itself takes `DEBUG_PORT` from the environment. If you set `DEBUG_PORT` to anything else, debugpy listens on a port that isn't published to the host. The editor can't connect, and the service waits forever without running.

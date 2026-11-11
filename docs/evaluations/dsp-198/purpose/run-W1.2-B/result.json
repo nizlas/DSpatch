@@ -1,0 +1,15 @@
+{
+  "startedAt": "2026-11-11T20:26:54.114Z",
+  "endedAt": "2026-11-11T20:27:06.238Z",
+  "status": "finished",
+  "error": null,
+  "provider": "claude",
+  "modelRequested": "opus",
+  "modelReported": "claude-opus-5-5",
+  "dspatchSessionId": "dsp-session-1d13a25a-26d8-432b-a35d-69bfc497d2cd",
+  "folder": "<home>\\AppData\\Local\\Temp\\dsp198-standalone-Nldweu\\revisions",
+  "scratch": "<home>\\AppData\\Local\\Temp\\dsp198-standalone-Nldweu",
+  "base": "47a5e46243c37b9f9db4b3d80d53279ac0c194aa",
+  "target": "57806884af74873379d7859aa962d416c6dc15c7",
+  "answerChars": 1290
+}
