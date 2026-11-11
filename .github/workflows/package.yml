@@ -57,7 +57,17 @@ jobs:
       - run: npm run package:client -- --linux deb --x64
         working-directory: app
       - name: Build isolated installed-package trial environment
-        run: docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if docker build -t dspatch-trial -f scripts/trial-package/Dockerfile scripts/trial-package; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
         working-directory: app
       - name: Verify installed standalone host and SSH continuity
         run: node scripts/trial-package/standalone.mjs
