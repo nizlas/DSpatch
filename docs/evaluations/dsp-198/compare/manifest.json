@@ -1,0 +1,84 @@
+{
+  "phase": "compare-198",
+  "provider": "claude",
+  "model": "opus",
+  "instructionVersion": 11,
+  "base": "1c0a2c9889b66c365959618f2b132e868c3b5616",
+  "target": "eb097e7c42aa8ea8192faa1a1bdc1993e9355174",
+  "startedAt": "2026-11-11T18:48:14.975Z",
+  "runs": [
+    {
+      "name": "writer-essens-W1.2-A-2",
+      "note": "the loop writer, Essentials, W1.2, the product's prompt, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1488,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-B-1",
+      "note": "the loop writer, Essentials, W1.2, the replacing writing task, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1044,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-B-2",
+      "note": "the loop writer, Essentials, W1.2, the replacing writing task, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 11,
+      "chars": 1056,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.2-A-1",
+      "note": "the loop writer, Essentials, W1.2, the product's prompt, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 1622,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-B-1",
+      "note": "the loop writer, Essentials, W1.7, the replacing writing task, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1360,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-A-1",
+      "note": "the loop writer, Essentials, W1.7, the product's prompt, sample 1",
+      "status": "finished",
+      "error": null,
+      "seconds": 12,
+      "chars": 1819,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-B-2",
+      "note": "the loop writer, Essentials, W1.7, the replacing writing task, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 10,
+      "chars": 1665,
+      "modelReported": "claude-opus-5-5"
+    },
+    {
+      "name": "writer-essens-W1.7-A-2",
+      "note": "the loop writer, Essentials, W1.7, the product's prompt, sample 2",
+      "status": "finished",
+      "error": null,
+      "seconds": 13,
+      "chars": 2085,
+      "modelReported": "claude-opus-5-5"
+    }
+  ],
+  "endedAt": "2026-11-11T18:48:39.010Z"
+}

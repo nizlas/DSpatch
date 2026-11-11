@@ -1,0 +1,5 @@
+The debug configuration's `preLaunchTask` names this task by its exact `label`, "Start debugger in dev container", so VS Code runs this task before it tries to attach. The task is new in this change. It is a plain `shell` task that runs the `start-debugger.sh` script and passes two environment variables to it: `DEV_CONTAINER=orders-dev` and `DEBUG_PORT=5678`.
+
+**VS Code waits for the script to exit, then looks at its exit code before it attaches.** The task has no `isBackground` flag and an empty `problemMatcher`, so it counts as finished when the script finishes. A non-zero exit code stops the launch, as W2 shows. This works only because the script, in W1.7, starts the service detached and exits instead of keeping it in the foreground.
+
+The port appears in two places. The script receives `DEBUG_PORT` from here, but the configuration's `connect` has its own fixed `5678`, so changing one doesn't change the other. In the next step the script reads both variables. If either is missing, it falls back to the same values: `orders-dev` and `5678`.

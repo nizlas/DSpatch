@@ -155,7 +155,7 @@ const shortOf = (text) => text.split(DETAILS_MARKER)[0].trim();
 const targetLines = (p, start, end) => CASE.target[p].split('\n').slice(start - 1, end);
 
 /** The step explanation channel's prompt for an alternative, with the envelope as the host fills it. */
-function presentPrompt(profile, stepId, standardShort) {
+function presentPrompt(profile, stepId, standardShort, action = 'present', chain = []) {
   const raw = stepRaw(stepId);
   const places = raw.places;
   const focus = places[0];
@@ -178,7 +178,7 @@ function presentPrompt(profile, stepId, standardShort) {
     current: Number(stepId.split('.')[1]) - 1,
     otherWalks: planJson.walks.slice(1).map((walk, w) => ({ title: walk.title, steps: walk.steps.map((step, index) => ({ id: `W${String(w + 2)}.${String(index + 1)}`, title: step.title })) })),
   };
-  return stepExplanationPrompt({ envelope, action: 'present', profile, chain: [], outline, folderSection: folderSection(material, folder) });
+  return stepExplanationPrompt({ envelope, action, profile, chain, outline, folderSection: folderSection(material, folder) });
 }
 
 // The ablation's variations of a built prompt (an experiment on the text, not product prompts).
@@ -353,6 +353,58 @@ if (phase === 'ablation') {
   const versions = arg('--versions', 'B,C').split(',');
   const count = Number(arg('--samples', '2'));
   await pool(profiles.flatMap((profile) => STEPS.flatMap((stepId) => versions.flatMap((version) => Array.from({ length: count }, (_, i) => () => ask(`writer-${profile}-${stepId}-${version}-${String(i + 1)}`, build(profile, stepId, version), `the loop writer, ${PROFILES[profile].promptName}, ${stepId}, ${version === 'B' ? 'oriented brief, product readers' : 'oriented brief, proposed readers'}, sample ${String(i + 1)}`))))));
+} else if (phase === 'baseline-198') {
+  // DSP-198: the Essentials instructions as the product builds them today, in all four paths, with
+  // no model call: the one-call preparation, the loop writer (its first turn in a session), the
+  // profile switch, regeneration, and the loop reviewer that judges the writer's texts.
+  const { walksPrompt } = await import('../src/shared/review-agent');
+  const { reviewPrompt } = await import('../src/shared/walk-loop');
+  const reviewer = resolveRole(loaded.graph.nodes.find((node) => node.id === 'review').role);
+  const dir = path.join(out, 'baseline');
+  fs.mkdirSync(dir, { recursive: true });
+  const stepId = STEPS[0];
+  const earlier = arg('--earlier', '');
+  const earlierText = earlier === '' ? 'An earlier Essentials explanation of this step.' : shortOf(fs.readFileSync(path.resolve(earlier), 'utf8'));
+  const write = (name, text) => fs.writeFileSync(path.join(dir, name), text);
+  write('one-call-essens.prompt.md', walksPrompt(material, folder, 'en', 'essens'));
+  write(`loop-writer-essens-${stepId}.prompt.md`, writerPrompt('essens', stepId));
+  write(`loop-writer-essens-${stepId}-later-turn.prompt.md`, writeStepPrompt({ role, plan, stepId, profile: 'essens', language: 'en', material, folder, fresh: false, rework: null }));
+  write(`profile-switch-essens-${stepId}.prompt.md`, presentPrompt('essens', stepId, earlierText));
+  write(`regenerate-essens-${stepId}.prompt.md`, presentPrompt('essens', stepId, earlierText, 'regenerate', [{ label: 'The Essentials explanation of the step', text: earlierText }]));
+  write(`loop-reviewer-essens-${stepId}.prompt.md`, reviewPrompt({ role: reviewer, plan, texts: new Map([[stepId, { body: earlierText, details: '' }]]), profile: 'essens', language: 'en', material, folder, final: false, earlier: null, fresh: true }));
+  console.log(`baseline prompts in ${dir}`);
+} else if (phase === 'compare-198') {
+  // DSP-198: A, the loop writer's prompt as the product builds it for Essentials; B, the same prompt
+  // with Essentials' pedagogical instruction replaced by one writing task (an experiment on the
+  // built text; the rest of the prompt, the code access and the locked plan are the same).
+  const { EXPLANATION_TASK, SAME_FACTS_RULES, DEEPENING_RULES } = await import('../src/shared/presentation-profiles');
+  const NEW_TASK = 'Explain this step to an experienced developer reading the code beside your text. Give them the purpose of this code and the main connection or consequence that helps them understand its place in the program. Choose that overview yourself from the code; ordinary syntax and configuration fields are already visible to the reader. Include a detail when leaving it out would make the overview misleading. Finish when the reader has that orientation.';
+  const FACT_LINE = 'Keep what the code shows apart from your interpretation of why it is written so, and be exact about what it guarantees; when a part cannot be read, say what cannot be established about it.';
+  const SHOW_MORE = 'Show more is optional. Put a deepening after the marker only when it gives this reader something worth opening; it is not where the rest of the material goes, and it does not repeat the first part. Leave the line out otherwise.';
+  const swap = (text, from, to) => {
+    if (!text.includes(from)) throw new Error(`not in the prompt: ${from.slice(0, 70)}`);
+    return text.split(from).join(to);
+  };
+  const toB = (prompt) => {
+    const start = prompt.indexOf('## How to explain the step (Essentials)');
+    const end = prompt.indexOf('Every step is read beside its code, in the walk\'s order:');
+    if (start < 0 || end < start) throw new Error('no Essentials section');
+    const version = /Instruction version: \d+/.exec(prompt.slice(start, end))?.[0] ?? '';
+    const section = ['## How to explain the step (Essentials)', version, '', ...[NEW_TASK, EXPLANATION_TASK[1], FACT_LINE, ...SAME_FACTS_RULES].map((rule) => `- ${rule}`), '', ''].join('\n');
+    let text = prompt.slice(0, start) + section + prompt.slice(end);
+    text = swap(text, `- ${DEEPENING_RULES[0]}`, `- ${SHOW_MORE}`);
+    text = swap(text, 'for Essentials an accurate main picture at a higher level of abstraction, chosen rather than compressed', 'for Essentials the purpose and the main connection or consequence, chosen from the code');
+    text = swap(text, 'The planner\'s brief, written for every profile: ', 'The planner\'s notes from planning this step (observations to check against the code, not a list of what to say): ');
+    // The other steps' briefs in the walk outline: the plan's path stays, its prewritten content lists go.
+    text = text.split('\n').filter((line) => !/^  - Brief: /.test(line)).join('\n');
+    return text;
+  };
+  const versions = arg('--versions', 'A,B').split(',');
+  const count = Number(arg('--samples', '2'));
+  await pool(STEPS.flatMap((stepId) => versions.flatMap((version) => Array.from({ length: count }, (_, i) => () => {
+    const built = writerPrompt('essens', stepId);
+    return ask(`writer-essens-${stepId}-${version}-${String(i + 1)}`, version === 'B' ? toB(built) : built, `the loop writer, Essentials, ${stepId}, ${version === 'A' ? 'the product\'s prompt' : 'the replacing writing task'}, sample ${String(i + 1)}`);
+  }))));
 } else if (phase === 'v8-teacher') {
   // Teacher at version 8, for the before-picture: the version 9 prompts with the DSP-194 changes
   // turned back, exactly (the brief's label and the writer role's sentence; the profile section's
