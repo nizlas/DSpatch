@@ -3,10 +3,10 @@ id: DSP-199
 title: >-
   Essentials becomes extremely short: about two natural sentences before Show
   more, in the reference and in every generation path
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-11 20:48'
-updated_date: '2026-11-11 21:09'
+updated_date: '2026-11-11 22:34'
 labels:
   - review
 dependencies:
@@ -29,7 +29,7 @@ Niclas's explicit decision (11 November 2026), replacing the earlier caution abo
 - [x] #3 The visible block before Show more in Essentials adds no second walkthrough through a summary, introduction or Why it matters
 - [x] #4 The loop reviewer judges the short part apart from Show more and does not ask for details back; facts are still checked
 - [x] #5 Standard and Teacher prompts and level are unchanged; saved explanations kept; the instruction version raised
-- [ ] #6 Real generations with the configured provider on a simple and a larger step show the short part and Show more; targeted tests and project checks pass; remaining shortcomings are reported
+- [x] #6 Real generations with the configured provider on a simple and a larger step show the short part and Show more; targeted tests and project checks pass; remaining shortcomings are reported
 - [ ] #7 Commit and push; no release; Niclas judges the form
 <!-- AC:END -->
 
@@ -71,5 +71,5 @@ Commit f326ca9; linux-verify run 43100697122 green (dock, profiles, governor, pr
 - The walks' transitions remain followable; no addition was needed.
 - Show more: one stray line documented; no format rule added.
 
-Released as 0.1.22 on Niclas's authorisation (see the release record below).
+Released as 0.1.22 on Niclas's authorisation. Check commit e554e39, with linux-verify run 43109481382 green. Release commit b41aece, tag v0.1.22. Package run 43111027151 published https://github.com/nizlas/DSpatch/releases/tag/v0.1.22 with dspatch_0.1.22_amd64.deb, dspatch-host-0.1.22-b41aeceb0b32-linux-x64.tar.gz, host-manifest.json and SHA256SUMS; the notes are docs/releases/v0.1.22.md. The published upgrade trial from v0.1.21 (run 43111765190) passed 30 checks. In Review: Niclas's reading of Essentials on real code remains.
 <!-- SECTION:NOTES:END -->
