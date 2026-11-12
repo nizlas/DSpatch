@@ -84,7 +84,7 @@
 }
 
 /* DSP-204: the app icon, small and centred just above the wordmark. */
-.start__icon {
+.start__app-icon {
   /* Its own size always: as a flex item the column would shrink it when the window is short. */
   flex: none;
   width: 56px;

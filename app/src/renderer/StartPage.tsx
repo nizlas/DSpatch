@@ -510,7 +510,7 @@ export function StartPage({
       </header>
       <main className="start__content">
         {/* DSP-204: the app icon, discreetly above the wordmark; Vite serves it from public/icons. */}
-        <img className="start__icon" src="./icons/dspatch-128.png" width={56} height={56} alt="" data-ev="start-icon" />
+        <img className="start__app-icon" src="./icons/dspatch-128.png" width={56} height={56} alt="" data-ev="start-icon" />
         <Wordmark />
         <WorkspaceEntrances busy={busy} onOpenProject={onOpenProject} />
         {problem !== null && (
