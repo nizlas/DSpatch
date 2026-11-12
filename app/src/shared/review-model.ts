@@ -1663,30 +1663,36 @@ export interface MarkedLines {
 }
 
 /**
- * The changed lines of a place's marking (DSP-201): of the rows {@link referenceRows} gives
- * for the focus — the rows the marking is drawn from — the added and removed ones, as ranges
- * per side. Unchanged lines inside the marking are not among them, and nothing shown around
- * it (context, *Show more*, the whole file, another place) is: the rows come from the
- * reference alone.
+ * The changed rows of a place (DSP-201, DSP-202): of the rows {@link referenceRows} gives for
+ * the focus, the added and removed ones. This is the one definition a walk marks, flashes on
+ * arrival and decides about. Unchanged rows inside the reference are not among them, and
+ * nothing shown around it (context, *Show more*, the whole file, scrolling, another place)
+ * is: the rows come from the reference alone.
  *
- * `ownSide` is how a walk draws its place (DSP-175): only the focus's own side is marked, a
- * place at To its new lines and one at From its old, though the reference also takes in the
- * old lines a replacement put the new ones in place of. So a place at To never decides about
- * removed lines; a place at From does. A location opened outside the walk marks both, and
- * decides about both.
+ * Removed rows come with a place at To exactly as `referenceRows` pairs them: the old lines a
+ * replacement put the new ones in place of, where the place lies on those new lines, and lines
+ * removed strictly inside it. Other removals of the same hunk are not the place's. A place at
+ * From is the mirror image.
  */
+export function markedChangedRows(
+  rows: readonly DiffRow[],
+  focus: { readonly side: RevisionSide; readonly start: number; readonly end: number },
+): readonly number[] {
+  return referenceRows(rows, focus).indexes.filter((index) => rows[index]?.kind === 'added' || rows[index]?.kind === 'deleted');
+}
+
+/** A place's changed rows as one exact decision scope: removed lines on `base`, added on `target`. */
 export function markedChangedLines(
   rows: readonly DiffRow[],
   focus: { readonly path: string; readonly side: RevisionSide; readonly start: number; readonly end: number },
-  ownSide: boolean,
 ): MarkedLines {
   const base: number[] = [];
   const target: number[] = [];
-  for (const index of referenceRows(rows, focus).indexes) {
+  for (const index of markedChangedRows(rows, focus)) {
     const row = rows[index];
-    if (row?.kind === 'deleted' && row.baseLine !== null && (!ownSide || focus.side === 'base')) {
+    if (row?.kind === 'deleted' && row.baseLine !== null) {
       base.push(row.baseLine);
-    } else if (row?.kind === 'added' && row.targetLine !== null && (!ownSide || focus.side === 'target')) {
+    } else if (row?.kind === 'added' && row.targetLine !== null) {
       target.push(row.targetLine);
     }
   }

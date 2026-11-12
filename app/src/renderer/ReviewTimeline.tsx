@@ -7,6 +7,7 @@ import { activationLine } from './walk-activation';
 import { focusIdentity, paneOfStation, panesOf, shownStation, type FocusRevision } from './walk-panes';
 import {
   isProsePath,
+  markedChangedRows,
   type CodeLevel,
   type CodeLocation,
   type DiffFile,
@@ -924,15 +925,6 @@ export function WalkTimeline({
                     level={level}
                     view={view}
                     wrap={isProsePath(path) ? wrapProse : wrapCode}
-                    // The walk's other places in this file — in this pane or another — show faintly.
-                    // In a diff every row has both line numbers; a file shown at one side only
-                    // has that side's.
-                    sameFile={stations.filter(
-                      (other) =>
-                        other.index !== station.index &&
-                        other.place.focus.path === path &&
-                        (diffFile !== null || other.place.focus.side === station.place.focus.side),
-                    )}
                     selection={selection}
                     words={words}
                     lang={lang}
@@ -1035,7 +1027,6 @@ function TimelinePaneView({
   level,
   view,
   wrap,
-  sameFile,
   selection,
   words,
   lang,
@@ -1077,8 +1068,6 @@ function TimelinePaneView({
    * is drawn at its own height, so the pane draws all of its rows instead of a screenful.
    */
   readonly wrap: boolean;
-  /** The walk's other stations in this file: their focus shows faintly, as orientation. */
-  readonly sameFile: readonly Station[];
   readonly words: ReviewWords;
   readonly lang: Lang;
   readonly savedScroll: { readonly top: number; readonly left: number } | undefined;
@@ -1126,23 +1115,39 @@ function TimelinePaneView({
 
   const shownFocus = useMemo(() => rowsOf(rows, station.place.focus), [rows, station.place.focus]);
   const shownSet = useMemo(() => new Set(shownFocus.indexes), [shownFocus]);
-  const otherFocus = useMemo(() => {
+  /*
+   * DSP-202 (Niclas, 12 November 2026): every pane marks the changed rows of its own places,
+   * active or not, so the next place's change is clear before the walk gets there. The rows are
+   * the ones Accept decides about (`markedChangedRows`, DSP-201): unchanged rows inside a
+   * reference are never among them. Marking a row is not reviewing it.
+   */
+  const ownRows = useMemo(() => {
     const set = new Set<number>();
-    for (const other of sameFile) {
-      rowsOf(rows, other.place.focus).indexes.forEach((row) => set.add(row));
+    for (const member of paneStations) {
+      if (member.place.focus.path === path) {
+        markedChangedRows(rows, member.place.focus).forEach((row) => set.add(row));
+      }
     }
     return set;
-  }, [rows, sameFile]);
-  const activeStopRows = useMemo(() => {
-    const set = new Set<number>();
-    activeStopFoci.forEach((focus) => {
-      if (focus.path === path) {
-        rowsOf(rows, focus).indexes.forEach((row) => set.add(row));
-      }
-    });
-    return set;
-  }, [activeStopFoci, rows, path]);
+  }, [rows, paneStations, path]);
   const activeStopSides = useMemo(() => new Set(activeStopFoci.map((focus) => focus.side)), [activeStopFoci]);
+  // The rows the walk arrives at: the active place's changed rows, and those of the places its
+  // stop shows with it on both sides. Only these carry the amber edge and the arrival flash.
+  const arrivalRows = useMemo(() => {
+    const set = new Set<number>();
+    if (!isActive) {
+      return set;
+    }
+    markedChangedRows(rows, station.place.focus).forEach((row) => set.add(row));
+    if (activeStopSides.has('base') && activeStopSides.has('target')) {
+      for (const focus of activeStopFoci) {
+        if (focus.path === path) {
+          markedChangedRows(rows, focus).forEach((row) => set.add(row));
+        }
+      }
+    }
+    return set;
+  }, [isActive, rows, station.place.focus, activeStopSides, activeStopFoci, path]);
   // The active place's call is marked; the latest navigation's call stays unfolded.
   const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(rowsOf(rows, fromHere).indexes)), [fromHere, rows]);
   const callRows = useMemo(() => {
@@ -1634,25 +1639,21 @@ function TimelinePaneView({
     const rowSide: RevisionSide = row.targetLine !== null ? 'target' : 'base';
     const lineTokens = rowSide === 'target' ? content?.tokens.target[(row.targetLine ?? 1) - 1] : content?.tokens.base[(row.baseLine ?? 1) - 1];
     const classes = ['rv-row'];
-    // Only the active place's focus is marked (DSP-175): the same code shown again in
-    // another pane, earlier or later in the walk, keeps the diff's own quiet colours, so
-    // the strong mark, the edge and the arrival flash are never in two places at once. And
-    // only its own side's lines: a place at From marks the old lines, one at To the new,
-    // though the place's reference also takes in the other side of a replacement.
-    const ownSide = side === 'target' ? row.targetLine !== null : row.baseLine !== null;
-    const mergedStopHere = isActive && activeStopSides.has('base') && activeStopSides.has('target') && effectiveView === 'both' && activeStopRows.has(index);
-    const activeHere = (inShown && isActive && ownSide) || mergedStopHere;
-    if (activeHere) {
-      classes.push(row.kind === 'deleted' ? 'rv-old' : row.kind === 'added' ? 'rv-new' : 'rv-neutral-focus', 'rv-focus-active');
+    // DSP-202: a place's own changed rows are light red and green in every pane; other changed
+    // rows a weaker, still clear red and green; unchanged rows keep the code view's background,
+    // also inside a reference. The amber edge and the gold flash are the arriving place's
+    // changed rows only, so context, the whole reference and other panes never flash.
+    if (row.kind === 'deleted') {
+      classes.push(ownRows.has(index) ? 'rv-old' : 'rv-old-faint');
+    } else if (row.kind === 'added') {
+      classes.push(ownRows.has(index) ? 'rv-new' : 'rv-new-faint');
+    }
+    const arrivalHere = arrivalRows.has(index);
+    if (arrivalHere) {
+      classes.push('rv-focus-active');
       if (arriving) {
         classes.push('rv-arrive');
       }
-    } else if (inShown || otherFocus.has(index)) {
-      classes.push(row.kind === 'deleted' ? 'rv-old-faint' : row.kind === 'added' ? 'rv-new-faint' : 'rv-neutral-faint');
-    } else if (row.kind === 'deleted') {
-      classes.push('rv-old-faint');
-    } else if (row.kind === 'added') {
-      classes.push('rv-new-faint');
     }
     const isFrom = fromSet.has(index);
     if (isFrom) {
@@ -1669,9 +1670,9 @@ function TimelinePaneView({
     }
     if (inShown) {
       attrs['data-focus'] = '1';
-      if (activeHere) {
-        attrs['data-focus-active'] = '1';
-      }
+    }
+    if (arrivalHere) {
+      attrs['data-focus-active'] = '1';
     }
     if (index === layoutRows.firstShown) {
       attrs['data-shown'] = '1';

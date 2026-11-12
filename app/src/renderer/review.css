@@ -8,15 +8,15 @@
    - walk overview: a faint purple, optional, below the step's own marking. */
 
 .rv {
-  --rv-old: color-mix(in srgb, var(--no) 32%, var(--bg));
-  /* The active place's own before/after rows: clearly lighter than any other change. */
-  --rv-old-active: color-mix(in srgb, var(--no) 46%, var(--bg));
-  --rv-new-active: color-mix(in srgb, var(--ok) 40%, var(--bg));
+  /* DSP-202: a place's own removed and added rows, light red and light green of about the same
+     lightness (red needs more of its colour for that, being the darker); other changed rows a
+     weaker red and green that is still clearly seen. Belonging to a walk place, not reviewed. */
+  --rv-old: color-mix(in srgb, var(--no) 50%, var(--bg));
+  --rv-new: color-mix(in srgb, var(--ok) 40%, var(--bg));
+  --rv-old-faint: color-mix(in srgb, var(--no) 24%, var(--bg));
+  --rv-new-faint: color-mix(in srgb, var(--ok) 20%, var(--bg));
   /* Only the moment a place becomes active; not a review status. */
   --rv-gold: color-mix(in srgb, #f0b429 58%, var(--bg));
-  --rv-old-faint: color-mix(in srgb, var(--no) 12%, var(--bg));
-  --rv-new: color-mix(in srgb, var(--ok) 30%, var(--bg));
-  --rv-new-faint: color-mix(in srgb, var(--ok) 11%, var(--bg));
   --rv-neutral: color-mix(in srgb, var(--text) 10%, var(--bg));
   --rv-walk: color-mix(in srgb, var(--unknown) 14%, var(--bg));
   display: flex;
@@ -1154,10 +1154,9 @@
   transition: opacity 400ms ease, filter 400ms ease;
 }
 
-/* Only the active place is marked (DSP-175): its focus rows carry the strong colour, an
-   amber edge (a shape, not only a colour) and the arrival flash. Other panes, also one
-   showing the same code later in the walk, draw their rows in the diff's quiet colours.
-   The pane's heading names the place in full: repository, side and commit, file, lines. */
+/* Every pane marks its own places' changed rows (DSP-202); the active place's changed rows
+   carry an amber edge (a shape, not only a colour) and the arrival flash. The pane's heading
+   names the active place in full: repository, side and commit, file, lines. */
 .rv-pane-active .rv-focus-active {
   box-shadow: inset 4px 0 0 var(--rv-amber);
 }
@@ -1174,49 +1173,18 @@
   margin-right: 0.25rem;
 }
 
-/* Earlier and later panes: the focus is quieter, but added, removed and unchanged
-   code keep their colours and the text stays readable. */
-.rv-pane-inactive {
-  opacity: 0.9;
-}
-
-.rv-pane-inactive .rv-old {
-  background: color-mix(in srgb, var(--no) 22%, var(--bg));
-}
-
-.rv-pane-inactive .rv-new {
-  background: color-mix(in srgb, var(--ok) 20%, var(--bg));
-}
-
-.rv-pane-inactive .rv-neutral-focus {
-  background: color-mix(in srgb, var(--text) 7%, var(--bg));
-}
-
-.rv-pane-active {
-  opacity: 1;
-}
-
-/* The active place's focus rows stay clearly lighter than every other changed row —
-   in other panes and around it — after the gold has faded. Unchanged focus stays
-   neutral. The dimmer token colours are lifted on these rows so they keep a contrast
-   of at least 5:1. */
-.rv-pane-active .rv-old {
-  background: var(--rv-old-active);
-}
-
-.rv-pane-active .rv-new {
-  background: var(--rv-new-active);
-}
-
-.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-keyword {
+/* Earlier, later and active panes draw a place's rows alike (DSP-202): the next place's change
+   is as clear before the walk gets there. The dimmer token colours are lifted on a place's own
+   rows so they keep a contrast of at least 5:1 there. */
+:is(.rv-old, .rv-new) .rv-tk-keyword {
   color: #dcbcf6;
 }
 
-.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-comment {
+:is(.rv-old, .rv-new) .rv-tk-comment {
   color: #b4bfcc;
 }
 
-.rv-pane-active :is(.rv-old, .rv-new) .rv-tk-number {
+:is(.rv-old, .rv-new) .rv-tk-number {
   color: #ffb59c;
 }
 

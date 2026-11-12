@@ -940,7 +940,7 @@ function OpenReview({
    */
   const decisionPlaces = useMemo((): readonly DecisionPlace[] => {
     if (away !== null) {
-      return [{ key: 'opened', label: null, focus: away, ownSide: false, origin: { kind: 'opened' } }];
+      return [{ key: 'opened', label: null, focus: away, origin: { kind: 'opened' } }];
     }
     if (current === null) {
       return [];
@@ -950,7 +950,7 @@ function OpenReview({
       const entry = current.step.places[index];
       return entry === undefined
         ? []
-        : [{ key: entry.id, label: indexes.length > 1 ? entry.label : null, focus: asLocation(entry.focus), ownSide: true, origin: { kind: 'walk', stepId: current.step.id, placeId: entry.id } as const }];
+        : [{ key: entry.id, label: indexes.length > 1 ? entry.label : null, focus: asLocation(entry.focus), origin: { kind: 'walk', stepId: current.step.id, placeId: entry.id } as const }];
     });
   }, [away, current, activeStop, placeIndex]);
   /*
@@ -3986,8 +3986,6 @@ interface DecisionPlace {
   /** The place's label, when several places are decided about side by side. */
   readonly label: LocalText | null;
   readonly focus: CodeLocation;
-  /** A walk marks only its focus's own side; a location opened outside the walk marks both. */
-  readonly ownSide: boolean;
   readonly origin: DecisionOrigin;
 }
 
@@ -4075,8 +4073,8 @@ function PlaceDecision({
   const content = useRows(files, place.focus.path, diffFile, place.focus.side);
   // The same reference and rows the marking is drawn from: never the pane's expansion or scroll.
   const marked = useMemo(
-    () => (content === null ? null : markedChangedLines(content.rows, place.focus, place.ownSide)),
-    [content, place.focus, place.ownSide],
+    () => (content === null ? null : markedChangedLines(content.rows, place.focus)),
+    [content, place.focus],
   );
   const view = useMemo(() => (marked === null ? null : placeDecisionView(marked, holds)), [marked, holds]);
   if (marked === null || view === null) {

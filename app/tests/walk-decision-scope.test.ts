@@ -23,6 +23,7 @@ import {
   heldOf,
   isDecisionScope,
   markedChangedLines,
+  markedChangedRows,
   parseReviewDefinition,
   placeDecisionView,
   stillHeld,
@@ -104,7 +105,7 @@ function pairMarks(op: PairMark['op'], locations: readonly CodeLocation[], idPre
 }
 
 test('the 417-line regression: a place marking 151–159 accepts those 9 lines and no others, in the walk record', () => {
-  const marked = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 }, true);
+  const marked = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 });
   assert.deepEqual(marked, { path: PATH, ranges: [{ side: 'target', start: 151, end: 159 }], lines: 9 });
 
   const decisions = [walkDecision('d1', 'accepted', marked.ranges.map((range) => ({ path: PATH, ...range })))];
@@ -133,7 +134,7 @@ test('the 417-line regression: a place marking 151–159 accepts those 9 lines a
 });
 
 test('the 417-line regression in the pair record the diff window shares: 9 of 417, after a restart too, and withdrawing touches only them', () => {
-  const marked = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 }, true);
+  const marked = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 });
   const locations = marked.ranges.map((range) => ({ path: PATH, ...range }));
   // Another decision made in the diff window over lines 300–310, which the walk must leave alone.
   const diffMarks = pairMarks('manual', [at('target', 300, 310)], 'diff', { kind: 'diff' });
@@ -162,8 +163,8 @@ test('the 417-line regression in the pair record the diff window shares: 9 of 41
 
 test('expanded context, the whole file and other places never widen what a place decides about', () => {
   // The scope is read from the reference alone: the same call whatever the pane shows around it.
-  const once = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 }, true);
-  const again = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 }, true);
+  const once = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 });
+  const again = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 });
   assert.deepEqual(once, again);
   // A modified file: unchanged lines inside the marking are not decided about.
   const base = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -173,10 +174,10 @@ test('expanded context, the whole file and other places never widen what a place
     { id: 'H2', path: 'm.ts', baseStart: 5, baseCount: 0, targetStart: 6, targetCount: 1 },
   ];
   const rows = buildDiffRows(base, target, hunks);
-  const wide = markedChangedLines(rows, { path: 'm.ts', side: 'target', start: 2, end: 8 }, true);
-  assert.deepEqual(wide.ranges, [{ side: 'target', start: 4, end: 4 }, { side: 'target', start: 6, end: 6 }]);
-  assert.equal(wide.lines, 2, 'lines 2, 3, 5, 7 and 8 are context');
-  const quiet = markedChangedLines(rows, { path: 'm.ts', side: 'target', start: 1, end: 3 }, true);
+  const wide = markedChangedLines(rows, { path: 'm.ts', side: 'target', start: 2, end: 8 });
+  assert.deepEqual(wide.ranges, [{ side: 'base', start: 4, end: 4 }, { side: 'target', start: 4, end: 4 }, { side: 'target', start: 6, end: 6 }]);
+  assert.equal(wide.lines, 3, 'the replaced line, its replacement and the inserted line; lines 2, 3, 5, 7 and 8 are context');
+  const quiet = markedChangedLines(rows, { path: 'm.ts', side: 'target', start: 1, end: 3 });
   assert.equal(quiet.lines, 0, 'a marking over unchanged code decides about nothing');
 });
 
@@ -196,11 +197,11 @@ test('two places in one hunk decide separately, and overlapping places never cou
   const record: PairRecord = { ...emptyRecord(PAIR), marks: [...pairMarks('manual', first, 'a', { kind: 'diff' }), ...pairMarks('manual', [at('target', 155, 165)], 'b', { kind: 'diff' })] };
   assert.equal(fileProgressOf(NEW_PAIR_FILE, record).manual, 15);
   // The second place reads its own 11 lines, the overlap included, all held by the later decision.
-  const view = placeDecisionView(markedChangedLines(ROWS, { path: PATH, side: 'target', start: 155, end: 165 }, true), localHolds(overlapping, [NEW_FILE]));
+  const view = placeDecisionView(markedChangedLines(ROWS, { path: PATH, side: 'target', start: 155, end: 165 }), localHolds(overlapping, [NEW_FILE]));
   assert.deepEqual([view.marked.lines, view.accepted, view.held.length], [11, 11, 1], 'the later decision holds on the overlap');
 });
 
-test('removed lines: a place at To never decides about them, a place at From decides about exactly its own, an opened location about both it marks', () => {
+test('removed lines come with a place exactly as referenceRows pairs them, never every removal of the hunk', () => {
   // Base lines 5–6 replaced by target lines 5–7; base line 10 removed with nothing in its place.
   const base = ['1', '2', '3', '4', 'old5', 'old6', '7', '8', '9', 'gone10', '11'];
   const target = ['1', '2', '3', '4', 'new5', 'new6', 'new7', '7', '8', '9', '11'];
@@ -211,24 +212,25 @@ test('removed lines: a place at To never decides about them, a place at From dec
   const file: DiffFile = { path: 'r.ts', status: 'modified', binary: false, hunks, added: 3, deleted: 3 };
   const rows = buildDiffRows(base, target, hunks);
 
-  const toPlace = markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 5, end: 6 }, true);
-  assert.deepEqual(toPlace.ranges, [{ side: 'target', start: 5, end: 6 }], 'the replaced old lines are not the marking of a place at To');
-  const fromPlace = markedChangedLines(rows, { path: 'r.ts', side: 'base', start: 6, end: 6 }, true);
-  assert.deepEqual(fromPlace.ranges, [{ side: 'base', start: 6, end: 6 }], 'one old line, not the other old line of the hunk');
-  // Opened outside the walk, the location marks a replaced line's before and after, as its pane draws them.
-  const opened = markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 5, end: 5 }, false);
-  assert.deepEqual(opened.ranges, [{ side: 'base', start: 5, end: 6 }, { side: 'target', start: 5, end: 5 }]);
-  // The pure deletion follows only a span strictly around it, and only where both sides are marked.
-  assert.deepEqual(markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 10, end: 11 }, false).ranges, [{ side: 'base', start: 10, end: 10 }]);
-  assert.equal(markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 10, end: 11 }, true).lines, 0);
+  // A place at To on the replacing lines takes the old lines they replaced, as referenceRows pairs them.
+  const toPlace = markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 5, end: 6 });
+  assert.deepEqual(toPlace.ranges, [{ side: 'base', start: 5, end: 6 }, { side: 'target', start: 5, end: 6 }]);
+  // A place at To past them does not: other removals of the same hunk are not its own.
+  const lastNew = markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 7, end: 7 });
+  assert.deepEqual(lastNew.ranges, [{ side: 'target', start: 7, end: 7 }]);
+  // A place at From is the mirror image: its old line and the new lines that replaced it.
+  assert.deepEqual(markedChangedLines(rows, { path: 'r.ts', side: 'base', start: 6, end: 6 }).ranges, [{ side: 'base', start: 6, end: 6 }, { side: 'target', start: 5, end: 7 }]);
+  // The pure deletion follows only a span strictly around it.
+  assert.deepEqual(markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 10, end: 11 }).ranges, [{ side: 'base', start: 10, end: 10 }]);
+  assert.equal(markedChangedLines(rows, { path: 'r.ts', side: 'target', start: 9, end: 10 }).lines, 0);
 
-  // Mixed: the place at To accepted, the old line exempted; the rest of the hunk remains.
+  // Mixed: the last new line accepted, the replacement exempted; the pure deletion remains.
   const decisions = [
-    walkDecision('d1', 'accepted', toPlace.ranges.map((range) => ({ path: 'r.ts', ...range }))),
-    walkDecision('d2', 'exempted', fromPlace.ranges.map((range) => ({ path: 'r.ts', ...range }))),
+    walkDecision('d1', 'accepted', lastNew.ranges.map((range) => ({ path: 'r.ts', ...range }))),
+    walkDecision('d2', 'exempted', toPlace.ranges.map((range) => ({ path: 'r.ts', ...range }))),
   ];
   const coverage = computeCoverage(definitionWith('r.ts'), [file], { ...emptyReviewState(REVISIONS, 'def.json', 'hash'), decisions });
-  assert.deepEqual([coverage.totalLines, coverage.acceptedLines, coverage.exemptedLines, coverage.remainingLines], [6, 2, 1, 3]);
+  assert.deepEqual([coverage.totalLines, coverage.acceptedLines, coverage.exemptedLines, coverage.remainingLines], [6, 1, 4, 1]);
 });
 
 test('an earlier whole-hunk decision is kept as recorded, said to be uncertain, and kept or withdrawn only by the person', () => {
@@ -239,7 +241,7 @@ test('an earlier whole-hunk decision is kept as recorded, said to be uncertain, 
   assert.equal(computeCoverage(definition, [NEW_FILE], base).acceptedLines, 417);
   assert.equal(checkStateForSave(base, REVISIONS), null, 'an older record still saves');
 
-  const marked = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 }, true);
+  const marked = markedChangedLines(ROWS, { path: PATH, side: 'target', start: 151, end: 159 });
   const holds = localHolds(base.decisions, [NEW_FILE]);
   const view = placeDecisionView(marked, holds);
   assert.equal(view.held.length, 1);
@@ -291,4 +293,35 @@ test('a decision scope and origin are checked before a record is saved', () => {
   const adopted = adoptPairRecord(JSON.parse(JSON.stringify(stored)), PAIR);
   assert.equal(adopted.marks.length, 1);
   assert.equal(adopted.marks[0]?.origin, undefined);
+});
+
+test('DSP-202 A–D: the rows a pane marks and flashes are the place changed rows Accept decides about', () => {
+  // A: two old if lines replaced by one; the reference also takes the unchanged block after it.
+  const baseA = ['export function check(value, limit) {', '  if (value !== null)', '    if (value > limit) {', "      log('over', value);", "      return 'over';", '    }', "  return 'ok';", '}', '// an old note'];
+  const targetA = ['export function check(value, limit) {', '  if (value !== null && value > limit) {', "      log('over', value);", "      return 'over';", '    }', "  return 'ok';", '}', 'export const LIMIT = 10;'];
+  const hunksA = [
+    { id: 'H1', path: 'check.js', baseStart: 2, baseCount: 2, targetStart: 2, targetCount: 1 },
+    { id: 'H2', path: 'check.js', baseStart: 9, baseCount: 1, targetStart: 8, targetCount: 1 },
+  ];
+  const rowsA = buildDiffRows(baseA, targetA, hunksA);
+  const placeA = { path: 'check.js', side: 'target' as const, start: 2, end: 5 };
+  const rowsOfA = markedChangedRows(rowsA, placeA).map((index) => rowsA[index]);
+  assert.deepEqual(rowsOfA.map((row) => [row?.kind, row?.baseLine ?? row?.targetLine]), [['deleted', 2], ['deleted', 3], ['added', 2]], 'both replaced if lines and the new one; the block after is context');
+  assert.deepEqual(markedChangedLines(rowsA, placeA).ranges, [{ side: 'base', start: 2, end: 3 }, { side: 'target', start: 2, end: 2 }], 'Accept decides about the same three rows');
+  // D: the change outside the place (old note removed, LIMIT added) is not the place's.
+  const outside = rowsA.flatMap((row, index) => (row.kind !== 'context' && !markedChangedRows(rowsA, placeA).includes(index) ? [[row.kind, row.baseLine ?? row.targetLine]] : []));
+  assert.deepEqual(outside, [['deleted', 9], ['added', 8]]);
+
+  // B and C: a new function inside a larger added block, and a second place in the same hunk.
+  const baseB = ['export function run(items) {', '  return items.length;', '}'];
+  const targetB = ['export function run(items) {', '  start();', '  return items.length;', '}', '', 'function start() {', '  return { running: true };', '}', '', 'export const VERSION = 2;'];
+  const hunksB = [
+    { id: 'H1', path: 'worker.js', baseStart: 1, baseCount: 0, targetStart: 2, targetCount: 1 },
+    { id: 'H2', path: 'worker.js', baseStart: 3, baseCount: 0, targetStart: 5, targetCount: 6 },
+  ];
+  const rowsB = buildDiffRows(baseB, targetB, hunksB);
+  const lines = (place: { side: 'target'; start: number; end: number }): (number | null)[] => markedChangedRows(rowsB, place).map((index) => rowsB[index]?.targetLine ?? null);
+  assert.deepEqual(lines({ side: 'target', start: 6, end: 8 }), [6, 7, 8], 'the function, not the added lines around it');
+  assert.deepEqual(lines({ side: 'target', start: 10, end: 10 }), [10], 'the second place in the same hunk keeps its own line');
+  assert.equal(markedChangedLines(rowsB, { path: 'worker.js', side: 'target', start: 6, end: 8 }).lines, 3);
 });
