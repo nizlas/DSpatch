@@ -57,7 +57,7 @@ import {
   type RevisionPairIdentity,
 } from '../shared/review-pair';
 import { ORIENTATION_DIFF_CHARS, type AnalysisMaterial, type WalkStepOutline } from '../shared/review-agent';
-import { CHECKS_FILE_FORMAT, checksFileOf } from '../shared/review-model';
+import { CHECKS_FILE_FORMAT, checksFileOf, isDecisionOrigin, type DecisionOrigin } from '../shared/review-model';
 import { PRESENTATION_INSTRUCTION_VERSION } from '../shared/presentation-profiles';
 import { reviewRecordKey } from '../main/review-service';
 import { checkThreadId, reviewThreadsOf, reviewerOf, threadActionProblem } from '../shared/review-threads';
@@ -308,6 +308,7 @@ interface MarkRequest {
   readonly op: PairMark['op'];
   readonly scopes: readonly MarkScope[];
   readonly reason: string;
+  readonly origin: DecisionOrigin | null;
 }
 
 function markRequestFrom(raw: unknown): MarkRequest | null {
@@ -331,7 +332,12 @@ function markRequestFrom(raw: unknown): MarkRequest | null {
   if (scopes.length === 0) {
     return null;
   }
-  return { op, scopes, reason: typeof value['reason'] === 'string' ? value['reason'].slice(0, 2000) : '' };
+  // DSP-201: where the decision was made, when the window says; a malformed one is refused, not dropped.
+  if (value['origin'] !== undefined && !isDecisionOrigin(value['origin'])) {
+    return null;
+  }
+  const origin = value['origin'] === undefined ? null : (value['origin'] as DecisionOrigin);
+  return { op, scopes, reason: typeof value['reason'] === 'string' ? value['reason'].slice(0, 2000) : '', origin };
 }
 
 export class ReviewPairs {
@@ -664,7 +670,7 @@ export class ReviewPairs {
         return { error: 'That delegated review is not in this review, or has no result to decide about.' };
       }
     }
-    const marks: PairMark[] = request.scopes.map((scope) => ({ id: randomUUID(), op: request.op, scope, reason: request.reason, at }));
+    const marks: PairMark[] = request.scopes.map((scope) => ({ id: randomUUID(), op: request.op, scope, reason: request.reason, at, ...(request.origin === null ? {} : { origin: request.origin }) }));
     return this.write(opened.key, { ...record, marks: [...record.marks, ...marks] }, true);
   }
 

@@ -1160,9 +1160,37 @@ export type DecisionProvenance =
   /** Reserved for delegated agent review under an explicit mandate. Never simulated. */
   | { readonly kind: 'agent-delegated'; readonly adapterId: string; readonly mandate: string };
 
+/** Changed lines on one side of a file, 1-based and inclusive. */
+export interface DecisionRange {
+  readonly side: RevisionSide;
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * What a decision is about.
+ *
+ * `lines` is exact: the changed lines it names and no others (DSP-201). A walk's Accept,
+ * Exempt and Withdraw use it, with the changed lines of the place's marking. `hunk` and
+ * `file` are whole changes, as a walk recorded them before DSP-201; they are read as they
+ * were saved, never narrowed to a marking shown now.
+ */
 export type DecisionScope =
   | { readonly kind: 'hunk'; readonly path: string; readonly hunkId: string }
-  | { readonly kind: 'file'; readonly path: string; readonly hunkIds: readonly string[] };
+  | { readonly kind: 'file'; readonly path: string; readonly hunkIds: readonly string[] }
+  | { readonly kind: 'lines'; readonly path: string; readonly ranges: readonly DecisionRange[] };
+
+/**
+ * Where a decision was made (DSP-201): at a walk's place; in the walk window over a location
+ * opened outside the walk's places (`opened`); in the diff window; or as the person's keeping
+ * of an earlier decision whose intended scope was not known. Absent on decisions recorded
+ * before it was kept.
+ */
+export type DecisionOrigin =
+  | { readonly kind: 'walk'; readonly stepId: string; readonly placeId: string }
+  | { readonly kind: 'opened' }
+  | { readonly kind: 'diff' }
+  | { readonly kind: 'kept'; readonly of: string };
 
 export interface ReviewDecision {
   readonly id: string;
@@ -1173,6 +1201,59 @@ export interface ReviewDecision {
   readonly by: DecisionProvenance;
   readonly at: string;
   readonly revisions: RevisionPair;
+  readonly origin?: DecisionOrigin;
+}
+
+/**
+ * Whether a value is a decision scope: a whole hunk or file as recorded before DSP-201, or
+ * exact lines — at least one range, each on a side, 1-based, start not after end.
+ */
+export function isDecisionScope(value: unknown): value is DecisionScope {
+  if (!isRecord(value) || typeof value['path'] !== 'string' || value['path'] === '') {
+    return false;
+  }
+  switch (value['kind']) {
+    case 'hunk':
+      return typeof value['hunkId'] === 'string';
+    case 'file':
+      return Array.isArray(value['hunkIds']) && value['hunkIds'].every((id) => typeof id === 'string');
+    case 'lines':
+      return (
+        Array.isArray(value['ranges']) &&
+        value['ranges'].length > 0 &&
+        value['ranges'].every(
+          (range: unknown) =>
+            isRecord(range) &&
+            (range['side'] === 'base' || range['side'] === 'target') &&
+            Number.isInteger(range['start']) &&
+            Number.isInteger(range['end']) &&
+            (range['start'] as number) >= 1 &&
+            (range['start'] as number) <= (range['end'] as number),
+        )
+      );
+    default:
+      return false;
+  }
+}
+
+/** Whether a value is a decision origin as {@link DecisionOrigin} defines it. */
+export function isDecisionOrigin(value: unknown): value is DecisionOrigin {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort().join(',');
+  const text = (field: string): boolean => typeof value[field] === 'string' && value[field] !== '' && (value[field] as string).length <= 200;
+  switch (value['kind']) {
+    case 'walk':
+      return keys === 'kind,placeId,stepId' && text('stepId') && text('placeId');
+    case 'opened':
+    case 'diff':
+      return keys === 'kind';
+    case 'kept':
+      return keys === 'kind,of' && text('of');
+    default:
+      return false;
+  }
 }
 
 export interface ReviewNote {
@@ -1490,13 +1571,16 @@ export function staleOpenedMarks(definition: ReviewDefinition, state: ReviewStat
   return Object.keys(state.shownRefs).filter((key) => !known.has(key)).length;
 }
 
-/** The current decision for each hunk: the latest entry whose scope includes it. */
+/**
+ * The latest whole-change decision for each hunk, from `hunk` and `file` scopes: how a walk
+ * decided before DSP-201. Exact decisions are read line by line with {@link currentLineDecisions}.
+ */
 export function currentHunkDecisions(
   decisions: readonly ReviewDecision[],
 ): ReadonlyMap<string, ReviewDecision> {
   const current = new Map<string, ReviewDecision>();
   for (const decision of decisions) {
-    const ids = decision.scope.kind === 'hunk' ? [decision.scope.hunkId] : decision.scope.hunkIds;
+    const ids = decision.scope.kind === 'hunk' ? [decision.scope.hunkId] : decision.scope.kind === 'file' ? decision.scope.hunkIds : [];
     for (const id of ids) {
       if (decision.outcome === 'withdrawn') {
         current.delete(id);
@@ -1506,6 +1590,215 @@ export function currentHunkDecisions(
     }
   }
   return current;
+}
+
+/** The key of one changed line: its side, path and number. */
+export function changedLineKey(path: string, side: RevisionSide, line: number): string {
+  return `${side}\0${path}\0${String(line)}`;
+}
+
+/** A hunk's changed lines as ranges: its removed lines on `base`, its added lines on `target`. */
+export function hunkLocations(hunk: DiffHunk): CodeLocation[] {
+  const locations: CodeLocation[] = [];
+  if (hunk.baseCount > 0) {
+    locations.push({ path: hunk.path, side: 'base', start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 });
+  }
+  if (hunk.targetCount > 0) {
+    locations.push({ path: hunk.path, side: 'target', start: hunk.targetStart, end: hunk.targetStart + hunk.targetCount - 1 });
+  }
+  return locations;
+}
+
+/**
+ * The lines a decision's scope names, as ranges. A whole-hunk or file scope names every
+ * changed line of its hunks, as it was recorded; an exact scope only its own ranges.
+ */
+export function scopeLocations(scope: DecisionScope, hunks: ReadonlyMap<string, DiffHunk>): CodeLocation[] {
+  if (scope.kind === 'lines') {
+    return scope.ranges.map((range) => ({ path: scope.path, ...range }));
+  }
+  const ids = scope.kind === 'hunk' ? [scope.hunkId] : scope.hunkIds;
+  return ids.flatMap((id) => {
+    const hunk = hunks.get(id);
+    return hunk === undefined ? [] : hunkLocations(hunk);
+  });
+}
+
+function hunksById(files: readonly DiffFile[]): Map<string, DiffHunk> {
+  return new Map(files.flatMap((file) => file.hunks.map((hunk) => [hunk.id, hunk] as const)));
+}
+
+/**
+ * The decision that holds for each line, keyed by {@link changedLineKey}: the latest entry
+ * whose scope names the line, a withdrawal returning it to remaining. A line named by several
+ * decisions holds one of them, so overlapping decisions never count a line twice.
+ */
+export function currentLineDecisions(
+  decisions: readonly ReviewDecision[],
+  files: readonly DiffFile[],
+): ReadonlyMap<string, ReviewDecision> {
+  const hunks = hunksById(files);
+  const current = new Map<string, ReviewDecision>();
+  for (const decision of decisions) {
+    for (const location of scopeLocations(decision.scope, hunks)) {
+      for (let line = location.start; line <= location.end; line += 1) {
+        const key = changedLineKey(location.path, location.side, line);
+        if (decision.outcome === 'withdrawn') {
+          current.delete(key);
+        } else {
+          current.set(key, decision);
+        }
+      }
+    }
+  }
+  return current;
+}
+
+/** The changed lines a walk's marking covers, as one exact decision scope. */
+export interface MarkedLines {
+  readonly path: string;
+  readonly ranges: readonly DecisionRange[];
+  /** How many changed lines the ranges hold. */
+  readonly lines: number;
+}
+
+/**
+ * The changed lines of a place's marking (DSP-201): of the rows {@link referenceRows} gives
+ * for the focus — the rows the marking is drawn from — the added and removed ones, as ranges
+ * per side. Unchanged lines inside the marking are not among them, and nothing shown around
+ * it (context, *Show more*, the whole file, another place) is: the rows come from the
+ * reference alone.
+ *
+ * `ownSide` is how a walk draws its place (DSP-175): only the focus's own side is marked, a
+ * place at To its new lines and one at From its old, though the reference also takes in the
+ * old lines a replacement put the new ones in place of. So a place at To never decides about
+ * removed lines; a place at From does. A location opened outside the walk marks both, and
+ * decides about both.
+ */
+export function markedChangedLines(
+  rows: readonly DiffRow[],
+  focus: { readonly path: string; readonly side: RevisionSide; readonly start: number; readonly end: number },
+  ownSide: boolean,
+): MarkedLines {
+  const base: number[] = [];
+  const target: number[] = [];
+  for (const index of referenceRows(rows, focus).indexes) {
+    const row = rows[index];
+    if (row?.kind === 'deleted' && row.baseLine !== null && (!ownSide || focus.side === 'base')) {
+      base.push(row.baseLine);
+    } else if (row?.kind === 'added' && row.targetLine !== null && (!ownSide || focus.side === 'target')) {
+      target.push(row.targetLine);
+    }
+  }
+  const ranges: DecisionRange[] = [];
+  for (const [side, lines] of [['base', base], ['target', target]] as const) {
+    for (const line of [...lines].sort((a, b) => a - b)) {
+      const last = ranges.at(-1);
+      if (last !== undefined && last.side === side && last.end + 1 >= line) {
+        ranges[ranges.length - 1] = { ...last, end: Math.max(last.end, line) };
+      } else {
+        ranges.push({ side, start: line, end: line });
+      }
+    }
+  }
+  return { path: focus.path, ranges, lines: base.length + target.length };
+}
+
+/** A decision as it holds for a line, whichever record keeps it (the walk's own or the pair's). */
+export interface HeldDecision {
+  readonly id: string;
+  readonly outcome: 'accepted' | 'exempted';
+  readonly by: DecisionProvenance;
+  readonly at: string;
+  readonly reason: string;
+  /** The lines it was recorded over. */
+  readonly over: readonly CodeLocation[];
+  /**
+   * Recorded over a whole change, or without saying where it was made, before a walk's
+   * Accept followed its marking (DSP-201): whether it was meant for all of `over` is not known.
+   */
+  readonly scopeUncertain: boolean;
+}
+
+/** A walk decision as a held decision: an exact scope is certain, a whole hunk or file is not. */
+export function heldOf(decision: ReviewDecision, files: readonly DiffFile[]): HeldDecision | null {
+  if (decision.outcome === 'withdrawn') {
+    return null;
+  }
+  return {
+    id: decision.id,
+    outcome: decision.outcome,
+    by: decision.by,
+    at: decision.at,
+    reason: decision.reason,
+    over: scopeLocations(decision.scope, hunksById(files)),
+    scopeUncertain: decision.scope.kind !== 'lines',
+  };
+}
+
+/** What holds over a place's marked lines, for the walk's Review section. */
+export interface PlaceDecisionView {
+  readonly marked: MarkedLines;
+  readonly accepted: number;
+  readonly exempted: number;
+  readonly remaining: number;
+  /**
+   * Each decision holding on a marked line, once, in line order: on how many lines here,
+   * and on how many changed lines outside the marking it still holds.
+   */
+  readonly held: readonly { readonly decision: HeldDecision; readonly here: number; readonly beyond: number }[];
+}
+
+export type HoldsAt = (path: string, side: RevisionSide, line: number) => HeldDecision | null;
+
+/** The lines of `over` where `decision` still holds, as ranges. */
+export function stillHeld(decision: HeldDecision, holds: HoldsAt): CodeLocation[] {
+  const out: CodeLocation[] = [];
+  for (const location of decision.over) {
+    for (let line = location.start; line <= location.end; line += 1) {
+      if (holds(location.path, location.side, line)?.id !== decision.id) {
+        continue;
+      }
+      const last = out.at(-1);
+      if (last !== undefined && last.path === location.path && last.side === location.side && last.end + 1 === line) {
+        out[out.length - 1] = { ...last, end: line };
+      } else {
+        out.push({ path: location.path, side: location.side, start: line, end: line });
+      }
+    }
+  }
+  return out;
+}
+
+export function placeDecisionView(marked: MarkedLines, holds: HoldsAt): PlaceDecisionView {
+  let accepted = 0;
+  let exempted = 0;
+  const here = new Map<string, { decision: HeldDecision; here: number }>();
+  const inside = new Set<string>();
+  for (const range of marked.ranges) {
+    for (let line = range.start; line <= range.end; line += 1) {
+      inside.add(changedLineKey(marked.path, range.side, line));
+      const decision = holds(marked.path, range.side, line);
+      if (decision === null) {
+        continue;
+      }
+      if (decision.outcome === 'accepted') {
+        accepted += 1;
+      } else {
+        exempted += 1;
+      }
+      const entry = here.get(decision.id) ?? { decision, here: 0 };
+      entry.here += 1;
+      here.set(decision.id, entry);
+    }
+  }
+  const held = [...here.values()].map((entry) => ({
+    ...entry,
+    beyond: stillHeld(entry.decision, holds)
+      .flatMap((location) => Array.from({ length: location.end - location.start + 1 }, (_, offset) => changedLineKey(location.path, location.side, location.start + offset)))
+      .filter((key) => !inside.has(key)).length,
+  }));
+  return { marked, accepted, exempted, remaining: marked.lines - accepted - exempted, held };
 }
 
 // --- Coverage ----------------------------------------------------------------------
@@ -1520,7 +1813,11 @@ export interface HunkCoverage {
   readonly plannedBy: readonly string[];
   readonly shown: PlanState;
   readonly walked: PlanState;
+  /** The one decision holding on every changed line of the hunk, or `null` when none or several do. */
   readonly decision: ReviewDecision | null;
+  /** Changed lines of the hunk an accepting or exempting decision holds on (DSP-201: exact lines, not the hunk). */
+  readonly acceptedLines: number;
+  readonly exemptedLines: number;
   readonly openFindings: number;
   readonly openQuestions: number;
 }
@@ -1645,7 +1942,7 @@ export function computeCoverage(
   const allRefs = stepRefs(definition, null);
   const shownRefs = shownReferences(definition, state.shownRefs);
   const walkedRefs = stepRefs(definition, new Set(Object.keys(state.walkedSteps)));
-  const decisions = currentHunkDecisions(state.decisions);
+  const decisions = currentLineDecisions(state.decisions, files);
   const hunks: HunkCoverage[] = [];
   for (const file of files) {
     for (const hunk of file.hunks) {
@@ -1658,6 +1955,10 @@ export function computeCoverage(
         }
       }
       const notes = state.notes.filter((note) => note.status === 'open' && noteTouchesHunk(note, hunk));
+      const held = hunkLocations(hunk).flatMap((location) =>
+        Array.from({ length: location.end - location.start + 1 }, (_, offset) => decisions.get(changedLineKey(location.path, location.side, location.start + offset)) ?? null),
+      );
+      const first = held[0] ?? null;
       hunks.push({
         hunk,
         lines: hunk.baseCount + hunk.targetCount,
@@ -1665,7 +1966,9 @@ export function computeCoverage(
         plannedBy,
         shown: hunkPlanState(hunk, shownRefs),
         walked: hunkPlanState(hunk, walkedRefs),
-        decision: decisions.get(hunk.id) ?? null,
+        decision: first !== null && held.every((entry) => entry === first) ? first : null,
+        acceptedLines: held.filter((entry) => entry?.outcome === 'accepted').length,
+        exemptedLines: held.filter((entry) => entry?.outcome === 'exempted').length,
         openFindings: notes.filter((note) => note.kind === 'finding').length,
         openQuestions: notes.filter((note) => note.kind === 'question').length,
       });
@@ -1676,7 +1979,7 @@ export function computeCoverage(
     partialHunks: hunks.filter((entry) => pick(entry) === 'partial').length,
   });
   const decided = (outcome: 'accepted' | 'exempted'): number =>
-    hunks.filter((entry) => entry.decision?.outcome === outcome).reduce((total, entry) => total + entry.lines, 0);
+    hunks.reduce((total, entry) => total + (outcome === 'accepted' ? entry.acceptedLines : entry.exemptedLines), 0);
   const totalLines = hunks.reduce((total, entry) => total + entry.lines, 0);
   const acceptedLines = decided('accepted');
   const exemptedLines = decided('exempted');
@@ -1977,6 +2280,12 @@ export function checkStateForSave(state: unknown, revisions: RevisionPair): stri
     }
     if (decision.revisions.base !== revisions.base || decision.revisions.target !== revisions.target) {
       return 'A decision names a different revision pair than the open review.';
+    }
+    if (!isDecisionScope(decision.scope) || !['accepted', 'exempted', 'withdrawn'].includes(decision.outcome)) {
+      return 'A decision does not name a change or exact lines it can hold.';
+    }
+    if (decision.origin !== undefined && !isDecisionOrigin(decision.origin)) {
+      return 'A decision names where it was made in a form this version does not know.';
     }
   }
   for (const note of record.notes) {

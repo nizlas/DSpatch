@@ -7,7 +7,7 @@ import { Markdown } from './Markdown';
 import { ReviewDiscussion } from './ReviewDiscussion';
 import { AgentPicker } from './AgentPicker';
 import { AgentReviewResult, attemptLabel, isRunning, JobLine, JobNote, requestFailure } from './PairReview';
-import { Inline, LineGutter, TokensView, asLocation, capitalise, fileName, lineDigits, rangeText, useFiles, useRows, type Files } from './review-code';
+import { Inline, LineGutter, TokensView, asLocation, fileName, lineDigits, rangeText, useFiles, useRows, type Files } from './review-code';
 import { FileTree, WalkTimeline, stationsOf, unitLabel, unitTitle } from './ReviewTimeline';
 import { WORDS, pick, type ReviewWords } from './review-i18n';
 import { paneOfStation, panesOf, stopsOf } from './walk-panes';
@@ -21,7 +21,18 @@ import {
   isProsePath,
   wrapsLines,
   computeCoverage,
-  currentHunkDecisions,
+  changedLineKey,
+  currentLineDecisions,
+  heldOf,
+  hunkLocations,
+  markedChangedLines,
+  placeDecisionView,
+  scopeLocations,
+  stillHeld,
+  type DecisionOrigin,
+  type DecisionRange,
+  type HeldDecision,
+  type HoldsAt,
   placeKey,
   referenceRows,
   reviewIdentityLabel,
@@ -31,8 +42,8 @@ import {
   type DiffFile,
   type DiffHunk,
   type DiffRow,
-  type HunkCoverage,
   type Lang,
+  type LocalText,
   type ReviewPreferences,
   type Place,
   type PlanState,
@@ -69,7 +80,7 @@ import { usePresentationProfile, useStepExplanations } from './presentation-choi
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
 import { delegationDecisionOf, generationStale, isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
-import { hunkDecisionsFromPair, hunkRanges, pairOpFor } from '../shared/review-pair-walk';
+import { lineDecisionsFromPair, pairHolds, pairOpFor, pairRanges } from '../shared/review-pair-walk';
 import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
 import { PairKeyContext, ReferenceLinksContext, type ReferenceLinks } from './DiscussionAnswer';
 import { WalkContextPlaces } from './WalkContextPlaces';
@@ -670,9 +681,20 @@ function OpenReview({
     };
   }, [pairBridge]);
   const shownState = useMemo(
-    () => (pair === null ? state : { ...state, decisions: hunkDecisionsFromPair(bundle.files, pair.record, state.revisions) }),
+    () => (pair === null ? state : { ...state, decisions: lineDecisionsFromPair(bundle.files, pair.record, state.revisions) }),
     [pair, state, bundle],
   );
+  // DSP-201: what holds on each changed line, from the pair record or the walk's own decisions.
+  const holds = useMemo((): HoldsAt => {
+    if (pair !== null) {
+      return pairHolds(pair.record);
+    }
+    const current = currentLineDecisions(state.decisions, bundle.files);
+    return (path, side, line) => {
+      const decision = current.get(changedLineKey(path, side, line));
+      return decision === undefined ? null : heldOf(decision, bundle.files);
+    };
+  }, [pair, state.decisions, bundle.files]);
   const [diffNote, setDiffNote] = useState('');
 
   /*
@@ -869,7 +891,6 @@ function OpenReview({
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
   // What the active place's mark names besides its file and lines (DSP-175).
   const focusRevision = useMemo(() => ({ repository: bundle.repository, base: bundle.base.sha, target: bundle.target.sha }), [bundle.repository, bundle.base.sha, bundle.target.sha]);
-  const coverageByHunk = useMemo(() => new Map(coverage.hunks.map((entry) => [entry.hunk.id, entry])), [coverage]);
 
   const current = findStep(bundle, state.position.stepId);
   const away = state.position.away;
@@ -912,6 +933,26 @@ function OpenReview({
   const activeStation = current === null ? -1 : stations.findIndex((entry) => entry.stepId === current.step.id && entry.placeIndex === placeIndex);
   const activeWalkStop = activeStation < 0 ? -1 : walkStops.findIndex((stop) => stop.stations.includes(activeStation));
   const focus: CodeLocation | null = away ?? (place === null ? null : asLocation(place.focus));
+  /*
+   * DSP-201: what the Review section decides about — the place on screen, or every place of a
+   * stop that marks several at once, each with its own Accept; or a location opened outside
+   * the walk. Each is its marking's own lines, never merged with another's.
+   */
+  const decisionPlaces = useMemo((): readonly DecisionPlace[] => {
+    if (away !== null) {
+      return [{ key: 'opened', label: null, focus: away, ownSide: false, origin: { kind: 'opened' } }];
+    }
+    if (current === null) {
+      return [];
+    }
+    const indexes = activeStop !== null && activeStop.merged ? activeStop.placeIndexes : [placeIndex];
+    return indexes.flatMap((index) => {
+      const entry = current.step.places[index];
+      return entry === undefined
+        ? []
+        : [{ key: entry.id, label: indexes.length > 1 ? entry.label : null, focus: asLocation(entry.focus), ownSide: true, origin: { kind: 'walk', stepId: current.step.id, placeId: entry.id } as const }];
+    });
+  }, [away, current, activeStop, placeIndex]);
   /*
    * DSP-193: the threads relevant to the step, by code place: a thread anchored in any of the
    * step's places, or about one of their files with no line named. Shown once, in the step's
@@ -1202,29 +1243,54 @@ function OpenReview({
     [record],
   );
 
+  /*
+   * DSP-201: a decision names exactly its lines — a place's marked changed lines, or the
+   * lines an earlier decision still holds on when the person keeps or withdraws it — and
+   * where it was made. Nothing here widens them to a hunk or a file.
+   */
   const decide = useCallback(
-    (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => {
-      if (pair !== null && pairBridge !== undefined && decision.scope.kind === 'hunk') {
-        const hunkId = decision.scope.hunkId;
-        const hunk = bundle.files.flatMap((file) => file.hunks).find((candidate) => candidate.id === hunkId);
-        if (hunk !== undefined) {
-          void pairBridge.mark(pair.key, { op: pairOpFor(decision.outcome), scopes: hunkRanges(hunk), reason: decision.reason }).then((answer) => {
-            if (!isPairError(answer)) {
-              setPair({ ...pair, record: answer });
+    (request: WalkDecision) => {
+      if (request.locations.length === 0) {
+        return;
+      }
+      if (pair !== null && pairBridge !== undefined) {
+        void pairBridge
+          .mark(pair.key, { op: pairOpFor(request.outcome), scopes: pairRanges(request.locations), reason: request.reason, origin: request.origin })
+          .catch((error: unknown) => ({ error: requestFailure(error) }))
+          .then((answer) => {
+            if (isPairError(answer)) {
+              setDiffNote(`The decision could not be recorded: ${answer.error}`);
+            } else {
+              setPair((current) => (current === null ? current : { ...current, record: answer }));
             }
           });
-          return;
-        }
+        return;
       }
+      const byPath = new Map<string, DecisionRange[]>();
+      for (const location of request.locations) {
+        byPath.set(location.path, [...(byPath.get(location.path) ?? []), { side: location.side, start: location.start, end: location.end }]);
+      }
+      const at = new Date().toISOString();
       record((value) => ({
         ...value,
         decisions: [
           ...value.decisions,
-          { ...decision, id: newId(), at: new Date().toISOString(), by: { kind: 'human' }, revisions: value.revisions },
+          ...[...byPath].map(
+            ([path, ranges]): ReviewDecision => ({
+              id: newId(),
+              scope: { kind: 'lines', path, ranges },
+              outcome: request.outcome,
+              reason: request.reason,
+              by: { kind: 'human' },
+              at,
+              revisions: value.revisions,
+              origin: request.origin,
+            }),
+          ),
         ],
       }));
     },
-    [record, pair, pairBridge, bundle],
+    [record, pair, pairBridge],
   );
 
   const setNoteStatus = useCallback(
@@ -1765,7 +1831,7 @@ function OpenReview({
       return null;
     }
     const stepIds = new Set(current.walk.steps.map((entry) => entry.id));
-    const ranges = coverage.hunks.filter((entry) => entry.plannedBy.some((id) => stepIds.has(id))).flatMap((entry) => hunkRanges(entry.hunk));
+    const ranges = coverage.hunks.filter((entry) => entry.plannedBy.some((id) => stepIds.has(id))).flatMap((entry) => pairRanges(hunkLocations(entry.hunk)));
     return ranges.length === 0 ? null : { kind: 'walk' as const, label: `walk ${current.walk.id} · ${pick(current.walk.title, lang)}`, ranges };
   }, [current, coverage, lang]);
   const walkJob =
@@ -2134,15 +2200,15 @@ function OpenReview({
                     <span className="rv-sub">{words.walkedNote}</span>
                   </div>
                 )}
-                <HunkDecisions
-                  focus={focus}
-                  diffFile={diffFile}
+                <PlaceDecisions
+                  places={decisionPlaces}
+                  diffFiles={bundle.files}
                   files={files}
-                  coverage={coverageByHunk}
-                  decisions={shownState.decisions}
+                  holds={holds}
                   onDecide={decide}
                   revisionText={revisionText}
                   words={words}
+                  lang={lang}
                 />
                 {/*
                   DSP-193: the delegated review of this walk, its report and the person's decision
@@ -3163,7 +3229,10 @@ function CoverageTable({
               <td>{planWord(entry.shown, words)}</td>
               <td>{planWord(entry.walked, words)}</td>
               <td>
-                {decisionWord(entry.decision, words)}
+                {/* DSP-201: a hunk decided in part says how much, line by line. */}
+                {entry.decision === null && entry.acceptedLines + entry.exemptedLines > 0
+                  ? words.decisions.partly(entry.acceptedLines, entry.exemptedLines, entry.lines)
+                  : decisionWord(entry.decision, words)}
                 {entry.openFindings > 0 ? ` · ${words.openFindings(entry.openFindings)}` : ''}
               </td>
             </tr>
@@ -3207,7 +3276,9 @@ function NotesList({
                   const hunk = hunkById.get(decision.scope.hunkId);
                   return hunk === undefined ? decision.scope.path : hunkWhere(hunk, words);
                 })()
-              : decision.scope.path;
+              : decision.scope.kind === 'lines'
+                ? linesWhere(scopeLocations(decision.scope, hunkById), words)
+                : decision.scope.path;
           return (
             <li key={decision.id}>
               <strong>
@@ -3901,120 +3972,209 @@ function StepPanel({
   );
 }
 
-/** Decisions for the changes the shown code touches, each with its exact scope. */
-function HunkDecisions({
-  focus,
-  diffFile,
+/** A decision a walk window records: exactly these lines, and where it was made (DSP-201). */
+interface WalkDecision {
+  readonly outcome: ReviewDecision['outcome'];
+  readonly locations: readonly CodeLocation[];
+  readonly reason: string;
+  readonly origin: DecisionOrigin;
+}
+
+/** A marking the Review section decides about: a walk's place, or a location opened outside the walk. */
+interface DecisionPlace {
+  readonly key: string;
+  /** The place's label, when several places are decided about side by side. */
+  readonly label: LocalText | null;
+  readonly focus: CodeLocation;
+  /** A walk marks only its focus's own side; a location opened outside the walk marks both. */
+  readonly ownSide: boolean;
+  readonly origin: DecisionOrigin;
+}
+
+/** Lines in the reader's words: "new lines 151–159 in x.ts". */
+function linesWhere(locations: readonly CodeLocation[], words: ReviewWords): string {
+  const byPath = new Map<string, string[]>();
+  for (const location of locations) {
+    const part = (location.side === 'target' ? words.newLines : words.oldLines)(rangeText(location));
+    byPath.set(location.path, [...(byPath.get(location.path) ?? []), part]);
+  }
+  return [...byPath].map(([path, parts]) => words.linesIn(fileName(path), parts.join(', '))).join('; ');
+}
+
+function heldWord(decision: HeldDecision, words: ReviewWords): string {
+  if (decision.outcome === 'exempted') {
+    return words.decisions.exempted;
+  }
+  return decision.by.kind === 'human' ? words.decisions.accepted : words.decisions.acceptedDelegated;
+}
+
+/** Decisions for the walk's marking, one per place, each over exactly its marked changed lines. */
+function PlaceDecisions({
+  places,
+  diffFiles,
   files,
-  coverage,
-  decisions,
+  holds,
   onDecide,
   revisionText,
   words,
+  lang,
 }: {
-  readonly focus: CodeLocation | null;
-  readonly diffFile: DiffFile | null;
+  readonly places: readonly DecisionPlace[];
+  readonly diffFiles: readonly DiffFile[];
   readonly files: Files;
-  readonly coverage: ReadonlyMap<string, HunkCoverage>;
-  readonly decisions: readonly ReviewDecision[];
-  readonly onDecide: (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => void;
+  readonly holds: HoldsAt;
+  readonly onDecide: (decision: WalkDecision) => void;
   readonly revisionText: string;
   readonly words: ReviewWords;
+  readonly lang: Lang;
 }): JSX.Element {
-  const rows = useRows(files, focus?.path ?? '', diffFile, focus?.side ?? 'target');
-  const current = useMemo(() => currentHunkDecisions(decisions), [decisions]);
-  const hunks = useMemo(() => {
-    if (focus === null || diffFile === null || rows === null) {
-      return [];
-    }
-    const ids = new Set(
-      referenceRows(rows.rows, focus)
-        .indexes.map((index) => rows.rows[index]?.hunkId)
-        .filter((id): id is string => id !== null && id !== undefined),
-    );
-    return diffFile.hunks.filter((hunk) => ids.has(hunk.id));
-  }, [focus, diffFile, rows]);
-  if (hunks.length === 0) {
+  if (places.length === 0) {
     return <p className="rv-sub">{words.decisions.noChangesHere}</p>;
   }
   return (
     <div className="rv-decisions">
       <div className="rv-section-title">{words.decisions.changesHere}</div>
-      {hunks.map((hunk) => (
-        <HunkDecision
-          key={hunk.id}
-          hunk={hunk}
-          entry={coverage.get(hunk.id) ?? null}
-          decision={current.get(hunk.id) ?? null}
+      {places.map((entry) => (
+        <PlaceDecision
+          key={entry.key}
+          place={entry}
+          diffFile={diffFiles.find((file) => file.path === entry.focus.path) ?? null}
+          files={files}
+          holds={holds}
           onDecide={onDecide}
           revisionText={revisionText}
           words={words}
+          lang={lang}
         />
       ))}
     </div>
   );
 }
 
-function HunkDecision({
-  hunk,
-  entry,
-  decision,
+function PlaceDecision({
+  place,
+  diffFile,
+  files,
+  holds,
   onDecide,
   revisionText,
   words,
+  lang,
 }: {
-  readonly hunk: DiffHunk;
-  readonly entry: HunkCoverage | null;
-  readonly decision: ReviewDecision | null;
-  readonly onDecide: (decision: Omit<ReviewDecision, 'id' | 'at' | 'by' | 'revisions'>) => void;
+  readonly place: DecisionPlace;
+  readonly diffFile: DiffFile | null;
+  readonly files: Files;
+  readonly holds: HoldsAt;
+  readonly onDecide: (decision: WalkDecision) => void;
   readonly revisionText: string;
   readonly words: ReviewWords;
-}): JSX.Element {
+  readonly lang: Lang;
+}): JSX.Element | null {
   const [asking, setAsking] = useState<'accepted' | 'exempted' | null>(null);
   const [reason, setReason] = useState('');
-  const where = hunkWhere(hunk, words);
-  return (
-    <div className="rv-decision">
-      <div>
-        {capitalise(where)} — <strong className={decision === null ? '' : `rv-decision-${decision.outcome}`}>{decisionWord(decision, words)}</strong>
-        {entry !== null && entry.openFindings > 0 && <span className="rv-error"> · {words.openFindings(entry.openFindings)}</span>}
+  const content = useRows(files, place.focus.path, diffFile, place.focus.side);
+  // The same reference and rows the marking is drawn from: never the pane's expansion or scroll.
+  const marked = useMemo(
+    () => (content === null ? null : markedChangedLines(content.rows, place.focus, place.ownSide)),
+    [content, place.focus, place.ownSide],
+  );
+  const view = useMemo(() => (marked === null ? null : placeDecisionView(marked, holds)), [marked, holds]);
+  if (marked === null || view === null) {
+    return null;
+  }
+  const label = place.label === null ? null : <div className="rv-sub">{pick(place.label, lang)}</div>;
+  if (marked.lines === 0) {
+    return (
+      <div className="rv-decision" data-ev="place-decision" data-lines="0">
+        {label}
+        <p className="rv-sub">{words.decisions.noChangesHere}</p>
       </div>
+    );
+  }
+  const locations: CodeLocation[] = marked.ranges.map((range) => ({ path: marked.path, ...range }));
+  const where = linesWhere(locations, words);
+  const decided = view.accepted + view.exempted;
+  const only = view.held.length === 1 && decided === marked.lines ? (view.held[0]?.decision ?? null) : null;
+  const status = decided === 0 ? words.decisions.remaining : only !== null ? heldWord(only, words) : words.decisions.partly(view.accepted, view.exempted, marked.lines);
+  const byPerson = view.held.some((entry) => entry.decision.by.kind === 'human');
+  const earlier = view.held.filter((entry) => entry.decision.scopeUncertain && entry.beyond > 0);
+  return (
+    <div
+      className="rv-decision"
+      data-ev="place-decision"
+      data-marked={marked.ranges.map((range) => `${range.side}:${String(range.start)}-${String(range.end)}`).join(',')}
+      data-lines={marked.lines}
+      data-accepted={view.accepted}
+      data-exempted={view.exempted}
+    >
+      {label}
+      <div>{words.decisions.marked(where, marked.lines)}</div>
+      <div>
+        <strong className={only === null ? '' : `rv-decision-${only.outcome}`} data-ev="place-decision-status">
+          {status}
+        </strong>
+      </div>
+      {earlier.map((entry) => {
+        const still = stillHeld(entry.decision, holds);
+        return (
+          <div key={entry.decision.id} className="rv-decision-earlier" data-ev="place-decision-earlier">
+            <div>{words.decisions.uncertain(heldWord(entry.decision, words), linesWhere(still, words), entry.beyond)}</div>
+            <div className="rv-decision-actions">
+              <button
+                type="button"
+                data-ev="place-earlier-keep"
+                onClick={() =>
+                  onDecide({ outcome: entry.decision.outcome, locations: still, reason: entry.decision.reason, origin: { kind: 'kept', of: entry.decision.id } })
+                }
+              >
+                {words.decisions.keepEarlier}
+              </button>
+              <button
+                type="button"
+                data-ev="place-earlier-withdraw"
+                onClick={() => onDecide({ outcome: 'withdrawn', locations: still, reason: '', origin: place.origin })}
+              >
+                {words.decisions.withdrawEarlier}
+              </button>
+            </div>
+          </div>
+        );
+      })}
       {asking === null ? (
         <div className="rv-decision-actions">
-          {decision === null ? (
+          {decided < marked.lines && (
             <>
-              <button type="button" onClick={() => setAsking('accepted')}>
-                {words.decisions.accept}
+              <button type="button" data-ev="place-accept" onClick={() => setAsking('accepted')}>
+                {words.decisions.acceptLines(where)}
               </button>
-              <button type="button" onClick={() => setAsking('exempted')}>
-                {words.decisions.exempt}
+              <button type="button" data-ev="place-exempt" onClick={() => setAsking('exempted')}>
+                {words.decisions.exemptLines(where)}
               </button>
             </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onDecide({ scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id }, outcome: 'withdrawn', reason: '' })}
-            >
-              {words.decisions.withdraw}
+          )}
+          {byPerson && (
+            <button type="button" data-ev="place-withdraw" onClick={() => onDecide({ outcome: 'withdrawn', locations, reason: '', origin: place.origin })}>
+              {words.decisions.withdrawLines(where)}
             </button>
           )}
         </div>
       ) : (
         <form
           className="rv-confirm"
+          data-ev="place-confirm"
           onSubmit={(event) => {
             event.preventDefault();
             if (asking === 'exempted' && reason.trim() === '') {
               return;
             }
-            onDecide({ scope: { kind: 'hunk', path: hunk.path, hunkId: hunk.id }, outcome: asking, reason: reason.trim() });
+            onDecide({ outcome: asking, locations, reason: reason.trim(), origin: place.origin });
             setAsking(null);
             setReason('');
           }}
         >
-          <div>
-            <strong>{asking === 'accepted' ? words.decisions.accept.replace('…', '') : words.decisions.exempt.replace('…', '')}</strong>:{' '}
-            {words.decisions.scope(`${where} (${hunk.path})`, revisionText)}
+          <div data-ev="place-confirm-scope">
+            <strong>{asking === 'accepted' ? words.decisions.accept.replace('…', '').trim() : words.decisions.exempt.replace('…', '').trim()}</strong>:{' '}
+            {words.decisions.scope(where, revisionText)}
             {asking === 'accepted' && ` ${words.decisions.notGuarantee}`}
           </div>
           <input
@@ -4022,7 +4182,7 @@ function HunkDecision({
             placeholder={asking === 'exempted' ? words.decisions.reasonRequired : words.decisions.commentOptional}
             onChange={(event) => setReason(event.target.value)}
           />
-          <button type="submit" disabled={asking === 'exempted' && reason.trim() === ''}>
+          <button type="submit" data-ev="place-confirm-submit" disabled={asking === 'exempted' && reason.trim() === ''}>
             {words.decisions.confirm}
           </button>
           <button type="button" onClick={() => setAsking(null)}>

@@ -45,7 +45,8 @@ import {
   type PairMark,
   type PairRecord,
 } from '../src/shared/review-pair';
-import { hunkDecisionsFromPair, hunkRanges } from '../src/shared/review-pair-walk';
+import { hunkLocations } from '../src/shared/review-model';
+import { lineDecisionsFromPair, pairRanges } from '../src/shared/review-pair-walk';
 import { reviewThreadsOf } from '../src/shared/review-threads';
 import { makeHistoryFixture, type HistoryFixture } from './support/history-fixture';
 import { PAIR_WORKING_TREE_ONLY, makePairFixture, type PairFixture } from './support/pair-fixture';
@@ -231,6 +232,28 @@ describe('decisions about changed lines', () => {
     assert.ok(!isPairError(swapped));
     assert.equal(swapped.record.marks.length, 0, 'other revisions start with nothing marked');
     assert.notEqual(swapped.key, open.key);
+  });
+
+  it('keeps where a decision was made across a restart, and refuses a malformed origin without writing (DSP-201)', async () => {
+    const open = await openApp();
+    const before = (pairs.state(open.key) as PairRecord).marks.length;
+    const scope = { kind: 'lines' as const, side: 'target' as const, path: 'src/keep.ts', start: 8, end: 9 };
+    const marked = pairs.mark(open.key, { op: 'manual', scopes: [scope], reason: '', origin: { kind: 'walk', stepId: 'W1.2', placeId: 'p1' } });
+    assert.ok(!isPairError(marked));
+    assert.deepEqual(marked.marks.at(-1)?.origin, { kind: 'walk', stepId: 'W1.2', placeId: 'p1' });
+    for (const origin of [{ kind: 'walk', stepId: 'W1.2' }, { kind: 'diff', extra: 1 }, { kind: 'somewhere' }, 'walk']) {
+      assert.ok(isPairError(pairs.mark(open.key, { op: 'manual', scopes: [scope], reason: '', origin })), JSON.stringify(origin));
+    }
+    assert.equal((pairs.state(open.key) as PairRecord).marks.length, before + 1, 'a refused mark writes nothing');
+    const again = new ReviewPairs({ recordsDir: records, changed: () => undefined });
+    await again.repositories([fixture.workspace]);
+    const reopened = await again.openPair({ review: open.key });
+    assert.ok(!isPairError(reopened));
+    assert.deepEqual(reopened.record.marks.at(-1)?.origin, { kind: 'walk', stepId: 'W1.2', placeId: 'p1' });
+    // A clear over the same lines returns them to remaining; the history keeps both.
+    const cleared = pairs.mark(open.key, { op: 'clear', scopes: [scope], reason: '', origin: { kind: 'walk', stepId: 'W1.2', placeId: 'p1' } });
+    assert.ok(!isPairError(cleared));
+    assert.equal(cleared.marks.length, before + 2);
   });
 
   it('keeps the position and offers the last pair again', async () => {
@@ -531,7 +554,7 @@ describe('requirements and agent review', () => {
 
   it('counts a change several walks pass once: a walk decision is a decision over the same lines', () => {
     const hunk = { id: 'H1', path: 'a.ts', baseStart: 2, baseCount: 1, targetStart: 2, targetCount: 2 };
-    const ranges = hunkRanges(hunk);
+    const ranges = pairRanges(hunkLocations(hunk));
     const record: PairRecord = {
       ...emptyRecord(pair),
       marks: [
@@ -540,36 +563,39 @@ describe('requirements and agent review', () => {
       ],
     };
     assert.equal(fileProgressOf(file, record).handled, 3);
-    const decisions = hunkDecisionsFromPair(
+    const decisions = lineDecisionsFromPair(
       [{ path: 'a.ts', status: 'modified', binary: false, hunks: [hunk], added: 2, deleted: 1 }],
       record,
       { base: pair.base, target: pair.target },
     );
-    assert.deepEqual(decisions.map((decision) => decision.outcome), ['accepted']);
+    // DSP-201: read line by line, each line once, by the mark that holds on it.
+    assert.deepEqual(decisions.map((decision) => decision.outcome), ['accepted', 'accepted']);
+    const lines = decisions.flatMap((decision) => (decision.scope.kind === 'lines' ? decision.scope.ranges : [])).reduce((total, range) => total + range.end - range.start + 1, 0);
+    assert.equal(lines, 3);
   });
 
   it('shows a hunk assessed in a delegated review as reviewed in the walk only once the person accepted it, by the agent; an assessment alone or without a job does not count', () => {
     const hunk = { id: 'H1', path: 'a.ts', baseStart: 2, baseCount: 1, targetStart: 2, targetCount: 2 };
     const files = [{ path: 'a.ts', status: 'modified' as const, binary: false, hunks: [hunk], added: 2, deleted: 1 }];
-    const approvals = hunkRanges(hunk).map((scope) => ({ ...agent, scope, reviewer: 'Claude · opus', jobId: 'job-1' }));
+    const approvals = pairRanges(hunkLocations(hunk)).map((scope) => ({ ...agent, scope, reviewer: 'Claude · opus', jobId: 'job-1' }));
     // DSP-193: the assessment alone decides nothing in the walk either.
-    assert.deepEqual(hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals }, { base: pair.base, target: pair.target }), []);
+    assert.deepEqual(lineDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals }, { base: pair.base, target: pair.target }), []);
     const acceptedMark: PairMark = { id: 'd', op: 'accept-agent', scope: { kind: 'job', jobId: 'job-1' }, reason: '', at: '2026-11-10T12:00:00.000Z' };
-    const delegated = hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals, marks: [acceptedMark] }, { base: pair.base, target: pair.target });
+    const delegated = lineDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: approvals, marks: [acceptedMark] }, { base: pair.base, target: pair.target });
     assert.deepEqual(
       delegated.map((decision) => [decision.outcome, decision.by]),
       [['accepted', { kind: 'agent-delegated', adapterId: 'Claude · opus', mandate: 'job-1' }]],
     );
     // An older agent review with no delegated job behind it approves nothing, accepted or not.
     const undelegated = approvals.map(({ jobId: _job, ...rest }) => rest);
-    assert.deepEqual(hunkDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: undelegated, marks: [acceptedMark] }, { base: pair.base, target: pair.target }), []);
-    // A person's decision on one line and the accepted assessment on the rest: reviewed, and by the person.
+    assert.deepEqual(lineDecisionsFromPair(files, { ...emptyRecord(pair), agentReviews: undelegated, marks: [acceptedMark] }, { base: pair.base, target: pair.target }), []);
+    // A person's decision on one line and the accepted assessment on the rest: each line by whoever holds it (DSP-201).
     const mixed: PairRecord = {
       ...emptyRecord(pair),
       agentReviews: approvals,
       marks: [acceptedMark, { id: 'm', op: 'manual', scope: { kind: 'lines', side: 'target', path: 'a.ts', start: 2, end: 2 }, reason: '', at: 't' }],
     };
-    assert.deepEqual(hunkDecisionsFromPair(files, mixed, { base: pair.base, target: pair.target }).map((decision) => decision.by.kind), ['human']);
+    assert.deepEqual(lineDecisionsFromPair(files, mixed, { base: pair.base, target: pair.target }).map((decision) => decision.by.kind), ['agent-delegated', 'human']);
   });
 });
 

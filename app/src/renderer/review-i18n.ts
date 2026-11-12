@@ -260,7 +260,19 @@ export interface ReviewWords {
     readonly scope: (where: string, revision: string) => string;
     readonly notGuarantee: string;
     readonly yours: string;
+    /** DSP-201: what a place's decision covers, exactly: `where` from {@link linesIn}. */
+    readonly marked: (where: string, lines: number) => string;
+    readonly acceptLines: (where: string) => string;
+    readonly exemptLines: (where: string) => string;
+    readonly withdrawLines: (where: string) => string;
+    readonly acceptedDelegated: string;
+    readonly partly: (accepted: number, exempted: number, total: number) => string;
+    /** An earlier decision over more than the marking, recorded before Accept followed it. */
+    readonly uncertain: (decided: string, where: string, beyond: number) => string;
+    readonly keepEarlier: string;
+    readonly withdrawEarlier: string;
   };
+  readonly linesIn: (path: string, lines: string) => string;
   readonly changeAt: (path: string, lines: string) => string;
   readonly newLines: (range: string) => string;
   readonly oldLines: (range: string) => string;
@@ -563,9 +575,23 @@ const sv: ReviewWords = {
     reasonRequired: 'Skäl (krävs)',
     commentOptional: 'Kommentar (valfri)',
     scope: (where, revision) => `Gäller ${where}, i den granskade versionen (${revision}), som ditt eget beslut.`,
-    notGuarantee: 'Acceptansen gäller bara den här ändringen i den här versionen och är ingen garanti för att koden är korrekt.',
+    notGuarantee: 'Acceptansen gäller bara de här raderna i den här versionen och är ingen garanti för att koden är korrekt.',
     yours: 'du',
+    marked: (where, lines) => `Markerat här: ${where} (${String(lines)} ${lines === 1 ? 'ändrad rad' : 'ändrade rader'}).`,
+    acceptLines: (where) => `Acceptera ${where} …`,
+    exemptLines: (where) => `Undanta ${where} …`,
+    withdrawLines: (where) => `Återkalla beslutet om ${where}`,
+    acceptedDelegated: 'Accepterad genom en delegering du godtog',
+    partly: (accepted, exempted, total) =>
+      [accepted > 0 ? `${String(accepted)} av ${String(total)} accepterade` : '', exempted > 0 ? `${String(exempted)} av ${String(total)} undantagna` : '', `${String(total - accepted - exempted)} utan beslut`]
+        .filter((part) => part !== '')
+        .join(', '),
+    uncertain: (decided, where, beyond) =>
+      `${decided} tidigare över ${where}, ${String(beyond)} ${beyond === 1 ? 'rad' : 'rader'} utöver markeringen här. Beslutet sparades innan Acceptera i en walk följde markeringen, så om det var menat för alla de raderna går inte att avgöra.`,
+    keepEarlier: 'Behåll som det sparades',
+    withdrawEarlier: 'Återkalla det',
   },
+  linesIn: (path, lines) => `${lines} i ${path}`,
   changeAt: (path, lines) => `ändringen i ${path}, ${lines}`,
   newLines: (range) => `nya rader ${range}`,
   oldLines: (range) => `gamla rader ${range}`,
@@ -888,9 +914,23 @@ const en: ReviewWords = {
     reasonRequired: 'Reason (required)',
     commentOptional: 'Comment (optional)',
     scope: (where, revision) => `Applies to ${where}, in the reviewed version (${revision}), as your own decision.`,
-    notGuarantee: 'Acceptance covers only this change in this version and is no guarantee that the code is correct.',
+    notGuarantee: 'Acceptance covers only these lines in this version and is no guarantee that the code is correct.',
     yours: 'you',
+    marked: (where, lines) => `Marked here: ${where} (${String(lines)} changed ${lines === 1 ? 'line' : 'lines'}).`,
+    acceptLines: (where) => `Accept ${where}…`,
+    exemptLines: (where) => `Exempt ${where}…`,
+    withdrawLines: (where) => `Withdraw the decision on ${where}`,
+    acceptedDelegated: 'Accepted through a delegation you accepted',
+    partly: (accepted, exempted, total) =>
+      [accepted > 0 ? `${String(accepted)} of ${String(total)} accepted` : '', exempted > 0 ? `${String(exempted)} of ${String(total)} exempted` : '', `${String(total - accepted - exempted)} without a decision`]
+        .filter((part) => part !== '')
+        .join(', '),
+    uncertain: (decided, where, beyond) =>
+      `${decided} earlier over ${where}, ${String(beyond)} ${beyond === 1 ? 'line' : 'lines'} beyond the marking here. It was recorded before a walk's Accept followed its marking, so whether it was meant for all of those lines is not known.`,
+    keepEarlier: 'Keep it as recorded',
+    withdrawEarlier: 'Withdraw it',
   },
+  linesIn: (path, lines) => `${lines} in ${path}`,
   changeAt: (path, lines) => `the change in ${path}, ${lines}`,
   newLines: (range) => `new lines ${range}`,
   oldLines: (range) => `old lines ${range}`,

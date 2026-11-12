@@ -12,6 +12,7 @@
  */
 
 import { isProfile, type PresentationProfile } from './presentation-profiles';
+import { isDecisionOrigin, type DecisionOrigin } from './review-model';
 import { stepReferencesFrom, type StepReference } from './review-discussion';
 import { isWalkMethod, walkLoopSummaryFrom, type WalkLoopRecordView, type WalkLoopSummary, type WalkMethod } from './walk-method';
 import type { WalkLoopRunEvent, WalkLoopRunSnapshot } from './walk-loop-view';
@@ -443,6 +444,13 @@ export interface PairMark {
   readonly scope: MarkScope;
   readonly reason: string;
   readonly at: string;
+  /**
+   * Where it was made (DSP-201): at a walk's place, in the diff window, or as the person's
+   * keeping of an earlier mark. Absent on marks recorded before it was kept, whose origin a
+   * window cannot tell: a walk's Accept then covered its whole hunk, and the diff window's
+   * marks over the same lines look the same.
+   */
+  readonly origin?: DecisionOrigin;
 }
 
 /**
@@ -1363,6 +1371,8 @@ export function adoptPairRecord(raw: unknown, pair: RevisionPairIdentity, id = '
       scope,
       reason: typeof entry['reason'] === 'string' ? entry['reason'] : '',
       at: typeof entry['at'] === 'string' ? entry['at'] : '',
+      // An origin this version cannot read is left out, as an absent one: the mark itself holds.
+      ...(isDecisionOrigin(entry['origin']) ? { origin: entry['origin'] } : {}),
     });
   }
   const agentReviews: AgentReview[] = [];
@@ -2201,6 +2211,8 @@ export interface MarkRequestInput {
   readonly op: PairMark['op'];
   readonly scopes: readonly MarkScope[];
   readonly reason: string;
+  /** Where the decision is made (DSP-201). A host from before it ignores the field. */
+  readonly origin?: DecisionOrigin;
 }
 
 /** What a review window may ask about pairs. Exposed as `window.dspatchReviewPair`. */

@@ -969,7 +969,8 @@ function DiffReview({
 
   const mark = useCallback(
     async (op: PairMark['op'], scopes: Parameters<ReviewPairBridge['mark']>[1]['scopes']): Promise<void> => {
-      const answer = await bridge.mark(open.key, { op, scopes, reason: '' });
+      // DSP-201: said as the diff window's own, so a walk can tell it from a decision of its own.
+      const answer = await bridge.mark(open.key, { op, scopes, reason: '', origin: { kind: 'diff' } });
       if (isPairError(answer)) {
         setProblem(answer.error);
       } else {
@@ -2156,6 +2157,10 @@ function describeLine(status: LineStatus | undefined): string {
   }
   if (status.decision !== null && status.decision.reason !== '') {
     parts.push(`reason: ${status.decision.reason}`);
+  }
+  // DSP-201: a decision made at a walk's place says which; it covers exactly the place's marked lines.
+  if (status.decision?.origin?.kind === 'walk') {
+    parts.push(`in walk step ${status.decision.origin.stepId}`);
   }
   // DSP-193: an accepted assessment names its agent; one awaiting the decision is said as such.
   if (strip === 'agent' && status.accepted[0]?.reviewer) {

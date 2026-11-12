@@ -675,8 +675,16 @@
 
 .rv-decision-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.3rem;
+}
+
+/* DSP-201: an earlier decision over more than the marking, whose intended scope is not known. */
+.rv-decision-earlier {
+  border-left: 3px solid var(--unknown);
+  padding-left: 0.45rem;
+  margin: 0.35rem 0;
 }
 
 .rv-decision-accepted {
