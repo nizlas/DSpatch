@@ -1078,6 +1078,10 @@ async function main() {
     panelNow = await dockedIn(walkWindow.id, 'the panel docked in the walk window');
   }
   await clickInPanel('right-tab-step');
+  // Since DSP-193 the threads at a step's places are read in Step's Review section, folded by default.
+  if ((await read(panelNow.view.contentsId, `document.querySelector('[data-ev="walk-review-section"]')?.getAttribute('aria-expanded')`)) !== 'true') {
+    await clickInPanel('walk-review-section');
+  }
   let here = 0;
   for (let index = 0; index < stations && here === 0; index += 1) {
     await walk.ev(`document.querySelectorAll('.rv-strip-dot')[${String(index)}]?.click()`);
