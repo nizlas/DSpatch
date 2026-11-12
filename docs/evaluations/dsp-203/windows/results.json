@@ -1,0 +1,146 @@
+{
+  "platform": "win32",
+  "profile": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-delegation-profile-ZOx2f1",
+  "project": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-delegation-project-MLkFcK",
+  "finishedAt": "2026-11-12T15:30:13.764Z",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the app is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the review of the pair",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "half the walk accepted by the person",
+      "what": "the confirmation names exactly new lines 151–155 in big.js",
+      "ok": true,
+      "detail": "Accept: Applies to new lines 151–155 in big.js, in the reviewed version (3201484→7a7952c), as your own decision. Acceptance covers only these lines in this version and is no guarantee that the code is correct."
+    },
+    {
+      "stage": "delegating the remaining lines (the default)",
+      "what": "the choices offer the remaining 4 of 9 lines, checked, and all 9",
+      "ok": true,
+      "detail": "{\"remaining\":{\"lines\":4,\"checked\":true,\"disabled\":false,\"text\":\"Review remaining lines in this walk (4 of 9 changed lines)\"},\"all\":{\"lines\":9,\"checked\":false,\"text\":\"Review all lines in this walk (9 changed lines)\"},\"note\":\"The lines you have not decided, and no assessment you accepted covers. The agent may read whole files, callers and tests; only these lines are its mandate.\",\"picker\":true}"
+    },
+    {
+      "stage": "delegating the remaining lines (the default)",
+      "what": "the counts read in the choices",
+      "ok": true,
+      "detail": "[\"Review remaining lines in this walk (4 of 9 changed lines)\",\"Review all lines in this walk (9 changed lines)\"]"
+    },
+    {
+      "stage": "delegating the remaining lines (the default)",
+      "what": "the mandate stored is exactly lines 156–159, as remaining",
+      "ok": true,
+      "detail": "{\"kind\":\"walk\",\"label\":\"walk W1 · The new file · remaining lines\",\"ranges\":[{\"kind\":\"lines\",\"side\":\"target\",\"path\":\"src/big.js\",\"start\":156,\"end\":159}],\"basis\":\"remaining\"}"
+    },
+    {
+      "stage": "delegating the remaining lines (the default)",
+      "what": "everything the agent assessed lies inside the mandate",
+      "ok": true,
+      "detail": "[{\"kind\":\"lines\",\"side\":\"target\",\"path\":\"src/big.js\",\"start\":156,\"end\":159}]"
+    },
+    {
+      "stage": "delegating the remaining lines (the default)",
+      "what": "the agent assessed",
+      "ok": true,
+      "detail": "4 of 4 lines acceptable"
+    },
+    {
+      "stage": "delegating the remaining lines (the default)",
+      "what": "awaiting the person: 151–155 stay the person's, the assessed lines are drawn as assessed, nothing else",
+      "ok": true,
+      "detail": "[[151,\"manual\"],[152,\"manual\"],[153,\"manual\"],[154,\"manual\"],[155,\"manual\"],[156,\"assessed\"],[157,\"assessed\"],[158,\"assessed\"],[159,\"assessed\"]]"
+    },
+    {
+      "stage": "the person accepts the assessment",
+      "what": "151–155 stay the person's; the accepted lines count through the delegation; nothing outside 151–159",
+      "ok": true,
+      "detail": "[[151,\"manual\"],[152,\"manual\"],[153,\"manual\"],[154,\"manual\"],[155,\"manual\"],[156,\"agent\"],[157,\"agent\"],[158,\"agent\"],[159,\"agent\"]]"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the choices then offer 0 remaining and all 9",
+      "ok": true,
+      "detail": "{\"remaining\":{\"lines\":0,\"checked\":false,\"disabled\":true,\"text\":\"Review remaining lines in this walk (0 of 9 changed lines)\"},\"all\":{\"lines\":9,\"checked\":true,\"text\":\"Review all lines in this walk (9 changed lines)\"},\"note\":\"Every changed line of this walk already has your decision or an assessment you accepted. Reviewing all lines asks for a complementary review. The agent may read whole files, callers and tests; only these lines are its mandate.\",\"picker\":true}"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the mandate stored is all of 151–159",
+      "ok": true,
+      "detail": "{\"kind\":\"walk\",\"label\":\"walk W1 · The new file · all lines\",\"ranges\":[{\"kind\":\"lines\",\"side\":\"target\",\"path\":\"src/big.js\",\"start\":151,\"end\":159}],\"basis\":\"all\"}"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the second review's assessments lie inside 151–159",
+      "ok": true,
+      "detail": "[{\"kind\":\"lines\",\"side\":\"target\",\"path\":\"src/big.js\",\"start\":151,\"end\":159}]"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the person's decisions stand: 151–155 are still theirs",
+      "ok": true,
+      "detail": "[151,152,153,154,155]"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "where the agent also assessed a line the person decided, a thin edge says awaiting, beside the person's band",
+      "ok": true,
+      "detail": "[[151,\"awaiting\"],[152,\"awaiting\"],[153,\"awaiting\"],[154,\"awaiting\"],[155,\"awaiting\"]]"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "its hover says both",
+      "ok": true,
+      "detail": "Added line 151: Reviewed by you (Nov 12, 2026, 04:29 PM); in walk step W1.1; also assessed acceptable by Copilot · copilot-default, awaiting your decision"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "marks of the person after both reviews",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "no line counts twice: the file stays at 2% (9 of 417 at most)",
+      "ok": true,
+      "detail": "2%"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the review says",
+      "ok": true,
+      "detail": "9 of 417 changed lines handled"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the handled lines are within the walk's 9",
+      "ok": true,
+      "detail": "9 of 417 changed lines handled"
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the walk at the first place",
+      "ok": true,
+      "detail": "The agent also assessed 5 of these lines acceptable, awaiting your decision; your decision stands."
+    },
+    {
+      "stage": "delegating all lines after that",
+      "what": "the walk says the agent also assessed lines the person decided, and that the decision stands",
+      "ok": true,
+      "detail": "The agent also assessed 5 of these lines acceptable, awaiting your decision; your decision stands."
+    },
+    {
+      "stage": "cleanup",
+      "what": "a standalone host of this trial ended",
+      "ok": true,
+      "detail": "57460"
+    }
+  ]
+}

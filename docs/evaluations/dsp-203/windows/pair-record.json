@@ -1,0 +1,230 @@
+{
+  "version": 2,
+  "id": "r-756e4c9ee0ba38f38bfeab30",
+  "createdAt": "2026-11-12T15:29:27.519Z",
+  "startedWith": {
+    "instructionVersion": 12
+  },
+  "generation": null,
+  "pair": {
+    "repository": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-delegation-project-MLkFcK",
+    "base": "3201484b6aa008f16e6a6145e299bcb054c4cf26",
+    "target": "7a7952c08b8cdf916d91449bf2225f4e9d6560e3"
+  },
+  "requirement": "manual",
+  "jobs": [
+    {
+      "id": "job-b13ab96c-3cd7-4fd9-b7eb-23621b45dbd4",
+      "kind": "review",
+      "state": "done",
+      "provider": "copilot",
+      "model": "copilot-default",
+      "startedAt": "2026-11-12T15:29:29.047Z",
+      "endedAt": "2026-11-12T15:29:30.378Z",
+      "note": "The agent assessed 4 line(s) as acceptable; awaiting your assessment.",
+      "detail": "",
+      "scope": {
+        "kind": "walk",
+        "label": "walk W1 · The new file · remaining lines",
+        "ranges": [
+          {
+            "kind": "lines",
+            "side": "target",
+            "path": "src/big.js",
+            "start": 156,
+            "end": 159
+          }
+        ],
+        "basis": "remaining"
+      },
+      "result": {
+        "assessment": "SIMULATED: reviewed 1 changed range(s) in the delegated part, reading them and what they call in the revision folder.",
+        "summary": "SIMULATED: every delegated line is approved.",
+        "reviewed": [
+          {
+            "kind": "lines",
+            "side": "target",
+            "path": "src/big.js",
+            "start": 156,
+            "end": 159
+          }
+        ],
+        "approved": [
+          {
+            "kind": "lines",
+            "side": "target",
+            "path": "src/big.js",
+            "start": 156,
+            "end": 159
+          }
+        ],
+        "findings": [],
+        "uncertainties": [],
+        "insufficient": false,
+        "adjustments": []
+      },
+      "definitionPath": null,
+      "uncovered": [],
+      "material": {
+        "base": "3201484b6aa008f16e6a6145e299bcb054c4cf26",
+        "target": "7a7952c08b8cdf916d91449bf2225f4e9d6560e3",
+        "files": 3,
+        "skipped": [],
+        "skippedCount": 0
+      },
+      "investigation": {
+        "reads": [
+          "target/src/big.js"
+        ],
+        "searches": [],
+        "refused": 0,
+        "refusedCalls": []
+      },
+      "instruction": "DSPATCH-REVIEW-TASK: delegated-review\n\nThe person has delegated the review of one part of a change to you. You examine the code yourself with your reading tools, then answer.\n\n## Your mandate\nScope: walk W1 · The new file · remaining lines\nYou may mark as acceptable (\"approved\" in the answer) changed lines inside the scope that you actually reviewed and judge to be correct. Nothing outside the scope, and nothing you did not review.\nJudge the lines in their context: read what they call and what calls them, the types and data they use, and the tests that cover them, at both revisions where behaviour changed. A finding may point at unchanged code when that is where the problem shows.\nReport what you reviewed, your assessment and what it rests on, every problem you found, and what remains uncertain. Name anything you needed but could not read.\nIf what you could read is not enough to judge the scope, say so with \"insufficient\": true and approve nothing.\nMarking lines acceptable means they are acceptable as far as you can tell from the code you read; it is not a guarantee of correctness, and you have run nothing. Your assessment is material for the person, who decides whether to accept it: it is not their approval, it closes no finding and it answers no question. Do not write fixes; describe problems.\nFor every finding, question and gap, say what you observed and what it rests on (the code you read, a test, a document), and recommend what to do about it: a code change, a test, a measurement, a question to the author, further investigation, or keeping the code as it is with the reason. Recommend a code change only when what you read shows one is needed; when the evidence is missing, recommend the test, measurement or investigation that would settle it, with a concrete next step. Give a short rationale and what remains uncertain. The person decides; accepting your recommendation starts nothing.\nA gap is something you could not establish (not a defect). When it belongs to one of your findings, name that finding's title in \"finding\".\n\n## The scope (machine-readable)\n```json\n[{\"path\":\"src/big.js\",\"side\":\"target\",\"start\":156,\"end\":159}]\n```\n\n## Answer format (language: English)\nWhen you have examined what you need, answer with one JSON object in a ```json fence and nothing else:\n```json\n{\n  \"summary\": \"One or two plain sentences: what you approved, and what remains or needs attention.\",\n  \"assessment\": \"What you reviewed and your judgement, in a few sentences, with what it rests on.\",\n  \"reviewed\": [\n    {\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 10,\n      \"end\": 14\n    }\n  ],\n  \"approved\": [\n    {\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 10,\n      \"end\": 12\n    }\n  ],\n  \"findings\": [\n    {\n      \"severity\": \"problem\",\n      \"title\": \"A short heading\",\n      \"text\": \"What is wrong and what it leads to, in one or two sentences\",\n      \"details\": \"Longer reasoning, only when it is needed\",\n      \"evidence\": \"What the observation rests on: the code you read, a test, a document\",\n      \"recommendation\": {\n        \"kind\": \"change\",\n        \"action\": \"The recommended action in one sentence\",\n        \"rationale\": \"Why, briefly\",\n        \"uncertainty\": \"What is still uncertain, or an empty string\",\n        \"nextStep\": \"A concrete next step when more investigation is needed, or an empty string\"\n      },\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 13,\n      \"end\": 13\n    }\n  ],\n  \"gaps\": [\n    {\n      \"text\": \"What you could not establish from the code you read\",\n      \"evidence\": \"What you looked at\",\n      \"finding\": \"The title of the finding it belongs to, or omit\",\n      \"recommendation\": {\n        \"kind\": \"test\",\n        \"action\": \"How it could be established\",\n        \"rationale\": \"Why\",\n        \"uncertainty\": \"\",\n        \"nextStep\": \"The first concrete step\"\n      },\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 20,\n      \"end\": 24\n    }\n  ],\n  \"insufficient\": false\n}\n```\nseverity is \"problem\", \"question\" or \"note\". recommendation.kind is \"change\", \"test\", \"measure\", \"ask-author\", \"investigate\" or \"keep\" (keep the code as it is; say why in the rationale). A gap's place is optional. A line with a problem is not approved. Do not narrate your investigation; give the judgement and what it rests on.\nThe same problem in several places is one finding per place, each with the same title."
+    },
+    {
+      "id": "job-e9d91f70-03a4-4710-9d04-1d717b7ef676",
+      "kind": "review",
+      "state": "done",
+      "provider": "copilot",
+      "model": "copilot-default",
+      "startedAt": "2026-11-12T15:29:32.032Z",
+      "endedAt": "2026-11-12T15:29:33.365Z",
+      "note": "The agent assessed 9 line(s) as acceptable; awaiting your assessment.",
+      "detail": "",
+      "scope": {
+        "kind": "walk",
+        "label": "walk W1 · The new file · all lines",
+        "ranges": [
+          {
+            "kind": "lines",
+            "side": "target",
+            "path": "src/big.js",
+            "start": 151,
+            "end": 159
+          }
+        ],
+        "basis": "all"
+      },
+      "result": {
+        "assessment": "SIMULATED: reviewed 1 changed range(s) in the delegated part, reading them and what they call in the revision folder.",
+        "summary": "SIMULATED: every delegated line is approved.",
+        "reviewed": [
+          {
+            "kind": "lines",
+            "side": "target",
+            "path": "src/big.js",
+            "start": 151,
+            "end": 159
+          }
+        ],
+        "approved": [
+          {
+            "kind": "lines",
+            "side": "target",
+            "path": "src/big.js",
+            "start": 151,
+            "end": 159
+          }
+        ],
+        "findings": [],
+        "uncertainties": [],
+        "insufficient": false,
+        "adjustments": []
+      },
+      "definitionPath": null,
+      "uncovered": [],
+      "material": {
+        "base": "3201484b6aa008f16e6a6145e299bcb054c4cf26",
+        "target": "7a7952c08b8cdf916d91449bf2225f4e9d6560e3",
+        "files": 3,
+        "skipped": [],
+        "skippedCount": 0
+      },
+      "investigation": {
+        "reads": [
+          "target/src/big.js"
+        ],
+        "searches": [],
+        "refused": 0,
+        "refusedCalls": []
+      },
+      "instruction": "DSPATCH-REVIEW-TASK: delegated-review\n\nThe person has delegated the review of one part of a change to you. You examine the code yourself with your reading tools, then answer.\n\n## Your mandate\nScope: walk W1 · The new file · all lines\nYou may mark as acceptable (\"approved\" in the answer) changed lines inside the scope that you actually reviewed and judge to be correct. Nothing outside the scope, and nothing you did not review.\nJudge the lines in their context: read what they call and what calls them, the types and data they use, and the tests that cover them, at both revisions where behaviour changed. A finding may point at unchanged code when that is where the problem shows.\nReport what you reviewed, your assessment and what it rests on, every problem you found, and what remains uncertain. Name anything you needed but could not read.\nIf what you could read is not enough to judge the scope, say so with \"insufficient\": true and approve nothing.\nMarking lines acceptable means they are acceptable as far as you can tell from the code you read; it is not a guarantee of correctness, and you have run nothing. Your assessment is material for the person, who decides whether to accept it: it is not their approval, it closes no finding and it answers no question. Do not write fixes; describe problems.\nFor every finding, question and gap, say what you observed and what it rests on (the code you read, a test, a document), and recommend what to do about it: a code change, a test, a measurement, a question to the author, further investigation, or keeping the code as it is with the reason. Recommend a code change only when what you read shows one is needed; when the evidence is missing, recommend the test, measurement or investigation that would settle it, with a concrete next step. Give a short rationale and what remains uncertain. The person decides; accepting your recommendation starts nothing.\nA gap is something you could not establish (not a defect). When it belongs to one of your findings, name that finding's title in \"finding\".\n\n## The scope (machine-readable)\n```json\n[{\"path\":\"src/big.js\",\"side\":\"target\",\"start\":151,\"end\":159}]\n```\n\n## Answer format (language: English)\nWhen you have examined what you need, answer with one JSON object in a ```json fence and nothing else:\n```json\n{\n  \"summary\": \"One or two plain sentences: what you approved, and what remains or needs attention.\",\n  \"assessment\": \"What you reviewed and your judgement, in a few sentences, with what it rests on.\",\n  \"reviewed\": [\n    {\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 10,\n      \"end\": 14\n    }\n  ],\n  \"approved\": [\n    {\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 10,\n      \"end\": 12\n    }\n  ],\n  \"findings\": [\n    {\n      \"severity\": \"problem\",\n      \"title\": \"A short heading\",\n      \"text\": \"What is wrong and what it leads to, in one or two sentences\",\n      \"details\": \"Longer reasoning, only when it is needed\",\n      \"evidence\": \"What the observation rests on: the code you read, a test, a document\",\n      \"recommendation\": {\n        \"kind\": \"change\",\n        \"action\": \"The recommended action in one sentence\",\n        \"rationale\": \"Why, briefly\",\n        \"uncertainty\": \"What is still uncertain, or an empty string\",\n        \"nextStep\": \"A concrete next step when more investigation is needed, or an empty string\"\n      },\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 13,\n      \"end\": 13\n    }\n  ],\n  \"gaps\": [\n    {\n      \"text\": \"What you could not establish from the code you read\",\n      \"evidence\": \"What you looked at\",\n      \"finding\": \"The title of the finding it belongs to, or omit\",\n      \"recommendation\": {\n        \"kind\": \"test\",\n        \"action\": \"How it could be established\",\n        \"rationale\": \"Why\",\n        \"uncertainty\": \"\",\n        \"nextStep\": \"The first concrete step\"\n      },\n      \"path\": \"src/file.ts\",\n      \"side\": \"target\",\n      \"start\": 20,\n      \"end\": 24\n    }\n  ],\n  \"insufficient\": false\n}\n```\nseverity is \"problem\", \"question\" or \"note\". recommendation.kind is \"change\", \"test\", \"measure\", \"ask-author\", \"investigate\" or \"keep\" (keep the code as it is; say why in the rationale). A gap's place is optional. A line with a problem is not approved. Do not narrate your investigation; give the judgement and what it rests on.\nThe same problem in several places is one finding per place, each with the same title."
+    }
+  ],
+  "agent": {
+    "provider": "copilot",
+    "model": "copilot-default"
+  },
+  "marks": [
+    {
+      "id": "7cd7f5bb-bfba-43f5-bd75-12b17f6d005c",
+      "op": "manual",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 151,
+        "end": 155
+      },
+      "reason": "",
+      "at": "2026-11-12T15:29:28.823Z",
+      "origin": {
+        "kind": "walk",
+        "stepId": "W1.1",
+        "placeId": "r1"
+      }
+    },
+    {
+      "id": "1efa87d0-03cb-4ada-885e-7eeb0157d7ce",
+      "op": "accept-agent",
+      "scope": {
+        "kind": "job",
+        "jobId": "job-b13ab96c-3cd7-4fd9-b7eb-23621b45dbd4"
+      },
+      "reason": "",
+      "at": "2026-11-12T15:29:31.563Z"
+    }
+  ],
+  "agentReviews": [
+    {
+      "id": "agent-db2a2e51-9fad-4879-bcf9-886fe1567982",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 156,
+        "end": 159
+      },
+      "reviewer": "Copilot · copilot-default",
+      "recordedAt": "2026-11-12T15:29:30.378Z",
+      "summary": "SIMULATED: reviewed 1 changed range(s) in the delegated part, reading them and what they call in the revision folder.",
+      "jobId": "job-b13ab96c-3cd7-4fd9-b7eb-23621b45dbd4"
+    },
+    {
+      "id": "agent-4339d2a5-8516-4fa5-bb91-f9a39a2a4075",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 151,
+        "end": 159
+      },
+      "reviewer": "Copilot · copilot-default",
+      "recordedAt": "2026-11-12T15:29:33.364Z",
+      "summary": "SIMULATED: reviewed 1 changed range(s) in the delegated part, reading them and what they call in the revision folder.",
+      "jobId": "job-e9d91f70-03a4-4710-9d04-1d717b7ef676"
+    }
+  ],
+  "position": {
+    "view": "file",
+    "fileKey": "→src/big.js",
+    "layout": "split",
+    "line": null
+  },
+  "walkDefinition": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-delegation-profile-ZOx2f1\\reviews\\generated\\r-756e4c9ee0ba38f38bfeab30\\delegation.review.json",
+  "endedAt": null,
+  "threads": [],
+  "checkSources": [],
+  "savedAt": "2026-11-12T15:30:13.731Z"
+}
