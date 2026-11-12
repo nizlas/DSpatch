@@ -171,6 +171,7 @@ const AREAS = {
       'profile-guard.test.ts',
       'window-zoom.test.ts',
       'window-layout.test.ts',
+      'about.test.ts',
       'electron-version.test.ts',
       'provider-setup.test.ts',
       'provider-ready.test.ts',

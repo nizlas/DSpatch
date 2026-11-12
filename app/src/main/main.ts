@@ -4,6 +4,7 @@ import { remoteBuild } from '../shared/remote-build';
 import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
 import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
 import { WINDOW_LAYOUT_FILE, WindowLayoutStore } from './window-layout';
+import { aboutText, mainWindowTitle } from './about';
 import { WINDOW_ZOOM_LEVEL_CHANNEL } from '../shared/window-zoom';
 import { hostBuildDifference } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
@@ -1486,6 +1487,27 @@ function logIfFailed(what: string, work: Promise<unknown>): void {
   });
 }
 
+/** DSP-200: About DSpatch, over the window it was asked from, with the versions to copy. */
+async function showAbout(): Promise<void> {
+  const text = aboutText(app.getVersion(), remoteBuild(app.getAppPath()).commit, remoteLink?.build() ?? null);
+  const focused = BrowserWindow.getFocusedWindow();
+  const box = {
+    type: 'info' as const,
+    title: 'About DSpatch',
+    message: 'DSpatch',
+    detail: text,
+    buttons: ['Copy version information', 'Close'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+  const { response } = await (focused === null ? dialog.showMessageBox(box) : dialog.showMessageBox(focused, box));
+  if (response === 0) {
+    clipboard.writeText(text);
+    log('about: version information copied');
+  }
+}
+
 /**
  * The review host's contract, reached through the project host (DSP-111).
  *
@@ -2619,6 +2641,19 @@ function installApplicationMenu(): void {
           },
         ],
       },
+      {
+        label: '&Help',
+        submenu: [
+          {
+            // DSP-200: which DSpatch this is, and which host it is talking to.
+            id: 'dspatch-about',
+            label: 'About DSpatch',
+            click: () => {
+              logIfFailed('About DSpatch', showAbout());
+            },
+          },
+        ],
+      },
   ]);
   Menu.setApplicationMenu(menu);
   menuItemsByCommand.clear();
@@ -2670,7 +2705,8 @@ function createWindow(): BrowserWindow {
     minHeight: 560,
     show: false,
     backgroundColor: '#101317',
-    title: 'DSpatch',
+    // DSP-200: the installed version, discreetly; the page's own <title> must not replace it.
+    title: mainWindowTitle(app.getVersion()),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -2682,6 +2718,9 @@ function createWindow(): BrowserWindow {
   // No navigation and no additional windows. A second window is opened by the main
   // process on request (`openLoopEditorWindow`), never by renderer script.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.on('page-title-updated', (event) => {
+    event.preventDefault();
+  });
   windowZoom?.adopt(window, 'main');
   windowLayout?.trackWindow(window, () => 'main');
   if (placement?.maximized === true) {
