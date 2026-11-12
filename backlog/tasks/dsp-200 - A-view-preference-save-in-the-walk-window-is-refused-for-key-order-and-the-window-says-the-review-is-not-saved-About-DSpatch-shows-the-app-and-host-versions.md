@@ -7,7 +7,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 10:25'
-updated_date: '2026-11-12 13:58'
+updated_date: '2026-11-12 14:16'
 labels:
   - review
 dependencies: []
@@ -56,4 +56,6 @@ Verification on the working tree over 66c8447 (build identity a0bbfc5a42ddf372):
 Linux CI on 8162c2c: dock job (run 43204247463) with the prefs trial under xvfb-run, 15 of 15 (About left out on Linux); tests job (run 43204252986) green. The first CI run on d3fdece failed: the client boundary test did not list main/about.ts, and the trial's Open click for the pair did not take under Xvfb; both fixed in 8162c2c.
 
 Linux CI dock job on d53fe1d (run 43231468600): the Accept scope trial under xvfb-run 32 of 32 (151-159 gives 9 of 417 in the walk, the saved mark and the diff window, after reopening and after a restart; the earlier whole-file mark flagged and withdrawn); the preference trial 20 of 20 with About DSpatch found on the X display and Copy pressed through xdotool (copied: DSpatch <version> (<commit>) / Running host: <version> (<commit>)). Released in 0.1.23.
+
+Released in 0.1.23 (https://github.com/nizlas/DSpatch/releases/tag/v0.1.23, Linux-only pre-release, tag on c3bf906; package run 43232467442). Published trial (linux-verify run 43233453724): the published .deb, host package, manifest and SHA256SUMS in clean containers, all checks passed; the upgrade from v0.1.22 30 of 30: the new client met the 0.1.22 host a closed window left running, offered Restart host, replaced it with 0.1.23-c3bf9065308d, and the conversation, agent choice, project, own loop and a review were kept, also after a restart.
 <!-- SECTION:NOTES:END -->

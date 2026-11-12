@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 13:14'
-updated_date: '2026-11-12 13:58'
+updated_date: '2026-11-12 14:16'
 labels:
   - review
 dependencies: []
@@ -55,4 +55,6 @@ Real-window trial scripts/accept-scope-trial.mjs on Windows, 32 of 32 (docs/eval
 Linux CI tests job on 4f8c8c6 (run 43229679035): success, the review group included; review-context.test.ts passes there, as its Windows failure is a path separator in the test.
 
 Linux CI dock job on d53fe1d (run 43231468600): the Accept scope trial under xvfb-run 32 of 32 (151-159 gives 9 of 417 in the walk, the saved mark and the diff window, after reopening and after a restart; the earlier whole-file mark flagged and withdrawn); the preference trial 20 of 20 with About DSpatch found on the X display and Copy pressed through xdotool (copied: DSpatch <version> (<commit>) / Running host: <version> (<commit>)). Released in 0.1.23.
+
+Released in 0.1.23 (https://github.com/nizlas/DSpatch/releases/tag/v0.1.23, Linux-only pre-release, tag on c3bf906; package run 43232467442). Published trial (linux-verify run 43233453724): the published .deb, host package, manifest and SHA256SUMS in clean containers, all checks passed; the upgrade from v0.1.22 30 of 30: the new client met the 0.1.22 host a closed window left running, offered Restart host, replaced it with 0.1.23-c3bf9065308d, and the conversation, agent choice, project, own loop and a review were kept, also after a restart.
 <!-- SECTION:NOTES:END -->
