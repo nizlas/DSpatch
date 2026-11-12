@@ -91,6 +91,8 @@ test("the client loads none of the project's services and no provider SDK", () =
     'main/profile-guard.ts',
     'main/window-zoom.ts',
     'main/window-layout.ts',
+    // About DSpatch's text (DSP-200): the client's own menu.
+    'main/about.ts',
     'main/own-repository.ts',
     'main/probe-exit.ts',
     'main/review-ipc.ts',

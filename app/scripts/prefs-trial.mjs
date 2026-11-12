@@ -295,7 +295,12 @@ async function openPair(page) {
   await page.click('pair-commit-0');
   await page.until('both chosen', chosen(2));
   await page.click('pair-open');
-  await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+  // As in the walk trial: a click that does not take (seen under Xvfb) is given once more by the DOM.
+  const opened = await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 15_000).catch(() => false);
+  if (opened !== true) {
+    await page.ev(`${q('pair-open')}?.click()`);
+    await page.until('the review of the pair', `${q('pair-discussion')}!==null`, 60_000);
+  }
 }
 
 const preferencesFile = () => path.join(profile, 'reviews', 'preferences.json');
