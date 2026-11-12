@@ -1858,6 +1858,12 @@ export function AgentReviewResult({
           <div className={`rv-agent-verdict rv-agent-verdict-${view.standing} rv-agent-decision-${view.decision}`} data-ev="agent-review-summary">
             <p className="rv-agent-verdict-line" data-ev="agent-review-state">{view.stateLine}</p>
             <p data-ev="agent-review-coverage">{view.examinedLine}</p>
+            {/* DSP-203: a walk delegated before the mandate followed the walk's exact lines keeps its stored scope, said as such. */}
+            {job.scope?.kind === 'walk' && job.scope.basis === undefined && (
+              <p className="rv-pair-muted" data-ev="agent-review-older-scope">
+                Delegated before a walk&apos;s mandate followed its exact lines: its scope is the whole changes the walk passed, as recorded then.
+              </p>
+            )}
             <p data-ev="agent-review-remaining">{remaining === '' ? 'Nothing open from this review.' : remaining}</p>
             {view.agentSummary !== '' && <p className="rv-pair-muted">The agent says: {view.agentSummary}</p>}
             {onDecide !== undefined && (
@@ -2167,6 +2173,10 @@ function describeLine(status: LineStatus | undefined): string {
     parts[0] = `Reviewed through a delegation you accepted, by ${status.accepted[0].reviewer}`;
   } else if (strip === 'assessed' && status.awaiting[0]?.reviewer) {
     parts[0] = `Assessed acceptable by ${status.awaiting[0].reviewer}, awaiting your decision`;
+  } else if (strip !== 'agent' && strip !== 'assessed' && status.accepted.length > 0) {
+    parts.push(`also reviewed through a delegation you accepted, by ${status.accepted[0]?.reviewer || 'an agent'}`);
+  } else if (strip !== 'agent' && strip !== 'assessed' && status.awaiting.length > 0) {
+    parts.push(`also assessed acceptable by ${status.awaiting[0]?.reviewer || 'an agent'}, awaiting your decision`);
   } else if (strip !== 'agent' && strip !== 'assessed' && status.agent.length > 0) {
     parts.push(`also assessed by ${status.agent[0]?.reviewer || 'an agent'}`);
   }
@@ -2943,11 +2953,15 @@ function FileDiff({
     const key = lineKey({ side, path, line });
     const status = statuses.get(key);
     const kind = status === undefined ? 'none' : stripStatusOf(status);
+    // DSP-203: the person's decision stays the band; an agent's assessment of the same line, accepted
+    // or awaiting the person, is a thin edge of its own beside it, never in place of it.
+    const alsoAgent = status === undefined || status.decision === null ? null : status.accepted.length > 0 ? 'accepted' : status.awaiting.length > 0 ? 'awaiting' : null;
     const label = `${side === 'base' ? 'Removed' : 'Added'} line ${String(line)}: ${describeLine(status)}`;
     return (
       <td
-        className={`rv-pair-strip rv-pair-strip-${kind}${selected.has(key) ? ' rv-pair-strip-selected' : ''}`}
+        className={`rv-pair-strip rv-pair-strip-${kind}${alsoAgent === null ? '' : ` rv-pair-strip-also-${alsoAgent}`}${selected.has(key) ? ' rv-pair-strip-selected' : ''}`}
         data-strip={kind}
+        data-also-agent={alsoAgent ?? undefined}
         data-side={side}
         data-line={line}
         tabIndex={0}

@@ -483,6 +483,19 @@ export interface DelegationScope {
   /** How the scope reads to a person: "src/keep.ts lines 8–9", "walk W1 · The user cancels". */
   readonly label: string;
   readonly ranges: readonly LineRange[];
+  /**
+   * For a walk delegated by its exact changed lines (DSP-203): whether the mandate is the lines
+   * still without a decision when it started (`remaining`) or all of them (`all`). Absent on a
+   * walk delegated before, whose ranges are the whole changes its steps planned, kept as stored.
+   */
+  readonly basis?: DelegationBasis;
+}
+
+export type DelegationBasis = 'remaining' | 'all';
+
+/** Whether a stored or requested value is a delegation basis. */
+export function isDelegationBasis(value: unknown): value is DelegationBasis {
+  return value === 'remaining' || value === 'all';
 }
 
 /** Something the agent found, where it found it when it said. */
@@ -1186,7 +1199,12 @@ export function jobFrom(raw: unknown): AgentJob | null {
   const scopeRaw = raw['scope'];
   const scope: DelegationScope | null =
     isRecordObject(scopeRaw) && (scopeRaw['kind'] === 'lines' || scopeRaw['kind'] === 'file' || scopeRaw['kind'] === 'walk')
-      ? { kind: scopeRaw['kind'], label: typeof scopeRaw['label'] === 'string' ? scopeRaw['label'] : '', ranges: rangesFrom(scopeRaw['ranges']) }
+      ? {
+          kind: scopeRaw['kind'],
+          label: typeof scopeRaw['label'] === 'string' ? scopeRaw['label'] : '',
+          ranges: rangesFrom(scopeRaw['ranges']),
+          ...(scopeRaw['kind'] === 'walk' && isDelegationBasis(scopeRaw['basis']) ? { basis: scopeRaw['basis'] } : {}),
+        }
       : null;
   const resultRaw = raw['result'];
   const result: DelegationResult | null = isRecordObject(resultRaw)

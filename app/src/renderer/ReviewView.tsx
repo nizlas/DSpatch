@@ -24,7 +24,9 @@ import {
   changedLineKey,
   currentLineDecisions,
   heldOf,
-  hunkLocations,
+  lineCount,
+  undecidedLines,
+  walkChangedLines,
   markedChangedLines,
   placeDecisionView,
   scopeLocations,
@@ -79,8 +81,8 @@ import {
 import { usePresentationProfile, useStepExplanations } from './presentation-choice';
 import type { DeepenRequest, DiscussionMessage, DiscussionRequest, SelectionQuote } from '../shared/review-discussion';
 import { quoteRanges, readQuote } from './walk-selection';
-import { delegationDecisionOf, generationStale, isPairError, type AgentJob, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
-import { lineDecisionsFromPair, pairHolds, pairOpFor, pairRanges } from '../shared/review-pair-walk';
+import { delegationDecisionOf, generationStale, isPairError, type AgentJob, type DelegationBasis, type DelegationScope, type LineRange, type PairFile, type PairRecord, type PairWalk, type PanelFollow, type PanelState, type ReviewPairBridge, type ReviewPanelBridge } from '../shared/review-pair';
+import { lineDecisionsFromPair, pairAgentBeside, pairHolds, pairOpFor, pairRanges } from '../shared/review-pair-walk';
 import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
 import { PairKeyContext, ReferenceLinksContext, type ReferenceLinks } from './DiscussionAnswer';
 import { WalkContextPlaces } from './WalkContextPlaces';
@@ -695,6 +697,7 @@ function OpenReview({
       return decision === undefined ? null : heldOf(decision, bundle.files);
     };
   }, [pair, state.decisions, bundle.files]);
+  const agentBeside = useMemo((): AgentBeside => (pair === null ? () => null : pairAgentBeside(pair.record)), [pair]);
   const [diffNote, setDiffNote] = useState('');
 
   /*
@@ -1825,15 +1828,22 @@ function OpenReview({
     }
   });
 
-  // The changed lines the current walk covers, for delegating the walk (DSP-152).
-  const walkScope = useMemo(() => {
-    if (current === null) {
-      return null;
-    }
-    const stepIds = new Set(current.walk.steps.map((entry) => entry.id));
-    const ranges = coverage.hunks.filter((entry) => entry.plannedBy.some((id) => stepIds.has(id))).flatMap((entry) => pairRanges(hunkLocations(entry.hunk)));
-    return ranges.length === 0 ? null : { kind: 'walk' as const, label: `walk ${current.walk.id} · ${pick(current.walk.title, lang)}`, ranges };
-  }, [current, coverage, lang]);
+  /*
+   * DSP-203: what delegating the walk mandates — the union of its places' exact changed lines,
+   * the lines their Accept decides about (DSP-201), never the hunks around them; and of those,
+   * the lines still without a decision of the person's or an accepted delegated assessment.
+   * The agent may read far more as context; that never widens the mandate.
+   */
+  const walkLines = useMemo(() => (current === null ? [] : walkChangedLines(current.walk, bundle.files)), [current, bundle.files]);
+  const walkRemaining = useMemo(() => undecidedLines(walkLines, holds), [walkLines, holds]);
+  const [walkBasis, setWalkBasis] = useState<DelegationBasis | null>(null);
+  const walkScopeOf = (basis: DelegationBasis | null): DelegationScope | null => {
+    const locations = basis === 'all' ? walkLines : basis === 'remaining' ? walkRemaining : [];
+    return current === null || locations.length === 0
+      ? null
+      : { kind: 'walk', label: `walk ${current.walk.id} · ${pick(current.walk.title, lang)} · ${basis === 'all' ? 'all' : 'remaining'} lines`, ranges: pairRanges(locations), basis: basis === 'all' ? 'all' : 'remaining' };
+  };
+  const walkScope = walkScopeOf(walkBasis);
   const walkJob =
     current === null || pair === null
       ? null
@@ -2205,6 +2215,7 @@ function OpenReview({
                   diffFiles={bundle.files}
                   files={files}
                   holds={holds}
+                  agentBeside={agentBeside}
                   onDecide={decide}
                   revisionText={revisionText}
                   words={words}
@@ -2216,7 +2227,7 @@ function OpenReview({
                   of Step, the report is in one place for the whole walk, and an arriving result
                   changes no tab, focus or scroll position and opens nothing.
                 */}
-                {pair !== null && pairBridge !== undefined && current !== null && away === null && walkScope !== null && (
+                {pair !== null && pairBridge !== undefined && current !== null && away === null && walkLines.length > 0 && (
                   <div className="rv-walk-delegate" data-ev="walk-delegation">
                     {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
                       <AgentReviewResult
@@ -2240,7 +2251,36 @@ function OpenReview({
                         }}
                       />
                     )}
-                    {delegatingWalk ? (
+                    {delegatingWalk && (
+                      // DSP-203: the two mandates, each with its count, before anything starts; remaining is the default.
+                      <fieldset className="rv-walk-basis" data-ev="walk-delegate-basis">
+                        <label>
+                          <input
+                            type="radio"
+                            name="walk-basis"
+                            data-ev="walk-basis-remaining"
+                            data-lines={lineCount(walkRemaining)}
+                            checked={walkBasis === 'remaining'}
+                            disabled={walkRemaining.length === 0}
+                            onChange={() => setWalkBasis('remaining')}
+                          />{' '}
+                          Review remaining lines in this walk ({lineCount(walkRemaining)} of {lineCount(walkLines)} changed lines)
+                        </label>
+                        <label>
+                          <input type="radio" name="walk-basis" data-ev="walk-basis-all" data-lines={lineCount(walkLines)} checked={walkBasis === 'all'} onChange={() => setWalkBasis('all')} />{' '}
+                          Review all lines in this walk ({lineCount(walkLines)} changed lines)
+                        </label>
+                        <p className="rv-sub" data-ev="walk-basis-note">
+                          {walkRemaining.length === 0
+                            ? 'Every changed line of this walk already has your decision or an assessment you accepted. Reviewing all lines asks for a complementary review.'
+                            : walkBasis === 'all'
+                              ? 'A complementary review: your decisions stay as they are, and the agent\'s assessment is kept beside them.'
+                              : 'The lines you have not decided, and no assessment you accepted covers.'}{' '}
+                          The agent may read whole files, callers and tests; only these lines are its mandate.
+                        </p>
+                      </fieldset>
+                    )}
+                    {delegatingWalk && walkScope !== null ? (
                       <AgentPicker
                         pairKey={pair.key}
                         action="Delegate this walk"
@@ -2260,10 +2300,22 @@ function OpenReview({
                             });
                         }}
                       />
+                    ) : delegatingWalk ? (
+                      <button type="button" className="rv-quiet" onClick={() => setDelegatingWalk(false)}>
+                        Cancel
+                      </button>
                     ) : (
                       walkJob?.state !== 'running' &&
                       walkJob?.state !== 'cancelling' && (
-                        <button type="button" className="rv-quiet" data-ev="walk-delegate" onClick={() => setDelegatingWalk(true)}>
+                        <button
+                          type="button"
+                          className="rv-quiet"
+                          data-ev="walk-delegate"
+                          onClick={() => {
+                            setWalkBasis(walkRemaining.length > 0 ? 'remaining' : null);
+                            setDelegatingWalk(true);
+                          }}
+                        >
                           Delegate this walk to the agent…
                         </button>
                       )
@@ -3972,6 +4024,9 @@ function StepPanel({
   );
 }
 
+/** An agent's assessment beside the person's decision on a line (DSP-203), or `null`. */
+type AgentBeside = (path: string, side: RevisionSide, line: number) => 'accepted' | 'awaiting' | null;
+
 /** A decision a walk window records: exactly these lines, and where it was made (DSP-201). */
 interface WalkDecision {
   readonly outcome: ReviewDecision['outcome'];
@@ -4012,6 +4067,7 @@ function PlaceDecisions({
   diffFiles,
   files,
   holds,
+  agentBeside,
   onDecide,
   revisionText,
   words,
@@ -4021,6 +4077,7 @@ function PlaceDecisions({
   readonly diffFiles: readonly DiffFile[];
   readonly files: Files;
   readonly holds: HoldsAt;
+  readonly agentBeside: AgentBeside;
   readonly onDecide: (decision: WalkDecision) => void;
   readonly revisionText: string;
   readonly words: ReviewWords;
@@ -4039,6 +4096,7 @@ function PlaceDecisions({
           diffFile={diffFiles.find((file) => file.path === entry.focus.path) ?? null}
           files={files}
           holds={holds}
+          agentBeside={agentBeside}
           onDecide={onDecide}
           revisionText={revisionText}
           words={words}
@@ -4054,6 +4112,7 @@ function PlaceDecision({
   diffFile,
   files,
   holds,
+  agentBeside,
   onDecide,
   revisionText,
   words,
@@ -4063,6 +4122,7 @@ function PlaceDecision({
   readonly diffFile: DiffFile | null;
   readonly files: Files;
   readonly holds: HoldsAt;
+  readonly agentBeside: AgentBeside;
   readonly onDecide: (decision: WalkDecision) => void;
   readonly revisionText: string;
   readonly words: ReviewWords;
@@ -4096,6 +4156,10 @@ function PlaceDecision({
   const status = decided === 0 ? words.decisions.remaining : only !== null ? heldWord(only, words) : words.decisions.partly(view.accepted, view.exempted, marked.lines);
   const byPerson = view.held.some((entry) => entry.decision.by.kind === 'human');
   const earlier = view.held.filter((entry) => entry.decision.scopeUncertain && entry.beyond > 0);
+  // DSP-203: an agent's assessment of lines decided here, beside the decision and never in its place.
+  const beside = marked.ranges.flatMap((range) => Array.from({ length: range.end - range.start + 1 }, (_, offset) => agentBeside(marked.path, range.side, range.start + offset)));
+  const besideAccepted = beside.filter((entry) => entry === 'accepted').length;
+  const besideAwaiting = beside.filter((entry) => entry === 'awaiting').length;
   return (
     <div
       className="rv-decision"
@@ -4112,6 +4176,13 @@ function PlaceDecision({
           {status}
         </strong>
       </div>
+      {besideAccepted + besideAwaiting > 0 && (
+        <div className="rv-sub" data-ev="place-decision-agent" data-accepted={besideAccepted} data-awaiting={besideAwaiting}>
+          {besideAwaiting > 0
+            ? `The agent also assessed ${String(besideAwaiting)} of these lines acceptable, awaiting your decision; your decision stands.`
+            : `The agent also reviewed ${String(besideAccepted)} of these lines in a delegation you accepted; your decision stands.`}
+        </div>
+      )}
       {earlier.map((entry) => {
         const still = stillHeld(entry.decision, holds);
         return (

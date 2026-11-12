@@ -1710,6 +1710,88 @@ export function markedChangedLines(
   return { path: focus.path, ranges, lines: base.length + target.length };
 }
 
+/**
+ * The rows of a file's diff without its text: the kinds and line numbers {@link buildDiffRows}
+ * gives, built from the hunks alone. Which rows a reference covers depends on nothing else, so
+ * {@link markedChangedLines} over these rows is the same as over the file's own. Unchanged lines
+ * run on past the last hunk at least to `needBase` and `needTarget`, the furthest lines asked about.
+ */
+export function diffSkeletonRows(hunks: readonly DiffHunk[], needBase: number, needTarget: number): DiffRow[] {
+  let base = 1;
+  let target = 1;
+  for (const hunk of hunks) {
+    base = (hunk.baseCount === 0 ? hunk.baseStart + 1 : hunk.baseStart) + hunk.baseCount;
+    target = (hunk.targetCount === 0 ? hunk.targetStart + 1 : hunk.targetStart) + hunk.targetCount;
+  }
+  const after = Math.max(needBase - base + 2, needTarget - target + 2, 1);
+  return buildDiffRows(new Array<string>(base - 1 + after).fill(''), new Array<string>(target - 1 + after).fill(''), hunks);
+}
+
+/**
+ * The changed lines a walk's places cover (DSP-203): the union of every place's
+ * {@link markedChangedLines}, the lines its Accept decides about, merged per file and side so a
+ * line two places share counts once. Context places, references, callers and other walks are
+ * not among them; a place in a file the diff does not change covers nothing.
+ */
+export function walkChangedLines(walk: Pick<Walk, 'steps'>, files: readonly DiffFile[]): CodeLocation[] {
+  const byFile = new Map(files.map((file) => [file.path, file] as const));
+  const lines = new Map<string, Set<number>>();
+  for (const step of walk.steps) {
+    for (const place of step.places) {
+      const file = byFile.get(place.focus.path);
+      if (file === undefined || file.binary) {
+        continue;
+      }
+      const rows = diffSkeletonRows(file.hunks, place.focus.side === 'base' ? place.focus.end : 0, place.focus.side === 'target' ? place.focus.end : 0);
+      for (const range of markedChangedLines(rows, place.focus).ranges) {
+        const key = `${range.side}\0${place.focus.path}`;
+        const set = lines.get(key) ?? new Set<number>();
+        for (let line = range.start; line <= range.end; line += 1) {
+          set.add(line);
+        }
+        lines.set(key, set);
+      }
+    }
+  }
+  const out: CodeLocation[] = [];
+  for (const [key, set] of [...lines].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const [side, path] = key.split('\0') as [RevisionSide, string];
+    for (const line of [...set].sort((a, b) => a - b)) {
+      const last = out.at(-1);
+      if (last !== undefined && last.path === path && last.side === side && last.end + 1 === line) {
+        out[out.length - 1] = { ...last, end: line };
+      } else {
+        out.push({ path, side, start: line, end: line });
+      }
+    }
+  }
+  return out;
+}
+
+/** The lines of `locations` on which nothing holds: no decision of the person's and no accepted delegated assessment. */
+export function undecidedLines(locations: readonly CodeLocation[], holds: HoldsAt): CodeLocation[] {
+  const out: CodeLocation[] = [];
+  for (const location of locations) {
+    for (let line = location.start; line <= location.end; line += 1) {
+      if (holds(location.path, location.side, line) !== null) {
+        continue;
+      }
+      const last = out.at(-1);
+      if (last !== undefined && last.path === location.path && last.side === location.side && last.end + 1 === line) {
+        out[out.length - 1] = { ...last, end: line };
+      } else {
+        out.push({ path: location.path, side: location.side, start: line, end: line });
+      }
+    }
+  }
+  return out;
+}
+
+/** How many lines a set of ranges holds. */
+export function lineCount(locations: readonly { readonly start: number; readonly end: number }[]): number {
+  return locations.reduce((total, location) => total + location.end - location.start + 1, 0);
+}
+
 /** A decision as it holds for a line, whichever record keeps it (the walk's own or the pair's). */
 export interface HeldDecision {
   readonly id: string;

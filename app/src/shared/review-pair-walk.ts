@@ -109,6 +109,21 @@ export function lineDecisionsFromPair(files: readonly DiffFile[], record: Pick<P
   });
 }
 
+/**
+ * An agent's assessment of a line the person has decided about (DSP-203): `accepted` when the
+ * person accepted the delegated review's assessment, `awaiting` while it waits for them. It is
+ * shown beside the person's decision and never replaces it; `null` where there is no such pair.
+ */
+export function pairAgentBeside(record: Pick<PairRecord, 'marks' | 'agentReviews'>): (path: string, side: 'base' | 'target', line: number) => 'accepted' | 'awaiting' | null {
+  return (path, side, line) => {
+    const status = lineStatusOf({ side, path, line }, record);
+    if (status.decision === null) {
+      return null;
+    }
+    return status.accepted.length > 0 ? 'accepted' : status.awaiting.length > 0 ? 'awaiting' : null;
+  };
+}
+
 /** A walk's decision as a decision over lines in the pair record. */
 export function pairOpFor(outcome: ReviewDecision['outcome']): 'manual' | 'exempt' | 'clear' {
   return outcome === 'accepted' ? 'manual' : outcome === 'exempted' ? 'exempt' : 'clear';

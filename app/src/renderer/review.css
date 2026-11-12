@@ -680,6 +680,18 @@
   margin-top: 0.3rem;
 }
 
+/* DSP-203: the two mandates for delegating a walk, one under the other. */
+.rv-walk-basis {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
 /* DSP-201: an earlier decision over more than the marking, whose intended scope is not known. */
 .rv-decision-earlier {
   border-left: 3px solid var(--unknown);
@@ -2500,6 +2512,16 @@
 .rv-pair-table td.rv-pair-strip-assessed[role="button"] {
   background: repeating-linear-gradient(to bottom, var(--rv-mark-agent) 0 2px, transparent 2px 5px);
   background-clip: content-box;
+}
+
+/* DSP-203: the person's decision is the band; an agent's assessment of the same line is the thin
+   left edge, solid when the person accepted it, dotted while it awaits them. */
+.rv-pair-table td.rv-pair-strip-also-accepted[role="button"] {
+  border-left: 2px solid var(--rv-mark-agent);
+}
+
+.rv-pair-table td.rv-pair-strip-also-awaiting[role="button"] {
+  border-left: 2px dotted var(--rv-mark-agent);
 }
 
 .rv-pair-progress-assessed {

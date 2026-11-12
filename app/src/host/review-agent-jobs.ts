@@ -86,6 +86,7 @@ import {
   openerChoiceFrom,
   changedLinesOf,
   generationOfJob,
+  isDelegationBasis,
   isPairError,
   lineKey,
   type AgentInvestigation,
@@ -348,7 +349,11 @@ function scopeFrom(raw: unknown): DelegationScope | null {
   if (ranges.length === 0) {
     return null;
   }
-  return { kind, label: typeof value['label'] === 'string' ? value['label'].slice(0, 200) : '', ranges };
+  // DSP-203: a walk's basis, when it names one; anything else is refused rather than dropped.
+  if (value['basis'] !== undefined && (kind !== 'walk' || !isDelegationBasis(value['basis']))) {
+    return null;
+  }
+  return { kind, label: typeof value['label'] === 'string' ? value['label'].slice(0, 200) : '', ranges, ...(isDelegationBasis(value['basis']) ? { basis: value['basis'] } : {}) };
 }
 
 export class ReviewAgentJobs {
