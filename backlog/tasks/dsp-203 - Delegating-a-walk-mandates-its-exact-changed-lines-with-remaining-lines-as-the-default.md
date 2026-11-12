@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 15:21'
-updated_date: '2026-11-12 15:39'
+updated_date: '2026-11-12 21:15'
 labels:
   - review
 dependencies: []
@@ -39,4 +39,6 @@ Root cause: walkScope in ReviewView built the mandate from every hunk a step of 
 Fix: walkChangedLines unions the places' markedChangedLines (the Accept lines, DSP-201/202) over diffSkeletonRows; undecidedLines gives the remaining lines (no person decision, no accepted assessment). Delegating offers Review remaining lines (default) and Review all lines with counts; no empty job. DelegationScope.basis stored and validated (host scopeFrom, jobFrom). Diff strip: the person's band stays, a thin agent edge beside it (dotted awaiting, solid accepted); the walk says the decision stands. Older walk jobs keep their whole-change scope, said in the report. VISION 3.4 and REVIEW_COVERAGE updated.
 
 Verification: walk-delegation-scope.test.ts 8 (417 -> 9; whole-file answer clipped to 9; overlap union; sides; remaining; all with half decided, accept and withdraw; decisions during a job; older jobs and saving). 139 related tests pass; Linux CI tests run 43248650068 green. walk-delegation-trial.mjs 23/23 on Windows and on Linux under Xvfb (dock run 43248641922, with Accept 32/32, marking 37/37, prefs/About 20/20, dock 54/54). Evidence docs/evaluations/dsp-203. Not established: real agent review quality (simulated); the edge's legibility on Niclas's screen.
+
+Released in 0.1.24 (https://github.com/nizlas/DSpatch/releases/tag/v0.1.24, Linux-only pre-release, tag on cc7c72c; package run 43293936160). Published trial (linux-verify run 43295145703): the published .deb, host package, manifest and SHA256SUMS in clean containers, 14 of 14; the upgrade from v0.1.23 27 of 27: the new client met the 0.1.23 host a closed window left running, offered Restart host, replaced it with 0.1.24-cc7c72c68e6f, and the conversation, agent choice, project, own loop, zoom and a review with a delegated result were kept, also after a restart.
 <!-- SECTION:NOTES:END -->

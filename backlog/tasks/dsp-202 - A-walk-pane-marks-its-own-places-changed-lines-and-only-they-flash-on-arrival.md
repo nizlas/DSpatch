@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 14:55'
-updated_date: '2026-11-12 20:48'
+updated_date: '2026-11-12 21:15'
 labels:
   - review
 dependencies: []
@@ -37,4 +37,6 @@ Root causes: ReviewTimeline classed every row of the reference (inShown) for the
 
 Verification: walk-decision-scope.test.ts 8 (A-D at model level); 106 targeted tests pass; typecheck green. walk-marking-trial.mjs 37/37 on Windows and on Linux under Xvfb (CI run 43244158263), screenshots in docs/evaluations/dsp-202/linux-xvfb: current and next pane, the flash caught at 150 ms on worker.js 6-8 only, neutral context, luminance own 0.063/0.059, other 0.026/0.023, plain 0.006, text contrast >= 7.6. Accept trial 32/32 (Windows, Linux), prefs/About 20/20 (Linux). Not run: thread-trial.mjs (expectations updated to the new rule). Niclas's own visual reading on his screen remains.
 Thread trial run before release 0.1.24: scripts/thread-trial.mjs in linux-verify's dock job (run 43290904053, c2139e6), 110 of 110 under Xvfb, including one active mark per moment, the flash in the active pane only and settling, and the first occurrence unmarked when the same code returns. Two stale steps since DSP-193 were fixed in the trial only: the keep-recommendation thread is drawn folded and is opened before Accept, and the walk's threads are read in Step's Review section. Same run: walk marking 37/37, walk delegation 23/23, Accept scope 32/32, prefs/About 20/20, dock passed.
+
+Released in 0.1.24 (https://github.com/nizlas/DSpatch/releases/tag/v0.1.24, Linux-only pre-release, tag on cc7c72c; package run 43293936160). Published trial (linux-verify run 43295145703): the published .deb, host package, manifest and SHA256SUMS in clean containers, 14 of 14; the upgrade from v0.1.23 27 of 27: the new client met the 0.1.23 host a closed window left running, offered Restart host, replaced it with 0.1.24-cc7c72c68e6f, and the conversation, agent choice, project, own loop, zoom and a review with a delegated result were kept, also after a restart.
 <!-- SECTION:NOTES:END -->
