@@ -429,7 +429,7 @@ function xIcon(xid) {
     const v = first.pixels[y * first.w + x] >>> 0;
     return [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255];
   };
-  return { classes, sizes, argb, size: first === null ? 0 : first.w };
+  return { classes, sizes, argb, size: first === null ? 0 : first.w, raw: raw.slice(0, 160) };
 }
 
 const SAMPLES = [[128, 128], [60, 128], [128, 190], [200, 70], [8, 128], [2, 2]];
@@ -451,7 +451,12 @@ const close = (a, b) => a !== null && b !== null && a.every((value, index) => Ma
 
 async function checkWindow(what, xid, expected, wmClassWanted) {
   const icon = xIcon(xid);
-  note(`${what}: WM_CLASS and icon sizes`, JSON.stringify({ classes: icon.classes, sizes: icon.sizes }));
+  note(`${what}: WM_CLASS and icon sizes`, JSON.stringify({ xid, classes: icon.classes, sizes: icon.sizes, raw: icon.raw }));
+  if (icon.size === 0) {
+    // Where the icon is, if not on this window: the properties here, and every window of the class.
+    note(`${what}: the window's properties`, run('sh', ['-c', `xprop -id ${String(xid)} | cut -c1-60 | head -40`], true));
+    note(`${what}: windows of the class`, run('sh', ['-c', `for w in $(xdotool search --class ${wmClassWanted}); do printf '%s ' $w; xprop -id $w WM_CLASS _NET_WM_ICON 2>&1 | cut -c1-70 | head -2 | tr '\\n' ' '; echo; done`], true));
+  }
   check(`${what}: WM_CLASS is DSpatch's`, icon.classes[1] === wmClassWanted, JSON.stringify(icon.classes));
   check(`${what}: the window carries a 256-pixel icon (_NET_WM_ICON)`, icon.size === 256, JSON.stringify(icon.sizes));
   const seen = SAMPLES.map(([x, y]) => icon.argb(x, y));
@@ -544,6 +549,7 @@ async function main() {
   const main = await launch('icons');
   const expected = await expectedSamples();
   check('the client reads its own 256-pixel icon', expected.size.width === 256 && expected.size.height === 256, JSON.stringify(expected.size));
+  note('the client\'s windowIcon()', await client.main.ev(`(() => { const { app } = process.mainModule.require('electron'); const path = process.mainModule.require('path'); const { windowIcon } = process.mainModule.require(path.join(app.getAppPath(), 'dist', 'main', 'app-icon.js')); const o = windowIcon(); return JSON.stringify({ platform: process.platform, has: o.icon !== undefined, size: o.icon?.getSize() ?? null }); })()`).catch((error) => String(error)));
   await main.until('the start page icon drawn', `(() => { const i = document.querySelector('[data-ev="start-icon"]'); return i !== null && i.complete && i.naturalWidth === 128; })()`, 30_000);
   const startIcon = await main.ev(`JSON.stringify((() => { const b = document.querySelector('[data-ev="start-icon"]').getBoundingClientRect(); const w = document.querySelector('.wordmark').getBoundingClientRect(); return { icon: [Math.round(b.width), Math.round(b.height)], centred: Math.abs((b.left + b.width / 2) - (w.left + w.width / 2)) < 2, above: b.bottom <= w.top + 4 }; })())`);
   check('the start page shows the icon small, centred above the wordmark', /"icon":\[56,56\]/.test(startIcon) && /"centred":true/.test(startIcon) && /"above":true/.test(startIcon), startIcon);
