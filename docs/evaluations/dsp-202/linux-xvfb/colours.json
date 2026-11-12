@@ -1,0 +1,20 @@
+{
+  "plain": "rgb(16, 19, 23)",
+  "ownNew": "color(srgb 0.16 0.308235 0.220392)",
+  "ownOld": "color(srgb 0.384314 0.22549 0.252941)",
+  "weakNew": "color(srgb 0.111373 0.191373 0.155294)",
+  "weakOld": "color(srgb 0.217098 0.14698 0.168314)",
+  "luminance": {
+    "plain": 0.006,
+    "ownNew": 0.063,
+    "ownOld": 0.059,
+    "weakNew": 0.026,
+    "weakOld": 0.023
+  },
+  "textContrast": {
+    "ownNew": 7.6,
+    "ownOld": 7.9,
+    "weakNew": 11.4,
+    "weakOld": 11.7
+  }
+}

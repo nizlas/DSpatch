@@ -1,0 +1,230 @@
+{
+  "platform": "linux",
+  "profile": "/tmp/dspatch-marking-profile-7mtoiJ",
+  "project": "/tmp/dspatch-marking-project-8dRqrI",
+  "finishedAt": "2026-11-12T15:12:08.772Z",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the app is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the review of the pair",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "no row is still flashing once the first place has settled",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "A: both replaced if lines are light red",
+      "ok": true,
+      "detail": "[\"own-old\",\"own-old\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "A: the new if line is light green",
+      "ok": true,
+      "detail": "[\"own-new\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "A: the unchanged block in the reference is plain, no grey plate",
+      "ok": true,
+      "detail": "[\"plain\",\"plain\",\"plain\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "A: the unchanged rows inside and outside the reference are drawn alike",
+      "ok": true,
+      "detail": "rgb(16, 19, 23) vs [\"rgb(16, 19, 23)\",\"rgb(16, 19, 23)\",\"rgb(16, 19, 23)\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "A: only the changed rows carry the amber edge",
+      "ok": true,
+      "detail": "[\"base:2\",\"base:3\",\"target:2\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "D: the note removed outside the place is a weaker red, the constant added a weaker green",
+      "ok": true,
+      "detail": "[\"old\"] [\"new\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "B: the next pane is drawn while the first place is active",
+      "ok": true,
+      "detail": "14 rows"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "B: the next place's function is already light green in its pane",
+      "ok": true,
+      "detail": "[[1,[\"own-new\",\"own-new\",\"own-new\"]],[2,[\"new\",\"new\",\"new\"]]]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "B: the added lines around it are a weaker green there",
+      "ok": true,
+      "detail": "[\"new\",\"new\",\"new\"]"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "the colours as drawn",
+      "ok": true,
+      "detail": "{\"plain\":\"rgb(16, 19, 23)\",\"ownNew\":\"color(srgb 0.16 0.308235 0.220392)\",\"ownOld\":\"color(srgb 0.384314 0.22549 0.252941)\",\"weakNew\":\"color(srgb 0.111373 0.191373 0.155294)\",\"weakOld\":\"color(srgb 0.217098 0.14698 0.168314)\",\"luminance\":{\"plain\":0.006,\"ownNew\":0.063,\"ownOld\":0.059,\"weakNew\":0.026,\"weakOld\":0.023},\"textContrast\":{\"ownNew\":7.6,\"ownOld\":7.9,\"weakNew\":11.4,\"weakOld\":11.7}}"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "light green and light red are of comparable lightness",
+      "ok": true,
+      "detail": "{\"plain\":0.006,\"ownNew\":0.063,\"ownOld\":0.059,\"weakNew\":0.026,\"weakOld\":0.023}"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "the weaker green and red stand clearly apart from unchanged code",
+      "ok": true,
+      "detail": "{\"plain\":0.006,\"ownNew\":0.063,\"ownOld\":0.059,\"weakNew\":0.026,\"weakOld\":0.023}"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "the place's own rows are clearly lighter than the weaker ones",
+      "ok": true,
+      "detail": "{\"plain\":0.006,\"ownNew\":0.063,\"ownOld\":0.059,\"weakNew\":0.026,\"weakOld\":0.023}"
+    },
+    {
+      "stage": "A and D: the first place, with the next pane beside it",
+      "what": "the code text keeps a contrast of at least 4.5:1 on every change colour",
+      "ok": true,
+      "detail": "{\"ownNew\":7.6,\"ownOld\":7.9,\"weakNew\":11.4,\"weakOld\":11.7}"
+    },
+    {
+      "stage": "B: arriving at the next place",
+      "what": "the flash, 150 ms after arriving",
+      "ok": true,
+      "detail": "[[\"1\",\"src/worker.js\",\"target\",6],[\"1\",\"src/worker.js\",\"target\",7],[\"1\",\"src/worker.js\",\"target\",8]] oklab(0.565387 0.00977775 0.101915)"
+    },
+    {
+      "stage": "B: arriving at the next place",
+      "what": "only the arriving place's changed rows flash: worker.js 6–8",
+      "ok": true,
+      "detail": "[[\"1\",\"src/worker.js\",\"target\",6],[\"1\",\"src/worker.js\",\"target\",7],[\"1\",\"src/worker.js\",\"target\",8]]"
+    },
+    {
+      "stage": "B: arriving at the next place",
+      "what": "the flash is gold while it lasts",
+      "ok": true,
+      "detail": "oklab(0.565387 0.00977775 0.101915)"
+    },
+    {
+      "stage": "B: arriving at the next place",
+      "what": "after the flash the function settles into light green",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "B: arriving at the next place",
+      "what": "the previous pane keeps its own place light red and green",
+      "ok": true,
+      "detail": "[[\"own-old\",\"own-old\"],[\"own-new\"]]"
+    },
+    {
+      "stage": "a re-render does not flash again",
+      "what": "wrapping the lines and back starts no flash",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "the active place decides about its 3 lines",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:6-8\",\"lines\":3,\"accepted\":0,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 6–8 in worker.js (3 changed lines).\\nNo decision\\nAccept new lines 6–8 in worker.js…\\nExempt new lines 6–8 in worker.js…\"}]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "arriving at the second place flashes its one line only",
+      "ok": true,
+      "detail": "[[\"2\",\"src/worker.js\",\"target\",10]]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "the panes",
+      "ok": true,
+      "detail": "first 0, third 2"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "the second place decides about its own line",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:10-10\",\"lines\":1,\"accepted\":0,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 10 in worker.js (1 changed line).\\nNo decision\\nAccept new lines 10 in worker.js…\\nExempt new lines 10 in worker.js…\"}]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "worker.js per pane, lines 6, 7, 8 and 10",
+      "ok": true,
+      "detail": "[[1,[\"own-new\",\"own-new\",\"own-new\",\"new\"]],[2,[\"new\",\"new\",\"new\",\"own-new\"]]]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "C: the second place's pane marks line 10 only, the first place's lines weaker",
+      "ok": true,
+      "detail": "[[1,[\"own-new\",\"own-new\",\"own-new\",\"new\"]],[2,[\"new\",\"new\",\"new\",\"own-new\"]]]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "C: the first place's pane still marks 6–8 only, line 10 weaker",
+      "ok": true,
+      "detail": "[[1,[\"own-new\",\"own-new\",\"own-new\",\"new\"]],[2,[\"new\",\"new\",\"new\",\"own-new\"]]]"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "navigating decided nothing and counted nothing",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "stage": "C: the second place in the same hunk",
+      "what": "the diff window has no line marked by navigation",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "Whole file changes no scope",
+      "what": "with the whole file, the second place still marks and decides about line 10 only",
+      "ok": true,
+      "detail": "[\"target:10-10\",[\"new\",\"own-new\"]]"
+    },
+    {
+      "stage": "Whole file changes no scope",
+      "what": "and nothing flashed for it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "Accept at a place",
+      "what": "the confirmation names exactly new lines 10 in worker.js",
+      "ok": true,
+      "detail": "Accept: Applies to new lines 10 in worker.js, in the reviewed version (28cda2c→fd70bb9), as your own decision. Acceptance covers only these lines in this version and is no guarantee that the code is correct."
+    },
+    {
+      "stage": "Accept at a place",
+      "what": "Accept at the second place reviews exactly worker.js line 10 in the diff window",
+      "ok": true,
+      "detail": "[10]"
+    },
+    {
+      "stage": "cleanup",
+      "what": "a standalone host of this trial ended",
+      "ok": true,
+      "detail": "5005"
+    }
+  ]
+}
