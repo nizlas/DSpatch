@@ -1,0 +1,200 @@
+{
+  "platform": "win32",
+  "profile": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-accept-profile-2mRnUc",
+  "project": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-accept-project-6gBNAA",
+  "finishedAt": "2026-11-12T13:36:43.592Z",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the app is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the review of the pair",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the review of the pair",
+      "what": "the review",
+      "ok": true,
+      "detail": "r-68b77b4a100760449cefe27e"
+    },
+    {
+      "stage": "the walk marks 151–159",
+      "what": "the walk marks exactly lines 151–159 for the first place",
+      "ok": true,
+      "detail": "[151,152,153,154,155,156,157,158,159]"
+    },
+    {
+      "stage": "the walk marks 151–159",
+      "what": "the Review section decides about exactly the marked lines",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:151-159\",\"lines\":9,\"accepted\":0,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 151–159 in big.js (9 changed lines).\\nNo decision\\nAccept new lines 151–159 in big.js…\\nExempt new lines 151–159 in big.js…\"}]"
+    },
+    {
+      "stage": "the walk marks 151–159",
+      "what": "the Accept button names lines 151–159",
+      "ok": true,
+      "detail": "Marked here: new lines 151–159 in big.js (9 changed lines).\nNo decision\nAccept new lines 151–159 in big.js…\nExempt new lines 151–159 in big.js…"
+    },
+    {
+      "stage": "the whole file shown around the marking",
+      "what": "rows drawn at the place",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "stage": "the whole file shown around the marking",
+      "what": "rows drawn with the whole file",
+      "ok": true,
+      "detail": "184"
+    },
+    {
+      "stage": "the whole file shown around the marking",
+      "what": "the marking is still exactly 151–159",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the whole file shown around the marking",
+      "what": "Accept still names exactly 151–159",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:151-159\",\"lines\":9,\"accepted\":0,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 151–159 in big.js (9 changed lines).\\nNo decision\\nAccept new lines 151–159 in big.js…\\nExempt new lines 151–159 in big.js…\"}]"
+    },
+    {
+      "stage": "Accept at the first place",
+      "what": "the confirmation names exactly new lines 151–159 in big.js",
+      "ok": true,
+      "detail": "Accept: Applies to new lines 151–159 in big.js, in the reviewed version (ed1fefc→0b0c24b), as your own decision. Acceptance covers only these lines in this version and is no guarantee that the code is correct."
+    },
+    {
+      "stage": "Accept at the first place",
+      "what": "one mark was saved, over exactly target lines 151–159, said as made at the walk place",
+      "ok": true,
+      "detail": "[{\"id\":\"83ac9705-d4f1-4e7d-9da6-1fe629897067\",\"op\":\"manual\",\"scope\":{\"kind\":\"lines\",\"side\":\"target\",\"path\":\"src/big.js\",\"start\":151,\"end\":159},\"reason\":\"\",\"at\":\"2026-11-12T13:36:00.910Z\",\"origin\":{\"kind\":\"walk\",\"stepId\":\"W1.1\",\"placeId\":\"r1\"}}]"
+    },
+    {
+      "stage": "Accept at the first place",
+      "what": "the confirmation",
+      "ok": true,
+      "detail": "Accept: Applies to new lines 151–159 in big.js, in the reviewed version (ed1fefc→0b0c24b), as your own decision. Acceptance covers only these lines in this version and is no guarantee that the code is correct."
+    },
+    {
+      "stage": "Accept at the first place",
+      "what": "the diff window draws exactly lines 151–159 of 417 as reviewed",
+      "ok": true,
+      "detail": "417 strips; manual [151,152,153,154,155,156,157,158,159]"
+    },
+    {
+      "stage": "Accept at the first place",
+      "what": "its line status names the walk step",
+      "ok": true,
+      "detail": "Added line 151: Reviewed by you (Nov 12, 2026, 02:36 PM); in walk step W1.1"
+    },
+    {
+      "stage": "a second place in the same hunk",
+      "what": "the second place decides about its own 5 lines, none of them decided yet",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:200-204\",\"lines\":5,\"accepted\":0,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 200–204 in big.js (5 changed lines).\\nNo decision\\nAccept new lines 200–204 in big.js…\\nExempt new lines 200–204 in big.js…\"}]"
+    },
+    {
+      "stage": "a second place in the same hunk",
+      "what": "the confirmation names exactly new lines 200–204 in big.js",
+      "ok": true,
+      "detail": "Accept: Applies to new lines 200–204 in big.js, in the reviewed version (ed1fefc→0b0c24b), as your own decision. Acceptance covers only these lines in this version and is no guarantee that the code is correct."
+    },
+    {
+      "stage": "a second place in the same hunk",
+      "what": "the diff window draws 14 lines: both places, nothing between them",
+      "ok": true,
+      "detail": "[151,152,153,154,155,156,157,158,159,200,201,202,203,204]"
+    },
+    {
+      "stage": "a second place in the same hunk",
+      "what": "withdrawing the second place leaves the first place's 9 lines",
+      "ok": true,
+      "detail": "[151,152,153,154,155,156,157,158,159]"
+    },
+    {
+      "stage": "the walk window closed and opened again",
+      "what": "the reopened walk reads 9 of 9 marked lines accepted",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:151-159\",\"lines\":9,\"accepted\":9,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 151–159 in big.js (9 changed lines).\\nAccepted by you\\nWithdraw the decision on new lines 151–159 in big.js\"}]"
+    },
+    {
+      "stage": "cleanup",
+      "what": "a standalone host of this trial ended",
+      "ok": true,
+      "detail": "24512"
+    },
+    {
+      "stage": "after a restart of the app and its host",
+      "what": "after the restart the diff window draws exactly 151–159",
+      "ok": true,
+      "detail": "[151,152,153,154,155,156,157,158,159]"
+    },
+    {
+      "stage": "after a restart of the app and its host",
+      "what": "after the restart the walk reads 9 of 9 marked lines accepted",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:151-159\",\"lines\":9,\"accepted\":9,\"exempted\":0,\"earlier\":0,\"text\":\"Marked here: new lines 151–159 in big.js (9 changed lines).\\nAccepted by you\\nWithdraw the decision on new lines 151–159 in big.js\"}]"
+    },
+    {
+      "stage": "cleanup",
+      "what": "a standalone host of this trial ended",
+      "ok": true,
+      "detail": "23428"
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "the earlier mark is read as it was saved: all 417 lines",
+      "ok": true,
+      "detail": "417"
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "the walk says the earlier decision reaches beyond its marking and is uncertain",
+      "ok": true,
+      "detail": "[{\"marked\":\"target:151-159\",\"lines\":9,\"accepted\":9,\"exempted\":0,\"earlier\":1,\"text\":\"Marked here: new lines 151–159 in big.js (9 changed lines).\\nAccepted by you\\nAccepted by you earlier over new lines 1–417 in big.js, 408 lines beyond the marking here. It was recorded before a walk's Accept followed its marking, so whether it was meant for all of those lines is not known.\\nKeep it as recorded\\nWithdraw it\\nWithdraw the decision on new lines 151–159 in big.js\"}]"
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "withdrawing it returns every line it held on",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "the confirmation names exactly new lines 151–159 in big.js",
+      "ok": true,
+      "detail": "Accept: Applies to new lines 151–159 in big.js, in the reviewed version (ed1fefc→0b0c24b), as your own decision. Acceptance covers only these lines in this version and is no guarantee that the code is correct."
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "the place then decides about its 9 lines again: 9 of 417",
+      "ok": true,
+      "detail": "[151,152,153,154,155,156,157,158,159]"
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "the history keeps every mark, the earlier one included",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "an earlier whole-file acceptance as 0.1.22 wrote it",
+      "what": "the file list gives the file 2% (9 of 417, rounded down)",
+      "ok": true,
+      "detail": "2%"
+    },
+    {
+      "stage": "cleanup",
+      "what": "a standalone host of this trial ended",
+      "ok": true,
+      "detail": "10432"
+    }
+  ]
+}

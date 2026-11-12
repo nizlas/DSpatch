@@ -1,0 +1,134 @@
+{
+  "version": 2,
+  "id": "r-68b77b4a100760449cefe27e",
+  "createdAt": "2026-11-12T13:35:59.378Z",
+  "startedWith": {
+    "instructionVersion": 12
+  },
+  "generation": null,
+  "pair": {
+    "repository": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-accept-project-6gBNAA",
+    "base": "ed1fefc5c3c900ff5d32fb9cdb66e1f38b511122",
+    "target": "0b0c24b3e9150b1449f021c3470131be385b09e3"
+  },
+  "requirement": "manual",
+  "jobs": [],
+  "agent": null,
+  "marks": [
+    {
+      "id": "83ac9705-d4f1-4e7d-9da6-1fe629897067",
+      "op": "manual",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 151,
+        "end": 159
+      },
+      "reason": "",
+      "at": "2026-11-12T13:36:00.910Z",
+      "origin": {
+        "kind": "walk",
+        "stepId": "W1.1",
+        "placeId": "r1"
+      }
+    },
+    {
+      "id": "3d9344a3-62f7-468b-a802-56d9a06d80bd",
+      "op": "manual",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 200,
+        "end": 204
+      },
+      "reason": "",
+      "at": "2026-11-12T13:36:01.410Z",
+      "origin": {
+        "kind": "walk",
+        "stepId": "W1.2",
+        "placeId": "r1"
+      }
+    },
+    {
+      "id": "7e5c6873-8d02-4cee-bd1e-377882a70823",
+      "op": "clear",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 200,
+        "end": 204
+      },
+      "reason": "",
+      "at": "2026-11-12T13:36:01.578Z",
+      "origin": {
+        "kind": "walk",
+        "stepId": "W1.2",
+        "placeId": "r1"
+      }
+    },
+    {
+      "id": "legacy-0",
+      "op": "manual",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 1,
+        "end": 417
+      },
+      "reason": "",
+      "at": "2026-11-12T13:36:20.200Z"
+    },
+    {
+      "id": "ccbb7c28-5919-4da6-af00-a0f7df8a54f1",
+      "op": "clear",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 1,
+        "end": 417
+      },
+      "reason": "",
+      "at": "2026-11-12T13:36:38.030Z",
+      "origin": {
+        "kind": "walk",
+        "stepId": "W1.1",
+        "placeId": "r1"
+      }
+    },
+    {
+      "id": "490d789d-62ee-4f4e-946e-1850b3e3d583",
+      "op": "manual",
+      "scope": {
+        "kind": "lines",
+        "side": "target",
+        "path": "src/big.js",
+        "start": 151,
+        "end": 159
+      },
+      "reason": "",
+      "at": "2026-11-12T13:36:38.267Z",
+      "origin": {
+        "kind": "walk",
+        "stepId": "W1.1",
+        "placeId": "r1"
+      }
+    }
+  ],
+  "agentReviews": [],
+  "position": {
+    "view": "file",
+    "fileKey": "→src/big.js",
+    "layout": "split",
+    "line": null
+  },
+  "walkDefinition": "C:\\Users\\<user>\\AppData\\Local\\Temp\\dspatch-accept-profile-2mRnUc\\reviews\\generated\\r-68b77b4a100760449cefe27e\\accept-scope.review.json",
+  "endedAt": null,
+  "threads": [],
+  "checkSources": [],
+  "savedAt": "2026-11-12T13:36:38.268Z"
+}
