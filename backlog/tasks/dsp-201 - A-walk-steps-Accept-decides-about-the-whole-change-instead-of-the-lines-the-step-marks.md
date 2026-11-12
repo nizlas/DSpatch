@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 13:14'
-updated_date: '2026-11-12 13:40'
+updated_date: '2026-11-12 13:44'
 labels:
   - review
 dependencies: []
@@ -51,4 +51,6 @@ Older decisions: a 0.1.22 walk Accept over a pair, the diff window's file and se
 Verification: tests/walk-decision-scope.test.ts (7) — 417-line regression 9 accepted / 408 remaining (2.2%) in the walk record and the pair record, after save/read-back, withdraw affects only those lines; two places in a hunk (14), overlapping (15, no double count), context not counted, removed and mixed changes, older decisions, validation. review-pairs.test.ts: origin kept across a host restart, malformed origin refused. review group on Windows: all pass except review-context.test.ts 'reads lib as context', which fails the same on a clean 1e4bdab checkout (path separator in the test), unrelated. Typecheck node, renderer, tools green.
 
 Real-window trial scripts/accept-scope-trial.mjs on Windows, 32 of 32 (docs/evaluations/dsp-201/final): the walk marks rows 151-159; Accept names new lines 151-159 before and after Whole file; the saved mark is target 151-159 with origin walk W1.1; the diff window draws 151-159 of 417 reviewed; a second place adds its own 5 and withdrawing it leaves 9; same after reopening the walk window and after restarting app and host; an earlier whole-file mark without origin is read as 417, flagged uncertain (408 beyond), withdrawn, and the place accepts its 9 again; the file list shows 2%. Not done: a negative control in a window against 0.1.22, Linux, CI.
+
+Linux CI tests job on 4f8c8c6 (run 43229679035): success, the review group included; review-context.test.ts passes there, as its Windows failure is a path separator in the test.
 <!-- SECTION:NOTES:END -->
