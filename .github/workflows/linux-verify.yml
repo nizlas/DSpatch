@@ -157,6 +157,17 @@ jobs:
         with:
           name: accept-scope-trial
           path: app/release/trial-accept-scope/ci
+      # DSP-202: every pane marks its own places' changed rows, unchanged context stays plain, and
+      # only the arriving place's changed rows flash, judged from the drawn colours.
+      - name: The walk marking trial in real windows
+        if: ${{ always() }}
+        run: xvfb-run -a node scripts/walk-marking-trial.mjs release/trial-walk-marking/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: walk-marking-trial
+          path: app/release/trial-walk-marking/ci
 
   # DSP-173: the resource governor on this runner's own /proc (units, intervals, unknown signals,
   # its reading starting and stopping with a light dry loop run in observe), then the loop and live

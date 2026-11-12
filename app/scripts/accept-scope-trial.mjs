@@ -338,10 +338,10 @@ const placesSaid = (page) =>
 const markedRows = (walk) => walk.ev(`JSON.stringify([...document.querySelectorAll('[data-focus-active]')].map((row) => Number(row.dataset.line)))`).then((text) => JSON.parse(text));
 const range = (start, end) => Array.from({ length: end - start + 1 }, (_, index) => start + index);
 
-/** The diff window's strip for the big file: which lines it draws as reviewed by the person. */
-async function diffStrips(diff) {
+/** The diff window's strip for one file (the big one by default): which lines it draws as reviewed by the person. */
+async function diffStrips(diff, file = 'big.js') {
   if ((await diff.ev(`document.querySelectorAll('.rv-pair-diff [data-strip]').length`)) === 0) {
-    await diff.ev(`[...document.querySelectorAll('[data-file-row]')].find((row) => row.textContent.includes('big.js'))?.click()`);
+    await diff.ev(`[...document.querySelectorAll('[data-file-row]')].find((row) => row.textContent.includes(${JSON.stringify(file)}))?.click()`);
     await diff.until('the big file\'s diff', `document.querySelectorAll('.rv-pair-diff [data-strip]').length > 0`, 20_000);
   }
   return JSON.parse(

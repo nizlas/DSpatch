@@ -1110,7 +1110,7 @@ async function main() {
   const activeState = () =>
     walk.ev(`JSON.stringify((()=>{const p=document.querySelector('section.rv-pane-active');const id=p?.querySelector('[data-ev="pane-focus-identity"]');const rows=[...(p?.querySelectorAll('[data-focus-active="1"]')??[])];return {pane:Number(p?.dataset.paneIndex??-1),identity:id?.textContent??'',side:id?.dataset.focusSide??'',start:Number(id?.dataset.focusStart??0),end:Number(id?.dataset.focusEnd??0),heading:p?.querySelector('.rv-pane-shown')?.textContent??'',rows:rows.map((r)=>r.dataset.row),kinds:[...new Set(rows.map((r)=>r.classList.contains('rv-old')?'old':r.classList.contains('rv-new')?'new':'neutral'))],lines:rows.map((r)=>Number(r.dataset.line))}})())`).then((t) => JSON.parse(t));
   const marksElsewhere = () =>
-    walk.ev(`JSON.stringify({activePanes:document.querySelectorAll('section.rv-pane:has(.rv-focus-active)').length,strongInactive:document.querySelectorAll('section.rv-pane-inactive :is(.rv-old,.rv-new,.rv-neutral-focus,.rv-focus-active,.rv-arrive)').length,arriveOutside:document.querySelectorAll('section.rv-pane-inactive .rv-arrive').length,oldVersion:[...document.querySelectorAll('.rv-pane-head')].some((h)=>/old version/i.test(h.textContent))})`).then((t) => JSON.parse(t));
+    walk.ev(`JSON.stringify({activePanes:document.querySelectorAll('section.rv-pane:has(.rv-focus-active)').length,strongInactive:document.querySelectorAll('section.rv-pane-inactive :is(.rv-focus-active,.rv-arrive)').length,arriveOutside:document.querySelectorAll('section.rv-pane-inactive .rv-arrive').length,oldVersion:[...document.querySelectorAll('.rv-pane-head')].some((h)=>/old version/i.test(h.textContent))})`).then((t) => JSON.parse(t));
   const stepShown = () =>
     read(pcw, `JSON.stringify({step:document.querySelector('.rv-step-panel h2 .rv-step-id')?.textContent??'',place:document.querySelector('.rv-place-on .rv-place-number')?.textContent??'1'})`).then((t) => JSON.parse(t));
   const base7 = (await walk.ev(`document.querySelector('[data-ev="review-identity"]')?.title ?? ''`)).split('\n')[1]?.split(' → ').map((sha) => sha.slice(0, 7)) ?? [];
@@ -1122,8 +1122,8 @@ async function main() {
   const newPlace = await activeState();
   note('the first two places', JSON.stringify({ oldPlace, newPlace }));
   check('the Old and the New place of one change share one pane', oldPlace.pane === newPlace.pane && oldPlace.pane >= 0, JSON.stringify({ old: oldPlace.pane, new: newPlace.pane }));
-  check('choosing Old marks the old (removed) lines at From', oldPlace.side === 'base' && oldPlace.kinds.includes('old') && !oldPlace.kinds.includes('new'), JSON.stringify(oldPlace));
-  check('choosing New moves the mark to the new lines at To in the same pane', newPlace.side === 'target' && newPlace.kinds.includes('new') && !newPlace.kinds.includes('old') && JSON.stringify(newPlace.rows) !== JSON.stringify(oldPlace.rows), JSON.stringify(newPlace));
+  check('choosing Old marks the old (removed) lines at From', oldPlace.side === 'base' && oldPlace.kinds.includes('old'), JSON.stringify(oldPlace));
+  check('choosing New moves the active place to the new lines at To in the same pane', newPlace.side === 'target' && newPlace.kinds.includes('new') && newPlace.pane === oldPlace.pane, JSON.stringify(newPlace));
   check(
     'the mark names the place in full: repository, side and commit, file and lines',
     /From [0-9a-f]{7}/.test(oldPlace.identity) && /To [0-9a-f]{7}/.test(newPlace.identity) && /line/.test(newPlace.identity) && (base7.length < 2 || (oldPlace.identity.includes(base7[0]) && newPlace.identity.includes(base7[1]))) && oldPlace.identity.includes('dspatch-threads-project-'),
@@ -1164,7 +1164,7 @@ async function main() {
   const returnFrames = await sampleMarks('the same code again at the end of the walk', '24-return-arriving');
   const shotA = { file: returnFrames[0].shot ?? '24-return-arriving.png' };
   const back = await activeState();
-  const firstPaneShown = await walk.ev(`JSON.stringify((()=>{const p=document.querySelector('section.rv-pane[data-pane-index="${String(oldPlace.pane)}"]');return p?{rendered:true,strong:p.querySelectorAll(':is(.rv-old,.rv-new,.rv-neutral-focus,.rv-focus-active)').length,focusRows:p.querySelectorAll('[data-focus="1"]').length}:{rendered:false}})())`).then((t) => JSON.parse(t));
+  const firstPaneShown = await walk.ev(`JSON.stringify((()=>{const p=document.querySelector('section.rv-pane[data-pane-index="${String(oldPlace.pane)}"]');return p?{rendered:true,strong:p.querySelectorAll(':is(.rv-focus-active,.rv-arrive)').length,focusRows:p.querySelectorAll('[data-focus="1"]').length}:{rendered:false}})())`).then((t) => JSON.parse(t));
   check('the return to the same code is a pane of its own, further on', back.pane !== oldPlace.pane && back.pane > newPlace.pane, JSON.stringify({ back, first: oldPlace.pane }));
   check('the first occurrence, now inactive, carries no active mark', firstPaneShown.rendered === false || firstPaneShown.strong === 0, JSON.stringify(firstPaneShown));
   note('the first occurrence while the return is active', JSON.stringify(firstPaneShown));
