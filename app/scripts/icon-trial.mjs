@@ -661,6 +661,7 @@ try {
   console.error(`FAIL ${stage}: ${error.stack ?? error}`);
   process.exitCode = 1;
 } finally {
+  if (results.some((result) => !result.ok)) shotRoot('failure-display');
   await quitClient().catch(() => undefined);
   for (const child of [owned.panel, owned.wm, owned.xvfb]) child?.kill('SIGTERM');
   if (profile !== '') {
