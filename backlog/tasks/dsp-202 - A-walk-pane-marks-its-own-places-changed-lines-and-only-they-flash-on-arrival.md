@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 14:55'
-updated_date: '2026-11-12 15:13'
+updated_date: '2026-11-12 20:48'
 labels:
   - review
 dependencies: []
@@ -36,4 +36,5 @@ Niclas (12 November 2026): in a walk, the gold arrival flash covers the whole re
 Root causes: ReviewTimeline classed every row of the reference (inShown) for the active place, unchanged rows with rv-neutral-focus (the grey plate), all with the amber edge and rv-arrive; strong colours only when isActive; faint tokens 11-12%. Fix: markedChangedRows (review-model) is the one definition, used by markedChangedLines (Accept), each pane's marking, the amber edge and the flash; every pane draws its own places' changed rows rv-old/rv-new, other changed rows faint, unchanged rows plain; only the arriving place's changed rows carry rv-focus-active and rv-arrive. A place's changed rows include the old lines a replacement it lies on replaced, as referenceRows pairs them (DSP-201 took only its own side; corrected). Colours: own red 50% / green 40%, other 24% / 20%, alike in active and inactive panes. VISION 3.4 updated.
 
 Verification: walk-decision-scope.test.ts 8 (A-D at model level); 106 targeted tests pass; typecheck green. walk-marking-trial.mjs 37/37 on Windows and on Linux under Xvfb (CI run 43244158263), screenshots in docs/evaluations/dsp-202/linux-xvfb: current and next pane, the flash caught at 150 ms on worker.js 6-8 only, neutral context, luminance own 0.063/0.059, other 0.026/0.023, plain 0.006, text contrast >= 7.6. Accept trial 32/32 (Windows, Linux), prefs/About 20/20 (Linux). Not run: thread-trial.mjs (expectations updated to the new rule). Niclas's own visual reading on his screen remains.
+Thread trial run before release 0.1.24: scripts/thread-trial.mjs in linux-verify's dock job (run 43290904053, c2139e6), 110 of 110 under Xvfb, including one active mark per moment, the flash in the active pane only and settling, and the first occurrence unmarked when the same code returns. Two stale steps since DSP-193 were fixed in the trial only: the keep-recommendation thread is drawn folded and is opened before Accept, and the walk's threads are read in Step's Review section. Same run: walk marking 37/37, walk delegation 23/23, Accept scope 32/32, prefs/About 20/20, dock passed.
 <!-- SECTION:NOTES:END -->

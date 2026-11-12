@@ -74,8 +74,8 @@ The colours say which lines belong to a place, not that they are reviewed. Showi
   - `03-settled-at-the-next-place.png`;
   - `04-whole-file.png`;
   - `00-diff-window-before.png` and `05-diff-window-after-accept.png`: the diff window.
+- **The thread trial** (`scripts/thread-trial.mjs`), with its expectations changed to the new rule, ran before release 0.1.24 in Linux CI's dock job under Xvfb (run 43290904053): 110 of 110. Two of its steps were stale since DSP-193 and were fixed in the trial only: the keep-recommendation thread is drawn folded, and the walk's threads are read in Step's Review section.
 
 ## Not done or not established
 
-- **The thread trial** (`scripts/thread-trial.mjs`) checks the old rule that inactive panes carry no strong colour. Its expectations were changed to the new rule, but it was not run.
 - **The colour judgement** rests on the screenshots and the computed values on one display path (Chromium under Xvfb and on Windows). Niclas's own reading on his screen is still to come.
