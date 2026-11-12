@@ -15,7 +15,7 @@ on:
         type: string
         default: v0.1.4
       only:
-        description: Run one job only (tests, provider-tests, windows, dock, governor, profiles); empty runs them all
+        description: Run one job only (tests, provider-tests, windows, dock, icons, governor, profiles); empty runs them all
         type: string
         default: ''
 
@@ -190,6 +190,50 @@ jobs:
         with:
           name: thread-trial
           path: app/release/trial-threads/ci
+
+  # DSP-204: the app icon on Linux, first from this checkout's build and then from the .deb
+  # installed on the runner: each window's WM_CLASS and _NET_WM_ICON, the start page, About, a
+  # taskbar and launcher (tint2), Openbox's window switcher, and the installed desktop entry and
+  # hicolor icons.
+  icons:
+    if: ${{ !inputs.published && (inputs.only == '' || inputs.only == 'icons') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xdotool openbox tint2 x11-utils imagemagick
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - run: test -f node_modules/electron/dist/chrome-sandbox || node node_modules/electron/install.js
+        working-directory: app
+      - run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+        working-directory: app
+      - name: The icon trial on this checkout's build
+        run: node scripts/icon-trial.mjs release/trial-icons/build
+        working-directory: app
+      - name: Build the .deb
+        if: ${{ always() }}
+        run: npm run package:host -- --platform linux && npm run package:client -- --linux deb --x64
+        working-directory: app
+      - name: Install the .deb on the runner
+        if: ${{ always() }}
+        run: sudo apt-get install -y ./release/dspatch_*_amd64.deb
+        working-directory: app
+      - name: The icon trial on the installed package
+        if: ${{ always() }}
+        env:
+          DSPATCH_TRIAL_CLIENT: /opt/DSpatch/dspatch
+        run: node scripts/icon-trial.mjs release/trial-icons/installed
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: icon-trial
+          path: app/release/trial-icons
 
   # DSP-173: the resource governor on this runner's own /proc (units, intervals, unknown signals,
   # its reading starting and stopping with a light dry loop run in observe), then the loop and live

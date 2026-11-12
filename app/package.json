@@ -17,6 +17,7 @@
   "scripts": {
     "build": "npm run build:node && npm run build:renderer && npm run build:identity",
     "build:identity": "node scripts/build-identity.mjs",
+    "icons": "electron scripts/generate-icons.mjs",
     "build:node": "tsc -p tsconfig.node.json",
     "build:renderer": "vite build",
     "dev": "npm run build:node && npm run build:identity && node scripts/dev.mjs",

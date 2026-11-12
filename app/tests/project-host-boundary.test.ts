@@ -93,6 +93,8 @@ test("the client loads none of the project's services and no provider SDK", () =
     'main/window-layout.ts',
     // About DSpatch's text (DSP-200): the client's own menu.
     'main/about.ts',
+    // The app icon for windows and About (DSP-204).
+    'main/app-icon.ts',
     'main/own-repository.ts',
     'main/probe-exit.ts',
     'main/review-ipc.ts',

@@ -63,7 +63,9 @@ linux:
         - x64
   executableName: dspatch
   category: Development
-  icon: build/icon.png
+  # DSP-204: the icon set scripts/generate-icons.mjs derives from build/icon-source/dspatch-icon.webp,
+  # installed as /usr/share/icons/hicolor/<n>x<n>/apps/dspatch.png for the desktop entry's Icon=dspatch.
+  icon: build/icons
   synopsis: A workspace for agent-assisted development
   maintainer: Niclas Danielsson <niclas.danielsson@users.noreply.github.com>
 
@@ -92,7 +94,8 @@ win:
     - target: nsis
       arch:
         - x64
-  icon: build/icon.png
+  # DSP-204: 16 to 256 pixels, from the same original; also the installer's and the shortcuts' icon.
+  icon: build/icon.ico
   # The executable gets DSpatch's icon and a version resource from package.json (built on Windows only).
   signAndEditExecutable: true
 

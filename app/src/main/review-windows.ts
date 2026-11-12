@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { BrowserWindow, Menu, WebContentsView, app, dialog, screen, type MenuItemConstructorOptions, type Rectangle, type WebContents } from 'electron';
 
+import { windowIcon } from './app-icon';
 import { zoomMenuItems } from './window-zoom';
 import type { WindowLayoutStore } from './window-layout';
 import type { ZoomCommand } from '../shared/window-zoom';
@@ -960,6 +961,7 @@ export class ReviewWindows {
       minHeight: 560,
       show: false,
       backgroundColor: '#101317',
+      ...windowIcon(),
       title: titleFor(init),
       // A sibling with its own taskbar entry, like the loop editor: no parent, not modal.
       webPreferences: {
@@ -1295,6 +1297,7 @@ export class ReviewWindows {
       minHeight: PANEL_SIZE.minHeight,
       show: false,
       backgroundColor: '#101317',
+      ...windowIcon(),
       title: titleFor({ identity: init.identity, startFolder: null, view: 'panel' }),
     });
     frame.setMenu(this.viewMenu());

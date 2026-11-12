@@ -83,6 +83,12 @@
   gap: 1.75rem;
 }
 
+/* DSP-204: the app icon, small and centred just above the wordmark. */
+.start__icon {
+  align-self: center;
+  margin-bottom: -1.25rem;
+}
+
 .wordmark {
   margin: 0 0 0.25rem;
   text-align: center;

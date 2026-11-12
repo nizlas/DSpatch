@@ -5,6 +5,7 @@ import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
 import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
 import { WINDOW_LAYOUT_FILE, WindowLayoutStore } from './window-layout';
 import { aboutText, mainWindowTitle } from './about';
+import { appIcon, windowIcon } from './app-icon';
 import { WINDOW_ZOOM_LEVEL_CHANNEL } from '../shared/window-zoom';
 import { hostBuildDifference } from '../shared/remote-protocol';
 import { RemoteLink, probeHost, type RemoteEndpoint } from './remote-link';
@@ -1103,6 +1104,7 @@ function pickOnHost(options: Electron.OpenDialogOptions & { readonly saving?: bo
       ...(placement?.bounds ?? { width: 620, height: 520 }),
       title: options.title ?? 'Choose on the host',
       backgroundColor: '#101317',
+      ...windowIcon(),
       ...(parent === null ? {} : { parent, modal: true }),
       webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
@@ -1491,10 +1493,12 @@ function logIfFailed(what: string, work: Promise<unknown>): void {
 async function showAbout(): Promise<void> {
   const text = aboutText(app.getVersion(), remoteBuild(app.getAppPath()).commit, remoteLink?.build() ?? null);
   const focused = BrowserWindow.getFocusedWindow();
+  const icon = appIcon(64);
   const box = {
     type: 'info' as const,
     title: 'About DSpatch',
     message: 'DSpatch',
+    ...(icon === null ? {} : { icon }),
     detail: text,
     buttons: ['Copy version information', 'Close'],
     defaultId: 1,
@@ -2705,6 +2709,7 @@ function createWindow(): BrowserWindow {
     minHeight: 560,
     show: false,
     backgroundColor: '#101317',
+    ...windowIcon(),
     // DSP-200: the installed version, discreetly; the page's own <title> must not replace it.
     title: mainWindowTitle(app.getVersion()),
     webPreferences: {
@@ -2852,6 +2857,7 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
       minHeight: 560,
       show: false,
       backgroundColor: '#101317',
+      ...windowIcon(),
       title: 'DSpatch — loop editor',
       // Deliberately no `parent` and no `modal`. See above.
       webPreferences: {
