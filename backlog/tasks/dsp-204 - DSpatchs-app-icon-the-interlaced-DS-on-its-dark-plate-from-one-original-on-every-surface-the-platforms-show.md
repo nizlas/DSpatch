@@ -3,10 +3,10 @@ id: DSP-204
 title: >-
   DSpatch's app icon: the interlaced DS on its dark plate, from one original, on
   every surface the platforms show
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-12 20:56'
-updated_date: '2026-11-12 21:31'
+updated_date: '2026-11-12 21:47'
 labels:
   - release
 dependencies: []
@@ -41,4 +41,6 @@ Niclas chose the blue-turquoise interlaced DS symbol with a glowing sphere in th
 Original app/build/icon-source/dspatch-icon.webp (as supplied; alpha already transparent outside the plate, an ~8% transparent margin cut away by the script). npm run icons (scripts/generate-icons.mjs, Electron decode, Lanczos-3 over premultiplied alpha, deterministic) writes build/icons/16..512 (Linux hicolor), build/icon.ico 16..256 (Windows exe, installer, shortcuts), src/renderer/public/icons/dspatch-64/128/256 (window icon on Linux, About, start page). Old build/icon.png removed. Every BrowserWindow gets windowIcon() on Linux; Windows uses the exe icon. Found and fixed: windows' WM_CLASS was dspatch while the entry's StartupWMClass was DSpatch; package.json desktopName dspatch.desktop makes them match (file name, appId and user data unchanged).
 
 Verification: scripts/icon-trial.mjs in linux-verify's icons job (run 43309807897): build 29/29, installed .deb 42/42 (entry, hicolor bytes, WM_CLASS = StartupWMClass, _NET_WM_ICON 256 px with the icon's pixels on main, review, walk and loop editor windows; start page icon 56 px; About, panel and Alt+Tab screenshots). Windows: exe and NSIS installer built locally carry 16..256 with transparent corners. Typecheck and project-host-boundary pass. Evidence docs/evaluations/dsp-204/. Not seen: GNOME/KDE docks and Wayland, Windows taskbar/shortcuts of an installed app.
+
+Released in 0.1.25 (https://github.com/nizlas/DSpatch/releases/tag/v0.1.25, Linux-only pre-release, tag on ec3b81e; package run 43311126943). Icon trial on the published .deb (linux-verify icons job with icons_release=v0.1.25, run 43312360490): checksum OK, 42 of 42 (desktop entry StartupWMClass=dspatch, hicolor icons, every window's icon and class, About, panel, Alt+Tab). Published trial (run 43312338144): the published .deb, host package, manifest and SHA256SUMS in clean containers 14 of 14; the upgrade from v0.1.24 27 of 27, with Restart host replacing the 0.1.24 host and the person's conversation, agent choice, project, own loop, zoom and review kept, also after a restart.
 <!-- SECTION:NOTES:END -->
