@@ -7,7 +7,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 10:25'
-updated_date: '2026-11-12 10:44'
+updated_date: '2026-11-12 10:58'
 labels:
   - review
 dependencies: []
@@ -31,7 +31,7 @@ Niclas saw, in 0.1.22 on Linux right after a newly generated walk opened and bef
 - [x] #5 Regression tests for key order, refusal and preservation
 - [x] #6 Real-window trial: a new walk opens with no message, and a changed width is kept after reopening
 - [x] #7 About DSpatch shows the package version and the running host's own version or not known, and copies them; the start window's title carries the version
-- [ ] #8 Linux CI's prefs trial passes
+- [x] #8 Linux CI's prefs trial passes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,4 +52,6 @@ Fix: refusedPreferenceFields checks field by field with nested keys sorted; unkn
 About DSpatch: in a Help menu; app.getVersion() and the app's commit; the running host's version from RemoteLink.build() (what the host reported in the handshake), otherwise "not known"; Copy version information; the start window's title "DSpatch — <version>", with page-title-updated prevented. No host method or protocol change.
 
 Verification on the working tree over 66c8447 (build identity a0bbfc5a42ddf372): typecheck (node, renderer, tools); about, review-model and review-host tests, plus review-reading-style, presentation-profiles, walk-panes and window-layout: 91 tests, all pass. Window trial scripts/prefs-trial.mjs on Windows: final 21 of 21; a negative control without the fix fails at the first width save, showing the new message, with the host's log line; an old-host control (host check reverted, window ordering kept) passes 21 of 21. Evidence in docs/evaluations/dsp-200/. Linux: the trial is added to linux-verify's dock job (About part left out there).
+
+Linux CI on 8162c2c: dock job (run 43204247463) with the prefs trial under xvfb-run, 15 of 15 (About left out on Linux); tests job (run 43204252986) green. The first CI run on d3fdece failed: the client boundary test did not list main/about.ts, and the trial's Open click for the pair did not take under Xvfb; both fixed in 8162c2c.
 <!-- SECTION:NOTES:END -->
