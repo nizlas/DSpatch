@@ -413,7 +413,7 @@ async function xWindows() {
 function xIcon(xid) {
   const wmClass = run('xprop', ['-id', String(xid), 'WM_CLASS'], true);
   const classes = [...wmClass.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
-  const raw = spawnSync('xprop', ['-id', String(xid), '-f', '_NET_WM_ICON', '32c', ' = $0+', '_NET_WM_ICON'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout ?? '';
+  const raw = spawnSync('xprop', ['-len', '16777216', '-id', String(xid), '-f', '_NET_WM_ICON', '32c', ' = $0+', '_NET_WM_ICON'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout ?? '';
   const numbers = (raw.split('=')[1] ?? '').split(',').map((n) => Number(n.trim())).filter((n) => Number.isFinite(n));
   const sizes = [];
   let first = null;
@@ -429,7 +429,7 @@ function xIcon(xid) {
     const v = first.pixels[y * first.w + x] >>> 0;
     return [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255];
   };
-  return { classes, sizes, argb, size: first === null ? 0 : first.w, raw: raw.slice(0, 160) };
+  return { classes, sizes, argb, size: first === null ? 0 : first.w, raw: `${String(numbers.length)} numbers: ${raw.slice(0, 80)} … ${raw.slice(-60)}` };
 }
 
 const SAMPLES = [[128, 128], [60, 128], [128, 190], [200, 70], [8, 128], [2, 2]];
