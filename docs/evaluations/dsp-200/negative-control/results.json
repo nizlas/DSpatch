@@ -1,0 +1,74 @@
+{
+  "platform": "win32",
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-prefs-profile-YbSFkd",
+  "project": "<home>\\AppData\\Local\\Temp\\dspatch-prefs-project-wTEpZK",
+  "finishedAt": "2026-11-12T10:40:19.934Z",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the app is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "preflight",
+      "what": "review preferences as DSpatch before 0.1.10 left them",
+      "ok": true,
+      "detail": "{ \"language\": \"en\", \"discussionPlace\": \"walk\", \"explanationBounds\": { \"x\": 120, \"y\": 80, \"width\": 560, \"height\": 696 } } "
+    },
+    {
+      "stage": "the start window",
+      "what": "the start window's title carries the installed version from package.json",
+      "ok": true,
+      "detail": "DSpatch — 0.1.22"
+    },
+    {
+      "stage": "the start window",
+      "what": "the build reports the same version",
+      "ok": true,
+      "detail": "0.1.22"
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "the walk opens with no preference message and no \"not saved\"",
+      "ok": true,
+      "detail": "{\"problem\":null,\"notSaved\":false}"
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "opening the walk wrote no preferences",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "the left column as it opened",
+      "ok": true,
+      "detail": "340"
+    },
+    {
+      "stage": "a width changed in the walk window",
+      "what": "a changed width shows no preference message and no \"not saved\"",
+      "ok": false,
+      "detail": "{\"problem\":\"This window's language and column widths could not be saved. The review is not affected.\",\"notSaved\":true}"
+    },
+    {
+      "stage": "a width changed in the walk window",
+      "what": "the trial reached its end",
+      "ok": false,
+      "detail": "Error: a changed width shows no preference message and no \"not saved\"\n    at check (file:///<home>/development/DSpatch/app/scripts/prefs-trial.mjs:61:18)\n    at main (file:///<home>/development/DSpatch/app/scripts/prefs-trial.mjs:391:3)\n    at async file:///<home>/development/DSpatch/app/scripts/prefs-trial.mjs:469:3"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "34384"
+    }
+  ]
+}

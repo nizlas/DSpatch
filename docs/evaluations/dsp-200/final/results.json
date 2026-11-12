@@ -1,0 +1,134 @@
+{
+  "platform": "win32",
+  "profile": "<home>\\AppData\\Local\\Temp\\dspatch-prefs-profile-pEwSUe",
+  "project": "<home>\\AppData\\Local\\Temp\\dspatch-prefs-project-5zCK6M",
+  "finishedAt": "2026-11-12T10:41:03.549Z",
+  "results": [
+    {
+      "stage": "preflight",
+      "what": "the app is built",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "preflight",
+      "what": "review preferences as DSpatch before 0.1.10 left them",
+      "ok": true,
+      "detail": "{ \"language\": \"en\", \"discussionPlace\": \"walk\", \"explanationBounds\": { \"x\": 120, \"y\": 80, \"width\": 560, \"height\": 696 } } "
+    },
+    {
+      "stage": "the start window",
+      "what": "the start window's title carries the installed version from package.json",
+      "ok": true,
+      "detail": "DSpatch — 0.1.22"
+    },
+    {
+      "stage": "the start window",
+      "what": "the build reports the same version",
+      "ok": true,
+      "detail": "0.1.22"
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "simulated Copilot choice accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "the walk opens with no preference message and no \"not saved\"",
+      "ok": true,
+      "detail": "{\"problem\":null,\"notSaved\":false}"
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "opening the walk wrote no preferences",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "a newly prepared walk opens",
+      "what": "the left column as it opened",
+      "ok": true,
+      "detail": "340"
+    },
+    {
+      "stage": "a width changed in the walk window",
+      "what": "a changed width shows no preference message and no \"not saved\"",
+      "ok": true,
+      "detail": "{\"problem\":null,\"notSaved\":false}"
+    },
+    {
+      "stage": "a width changed in the walk window",
+      "what": "the width is saved and the older fields are kept",
+      "ok": true,
+      "detail": "{\"language\":\"en\",\"explanationWidth\":520,\"navigationWidth\":420,\"discussionPlace\":\"walk\",\"explanationBounds\":{\"x\":120,\"y\":80,\"width\":560,\"height\":696}}"
+    },
+    {
+      "stage": "a width changed in the walk window",
+      "what": "the host logged no refused preferences",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "the walk window closed and opened again",
+      "what": "the reopened walk window has the saved width",
+      "ok": true,
+      "detail": "420 vs 420"
+    },
+    {
+      "stage": "the walk window closed and opened again",
+      "what": "the reopened walk shows no preference message and no \"not saved\"",
+      "ok": true,
+      "detail": "{\"problem\":null,\"notSaved\":false}"
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "the running host, as its own host-running.json says",
+      "ok": true,
+      "detail": "0.1.22 66c8447c05ad"
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "Help > About DSpatch is in the menu",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "About DSpatch opens",
+      "ok": true,
+      "detail": "{\"found\":true,\"title\":\"About DSpatch\",\"texts\":[\"DSpatch\",\"DSpatch 0.1.22 (66c8447c05ad)\\nRunning host: 0.1.22 (66c8447c05ad)\"],\"buttons\":[\"Copy version information\",\"Close\"],\"pressed\":true}"
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "it shows the app version from the package",
+      "ok": true,
+      "detail": "DSpatch\nDSpatch 0.1.22 (66c8447c05ad)\nRunning host: 0.1.22 (66c8447c05ad)"
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "it shows the running host's own version",
+      "ok": true,
+      "detail": "DSpatch\nDSpatch 0.1.22 (66c8447c05ad)\nRunning host: 0.1.22 (66c8447c05ad)"
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "it offers to copy the version information",
+      "ok": true,
+      "detail": "[\"Copy version information\",\"Close\"]"
+    },
+    {
+      "stage": "About DSpatch",
+      "what": "Copy puts the versions on the clipboard",
+      "ok": true,
+      "detail": "DSpatch 0.1.22 (66c8447c05ad)\nRunning host: 0.1.22 (66c8447c05ad)"
+    },
+    {
+      "stage": "cleanup",
+      "what": "the standalone host of this trial ended",
+      "ok": true,
+      "detail": "47284"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "found": true,
+  "title": "About DSpatch",
+  "texts": [
+    "DSpatch",
+    "DSpatch 0.1.22 (66c8447c05ad)\nRunning host: 0.1.22 (66c8447c05ad)"
+  ],
+  "buttons": [
+    "Copy version information",
+    "Close"
+  ],
+  "pressed": true
+}
