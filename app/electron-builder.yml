@@ -62,6 +62,9 @@ linux:
       arch:
         - x64
   executableName: dspatch
+  # DSP-204: package.json's desktopName (dspatch.desktop) makes the entry's StartupWMClass dspatch,
+  # the class Electron gives the windows (X11 WM_CLASS, Wayland app_id), so the dock and the window
+  # switcher match the windows to this entry and its icon. The entry's file name stays dspatch.desktop.
   category: Development
   # DSP-204: the icon set scripts/generate-icons.mjs derives from build/icon-source/dspatch-icon.webp,
   # installed as /usr/share/icons/hicolor/<n>x<n>/apps/dspatch.png for the desktop entry's Icon=dspatch.

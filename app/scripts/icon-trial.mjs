@@ -413,7 +413,7 @@ async function xWindows() {
 function xIcon(xid) {
   const wmClass = run('xprop', ['-id', String(xid), 'WM_CLASS'], true);
   const classes = [...wmClass.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
-  const raw = spawnSync('xprop', ['-id', String(xid), '-notype', '32c', '_NET_WM_ICON'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout ?? '';
+  const raw = spawnSync('xprop', ['-id', String(xid), '-f', '_NET_WM_ICON', '32c', ' = $0+', '_NET_WM_ICON'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout ?? '';
   const numbers = (raw.split('=')[1] ?? '').split(',').map((n) => Number(n.trim())).filter((n) => Number.isFinite(n));
   const sizes = [];
   let first = null;
@@ -468,7 +468,9 @@ async function main() {
   check('xdotool, xprop and import are here', run('sh', ['-c', 'command -v xdotool && command -v xprop && command -v import'], true) !== '');
 
   // The installed package: the desktop entry, its icon in hicolor, and the client's own copies.
-  let wmClassWanted = 'DSpatch';
+  // The class the windows should carry: the desktop entry's name, which Electron takes from
+  // package.json's desktopName for WM_CLASS and the Wayland app_id alike.
+  let wmClassWanted = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8')).desktopName.replace(/\.desktop$/, '');
   if (packaged !== '') {
     stage = 'the installed package';
     const entry = fs.existsSync(DESKTOP_FILE) ? fs.readFileSync(DESKTOP_FILE, 'utf8') : '';
