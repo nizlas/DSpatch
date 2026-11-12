@@ -47,7 +47,10 @@ import {
   type Walk,
   type WalkStep,
 } from '../shared/review-model';
-import { stepContentHash } from '../shared/review-model';
+import { inPreferenceOrder, stepContentHash } from '../shared/review-model';
+
+/** DSP-200: what went wrong with the window's own language and widths, which are not the review. */
+type PrefsProblem = 'read' | 'save';
 import { changedPathsOf } from '../shared/reference-links';
 import { PRESENTATION_INSTRUCTION_VERSION, PUBLIC_PROFILES, isPublicProfile, walkOutlineOf, type PresentationProfile, type PublicProfile, type WalkOutline } from '../shared/presentation-profiles';
 import {
@@ -291,7 +294,8 @@ export function ReviewView(): JSX.Element {
   const [lang, setLangState] = useState<Lang>(DEFAULT_PREFERENCES.language);
   const [width, setWidthState] = useState<number>(EXPLANATION_WIDTH.initial);
   const [navWidth, setNavWidthState] = useState<number>(NAVIGATION_WIDTH.initial);
-  const [langError, setLangError] = useState<string | null>(null);
+  // DSP-200: the window's own language and widths could not be read or saved; the review is not concerned.
+  const [prefsProblem, setPrefsProblem] = useState<PrefsProblem | null>(null);
 
   useEffect(() => {
     if (bridge === undefined) {
@@ -304,8 +308,8 @@ export function ReviewView(): JSX.Element {
         setWidthState(preferences.explanationWidth ?? EXPLANATION_WIDTH.initial);
         setNavWidthState(preferences.navigationWidth ?? NAVIGATION_WIDTH.initial);
       },
-      (error: unknown) => {
-        setLangError(String(error));
+      () => {
+        setPrefsProblem('read');
       },
     );
     void bridge.initial().then(setOutcome);
@@ -327,11 +331,18 @@ export function ReviewView(): JSX.Element {
         .then((kept) => {
           // The explanation's own window of earlier is gone; its choice means nothing now.
           const { explanationDetached: _gone, ...rest } = kept as ReviewPreferences;
-          return bridge.setPreferences({ ...rest, ...next });
+          // DSP-200: in the order the host writes them, which a host from before the fix compares.
+          return bridge.setPreferences(inPreferenceOrder({ ...rest, ...next }) as unknown as ReviewPreferences);
         })
-        .then((result) => {
-          setLangError(result.saved ? null : (result.error ?? 'not saved'));
-        });
+        .then(
+          (result) => {
+            // The cause is in the log; the window says what was not saved.
+            setPrefsProblem(result.saved ? null : 'save');
+          },
+          () => {
+            setPrefsProblem('save');
+          },
+        );
     },
     [bridge],
   );
@@ -473,7 +484,7 @@ export function ReviewView(): JSX.Element {
       onChoose={choose}
       lang={lang}
       onLang={setLang}
-      langError={langError}
+      prefsProblem={prefsProblem}
       explanationWidth={width}
       onExplanationWidth={setWidth}
       navigationWidth={navWidth}
@@ -497,7 +508,7 @@ function OpenReview({
   onChoose,
   lang,
   onLang,
-  langError,
+  prefsProblem,
   explanationWidth,
   onExplanationWidth,
   navigationWidth,
@@ -509,7 +520,7 @@ function OpenReview({
   readonly onChoose: () => void;
   readonly lang: Lang;
   readonly onLang: (lang: Lang) => void;
-  readonly langError: string | null;
+  readonly prefsProblem: PrefsProblem | null;
   readonly explanationWidth: number;
   readonly onExplanationWidth: (width: number) => void;
   readonly navigationWidth: number;
@@ -2323,7 +2334,7 @@ function OpenReview({
         words={words}
         lang={lang}
         onLang={onLang}
-        langError={langError}
+        prefsProblem={prefsProblem}
         save={save}
         saving={saving}
         coverage={coverage}
@@ -2908,7 +2919,7 @@ function Header({
   words,
   lang,
   onLang,
-  langError,
+  prefsProblem,
   save,
   saving,
   coverage,
@@ -2926,7 +2937,7 @@ function Header({
   readonly words: ReviewWords;
   readonly lang: Lang;
   readonly onLang: (lang: Lang) => void;
-  readonly langError: string | null;
+  readonly prefsProblem: PrefsProblem | null;
   readonly save: { at: string; error?: string } | null;
   readonly saving: boolean;
   readonly coverage: CoverageSummary;
@@ -2995,7 +3006,11 @@ function Header({
           </button>
         )}
       </div>
-      {langError !== null && <div className="rv-error rv-full">{words.notSaved(langError)}</div>}
+      {prefsProblem !== null && (
+        <div className="rv-error rv-full" data-ev="view-preferences-problem">
+          {prefsProblem === 'save' ? words.viewNotSaved : words.viewNotRead}
+        </div>
+      )}
     </header>
   );
 }

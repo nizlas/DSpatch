@@ -13,6 +13,7 @@ import {
   parseDiff,
   parseNameStatus,
   parseReviewDefinition,
+  refusedPreferenceFields,
   splitLines,
   carryStepMarks,
   stepHashesOf,
@@ -797,10 +798,13 @@ export class ReviewService {
   }
 
   setPreferences(raw: unknown): { saved: boolean; error?: string; writeFailed?: true } {
-    const preferences = adoptPreferences(raw);
-    if (JSON.stringify(preferences) !== JSON.stringify(raw)) {
-      return { saved: false, error: 'Unknown preference value.' };
+    // DSP-200: refused by field, not by comparing JSON text, which also refused valid fields sent
+    // in another key order. Unknown fields and invalid values are still refused, not dropped.
+    const refused = refusedPreferenceFields(raw);
+    if (refused.length > 0) {
+      return { saved: false, error: `Unknown preference value: ${refused.join(', ')}.` };
     }
+    const preferences = adoptPreferences(raw);
     try {
       const file = this.preferencesPath();
       fs.mkdirSync(path.dirname(file), { recursive: true });

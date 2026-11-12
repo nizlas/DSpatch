@@ -267,6 +267,10 @@ export class ReviewHost implements ReviewHostApi {
           hostError('save-failed', 'Your preference could not be saved: the preferences file could not be written.', result.error),
         );
       }
+      if (!result.saved) {
+        // DSP-200: the window says only that its view preferences were not saved; which fields, here.
+        this.options.log(`review host: review preferences not saved: ${result.error ?? 'unknown cause'}`);
+      }
       return Promise.resolve(result.error === undefined ? { saved: result.saved } : { saved: result.saved, error: result.error });
     });
   }

@@ -1887,6 +1887,50 @@ export function adoptPreferences(raw: unknown): ReviewPreferences {
   };
 }
 
+/** The preference fields, in the order `adoptPreferences` writes them. */
+const PREFERENCE_FIELDS = ['language', 'explanationWidth', 'navigationWidth', 'explanationDetached', 'discussionPlace', 'explanationBounds'] as const;
+
+/**
+ * DSP-200: the fields of `raw` the preferences do not take as sent: an unknown field, a known one
+ * with a value that is not valid, or a missing language. Empty when every field is taken as it
+ * is, whatever the order of its keys; an object is not compared by its JSON text, whose order is
+ * that of the keys.
+ */
+export function refusedPreferenceFields(raw: unknown): string[] {
+  if (!isRecord(raw)) {
+    return ['(not an object)'];
+  }
+  const adopted: Record<string, unknown> = { ...adoptPreferences(raw) };
+  const fields = [...new Set([...Object.keys(raw), ...Object.keys(adopted)])];
+  return fields.filter((field) => sortedJson(raw[field]) !== sortedJson(adopted[field]));
+}
+
+/**
+ * The same fields in the order `adoptPreferences` writes them, nothing dropped and nothing
+ * checked: what a window sends is then taken by a host that still compares JSON text (0.1.15 to
+ * 0.1.22, DSP-200) as well as by one that does not. An unknown field stays, last, to be refused.
+ */
+export function inPreferenceOrder(preferences: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const ordered: Record<string, unknown> = {};
+  for (const field of [...PREFERENCE_FIELDS, ...Object.keys(preferences)]) {
+    if (field in preferences && !(field in ordered)) {
+      ordered[field] = preferences[field];
+    }
+  }
+  return ordered;
+}
+
+/** JSON text with every object's keys sorted, so that two equal values give the same text. */
+function sortedJson(value: unknown): string | undefined {
+  const sorted = (item: unknown): unknown =>
+    Array.isArray(item)
+      ? item.map(sorted)
+      : isRecord(item)
+        ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, sorted(item[key])]))
+        : item;
+  return JSON.stringify(sorted(value));
+}
+
 /** A window's place and size as saved: whole numbers, a usable size, and nothing else. */
 function boundsOf(raw: unknown): ReviewPreferences['explanationBounds'] | null {
   if (!isRecord(raw)) {

@@ -16,6 +16,8 @@ import {
   REVIEW_CHANNELS,
   reviewIdentityLabel,
   adoptPreferences,
+  inPreferenceOrder,
+  refusedPreferenceFields,
   checksFileOf,
   adoptStoredState,
   buildDiffRows,
@@ -686,6 +688,33 @@ test('preferences accept only the two display languages', () => {
 test('preferences keep the widths of both walk window columns, within bounds', () => {
   assert.deepEqual(adoptPreferences({ language: 'en', explanationWidth: 600, navigationWidth: 420 }), { language: 'en', explanationWidth: 600, navigationWidth: 420 });
   assert.deepEqual(adoptPreferences({ language: 'en', navigationWidth: 5 }), { language: 'en' });
+});
+
+// DSP-200: a walk window saving its widths over preferences from before 0.1.10 (a panel place, no
+// widths yet) sent valid fields in another key order, and the JSON comparison refused them.
+test('preferences sent in another key order are taken; unknown fields and invalid values are still refused', () => {
+  const bounds = { height: 696, width: 560, y: 10, x: 1184 };
+  const reordered = { language: 'sv', discussionPlace: 'walk', explanationBounds: bounds, navigationWidth: 300, explanationWidth: 600 };
+  assert.notEqual(JSON.stringify(adoptPreferences(reordered)), JSON.stringify(reordered), 'the order differs from the one adoptPreferences writes');
+  assert.deepEqual(refusedPreferenceFields(reordered), []);
+  assert.deepEqual(refusedPreferenceFields({ language: 'en', navigationWidth: 300, explanationWidth: 600 }), []);
+  assert.deepEqual(refusedPreferenceFields({ language: 'en', explanationWidth: 5000 }), ['explanationWidth']);
+  assert.deepEqual(refusedPreferenceFields({ language: 'en', explanationWidth: 600.5 }), ['explanationWidth']);
+  assert.deepEqual(refusedPreferenceFields({ language: 'en', theme: 'dark' }), ['theme']);
+  assert.deepEqual(refusedPreferenceFields({ language: 'en', explanationBounds: { ...bounds, extra: 1 } }), ['explanationBounds']);
+  assert.deepEqual(refusedPreferenceFields({ language: 'de', navigationWidth: 300 }), ['language', 'navigationWidth']);
+  assert.deepEqual(refusedPreferenceFields({ navigationWidth: 300 }), ['navigationWidth', 'language']);
+  assert.deepEqual(refusedPreferenceFields('en'), ['(not an object)']);
+});
+
+test('a window sends its preferences in the order the host writes them, dropping nothing', () => {
+  const sent = { language: 'en', discussionPlace: 'walk', explanationWidth: 600, navigationWidth: 300, theme: 'dark' };
+  const ordered = inPreferenceOrder(sent);
+  assert.deepEqual(Object.keys(ordered), ['language', 'explanationWidth', 'navigationWidth', 'discussionPlace', 'theme']);
+  assert.deepEqual(ordered, sent);
+  // A host from 0.1.15 to 0.1.22 compares JSON text: the valid fields in this order pass it.
+  const valid = inPreferenceOrder({ language: 'en', discussionPlace: 'walk', explanationWidth: 600, navigationWidth: 300 });
+  assert.equal(JSON.stringify(adoptPreferences(valid)), JSON.stringify(valid));
 });
 
 test('a walk is a code walk or a reading, and the change can name what is worth checking', () => {

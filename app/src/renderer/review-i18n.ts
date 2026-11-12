@@ -120,6 +120,9 @@ export interface ReviewWords {
   readonly saving: string;
   readonly saved: string;
   readonly notSaved: (reason: string) => string;
+  /** DSP-200: the window's own language and widths, which are not the review. */
+  readonly viewNotSaved: string;
+  readonly viewNotRead: string;
   readonly openFindings: (count: number) => string;
   readonly tabs: {
     readonly walks: string;
@@ -338,6 +341,8 @@ const sv: ReviewWords = {
   saved: 'Sparat',
   notSaved: (reason) =>
     `Inte sparat. Dina senaste ändringar finns bara i det här fönstret och sparas igen vid nästa ändring. Orsak: ${reason}`,
+  viewNotSaved: 'Fönstrets språk och kolumnbredder kunde inte sparas. Granskningen berörs inte.',
+  viewNotRead: 'Sparat språk och kolumnbredder kunde inte läsas; fönstret använder standardvärden. Granskningen berörs inte.',
   openFindings: (count) => (count === 1 ? '1 öppet fynd' : `${String(count)} öppna fynd`),
   tabs: { walks: 'Walks', files: 'Ändrade filer', coverage: 'Täckning', notes: 'Anteckningar och beslut', search: 'Sök' },
   walkProgress: (opened, total) => `${String(opened)} av ${String(total)} steg öppnade`,
@@ -661,6 +666,8 @@ const en: ReviewWords = {
   saved: 'Saved',
   notSaved: (reason) =>
     `Not saved. Your latest changes exist only in this window and are saved again with the next change. Reason: ${reason}`,
+  viewNotSaved: "This window's language and column widths could not be saved. The review is not affected.",
+  viewNotRead: 'The saved language and column widths could not be read; this window uses the defaults. The review is not affected.',
   openFindings: (count) => (count === 1 ? '1 open finding' : `${String(count)} open findings`),
   tabs: { walks: 'Walks', files: 'Changed files', coverage: 'Coverage', notes: 'Notes and decisions', search: 'Search' },
   walkProgress: (opened, total) => `${String(opened)} of ${String(total)} steps opened`,

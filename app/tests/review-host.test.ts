@@ -289,6 +289,42 @@ test('through the host: the display language round-trips, and an unknown value i
   }
 });
 
+// DSP-200: preferences written before 0.1.10 kept the panel's place and window but no widths; the
+// walk window's first width save put the widths after them and was refused for the key order.
+test('through the host: a window saves its widths over older preferences in any key order, and keeps the rest', async () => {
+  const records = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-prefs-'));
+  try {
+    const logged: string[] = [];
+    const host = localReviewHost(new ReviewHost({ recordsDir: records, log: (line) => logged.push(line) }));
+    const bounds = { x: 1184, y: 10, width: 560, height: 696 };
+    const older = { language: 'sv', discussionPlace: 'walk', explanationBounds: bounds };
+    fs.writeFileSync(path.join(records, 'preferences.json'), JSON.stringify(older));
+    const kept = ok(await host.getPreferences());
+    // As ReviewView merged before DSP-200: the kept fields first, the window's own after them.
+    const merged = { ...kept, language: 'sv', explanationWidth: 600, navigationWidth: 300 };
+    assert.deepEqual(ok(await host.setPreferences({ preferences: merged })), { saved: true });
+    assert.deepEqual(ok(await host.getPreferences()), { language: 'sv', explanationWidth: 600, navigationWidth: 300, discussionPlace: 'walk', explanationBounds: bounds });
+    // A later save of one width keeps the other fields.
+    const again = ok(await host.getPreferences());
+    assert.deepEqual(ok(await host.setPreferences({ preferences: { ...again, navigationWidth: 420 } })), { saved: true });
+    assert.deepEqual(ok(await host.getPreferences()), { language: 'sv', explanationWidth: 600, navigationWidth: 420, discussionPlace: 'walk', explanationBounds: bounds });
+    // Invalid values and unknown fields are still refused, and nothing is written.
+    const before = fs.readFileSync(path.join(records, 'preferences.json'), 'utf8');
+    const invalid = ok(await host.setPreferences({ preferences: { ...again, explanationWidth: 5000 } }));
+    const unknown = ok(await host.setPreferences({ preferences: { ...again, theme: 'dark' } }));
+    assert.equal(invalid.saved, false);
+    assert.equal(unknown.saved, false);
+    assert.equal(fs.readFileSync(path.join(records, 'preferences.json'), 'utf8'), before);
+    assert.deepEqual(
+      logged.filter((line) => line.includes('preferences not saved')),
+      ['review host: review preferences not saved: Unknown preference value: explanationWidth.', 'review host: review preferences not saved: Unknown preference value: theme.'],
+      'the refused fields are named in the log',
+    );
+  } finally {
+    fs.rmSync(records, { recursive: true, force: true });
+  }
+});
+
 test('through the host: a closed session answers unknown-session, and sessions are kept apart', async () => {
   const fixture = makeReviewFixture();
   try {

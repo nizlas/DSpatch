@@ -187,7 +187,12 @@ export function registerReviewIpc(
   ipcMain.handle(REVIEW_CHANNELS.setPreferences, async (event, preferences: unknown): Promise<{ saved: boolean; error?: string }> => {
     entryOf(event);
     const answer = await host.setPreferences({ preferences });
-    return isReviewHostError(answer) ? { saved: false, error: answer.message } : answer;
+    if (isReviewHostError(answer)) {
+      // DSP-200: the window says only that its view preferences were not saved; the cause, here.
+      log(`[review] view preferences not saved: ${answer.message}`);
+      return { saved: false, error: answer.message };
+    }
+    return answer;
   });
 
   // --- The review discussion (DSP-127) ---------------------------------------------
