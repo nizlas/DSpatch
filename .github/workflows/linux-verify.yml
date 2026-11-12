@@ -136,7 +136,7 @@ jobs:
           name: dock-trial
           path: app/release/trial-dock/ci
       # DSP-200: a width saved in the walk window over preferences from before 0.1.10, with no
-      # message and the older fields kept; About is read through Windows UI Automation, not here.
+      # message and the older fields kept; About found on the X display and Copy pressed with xdotool.
       - name: The view preference trial in real windows
         if: ${{ always() }}
         run: xvfb-run -a node scripts/prefs-trial.mjs release/trial-prefs/ci
@@ -146,6 +146,17 @@ jobs:
         with:
           name: prefs-trial
           path: app/release/trial-prefs/ci
+      # DSP-201: a walk place marking 151-159 of a new 417-line file accepts exactly those 9 lines,
+      # in the walk, the saved mark and the diff window, after reopening and a restart.
+      - name: The Accept scope trial in real windows
+        if: ${{ always() }}
+        run: xvfb-run -a node scripts/accept-scope-trial.mjs release/trial-accept-scope/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: accept-scope-trial
+          path: app/release/trial-accept-scope/ci
 
   # DSP-173: the resource governor on this runner's own /proc (units, intervals, unknown signals,
   # its reading starting and stopping with a light dry loop run in observe), then the loop and live

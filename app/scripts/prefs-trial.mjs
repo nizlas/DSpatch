@@ -18,10 +18,10 @@
  *
  *     node scripts/prefs-trial.mjs [<evidence folder>]
  *
- * Needs `npm run build`, and on Linux an X display (Linux CI runs it under `xvfb-run`, where the
- * About part is left out). The input is DevTools input into the page (the divider is dragged through
- * Chromium's input pipeline, not the operating system's); the About dialog is read and its button
- * pressed through UI Automation, with no mouse or keyboard. The clipboard's text is put back after.
+ * Needs `npm run build`, and on Linux an X display (Linux CI runs it under `xvfb-run`). The input is
+ * DevTools input into the page (the divider is dragged through Chromium's input pipeline, not the
+ * operating system's). On Windows the About dialog is read and its button pressed through UI
+ * Automation; on Linux it is found by its title and Copy pressed through the X server with `xdotool`. The clipboard's text is put back after.
  * Nothing of the machine's own profile is touched; the standalone host this start begins is ended.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -424,7 +424,7 @@ async function main() {
 
   stage = 'About DSpatch';
   if (!onWindows) {
-    note('About DSpatch is read through Windows UI Automation; not checked on this platform');
+    await aboutOnLinux(mainWindow);
     return;
   }
   const hostBuild = JSON.parse(await client.main.ev(`JSON.stringify(JSON.parse(process.mainModule.require('node:fs').readFileSync(${JSON.stringify(path.join(profile, 'host-running.json'))}, 'utf8')))`));
@@ -449,6 +449,63 @@ async function main() {
   } finally {
     await client.main.ev(`process.mainModule.require('electron').clipboard.writeText(${JSON.stringify(keptClipboard ?? '')})`).catch(() => undefined);
   }
+}
+
+/**
+ * About DSpatch on Linux: the dialog found on the X display by its title and drawn into the
+ * evidence, its Copy button pressed through the X server's keyboard (XTEST, `xdotool`), and the
+ * clipboard read back. GTK's dialog text is not readable from here; what Copy puts on the
+ * clipboard is the dialog's own text, so it is checked there. Each way to reach Copy from the
+ * default Close button is tried with the dialog opened afresh, until one copies.
+ */
+async function aboutOnLinux(mainWindow) {
+  if (spawnSync('xdotool', ['version'], { encoding: 'utf8' }).status !== 0) {
+    note('About DSpatch on Linux needs xdotool on the X display; not checked here');
+    return;
+  }
+  const hostBuild = JSON.parse(fs.readFileSync(path.join(profile, 'host-running.json'), 'utf8'));
+  note('the running host, as its own host-running.json says', `${hostBuild.appVersion} ${hostBuild.commit}`);
+  const clipboard = () => client.main.ev(`process.mainModule.require('electron').clipboard.readText()`);
+  const openAbout = () =>
+    client.main.ev(`(() => { const { Menu, BrowserWindow } = process.mainModule.require('electron'); const item = Menu.getApplicationMenu().getMenuItemById('dspatch-about'); if (!item) return false; const w = BrowserWindow.fromId(${String(mainWindow.id)}); item.click(undefined, w, w.webContents); return item.label; })()`);
+  const dialogs = () => run('xdotool', ['search', '--name', '^About DSpatch$'], true).split('\n').filter((line) => /^\d+$/.test(line));
+  const ways = [['shift+Tab', 'Return'], ['Left', 'Return'], ['Tab', 'Return']];
+  const kept = await clipboard();
+  let copied = null;
+  try {
+    for (const [index, keys] of ways.entries()) {
+      await client.main.ev(`process.mainModule.require('electron').clipboard.writeText('dsp-200 trial placeholder')`);
+      check(`Help > About DSpatch is in the menu (opening ${String(index + 1)})`, (await openAbout()) === 'About DSpatch');
+      const [dialog] = await poll('the About DSpatch dialog on the X display', () => {
+        const found = dialogs();
+        return found.length > 0 ? found : false;
+      }, 15_000);
+      if (index === 0) {
+        check('About DSpatch opens, titled About DSpatch', run('xdotool', ['getwindowname', dialog]) === 'About DSpatch');
+        await delay(500);
+        run('import', ['-window', 'root', path.join(evidence, 'about-linux.png')], true);
+      }
+      run('xdotool', ['windowfocus', '--sync', dialog], true);
+      run('xdotool', ['key', '--clearmodifiers', ...keys]);
+      const text = await poll('the clipboard or the dialog closed', async () => {
+        const now = await clipboard();
+        if (now !== 'dsp-200 trial placeholder') return now;
+        return dialogs().length === 0 ? '' : false;
+      }, 10_000).catch(() => '');
+      if (dialogs().length > 0) run('xdotool', ['key', '--window', dialog, 'Escape'], true);
+      await poll('the dialog closed', () => dialogs().length === 0, 10_000).catch(() => undefined);
+      if (text !== '') {
+        note('Copy reached with', keys.join(' '));
+        copied = text;
+        break;
+      }
+    }
+  } finally {
+    await client.main.ev(`process.mainModule.require('electron').clipboard.writeText(${JSON.stringify(kept ?? '')})`).catch(() => undefined);
+  }
+  fs.writeFileSync(path.join(evidence, 'about-linux-copied.txt'), `${copied ?? '(nothing copied)'}\n`);
+  check('Copy puts the app version from the package on the clipboard', copied !== null && copied.startsWith(`DSpatch ${packageVersion} (`), copied ?? '');
+  check('and the running host\'s own version', copied !== null && copied.includes(`Running host: ${hostBuild.appVersion} (`), copied ?? '');
 }
 
 async function endHost() {
