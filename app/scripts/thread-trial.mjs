@@ -937,6 +937,11 @@ async function main() {
   check('a place that cannot be found says so and marks no code', /not found at that commit/.test(missing) && (await diff.ev(`[...document.querySelectorAll('td.rv-thread-anchor')].every((td)=>Number(td.dataset.codeLine)<9000)`)) === true, missing);
   const keepId = await diff.ev(`[...document.querySelectorAll('[data-ev="review-thread"]')].find((c)=>/exclamation/.test(c.textContent))?.dataset.threadId ?? ''`);
   if (keepId !== '') {
+    // A thread that is not the chosen one is drawn folded to its head line: open it first.
+    if ((await diff.ev(`document.querySelector('[data-thread-id="${keepId}"] [data-ev="thread-accept"]')===null`)) === true) {
+      await osClickAt(diffWindow.contentsId, `[data-thread-id="${keepId}"] [data-ev="thread-toggle"]`);
+      await diff.until('the keep thread opened', `document.querySelector('[data-thread-id="${keepId}"] [data-ev="thread-accept"]')!==null`, 10_000);
+    }
     await osClickAt(diffWindow.contentsId, `[data-thread-id="${keepId}"] [data-ev="thread-accept"]`);
     await diff.until('resolved on accept', `document.querySelector('[data-thread-id="${keepId}"]')?.dataset.threadStatus==='resolved'`, 15_000);
     check('accepting an explicit "keep the code" recommendation closes the thread with its reason kept', (await diff.ev(`document.querySelector('[data-thread-id="${keepId}"]').textContent`)).includes('punctuation is intended'));
