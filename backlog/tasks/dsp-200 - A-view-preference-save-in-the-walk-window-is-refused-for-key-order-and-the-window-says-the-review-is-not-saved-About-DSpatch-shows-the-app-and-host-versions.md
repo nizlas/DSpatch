@@ -7,7 +7,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 10:25'
-updated_date: '2026-11-12 10:58'
+updated_date: '2026-11-12 13:58'
 labels:
   - review
 dependencies: []
@@ -54,4 +54,6 @@ About DSpatch: in a Help menu; app.getVersion() and the app's commit; the runnin
 Verification on the working tree over 66c8447 (build identity a0bbfc5a42ddf372): typecheck (node, renderer, tools); about, review-model and review-host tests, plus review-reading-style, presentation-profiles, walk-panes and window-layout: 91 tests, all pass. Window trial scripts/prefs-trial.mjs on Windows: final 21 of 21; a negative control without the fix fails at the first width save, showing the new message, with the host's log line; an old-host control (host check reverted, window ordering kept) passes 21 of 21. Evidence in docs/evaluations/dsp-200/. Linux: the trial is added to linux-verify's dock job (About part left out there).
 
 Linux CI on 8162c2c: dock job (run 43204247463) with the prefs trial under xvfb-run, 15 of 15 (About left out on Linux); tests job (run 43204252986) green. The first CI run on d3fdece failed: the client boundary test did not list main/about.ts, and the trial's Open click for the pair did not take under Xvfb; both fixed in 8162c2c.
+
+Linux CI dock job on d53fe1d (run 43231468600): the Accept scope trial under xvfb-run 32 of 32 (151-159 gives 9 of 417 in the walk, the saved mark and the diff window, after reopening and after a restart; the earlier whole-file mark flagged and withdrawn); the preference trial 20 of 20 with About DSpatch found on the X display and Copy pressed through xdotool (copied: DSpatch <version> (<commit>) / Running host: <version> (<commit>)). Released in 0.1.23.
 <!-- SECTION:NOTES:END -->

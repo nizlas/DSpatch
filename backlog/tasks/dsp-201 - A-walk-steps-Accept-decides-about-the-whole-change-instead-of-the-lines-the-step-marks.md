@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-12 13:14'
-updated_date: '2026-11-12 13:44'
+updated_date: '2026-11-12 13:58'
 labels:
   - review
 dependencies: []
@@ -53,4 +53,6 @@ Verification: tests/walk-decision-scope.test.ts (7) — 417-line regression 9 ac
 Real-window trial scripts/accept-scope-trial.mjs on Windows, 32 of 32 (docs/evaluations/dsp-201/final): the walk marks rows 151-159; Accept names new lines 151-159 before and after Whole file; the saved mark is target 151-159 with origin walk W1.1; the diff window draws 151-159 of 417 reviewed; a second place adds its own 5 and withdrawing it leaves 9; same after reopening the walk window and after restarting app and host; an earlier whole-file mark without origin is read as 417, flagged uncertain (408 beyond), withdrawn, and the place accepts its 9 again; the file list shows 2%. Not done: a negative control in a window against 0.1.22, Linux, CI.
 
 Linux CI tests job on 4f8c8c6 (run 43229679035): success, the review group included; review-context.test.ts passes there, as its Windows failure is a path separator in the test.
+
+Linux CI dock job on d53fe1d (run 43231468600): the Accept scope trial under xvfb-run 32 of 32 (151-159 gives 9 of 417 in the walk, the saved mark and the diff window, after reopening and after a restart; the earlier whole-file mark flagged and withdrawn); the preference trial 20 of 20 with About DSpatch found on the X display and Copy pressed through xdotool (copied: DSpatch <version> (<commit>) / Running host: <version> (<commit>)). Released in 0.1.23.
 <!-- SECTION:NOTES:END -->
