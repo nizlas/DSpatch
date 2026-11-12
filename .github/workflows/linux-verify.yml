@@ -18,6 +18,10 @@ on:
         description: Run one job only (tests, provider-tests, windows, dock, icons, governor, profiles); empty runs them all
         type: string
         default: ''
+      icons_release:
+        description: For the icons job, a published release tag whose .deb is installed instead of building one
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -216,8 +220,14 @@ jobs:
         run: node scripts/icon-trial.mjs release/trial-icons/build
         working-directory: app
       - name: Build the .deb
-        if: ${{ always() }}
+        if: ${{ always() && inputs.icons_release == '' }}
         run: npm run package:host -- --platform linux && npm run package:client -- --linux deb --x64
+        working-directory: app
+      - name: Download the published .deb
+        if: ${{ always() && inputs.icons_release != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mkdir -p release && gh release download "${{ inputs.icons_release }}" --pattern 'dspatch_*_amd64.deb' --pattern SHA256SUMS --dir release && (cd release && sha256sum --check --ignore-missing SHA256SUMS)
         working-directory: app
       - name: Install the .deb on the runner
         if: ${{ always() }}

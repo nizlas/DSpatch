@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-12 20:56'
-updated_date: '2026-11-12 20:56'
+updated_date: '2026-11-12 21:31'
 labels:
   - release
 dependencies: []
@@ -21,12 +21,12 @@ Niclas chose the blue-turquoise interlaced DS symbol with a glowing sphere in th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The original is kept in the repository and every icon resource is derived from it by a script
-- [ ] #2 The Linux .deb installs the icon set and its desktop entry, WM_CLASS and window icons give the right icon in dock, taskbar and window switcher
-- [ ] #3 Every client window (main, review, walk, loop editor) carries the icon on Linux; Windows takes it from the executable
-- [ ] #4 About DSpatch and the start page show the icon discreetly
-- [ ] #5 The icon is inspected at 16, 24, 32, 48, 128 and 256 px on light and dark, with transparency outside the plate
-- [ ] #6 Verified in a built and an installed Linux package; Windows resources checked in a Windows build
+- [x] #1 The original is kept in the repository and every icon resource is derived from it by a script
+- [x] #2 The Linux .deb installs the icon set and its desktop entry, WM_CLASS and window icons give the right icon in dock, taskbar and window switcher
+- [x] #3 Every client window (main, review, walk, loop editor) carries the icon on Linux; Windows takes it from the executable
+- [x] #4 About DSpatch and the start page show the icon discreetly
+- [x] #5 The icon is inspected at 16, 24, 32, 48, 128 and 256 px on light and dark, with transparency outside the plate
+- [x] #6 Verified in a built and an installed Linux package; Windows resources checked in a Windows build
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -34,3 +34,11 @@ Niclas chose the blue-turquoise interlaced DS symbol with a glowing sphere in th
 <!-- SECTION:PLAN:BEGIN -->
 1. Save the original (app/build/icon-source/dspatch-icon.webp) and derive the resources with scripts/generate-icons.mjs. 2. Point electron-builder at build/icons and build/icon.ico; set the window icon on Linux; About and start page. 3. Inspect sizes; Windows dir build. 4. icon-trial.mjs in linux-verify on the build and on the installed .deb. 5. Release as a Linux pre-release with the published and upgrade trials.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Original app/build/icon-source/dspatch-icon.webp (as supplied; alpha already transparent outside the plate, an ~8% transparent margin cut away by the script). npm run icons (scripts/generate-icons.mjs, Electron decode, Lanczos-3 over premultiplied alpha, deterministic) writes build/icons/16..512 (Linux hicolor), build/icon.ico 16..256 (Windows exe, installer, shortcuts), src/renderer/public/icons/dspatch-64/128/256 (window icon on Linux, About, start page). Old build/icon.png removed. Every BrowserWindow gets windowIcon() on Linux; Windows uses the exe icon. Found and fixed: windows' WM_CLASS was dspatch while the entry's StartupWMClass was DSpatch; package.json desktopName dspatch.desktop makes them match (file name, appId and user data unchanged).
+
+Verification: scripts/icon-trial.mjs in linux-verify's icons job (run 43309807897): build 29/29, installed .deb 42/42 (entry, hicolor bytes, WM_CLASS = StartupWMClass, _NET_WM_ICON 256 px with the icon's pixels on main, review, walk and loop editor windows; start page icon 56 px; About, panel and Alt+Tab screenshots). Windows: exe and NSIS installer built locally carry 16..256 with transparent corners. Typecheck and project-host-boundary pass. Evidence docs/evaluations/dsp-204/. Not seen: GNOME/KDE docks and Wayland, Windows taskbar/shortcuts of an installed app.
+<!-- SECTION:NOTES:END -->

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=DSpatch
+Exec=/opt/DSpatch/dspatch %U
+Terminal=false
+Type=Application
+Icon=dspatch
+StartupWMClass=dspatch
+Comment=DSpatch – a workspace for agent-assisted development.
+Categories=Development;

@@ -2,7 +2,7 @@
   "name": "dspatch",
   "productName": "DSpatch",
   "desktopName": "dspatch.desktop",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "private": true,
   "description": "DSpatch – a workspace for agent-assisted development.",
   "homepage": "https://github.com/nizlas/DSpatch",
