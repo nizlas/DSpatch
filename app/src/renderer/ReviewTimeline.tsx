@@ -1515,7 +1515,7 @@ function TimelinePaneView({
     // A fold opens, in this order: the rest of the place's function, the rest of its
     // prepared context, then GAP_STEP lines at a time from the side nearest the change.
     // The whole file is a level of its own, never one click on a fold.
-    const fold = (start: number, end: number): PaneItem => {
+    const fold = (start: number, end: number): PaneItem | null => {
       const part = (set: ReadonlySet<number>): readonly [number, number] | null => {
         let from = -1;
         let to = -1;
@@ -1527,21 +1527,36 @@ function TimelinePaneView({
         }
         return from < 0 ? null : [from, to];
       };
-      const total = end - start;
+      // DSP-207: a fold counts the rows it opens in the view shown (Before hides added rows, After
+      // removed ones) and says only how many; it never calls them unchanged, as added and removed
+      // rows of other changes fold too. A fold that would open no row in this view is not drawn.
+      const shownIn = (from: number, to: number): number => {
+        let count = 0;
+        for (let row = from; row <= to; row += 1) {
+          if (!hidden(rows[row] as DiffRow)) {
+            count += 1;
+          }
+        }
+        return count;
+      };
+      const total = shownIn(start, end - 1);
+      if (total === 0) {
+        return null;
+      }
       const unitPart = part(unitSet);
-      if (unitPart !== null) {
-        const count = unitPart[1] - unitPart[0] + 1;
+      if (unitPart !== null && shownIn(unitPart[0], unitPart[1]) > 0) {
+        const count = shownIn(unitPart[0], unitPart[1]);
         return { kind: 'gap', start, reveal: unitPart, label: unitName === '' ? words.view.hiddenLines(count) : words.view.restOfUnit(unitName, count) };
       }
       const contextPart = part(inContext);
-      if (contextPart !== null) {
-        return { kind: 'gap', start, reveal: contextPart, label: words.view.hiddenLines(contextPart[1] - contextPart[0] + 1) };
+      if (contextPart !== null && shownIn(contextPart[0], contextPart[1]) > 0) {
+        return { kind: 'gap', start, reveal: contextPart, label: words.view.hiddenLines(shownIn(contextPart[0], contextPart[1])) };
       }
       if (total <= GAP_STEP + GAP_STEP / 2) {
         return { kind: 'gap', start, reveal: [start, end - 1], label: words.view.hiddenLines(total) };
       }
       const reveal: readonly [number, number] = end <= firstFocus ? [end - GAP_STEP, end - 1] : [start, start + GAP_STEP - 1];
-      return { kind: 'gap', start, reveal, label: words.view.moreLines(GAP_STEP, total) };
+      return { kind: 'gap', start, reveal, label: words.view.moreLines(shownIn(reveal[0], reveal[1]), total) };
     };
     let noteDone = false;
     let index = 0;
@@ -1551,7 +1566,10 @@ function TimelinePaneView({
         while (index < rows.length && visible[index] !== true) {
           index += 1;
         }
-        items.push(fold(start, index));
+        const gap = fold(start, index);
+        if (gap !== null) {
+          items.push(gap);
+        }
         continue;
       }
       const row = rows[index] as DiffRow;

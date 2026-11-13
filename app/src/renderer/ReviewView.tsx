@@ -4849,13 +4849,17 @@ function CodePane({
         while (index <= end && visible[index] !== true) {
           index += 1;
         }
-        body.push(
-          <div key={`gap-${String(start)}`} className="rv-gap">
-            <button type="button" onClick={() => setOpenGaps(new Set([...openGaps, start]))}>
-              {words.view.hiddenLines(index - start)}
-            </button>
-          </div>,
-        );
+        // DSP-207: the rows the fold opens in the view shown, never called unchanged; none, no fold.
+        const opens = rows.slice(start, index).filter((row) => !hidden(row)).length;
+        if (opens > 0) {
+          body.push(
+            <div key={`gap-${String(start)}`} className="rv-gap">
+              <button type="button" onClick={() => setOpenGaps(new Set([...openGaps, start]))}>
+                {words.view.hiddenLines(opens)}
+              </button>
+            </div>,
+          );
+        }
         continue;
       }
       const row = rows[index];

@@ -146,6 +146,21 @@ The table now shows `lineCoverage` in [`shared/review-model.ts`](../../../app/sr
 - **The filter** lists hunks with any line in no walk.
 - **Reading progress** (steps opened, or marked walked through) is no longer counted here: it is the walks' own and is shown with them. A note under the totals says so.
 
+### Fold labels
+
+A fold in a walk pane, or in the pane of an opened location, used to say "show N unchanged lines". In a new file, or around other changes, the lines it hid were added or removed lines, so the wording was untrue.
+
+It now says only how many lines it opens: "⋯ show N more lines" ("⋯ visa N rader till"). Named folds ("⋯ show the rest of `<name>` (n lines)") and "⋯ show 20 more lines (N hidden)" are kept.
+
+The count is the rows the fold opens in the view shown: Before leaves out added rows, and After leaves out removed ones. A fold that would open no row in that view is not drawn. The diff window's folds between hunks, which hide only unchanged lines, are not affected.
+
+Only the wording and the counting changed: what folds, and what Accept, delegation and the coverage include, are as before.
+
+In the trial, the new file `table.cpp` ([14](linux-xvfb/14-new-file-folds.png)):
+- shows "⋯ show 134 more lines" and "⋯ show 151 more lines";
+- the first opens exactly lines 2–135;
+- in Before, where the file has no lines, no fold is drawn.
+
 ## Verification
 
 **The trial,** on Linux and on Windows, checks:
@@ -203,5 +218,5 @@ The screenshots in [linux-xvfb/](linux-xvfb/) are from dock run 43479029845.
 ## Not established
 
 - **The structure finder is a reader of the text, not a compiler's parser.** Balanced macros that change what code means (a macro used as a function header, for example `TEST(Suite, Name) {`), or code the preprocessor removes while its braces still balance, can still be read as ordinary code. The trial and the tests cover the shapes listed above, not every codebase.
-- **A paragraph of statements at file level** (no blank lines, outside any function) is taken as one declaration and folded like a unit when long. In a new file whose lines are all added, such folds say "unchanged lines" for hidden added lines; that wording comes from before DSP-207 and is unchanged here.
+- **A paragraph of statements at file level** (no blank lines, outside any function) is taken as one declaration and folded like a unit when long.
 - **Other window managers, Wayland** and **Linux distributions other than the runner's** are not tried.

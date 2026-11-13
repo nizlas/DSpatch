@@ -36,6 +36,21 @@ import {
   type Walk,
 } from '../src/shared/review-model.ts';
 import { codeStructure, placeStructures, structureLines } from '../src/renderer/code-structure.ts';
+import { WORDS } from '../src/renderer/review-i18n.ts';
+
+test('a fold says how many lines it opens, never that they are unchanged: added and removed lines of other changes fold too', () => {
+  assert.equal(WORDS.en.view.hiddenLines(134), '⋯ show 134 more lines');
+  assert.equal(WORDS.en.view.hiddenLines(1), '⋯ show 1 more line');
+  assert.equal(WORDS.sv.view.hiddenLines(134), '⋯ visa 134 rader till');
+  assert.equal(WORDS.sv.view.hiddenLines(1), '⋯ visa 1 rad till');
+  for (const words of [WORDS.en, WORDS.sv]) {
+    for (const label of [words.view.hiddenLines(5), words.view.moreLines(20, 140), words.view.restOfUnit('Box::run', 40)]) {
+      assert.ok(!/unchanged|oförändrad/i.test(label), label);
+    }
+  }
+  // Named folds stay named.
+  assert.equal(WORDS.en.view.restOfUnit('MctAdapter::process', 457), '⋯ show the rest of MctAdapter::process (457 lines)');
+});
 
 const REVISIONS = { base: 'a'.repeat(40), target: 'b'.repeat(40) };
 const PATH = 'src/mct_adapter.cpp';

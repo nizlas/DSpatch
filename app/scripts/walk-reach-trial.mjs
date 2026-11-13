@@ -796,8 +796,25 @@ async function main() {
   const mandate = job.job.scope.ranges.map((entry) => `${entry.side}:${String(entry.start)}-${String(entry.end)}`).sort();
   check('the mandate is the walk\'s marked lines, the blank line 131 with them, and no line outside the walk', mandate.includes('target:128-131') && mandate.includes('target:137-137') && mandate.includes('target:4-4') && !mandate.some((entry) => /^target:(148|150|151|153)-/.test(entry)), JSON.stringify(mandate));
 
-  stage = 'a hunk partly in a walk and partly decided: every count agrees';
+  stage = 'the folds of a new file say how many lines they open, not that they are unchanged';
   await goStep(walk, 'W2.3');
+  const foldsNow = () => walk.ev(`JSON.stringify([...(document.querySelector('[data-focus-active]')?.closest('.rv-pane-lines') ?? document.createElement('div')).querySelectorAll('.rv-gap button')].map((button) => button.textContent.trim()))`).then(JSON.parse);
+  const newFileFolds = await foldsNow();
+  check('in a new file, whose lines are all added, no fold says unchanged; each says how many lines it opens', newFileFolds.length > 0 && newFileFolds.every((label) => /show \d+ more lines?/.test(label) && !/unchanged/i.test(label)), JSON.stringify(newFileFolds));
+  check('the fold above line 136 opens exactly the 134 lines 2–135', newFileFolds.some((label) => /show 134 more lines$/.test(label)), JSON.stringify(newFileFolds));
+  await walk.shot('14-new-file-folds');
+  await walk.ev(`[...(document.querySelector('[data-focus-active]')?.closest('.rv-pane-lines') ?? document).querySelectorAll('.rv-gap button')].find((button) => /show 134 more lines$/.test(button.textContent.trim()))?.click(); true`);
+  await delay(600);
+  const opened = await sweepPane(walk);
+  check('opened, it draws those 134 lines: 2 to 135', range(2, 135).every((line) => opened.lines.has(line)), JSON.stringify({ missing: range(2, 135).filter((line) => !opened.lines.has(line)).slice(0, 8) }));
+  await walk.click('code-view-before');
+  await delay(600);
+  const beforeFolds = await walk.ev(`JSON.stringify([...document.querySelectorAll('.rv-pane-active .rv-gap button')].map((button) => button.textContent.trim()))`).then(JSON.parse);
+  check('in Before, where a new file has no lines, no fold offers lines it cannot show', beforeFolds.length === 0 || beforeFolds.every((label) => !/unchanged/i.test(label) && !/show 0 /.test(label)), JSON.stringify(beforeFolds));
+  await walk.click('code-view-both');
+  await delay(400);
+
+  stage = 'a hunk partly in a walk and partly decided: every count agrees';
   const tableSection = await reviewSectionPage();
   await confirmAccept(tableSection, 0, 'new lines 140–144 in table.cpp');
   await poll('the table place accepted', () => rangesOf(key, 'walk').includes('target:140-144'), 15_000);
