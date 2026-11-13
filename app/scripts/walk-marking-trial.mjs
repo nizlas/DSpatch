@@ -494,7 +494,9 @@ async function main() {
   check('B: the next pane is drawn while the first place is active', worker.length > 0 && worker.every((row) => !row.active), `${String(worker.length)} rows`);
   const paneB = paneOwning(worker, 'target', [6, 7, 8]);
   check('B: the next place\'s function is already light green in its pane', paneB !== null, JSON.stringify([...new Set(worker.map((row) => row.pane))].map((pane) => [pane, kindsAt(inPane(worker, pane), 'target', [6, 7, 8])])));
-  check('B: the added lines around it are a weaker green there', kindsAt(inPane(worker, paneB), 'target', [2, 5, 9]).every((kind) => kind === 'new' || kind === ''), JSON.stringify(kindsAt(inPane(worker, paneB), 'target', [2, 5, 9])));
+  // DSP-207: the added blank lines on either side of the new function (5 and 9) are its place's own;
+  // the other added line of the file (2) is a weaker green there.
+  check('B: the function\'s blank lines are its own, the other added line a weaker green there', kindsAt(inPane(worker, paneB), 'target', [5, 9]).every((kind) => kind === 'own-new') && kindsAt(inPane(worker, paneB), 'target', [2]).every((kind) => kind === 'new' || kind === ''), JSON.stringify(kindsAt(inPane(worker, paneB), 'target', [2, 5, 9])));
 
   // The colours as drawn, judged by their numbers as well as by eye in the screenshots.
   const ownNew = rowsAt(check1, 'target', 2)[0];
@@ -525,7 +527,7 @@ async function main() {
   const flash = await arriving(walk);
   const flashBg = await walk.ev(`(() => { const row = document.querySelector('.rv-arrive'); return row ? getComputedStyle(row).backgroundColor : ''; })()`);
   note('the flash, 150 ms after arriving', `${JSON.stringify(flash)} ${flashBg}`);
-  check('only the arriving place\'s changed rows flash: worker.js 6–8', JSON.stringify(flash.map((entry) => `${entry[1]}:${entry[2]}:${String(entry[3])}`).sort()) === JSON.stringify(['src/worker.js:target:6', 'src/worker.js:target:7', 'src/worker.js:target:8']), JSON.stringify(flash));
+  check('only the arriving place\'s changed rows flash: worker.js 5–9, the function and its blank lines (DSP-207)', JSON.stringify(flash.map((entry) => `${entry[1]}:${entry[2]}:${String(entry[3])}`).sort()) === JSON.stringify(['src/worker.js:target:5', 'src/worker.js:target:6', 'src/worker.js:target:7', 'src/worker.js:target:8', 'src/worker.js:target:9']), JSON.stringify(flash));
   // Mid-animation Chromium reports the interpolated colour in oklab: gold is light and on the yellow side (b > 0).
   const golden = flashBg.startsWith('oklab(')
     ? (() => {
@@ -551,7 +553,7 @@ async function main() {
   stage = 'C: the second place in the same hunk';
   const section = await reviewSectionPage();
   let said = await placesSaid(section);
-  check('the active place decides about its 3 lines', said.length === 1 && said[0].marked === 'target:6-8' && said[0].lines === 3, JSON.stringify(said));
+  check('the active place decides about its 5 lines, the function and its blank lines (DSP-207)', said.length === 1 && said[0].marked === 'target:5-9' && said[0].lines === 5, JSON.stringify(said));
   await walk.ev(`document.querySelector('.rv-nav-next').click()`);
   await delay(150);
   const flash3 = await arriving(walk);

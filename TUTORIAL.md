@@ -164,7 +164,7 @@ Useful controls while walking:
 
 | Control | Use it to |
 | --- | --- |
-| **The change / The context / Whole file** | Adjust how much surrounding code you see. |
+| **The change / The context / Whole file** | Adjust how much surrounding code you see. **The context** shows the function or method the place is in, with its documentation and signature; in a long function the parts between its head, the change and its end are folded and named. Outside functions it shows the declaration, class or section, and only the lines around the place where the language's structure is not known. |
 | **Before / Before → After / After** | Read the old version, comparison or new version. |
 | **Wrap lines** | Fit long lines within the current pane width. |
 | Pane dividers | Give the code you are reading more space. |
@@ -206,6 +206,8 @@ The current delegated-review presentation can be verbose and may show only **run
 Use **Files changed** to see what remains. The handled percentage counts changed lines, including deletions; expanding unchanged context does not increase the denominator. Exemptions are kept distinct from approvals even when both contribute to handled progress.
 
 In the walk's **Coverage** view, distinguish code included in a walk or opened while reading from code actually reviewed. Passing through a step, generating an explanation and asking questions do not approve lines.
+
+**What is left**, at the top of the Coverage view, counts the changed lines that have a decision and lists the rest in two groups: changes no walk place covers, and walk places without a decision. Open a change no walk covers to read it beside its code; Accept or Exempt there applies to exactly its lines. A walk place also covers the blank lines its change added or removed next to it, and those are marked and decided with it. Nothing is accepted by being listed, so 100% means every changed line has a decision of yours or an agent assessment you accepted.
 
 Close the windows when finished for now. Reopen the ongoing review through **Open review** to return to its saved material. Opening saved walks and discussions does not regenerate them or send another question. **End review** removes it from the ongoing list without approving code or deleting the record.
 
