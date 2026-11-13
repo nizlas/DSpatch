@@ -194,6 +194,18 @@ jobs:
         with:
           name: thread-trial
           path: app/release/trial-threads/ci
+      # DSP-206: syntax colours in the diff and walk windows, with their contrast on every diff
+      # background and during the arrival flash; the agent reports above the diff in a narrow,
+      # zoomed window; the Discussion field growing, capped, resized and re-docked.
+      - name: The code and review view trial in real windows
+        if: ${{ always() }}
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" node scripts/view-trial.mjs release/trial-views/ci
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: view-trial
+          path: app/release/trial-views/ci
 
   # DSP-204: the app icon on Linux, first from this checkout's build and then from the .deb
   # installed on the runner: each window's WM_CLASS and _NET_WM_ICON, the start page, About, a
