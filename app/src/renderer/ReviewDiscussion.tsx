@@ -927,7 +927,7 @@ export function ReviewDiscussion({
         <textarea
           className="rv-discussion-composer"
           data-ev="discussion-composer"
-          rows={3}
+          rows={1}
           value={text}
           placeholder={words.placeholder}
           onChange={(event) => setText(event.target.value)}

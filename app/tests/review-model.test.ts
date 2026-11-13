@@ -27,7 +27,6 @@ import {
   computeCoverage,
   currentHunkDecisions,
   emptyReviewState,
-  highlightLines,
   hunkPlanState,
   parseDiff,
   parseNameStatus,
@@ -464,27 +463,6 @@ test('a review is identified by its repository folder name and both short revisi
     'project · abcdef0→0123456',
   );
   assert.equal(reviewIdentityLabel('/home/me/repo', 'a'.repeat(40), 'b'.repeat(40)), 'repo · aaaaaaa→bbbbbbb');
-});
-
-test('highlighting keeps every character and carries block comments and template strings across lines', () => {
-  const lines = ['const a = "x" + 1; // note', '/* start', 'still comment */ return `t', 'emplate` + b;'];
-  const tokens = highlightLines(lines, 'src/x.ts');
-  tokens.forEach((line, index) => {
-    assert.equal(line.map((token) => token.text).join(''), lines[index]);
-  });
-  assert.deepEqual(
-    tokens[0]?.filter((token) => token.kind !== 'plain').map((token) => [token.kind, token.text]),
-    [
-      ['keyword', 'const'],
-      ['string', '"x"'],
-      ['number', '1'],
-      ['comment', '// note'],
-    ],
-  );
-  assert.equal(tokens[1]?.[0]?.kind, 'comment');
-  assert.equal(tokens[2]?.[0]?.kind, 'comment');
-  assert.equal(tokens[3]?.[0]?.kind, 'string');
-  assert.deepEqual(highlightLines(['# title'], 'README.md'), [[{ kind: 'plain', text: '# title' }]]);
 });
 
 // --- Version 2: places, two languages, precise focus (second iteration) ---------

@@ -3,7 +3,6 @@ import type { JSX } from 'react';
 
 import {
   buildDiffRows,
-  highlightLines,
   referenceRows,
   type CodeLocation,
   type CodeReference,
@@ -12,8 +11,8 @@ import {
   type ReviewBridge,
   type ReviewFileOutcome,
   type RevisionSide,
-  type Token,
 } from '../shared/review-model';
+import { highlightLines, type Token } from './syntax';
 
 /**
  * Code reading shared by the review surface's panes: files read from git at a

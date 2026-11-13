@@ -974,21 +974,74 @@
   padding-right: 1rem;
 }
 
+/* DSP-206: the code's syntax colours, one theme for the dark look. Text colour says what the
+   code is; the row backgrounds alone say what changed. Each colour keeps a contrast of at least
+   4.5:1 on the darker diff backgrounds (the plain dark one, the panel, the weaker red and green
+   of other changes and the diff view's light blocks). On the strong backgrounds, a walk place's
+   own rows and the diff view's whole-block and changed-word marks, the same hues are lifted
+   towards white to keep that contrast; and while an arriving place flashes gold its tokens
+   take the plain text colour, as all its text had before. */
+:root {
+  --rv-syn-keyword: #c792ea;
+  --rv-syn-type: #ffcb6b;
+  --rv-syn-function: #82aaff;
+  --rv-syn-string: #c3e88d;
+  --rv-syn-comment: #95a0ae;
+  --rv-syn-number: #f78c6c;
+  --rv-syn-meta: #89ddff;
+}
+
+.rv-old,
+.rv-new,
+.rv-pair-table td.rv-pair-whole,
+.rv-pair-word {
+  --rv-syn-keyword: #e5ccf5;
+  --rv-syn-type: #ffd88a;
+  --rv-syn-function: #c2d6ff;
+  --rv-syn-string: #d2eeaa;
+  --rv-syn-comment: #d1d6dc;
+  --rv-syn-number: #fbcbbc;
+  --rv-syn-meta: #b5ebff;
+}
+
 .rv-tk-keyword {
-  color: #c792ea;
+  color: var(--rv-syn-keyword);
+}
+
+.rv-tk-type {
+  color: var(--rv-syn-type);
+}
+
+.rv-tk-function {
+  color: var(--rv-syn-function);
 }
 
 .rv-tk-string {
-  color: #c3e88d;
+  color: var(--rv-syn-string);
 }
 
 .rv-tk-comment {
-  color: #7f8b99;
+  color: var(--rv-syn-comment);
   font-style: italic;
 }
 
 .rv-tk-number {
-  color: #f78c6c;
+  color: var(--rv-syn-number);
+}
+
+.rv-tk-meta {
+  color: var(--rv-syn-meta);
+}
+
+@keyframes rv-flash-ink {
+  0%,
+  25% {
+    color: var(--text);
+  }
+}
+
+.rv-arrive :is(.rv-tk-keyword, .rv-tk-type, .rv-tk-function, .rv-tk-string, .rv-tk-comment, .rv-tk-number, .rv-tk-meta) {
+  animation: rv-flash-ink 1500ms ease-out;
 }
 
 .rv-nothing {
@@ -1186,19 +1239,8 @@
 }
 
 /* Earlier, later and active panes draw a place's rows alike (DSP-202): the next place's change
-   is as clear before the walk gets there. The dimmer token colours are lifted on a place's own
-   rows so they keep a contrast of at least 5:1 there. */
-:is(.rv-old, .rv-new) .rv-tk-keyword {
-  color: #dcbcf6;
-}
-
-:is(.rv-old, .rv-new) .rv-tk-comment {
-  color: #b4bfcc;
-}
-
-:is(.rv-old, .rv-new) .rv-tk-number {
-  color: #ffb59c;
-}
+   is as clear before the walk gets there. The token colours are lifted on a place's own rows
+   (the strong palette above, DSP-206). */
 
 .rv-pane-head {
   display: flex;
@@ -1776,16 +1818,37 @@
   text-overflow: ellipsis;
 }
 
-.rv-discussion-composer {
+/* DSP-206: the question field grows with what is written, as the start page's does: one line
+   when empty, taller with every line, typed, pasted or wrapped by the panel's width, and back
+   when text is removed or a sent question clears it. The browser sizes it from its content
+   (`field-sizing`), so a new width, window height, zoom or place is taken into account without
+   anything being measured, and the draft, caret and selection are never touched. Above 40% of
+   the window's height it scrolls inside, so the conversation and the controls above it stay in
+   reach. While empty it keeps one line even when the hint would wrap.
+   The selector outweighs `.rv textarea`, whose `font: inherit` would otherwise reset the line
+   height that every step of growth is measured in; its colours, border and padding stay. */
+.rv textarea.rv-discussion-composer {
+  --rv-composer-line: calc(1lh + 0.5rem + 2px);
+  display: block;
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
-  font: inherit;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.4rem;
+  resize: none;
+  field-sizing: content;
+  min-height: var(--rv-composer-line);
+  max-height: max(var(--rv-composer-line), 40vh);
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
+.rv textarea.rv-discussion-composer:placeholder-shown {
+  field-sizing: fixed;
+  height: var(--rv-composer-line);
+}
+
+.rv-discussion-composer::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --- DSP-150: the diff review of a chosen revision pair ---------------------------
@@ -2821,7 +2884,12 @@
   }
 }
 
+/* DSP-206: the reports take the height their rows need, up to the cap, and the code starts
+   below them. In the file view's column this block is a flex item with its own scrolling, and
+   such an item's automatic minimum height is 0: it shrank with the diff, and a folded report's
+   one line was cut at the bottom. `flex: none` keeps it at its content's height. */
 .rv-agent-reviews {
+  flex: none;
   padding: 0.3rem 1rem;
   border-bottom: 1px solid var(--line);
   max-height: 40vh;

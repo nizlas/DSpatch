@@ -16,7 +16,7 @@ import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo,
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 
 import { delegatedReviewView } from '../shared/delegated-review-view';
-import { highlightLines, type Token } from '../shared/review-model';
+import { highlightLines, type Token } from './syntax';
 import {
   changedLinesOf,
   delegationDecisionOf,
@@ -3540,7 +3540,7 @@ function ReferenceView({
       cancelled = true;
     };
   }, [bridge, pairKey, location.side, location.path]);
-  const tokens = useMemo(() => (lines === null ? [] : highlightLines([...lines], location.path)), [lines, location.path]);
+  const tokens = useMemo(() => (lines === null ? [] : highlightLines(lines, location.path)), [lines, location.path]);
   // A selection here: in the changed file at this side, or in a file outside the change.
   const file: PairFile = useMemo(
     () =>
