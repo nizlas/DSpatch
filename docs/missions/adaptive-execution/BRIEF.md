@@ -195,9 +195,9 @@ In STATE.md a sub-goal is **pending**, **in progress**, **reviewed** (accepted b
 
 ## 7 Operating the run (for Niclas)
 
-**Once, before the first run: a stable engine.**
+**Once, before the first run: a stable engine.** This was done on 13 November 2026, at commit `81a5949`: `C:\Users\nicla\development\DSpatch-engine` is built, and its window and host were started from it and recorded as `1.0.0 at 81a59496614a`. Electron's own install script had to be run by hand (`node node_modules/electron/install.js`), because npm skipped it in the new checkout. The workspace for the working copy is remembered with **DSpatch mission loop** chosen; a backup of the store from before that change is `dspatch-projects.backup-before-dsp-208-20261113.json`.
 
-Run the mission from a separate checkout of DSpatch. The mission then edits the working copy without touching the program that runs it:
+Run the mission from a separate checkout of DSpatch. The mission then edits the working copy without touching the program that runs it. To set it up again:
 
 ```bash
 git -C C:/Users/nicla/development/DSpatch worktree add --detach C:/Users/nicla/development/DSpatch-engine main
@@ -211,9 +211,11 @@ cd C:/Users/nicla/development/DSpatch-engine/app && npm ci && npm run claude:ins
 
 **Starting a run.**
 
-1. In the engine window, open the folder `C:\Users\nicla\development\DSpatch` (the working copy) as the workspace.
-2. Open the loop editor. In its **Loop** list choose **DSpatch mission loop**. The graph opens and can be edited and saved there.
-3. In the chat, tick **Use loop** and send this mandate, the same every time:
+1. In the engine window, open the workspace **DSpatch** (the folder `C:\Users\nicla\development\DSpatch`, the working copy) from the recent workspaces or **File → Recent Projects…**.
+2. Open the loop editor and check that its **Loop** list shows **DSpatch mission loop**; choose it if not. The graph opens and can be edited and saved there.
+3. Check that the chat's agent is **Claude** with model **opus**. If DSpatch asks to set up Claude or shows Claude's terms, that is the one-time consent in this profile; accept it yourself or stop here.
+4. Keep the computer awake for the night: on mains power, with sleep switched off for tonight in Windows' power settings. A sleeping machine ends the run.
+5. In the chat, tick **Use loop** and send this mandate, the same every time:
 
    > Run the adaptive-execution mission (DSP-209) on this repository. Read docs/missions/adaptive-execution/BRIEF.md in full, then docs/missions/adaptive-execution/STATE.md, before anything else: they are the assignment, its decisions and limits, and where the mission stands. Continue from the state file.
 

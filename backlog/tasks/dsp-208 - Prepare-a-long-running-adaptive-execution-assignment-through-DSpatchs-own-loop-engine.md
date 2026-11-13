@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-13 20:54'
-updated_date: '2026-11-13 21:08'
+updated_date: '2026-11-13 21:38'
 labels: []
 dependencies: []
 ordinal: 127000
@@ -47,6 +47,8 @@ Fixed: validation said limits and onRuntimeFault were honoured by nothing, so an
 Added: docs/loop/roles/run/dspatch-mission-coordinator.role.md; docs/loop/graphs/dspatch-mission-loop.graph.json (hub coordinator, planner, researcher, implementer, optional verifier asked for by the review, review with rework, whole assessment, final report; seven terminals); .dspatch/loops/dspatch-mission-loop.loop.json; docs/missions/adaptive-execution/BRIEF.md and STATE.md; docs/ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md (the vision, v0.1, unchanged); DSP-209 for the main assignment.
 
 Checks: tests/loop-graph.test.ts 41/41; npm run typecheck:node clean; the mission graph loads against the real role files with no errors or warnings (notices only); scripted dry walks (no provider) reached mission-complete, batch-paused and needs-decision as drawn and stopped at maxReworkRounds on the fifth rework; discovery lists DSpatch mission loop from .dspatch/loops without error. Not tried: a live run, the loop in the editor window, the worktree engine setup; those are Niclas's.
+
+Night run prepared, 13 November 2026 (Niclas: the whole mission in one autonomous run). The graph now allows 180 calls and 60 rework rounds, under the runner's own 200-transition bound. The review gained a stalled verdict, which separates repeated attempts on one problem from ordinary rework. A blocked, stalled or waiting sub-goal no longer ends the run. The brief now separates the mission's own design decisions from those that stop for Niclas. The engine checkout C:\Users\nicla\development\DSpatch-engine is built at 81a5949 with Claude support installed; Electron's install script had to be run by hand. Its window and host were started and recorded as 1.0.0 at 81a59496614a from that checkout, with ownRepo set to the engine checkout. The workspace for the working copy is remembered with the mission loop chosen; the store was backed up first. The app did not open the workspace on its own, so Niclas opens it from the recent list. Not done, and Niclas's to do: the one-time Claude consent in this profile, opening the workspace, keeping the machine awake, and starting the run.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
