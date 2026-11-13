@@ -8,6 +8,19 @@ Development plan, updated 14 September 2026. Based on [VISION.md](docs/VISION.md
 
 ## Next concrete step
 
+
+### Near-term follow-up: adaptive loops and interactive chat
+
+Requested by Niclas on 13 November 2026. Revisit this at the next planning pass so the intended adaptive behaviour is not overlooked.
+
+- Check whether small assignments can receive a popup recommendation to continue in interactive chat, with the user choosing whether to switch and relevant context preserved.
+- Check whether loop decisions and outcome routing actually select the steps needed for the assignment, including skipping unnecessary steps. A graph describes possible work paths, not a checklist that every run must execute.
+- Distinguish the agreed interaction, current runtime capability and the behaviour of individual bundled loop definitions. In particular, mandatory checking in the small chat loop is not evidence that every DSpatch workflow must run every stage.
+- Report what is implemented, what is missing and the smallest useful follow-up. Compare with Boris Cherny's loop approach only where it exposes a concrete gap; no wholesale redesign is implied.
+
+Start with `docs/INTERACTION_MODEL.md`, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md`, existing related task records and the runnable loop definitions. Follow the proportionate verification policy in `AGENTS.md`: inspect first, use only targeted checks where needed, and leave manual product assessment to Niclas. This note schedules consideration in near-term planning; it does not claim implementation or start a broad investigation now.
+
+
 The sequence begins with **DSP-7**, a preparatory [development-loop](docs/DEVELOPMENT_LOOP.md) probe in Cursor: real specialist calls, planning quality and recovery. Its ID was assigned later but it comes first in execution order. Consult its task status rather than repeating a completed calibration.
 
 **DSP-1** follows: verify the selected stack and the Cursor path to an agent response, actual file change and build or test, including a minimal packaged Windows probe. **DSP-2** builds the workspace in small runnable substeps: chat, code change with diff and command execution. Niclas can test intermediate results early; **DSP-5** then assesses the complete change workflow without waiting for deeper error recovery in DSP-3 and persisted history in DSP-4.
