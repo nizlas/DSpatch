@@ -374,6 +374,39 @@
 
 /* --- Coverage and notes ---------------------------------------------------------- */
 
+/* DSP-207: What is left, above the coverage table, and the Walks tab's pointer to it. */
+.rv-remaining {
+  margin-bottom: 1.2rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.rv-remaining h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.rv-remaining h3 {
+  margin: 0.9rem 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.rv-remaining-list {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.rv-remaining-list li {
+  margin: 0.2rem 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-outside-pointer {
+  margin: 0.8rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .rv-totals,
 .rv-hunks {
   width: 100%;

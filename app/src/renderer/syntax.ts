@@ -67,6 +67,46 @@ export function languageOf(path: string): string | null {
   return language !== 'plaintext' && hljs.getLanguage(language) !== undefined ? language : null;
 }
 
+/** How a language's code is structured, for finding the function or section a place lies in (DSP-207). */
+export type LanguageFamily = 'brace' | 'indent' | 'yaml' | 'ini' | 'markdown';
+
+const FAMILIES: Readonly<Record<string, LanguageFamily>> = {
+  c: 'brace',
+  cpp: 'brace',
+  csharp: 'brace',
+  java: 'brace',
+  javascript: 'brace',
+  typescript: 'brace',
+  go: 'brace',
+  rust: 'brace',
+  kotlin: 'brace',
+  swift: 'brace',
+  php: 'brace',
+  objectivec: 'brace',
+  css: 'brace',
+  scss: 'brace',
+  less: 'brace',
+  python: 'indent',
+  yaml: 'yaml',
+  ini: 'ini',
+  markdown: 'markdown',
+};
+
+/** The structure family of a path's language, or null where none is known (DSP-207). */
+export function languageFamily(path: string): LanguageFamily | null {
+  const language = languageOf(path);
+  const grammar = language === null ? undefined : hljs.getLanguage(language);
+  if (grammar === undefined) {
+    return null;
+  }
+  for (const [name, family] of Object.entries(FAMILIES)) {
+    if (hljs.getLanguage(name) === grammar) {
+      return family;
+    }
+  }
+  return null;
+}
+
 /**
  * A highlight.js scope's colour. The first part of a scope names it (`title.function` is a
  * title); the rest refines it. Scopes not listed are plain: operators, punctuation,

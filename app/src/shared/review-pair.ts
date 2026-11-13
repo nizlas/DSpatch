@@ -2637,6 +2637,12 @@ export interface PanelFollow {
   readonly checkId: string | null;
   /** The way back from the open point, as the walk window names it; `null` when there is none. */
   readonly checkBack: string | null;
+  /**
+   * DSP-207: the location the walk window has open outside the walk (a change no walk covers, a
+   * hunk, a file), so the panel's Review section decides about what the walk window shows; `null`
+   * at a place of the walk. Absent from an older walk window: the panel then follows the walk only.
+   */
+  readonly away?: { readonly side: LineSide; readonly path: string; readonly start: number; readonly end: number } | null;
 }
 
 /** What the panel asks a code window of the same review to do. */

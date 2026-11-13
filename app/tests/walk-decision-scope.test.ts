@@ -321,7 +321,9 @@ test('DSP-202 A–D: the rows a pane marks and flashes are the place changed row
   ];
   const rowsB = buildDiffRows(baseB, targetB, hunksB);
   const lines = (place: { side: 'target'; start: number; end: number }): (number | null)[] => markedChangedRows(rowsB, place).map((index) => rowsB[index]?.targetLine ?? null);
-  assert.deepEqual(lines({ side: 'target', start: 6, end: 8 }), [6, 7, 8], 'the function, not the added lines around it');
+  // DSP-207: the added blank lines on either side of the new function are its own (the nearest changed line
+  // with text is the function's; between it and VERSION the one above wins); no line with text around it is.
+  assert.deepEqual(lines({ side: 'target', start: 6, end: 8 }), [5, 6, 7, 8, 9], 'the function and its blank lines, not the code around it');
   assert.deepEqual(lines({ side: 'target', start: 10, end: 10 }), [10], 'the second place in the same hunk keeps its own line');
-  assert.equal(markedChangedLines(rowsB, { path: 'worker.js', side: 'target', start: 6, end: 8 }).lines, 3);
+  assert.equal(markedChangedLines(rowsB, { path: 'worker.js', side: 'target', start: 6, end: 8 }).lines, 5);
 });

@@ -28,6 +28,12 @@ import {
   undecidedLines,
   walkChangedLines,
   markedChangedLines,
+  markedChangedRows,
+  changesOutsideWalks,
+  diffSkeletonRows,
+  type OutsideChange,
+  type MarkedLines,
+  hunkLocations,
   placeDecisionView,
   scopeLocations,
   stillHeld,
@@ -242,6 +248,181 @@ function hunkWhere(hunk: DiffHunk, words: ReviewWords): string {
     parts.push(words.oldLines(rangeText({ start: hunk.baseStart, end: hunk.baseStart + hunk.baseCount - 1 })));
   }
   return words.changeAt(fileName(hunk.path), parts.join(', '));
+}
+
+/** A change's exact lines as a place's marking (DSP-207). */
+function exactMarked(locations: readonly CodeLocation[]): MarkedLines {
+  return { path: locations[0]?.path ?? '', ranges: locations.map((location) => ({ side: location.side, start: location.start, end: location.end })), lines: lineCount(locations) };
+}
+
+/** The rows of exactly these changed lines: removed rows for `base` lines, added rows for `target` lines. */
+function exactRows(rows: readonly DiffRow[], locations: readonly CodeLocation[]): number[] {
+  const within = (side: RevisionSide, line: number | null): boolean => line !== null && locations.some((location) => location.side === side && location.start <= line && line <= location.end);
+  return rows.flatMap((row, index) => ((row.kind === 'deleted' && within('base', row.baseLine)) || (row.kind === 'added' && within('target', row.targetLine)) ? [index] : []));
+}
+
+/** DSP-207: what is left of the review, line by line. */
+interface Remaining {
+  /** Every changed line of the diff, and those on which a decision or an accepted assessment holds. */
+  readonly total: number;
+  readonly decided: number;
+  /** Changes no walk place covers, each with how much of it is decided. */
+  readonly outside: readonly { readonly entry: OutsideChange; readonly lines: number; readonly decided: number; readonly outcome: 'accepted' | 'exempted' | null }[];
+  /** Walk places with marked lines on which nothing holds yet. */
+  readonly undecided: readonly { readonly stepId: string; readonly placeIndex: number; readonly label: LocalText; readonly where: readonly CodeLocation[]; readonly lines: number; readonly undecided: number }[];
+}
+
+function remainingOf(bundle: ReviewBundle, outside: readonly OutsideChange[], holds: HoldsAt): Remaining {
+  const held = (location: CodeLocation): { decided: number; outcomes: Set<string> } => {
+    const outcomes = new Set<string>();
+    let decided = 0;
+    for (let line = location.start; line <= location.end; line += 1) {
+      const decision = holds(location.path, location.side, line);
+      if (decision !== null) {
+        decided += 1;
+        outcomes.add(decision.outcome);
+      }
+    }
+    return { decided, outcomes };
+  };
+  let total = 0;
+  let decided = 0;
+  for (const file of bundle.files) {
+    for (const hunk of file.binary ? [] : file.hunks) {
+      for (const location of hunkLocations(hunk)) {
+        total += location.end - location.start + 1;
+        decided += held(location).decided;
+      }
+    }
+  }
+  const byPath = new Map(bundle.files.map((file) => [file.path, file] as const));
+  const undecided: Remaining['undecided'][number][] = [];
+  for (const walk of bundle.definition.walks) {
+    for (const step of walk.steps) {
+      step.places.forEach((place, placeIndex) => {
+        const file = byPath.get(place.focus.path);
+        if (file === undefined || file.binary) {
+          return;
+        }
+        const rows = diffSkeletonRows(file.hunks, place.focus.side === 'base' ? place.focus.end : 0, place.focus.side === 'target' ? place.focus.end : 0);
+        const marked = markedChangedLines(rows, place.focus);
+        const where = marked.ranges.map((range) => ({ path: marked.path, ...range }));
+        const open = lineCount(undecidedLines(where, holds));
+        if (open > 0) {
+          undecided.push({ stepId: step.id, placeIndex, label: place.label, where, lines: marked.lines, undecided: open });
+        }
+      });
+    }
+  }
+  return {
+    total,
+    decided,
+    outside: outside.map((entry) => {
+      const { decided: done, outcomes } = held(entry);
+      const lines = entry.end - entry.start + 1;
+      const outcome = done === lines && outcomes.size === 1 ? ([...outcomes][0] as 'accepted' | 'exempted') : null;
+      return { entry, lines, decided: done, outcome };
+    }),
+    undecided,
+  };
+}
+
+/** The Walks tab's pointer to what no walk covers (DSP-207); nothing when every changed line is in a walk. */
+function OutsidePointer({ remaining, words, onShow }: { readonly remaining: Remaining; readonly words: ReviewWords; readonly onShow: () => void }): JSX.Element | null {
+  const lines = remaining.outside.reduce((sum, item) => sum + item.lines, 0);
+  const open = remaining.outside.reduce((sum, item) => sum + item.lines - item.decided, 0);
+  if (lines === 0) {
+    return null;
+  }
+  return (
+    <p className="rv-outside-pointer" data-ev="walks-outside" data-lines={lines} data-open={open}>
+      {words.remaining.pointer(lines, open)}{' '}
+      <button type="button" className="rv-link" data-ev="walks-outside-show" onClick={onShow}>
+        {words.remaining.pointerOpen}
+      </button>
+    </p>
+  );
+}
+
+/**
+ * DSP-207: What is left, at the top of the coverage tab. The changed lines decided out of all of
+ * them (never rounded up); the changes no walk place covers, each opened beside its code where
+ * the Review section decides about exactly its lines; and the walk places whose marked lines are
+ * not decided yet, each opened in its walk. Listing decides nothing.
+ */
+function RemainingChanges({
+  remaining,
+  words,
+  lang,
+  onOutside,
+  onPlace,
+}: {
+  readonly remaining: Remaining;
+  readonly words: ReviewWords;
+  readonly lang: Lang;
+  readonly onOutside: (entry: OutsideChange) => void;
+  readonly onPlace: (stepId: string, placeIndex: number) => void;
+}): JSX.Element {
+  const r = words.remaining;
+  const percent = remaining.total === 0 ? 100 : Math.floor((remaining.decided * 100) / remaining.total);
+  const outsideLines = remaining.outside.reduce((sum, item) => sum + item.lines, 0);
+  const undecidedLines = remaining.undecided.reduce((sum, item) => sum + item.undecided, 0);
+  return (
+    <section className="rv-remaining" data-ev="coverage-remaining" data-total={remaining.total} data-decided={remaining.decided}>
+      <h2>{r.title}</h2>
+      <p data-ev="coverage-remaining-summary">{r.summary(remaining.decided, remaining.total, percent)}</p>
+      <h3>{r.outsideTitle(outsideLines)}</h3>
+      {remaining.outside.length === 0 ? (
+        <p className="rv-sub">{r.outsideNone}</p>
+      ) : (
+        <>
+          <p className="rv-sub">{r.outsideIntro}</p>
+          <ul className="rv-remaining-list">
+            {remaining.outside.map((item) => (
+              <li key={`${item.entry.hunkId}:${item.entry.side}:${String(item.entry.start)}`}>
+                <button
+                  type="button"
+                  className="rv-link"
+                  data-ev="coverage-outside"
+                  data-side={item.entry.side}
+                  data-start={item.entry.start}
+                  data-end={item.entry.end}
+                  data-path={item.entry.path}
+                  data-decided={item.decided}
+                  onClick={() => onOutside(item.entry)}
+                >
+                  {linesWhere([item.entry], words)}
+                </button>
+                {item.entry.blank && <span className="rv-sub"> · {r.blankOnly}</span>}
+                <span className="rv-sub">
+                  {' '}
+                  · {item.outcome === 'accepted' ? r.accepted : item.outcome === 'exempted' ? r.exempted : item.decided === 0 ? r.open : r.partly(item.decided, item.lines)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <h3>{r.undecidedTitle(undecidedLines)}</h3>
+      {remaining.undecided.length === 0 ? (
+        <p className="rv-sub">{r.undecidedNone}</p>
+      ) : (
+        <ul className="rv-remaining-list">
+          {remaining.undecided.map((item) => (
+            <li key={`${item.stepId}:${String(item.placeIndex)}`}>
+              <button type="button" className="rv-link" data-ev="coverage-undecided" data-step={item.stepId} data-undecided={item.undecided} onClick={() => onPlace(item.stepId, item.placeIndex)}>
+                {item.stepId} · {pick(item.label, lang)}
+              </button>
+              <span className="rv-sub">
+                {' '}
+                · {linesWhere(item.where, words)} · {r.partly(item.lines - item.undecided, item.lines)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function hunkLocation(hunk: DiffHunk): CodeLocation {
@@ -892,6 +1073,9 @@ function OpenReview({
   );
 
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
+  // DSP-207: what is left — the changes no walk place covers, and the walk places not yet decided.
+  const outside = useMemo(() => changesOutsideWalks(bundle.definition.walks, bundle.files), [bundle]);
+  const remaining = useMemo(() => remainingOf(bundle, outside, holds), [bundle, outside, holds]);
   // What the active place's mark names besides its file and lines (DSP-175).
   const focusRevision = useMemo(() => ({ repository: bundle.repository, base: bundle.base.sha, target: bundle.target.sha }), [bundle.repository, bundle.base.sha, bundle.target.sha]);
 
@@ -943,7 +1127,9 @@ function OpenReview({
    */
   const decisionPlaces = useMemo((): readonly DecisionPlace[] => {
     if (away !== null) {
-      return [{ key: 'opened', label: null, focus: away, origin: { kind: 'opened' } }];
+      // DSP-207: a change no walk covers, opened from What is left, is decided about exactly its lines.
+      const exact = outside.find((entry) => entry.path === away.path && entry.side === away.side && entry.start === away.start && entry.end === away.end);
+      return [{ key: 'opened', label: null, focus: away, origin: { kind: 'opened' }, exact: exact === undefined ? null : [exact] }];
     }
     if (current === null) {
       return [];
@@ -955,7 +1141,7 @@ function OpenReview({
         ? []
         : [{ key: entry.id, label: indexes.length > 1 ? entry.label : null, focus: asLocation(entry.focus), origin: { kind: 'walk', stepId: current.step.id, placeId: entry.id } as const }];
     });
-  }, [away, current, activeStop, placeIndex]);
+  }, [away, current, activeStop, placeIndex, outside]);
   /*
    * DSP-193: the threads relevant to the step, by code place: a thread anchored in any of the
    * step's places, or about one of their files with no line named. Shown once, in the step's
@@ -1486,7 +1672,8 @@ function OpenReview({
       const found = position.stepId === null ? null : findStep(bundle, position.stepId);
       update((value) => ({
         ...value,
-        position: { ...value.position, walkId: found?.walk.id ?? value.position.walkId, stepId: position.stepId ?? value.position.stepId, refIndex: position.refIndex, away: null },
+        // DSP-207: a location the walk window opened outside the walk is decided about here too.
+        position: { ...value.position, walkId: found?.walk.id ?? value.position.walkId, stepId: position.stepId ?? value.position.stepId, refIndex: position.refIndex, away: position.away ?? null },
       }));
       setOpenCheckId(position.checkId);
       setFollowedBack(position.checkBack);
@@ -1507,8 +1694,17 @@ function OpenReview({
     if (PANEL_MODE || panelBridge === undefined) {
       return;
     }
-    panelBridge.follow({ definitionPath: bundle.definitionPath, stepId: state.position.stepId, placeIndex: state.position.refIndex, refIndex: state.position.refIndex, checkId: openCheckId, checkBack: pointBack });
-  }, [panelBridge, bundle.definitionPath, state.position.stepId, state.position.refIndex, openCheckId, pointBack]);
+    const away = state.position.away;
+    panelBridge.follow({
+      definitionPath: bundle.definitionPath,
+      stepId: state.position.stepId,
+      placeIndex: state.position.refIndex,
+      refIndex: state.position.refIndex,
+      checkId: openCheckId,
+      checkBack: pointBack,
+      away: away === null ? null : { side: away.side, path: away.path, start: away.start, end: away.end },
+    });
+  }, [panelBridge, bundle.definitionPath, state.position.stepId, state.position.refIndex, state.position.away, openCheckId, pointBack]);
   const panelAsks = useRef({ goToStep, goAway, openPoint, closePoint });
   panelAsks.current = { goToStep, goAway, openPoint, closePoint };
   useEffect(() => {
@@ -2519,6 +2715,7 @@ function OpenReview({
                   }}
                   onToggle={toggleWalk}
                 />
+                <OutsidePointer remaining={remaining} words={words} onShow={() => setTab('coverage')} />
                 <WorthChecking
                   checks={bundle.definition.checks}
                   attention={pick(bundle.definition.attention, lang)}
@@ -2550,7 +2747,21 @@ function OpenReview({
                 </Collapsible>
               </div>
             )}
-            {tab === 'coverage' && <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />}
+            {tab === 'coverage' && (
+              <>
+                <RemainingChanges
+                  remaining={remaining}
+                  words={words}
+                  lang={lang}
+                  onOutside={(entry) => goAway({ path: entry.path, side: entry.side, start: entry.start, end: entry.end })}
+                  onPlace={(stepId, placeIndex) => {
+                    goToStep(stepId, placeIndex);
+                    setNavRequest((count) => count + 1);
+                  }}
+                />
+                <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />
+              </>
+            )}
             {tab === 'notes' && (
               <NotesList state={shownState} bundle={bundle} words={words} lang={lang} onOpen={goAway} onStatus={setNoteStatus} />
             )}
@@ -2688,6 +2899,7 @@ function OpenReview({
               problem={placeProblem}
               words={words}
               referenceMark={away !== null}
+              exact={away !== null ? (decisionPlaces[0]?.exact ?? null) : null}
               memory={paneMemory.current.get(`${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}`) ?? null}
               onLeave={(memory) => paneMemory.current.set(`${focus.path}:${focus.side}:${String(focus.start)}:${String(focus.end)}`, memory)}
             />
@@ -4042,6 +4254,8 @@ interface DecisionPlace {
   readonly label: LocalText | null;
   readonly focus: CodeLocation;
   readonly origin: DecisionOrigin;
+  /** DSP-207: exactly these changed lines, for a change no walk covers; otherwise the focus's marked lines. */
+  readonly exact?: readonly CodeLocation[] | null;
 }
 
 /** Lines in the reader's words: "new lines 151–159 in x.ts". */
@@ -4133,8 +4347,8 @@ function PlaceDecision({
   const content = useRows(files, place.focus.path, diffFile, place.focus.side);
   // The same reference and rows the marking is drawn from: never the pane's expansion or scroll.
   const marked = useMemo(
-    () => (content === null ? null : markedChangedLines(content.rows, place.focus)),
-    [content, place.focus],
+    () => (place.exact != null ? exactMarked(place.exact) : content === null ? null : markedChangedLines(content.rows, place.focus)),
+    [content, place.focus, place.exact],
   );
   const view = useMemo(() => (marked === null ? null : placeDecisionView(marked, holds)), [marked, holds]);
   if (marked === null || view === null) {
@@ -4426,9 +4640,12 @@ function CodePane({
   problem,
   words,
   referenceMark = false,
+  exact = null,
   memory = null,
   onLeave,
 }: {
+  /** DSP-207: the exact changed lines a change outside the walks is decided about, drawn strong. */
+  readonly exact?: readonly CodeLocation[] | null;
   /** A location opened on its own: its lines carry the reference's own mark (30 October 2026). */
   readonly referenceMark?: boolean;
   /** How this pane was left before, to open as it was. */
@@ -4476,6 +4693,12 @@ function CodePane({
 
   const focused = useMemo(() => referenceRows(rows, focus), [rows, focus]);
   const focusSet = useMemo(() => new Set(focused.indexes), [focused]);
+  // DSP-207: a changed row is strong when the Review section's decision here covers it — the
+  // focus's marked changed rows (with their blank lines), or a change's exact lines — and weak otherwise.
+  const markedSet = useMemo(
+    () => new Set(exact != null ? exactRows(rows, exact) : markedChangedRows(rows, focus)),
+    [rows, focus, exact],
+  );
   // Each context range on its own: separate ranges never merge into one long span.
   const contextRows = useMemo(
     () =>
@@ -4661,16 +4884,16 @@ function CodePane({
       const lineTokens = side === 'target' ? content.tokens.target[(row.targetLine ?? 1) - 1] : content.tokens.base[(row.baseLine ?? 1) - 1];
       const classes = ['rv-row'];
       if (row.kind === 'deleted') {
-        classes.push(inFocus ? 'rv-old' : 'rv-old-faint');
+        classes.push(markedSet.has(index) ? 'rv-old' : 'rv-old-faint');
       } else if (row.kind === 'added') {
-        classes.push(inFocus ? 'rv-new' : 'rv-new-faint');
+        classes.push(markedSet.has(index) ? 'rv-new' : 'rv-new-faint');
       } else if (inFocus) {
         classes.push('rv-neutral-focus');
       }
       if (selectionSet.has(index)) {
         classes.push('rv-row-selected');
       }
-      if (referenceMark && inFocus) {
+      if (referenceMark && (inFocus || markedSet.has(index))) {
         classes.push('rv-ref-mark');
       }
       const mark = row.kind === 'deleted' ? { sign: '−', word: words.view.before } : row.kind === 'added' ? { sign: '+', word: words.view.after } : null;

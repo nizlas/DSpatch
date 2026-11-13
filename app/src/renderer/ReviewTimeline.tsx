@@ -4,6 +4,7 @@ import type { CSSProperties, JSX } from 'react';
 import { Inline, LineGutter, TokensView, fileName, lineDigits, rangeText, rowsOf, useRows, type Files } from './review-code';
 import { pick, type ReviewWords } from './review-i18n';
 import { activationLine } from './walk-activation';
+import { placeStructures, structureLines } from './code-structure';
 import { focusIdentity, paneOfStation, panesOf, shownStation, type FocusRevision } from './walk-panes';
 import {
   isProsePath,
@@ -135,30 +136,41 @@ function unitRefs(place: Place): readonly CodeLocation[] {
   return unit.counterpart === null ? [unit.ref] : [unit.ref, unit.counterpart];
 }
 
-/** The rows a station shows at a level: its focus, its unit (or prepared context), or everything. */
-function stationRange(rows: readonly DiffRow[], place: Place, level: CodeLevel, focusIndexes: readonly number[]): [number, number] | null {
+/**
+ * The rows a station shows at a level, as ranges: its focus with a margin; at the unit level also
+ * the function (or declaration, class, section) it lies in at each side, and its prepared unit or
+ * context; at the file level everything.
+ */
+function stationRanges(rows: readonly DiffRow[], place: Place, level: CodeLevel, focusIndexes: readonly number[]): readonly (readonly [number, number])[] {
   if (rows.length === 0 || focusIndexes.length === 0) {
-    return null;
+    return [];
+  }
+  if (level === 'file') {
+    return [[0, rows.length - 1]];
   }
   const first = focusIndexes[0] ?? 0;
   const last = focusIndexes[focusIndexes.length - 1] ?? first;
-  let from = first - FOCUS_MARGIN;
-  let to = last + FOCUS_MARGIN;
+  const clamp = (range: readonly [number, number]): readonly [number, number] => [Math.max(0, range[0]), Math.min(rows.length - 1, range[1])];
+  const ranges: (readonly [number, number])[] = [clamp([first - FOCUS_MARGIN, last + FOCUS_MARGIN])];
   if (level === 'unit') {
     const unit = unitRefs(place);
     const fallback = place.context.find((ref) => ref.path === place.focus.path);
     for (const ref of unit.length > 0 ? unit : fallback === undefined ? [] : [fallback]) {
       const unitRows = rowsOf(rows, ref).indexes;
       if (unitRows.length > 0) {
-        from = Math.min(from, unitRows[0] ?? from);
-        to = Math.max(to, unitRows[unitRows.length - 1] ?? to);
+        ranges.push([unitRows[0] ?? 0, unitRows[unitRows.length - 1] ?? 0]);
+      }
+    }
+    for (const entry of placeStructures(rows, place.focus)) {
+      for (const [start, end] of structureLines(entry)) {
+        const indexes = rowsOf(rows, { side: entry.side, start, end }).indexes;
+        if (indexes.length > 0) {
+          ranges.push([indexes[0] ?? 0, indexes[indexes.length - 1] ?? 0]);
+        }
       }
     }
   }
-  if (level === 'file') {
-    return [0, rows.length - 1];
-  }
-  return [Math.max(0, from), Math.min(rows.length - 1, to)];
+  return ranges;
 }
 
 /**
@@ -1174,8 +1186,22 @@ function TimelinePaneView({
     }
   };
 
-  // The place's function or other unit, as rows: the first thing a fold opens.
-  const unitSet = useMemo(() => new Set(unitRefs(station.place).flatMap((ref) => rowsOf(rows, ref).indexes)), [rows, station.place]);
+  // The place's function or other unit, as rows: the first thing a fold opens. DSP-207: also the
+  // function, declaration or section found in the code at each side, and the first row of each head.
+  const structures = useMemo(() => (rows.length === 0 ? [] : placeStructures(rows, station.place.focus)), [rows, station.place.focus]);
+  const unitSet = useMemo(
+    () =>
+      new Set([
+        ...unitRefs(station.place).flatMap((ref) => rowsOf(rows, ref).indexes),
+        ...structures.filter((entry) => entry.structure.reliable).flatMap((entry) => rowsOf(rows, { side: entry.side, start: entry.structure.start, end: entry.structure.end }).indexes),
+      ]),
+    [rows, station.place, structures],
+  );
+  const unitHeads = useMemo(
+    () => new Set(level === 'file' ? [] : structures.flatMap((entry) => rowsOf(rows, { side: entry.side, start: entry.structure.start, end: entry.structure.start }).indexes.slice(0, 1))),
+    [rows, structures, level],
+  );
+  const structureName = structures.find((entry) => entry.structure.reliable && entry.structure.name !== '')?.structure.name ?? '';
 
   // Visible rows: every place of the pane at the chosen level — so choosing another of
   // them moves the focus without folding or unfolding anything — the latest navigation's
@@ -1183,8 +1209,7 @@ function TimelinePaneView({
   const visible = useMemo(() => {
     const keep = rows.map(() => false);
     for (const member of paneStations) {
-      const range = stationRange(rows, member.place, level, rowsOf(rows, member.place.focus).indexes);
-      if (range !== null) {
+      for (const range of stationRanges(rows, member.place, level, rowsOf(rows, member.place.focus).indexes)) {
         keep.fill(true, range[0], range[1] + 1);
       }
     }
@@ -1223,6 +1248,24 @@ function TimelinePaneView({
   // past a pane — or past a place called from it — leaves its scroll alone.
   // Wrapping is not part of the key: turning it on or off keeps the line being read (below).
   const scrollKey = `${level}:${view}:${String(rows.length)}`;
+  // DSP-207: where a pane is placed to show a row: centred, or at the unit level with the head of
+  // the function (its documentation and signature) at the top when the head and the change fit
+  // in the pane together. Only where the pane is placed anyway, never again while it is read.
+  const topFor = (element: HTMLElement, target: HTMLElement): number => {
+    const box = element.getBoundingClientRect();
+    const offsetOf = (node: Element): number => node.getBoundingClientRect().top - box.top + element.scrollTop;
+    const centred = Math.max(0, offsetOf(target) - element.clientHeight / 2 + 20);
+    if (level !== 'unit') {
+      return centred;
+    }
+    const head = [...element.querySelectorAll<HTMLElement>('[data-unit-head="1"]')].find((row) => offsetOf(row) <= offsetOf(target));
+    if (head === undefined) {
+      return centred;
+    }
+    const changeRows = [...element.querySelectorAll<HTMLElement>('[data-focus-active="1"], [data-shown-change="1"]'), target];
+    const changeEnd = Math.max(...changeRows.map((row) => offsetOf(row) + row.offsetHeight));
+    return changeEnd - offsetOf(head) <= element.clientHeight - 40 ? Math.max(0, offsetOf(head) - 8) : centred;
+  };
   const scrolledFor = useRef('');
   const scrollTimer = useRef<number | null>(null);
   // Set when this pane has just been placed for the first time; read by the arrival below.
@@ -1254,9 +1297,8 @@ function TimelinePaneView({
     const scrollNow = (behavior: ScrollBehavior): void => {
       const target = findTarget();
       if (target !== null) {
-        const offset = target.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
         const left = wrap ? 0 : changeLeft(element, rows, shownFocus.indexes);
-        element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), left, behavior });
+        element.scrollTo({ top: topFor(element, target), left, behavior });
       }
     };
     if (first || reducedMotion()) {
@@ -1353,8 +1395,7 @@ function TimelinePaneView({
     const place = (behavior: ScrollBehavior): void => {
       const target = findTarget();
       if (target !== null) {
-        const offset = target.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
-        element.scrollTo({ top: Math.max(0, offset - element.clientHeight / 2 + 20), left: wrap ? 0 : changeLeft(element, rows, shownFocus.indexes), behavior });
+        element.scrollTo({ top: topFor(element, target), left: wrap ? 0 : changeLeft(element, rows, shownFocus.indexes), behavior });
       }
     };
     if (immediate || reducedMotion()) {
@@ -1467,7 +1508,7 @@ function TimelinePaneView({
       (effectiveView === 'before' && row.kind === 'added') || (effectiveView === 'after' && row.kind === 'deleted');
     const items: PaneItem[] = [];
     const firstFocus = shownFocus.indexes[0] ?? 0;
-    const unitName = station.place.unit?.name ?? '';
+    const unitName = station.place.unit?.name || structureName;
     // A fold opens, in this order: the rest of the place's function, the rest of its
     // prepared context, then GAP_STEP lines at a time from the side nearest the change.
     // The whole file is a level of its own, never one click on a fold.
@@ -1546,7 +1587,7 @@ function TimelinePaneView({
       }
     }
     return { items, tops, columns, firstShown, firstChange, firstFrom };
-  }, [rows, visible, effectiveView, shownFocus, shownSet, fromSet, unitSet, inContext, station.place.unit, words]);
+  }, [rows, visible, effectiveView, shownFocus, shownSet, fromSet, unitSet, inContext, station.place.unit, structureName, words]);
   const { items, tops, columns } = layoutRows;
   const digits = useMemo(() => lineDigits(rows), [rows]);
 
@@ -1673,6 +1714,9 @@ function TimelinePaneView({
     }
     if (arrivalHere) {
       attrs['data-focus-active'] = '1';
+    }
+    if (unitHeads.has(index)) {
+      attrs['data-unit-head'] = '1';
     }
     if (index === layoutRows.firstShown) {
       attrs['data-shown'] = '1';

@@ -307,6 +307,23 @@ export interface ReviewWords {
     readonly no: string;
     readonly part: string;
   };
+  /** DSP-207: What is left — changes no walk covers, and walk places not decided yet. */
+  readonly remaining: {
+    readonly title: string;
+    readonly summary: (decided: number, total: number, percent: number) => string;
+    readonly outsideTitle: (lines: number) => string;
+    readonly outsideNone: string;
+    readonly outsideIntro: string;
+    readonly blankOnly: string;
+    readonly undecidedTitle: (lines: number) => string;
+    readonly undecidedNone: string;
+    readonly open: string;
+    readonly accepted: string;
+    readonly exempted: string;
+    readonly partly: (decided: number, lines: number) => string;
+    readonly pointer: (lines: number, open: number) => string;
+    readonly pointerOpen: string;
+  };
   readonly notesTab: { readonly notesTitle: string; readonly none: string; readonly historyTitle: string; readonly noDecisions: string };
   readonly search: {
     readonly revision: string;
@@ -626,6 +643,22 @@ const sv: ReviewWords = {
     yes: 'ja',
     no: 'nej',
     part: 'delvis',
+  },
+  remaining: {
+    title: 'Det som återstår',
+    summary: (decided, total, percent) => `${String(decided)} av ${String(total)} ändrade rader har ett beslut (${String(percent)} %).`,
+    outsideTitle: (lines) => `I ingen walk: ${String(lines)} ändrade rader`,
+    outsideNone: 'Varje ändrad rad finns i en walk.',
+    outsideIntro: 'Ändringar som ingen walkplats omfattar. Öppna en för att läsa den i sitt sammanhang och besluta om exakt dess rader.',
+    blankOnly: 'bara tomrader',
+    undecidedTitle: (lines) => `I en walk, utan beslut än: ${String(lines)} rader`,
+    undecidedNone: 'Varje plats i walkarna har ett beslut.',
+    open: 'inget beslut',
+    accepted: 'accepterat',
+    exempted: 'undantaget',
+    partly: (decided, lines) => `${String(decided)} av ${String(lines)} beslutade`,
+    pointer: (lines, open) => `${String(lines)} ändrade rader finns i ingen walk${open > 0 ? `, ${String(open)} utan beslut` : ''}.`,
+    pointerOpen: 'Visa dem',
   },
   notesTab: {
     notesTitle: 'Frågor och fynd',
@@ -965,6 +998,22 @@ const en: ReviewWords = {
     yes: 'yes',
     no: 'no',
     part: 'partly',
+  },
+  remaining: {
+    title: 'What is left',
+    summary: (decided, total, percent) => `${String(decided)} of ${String(total)} changed lines have a decision (${String(percent)}%).`,
+    outsideTitle: (lines) => `In no walk: ${String(lines)} changed lines`,
+    outsideNone: 'Every changed line is in a walk.',
+    outsideIntro: 'Changes no walk place covers. Open one to read it in context and decide about exactly its lines.',
+    blankOnly: 'blank lines only',
+    undecidedTitle: (lines) => `In a walk, not decided yet: ${String(lines)} lines`,
+    undecidedNone: 'Every place in the walks has a decision.',
+    open: 'no decision',
+    accepted: 'accepted',
+    exempted: 'exempted',
+    partly: (decided, lines) => `${String(decided)} of ${String(lines)} decided`,
+    pointer: (lines, open) => `${String(lines)} changed lines are in no walk${open > 0 ? `, ${String(open)} without a decision` : ''}.`,
+    pointerOpen: 'Show them',
   },
   notesTab: {
     notesTitle: 'Questions and findings',

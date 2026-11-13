@@ -31,6 +31,7 @@ import {
   type PairOpenOutcome,
   type PairWalk,
   type PairWindowStart,
+  type PanelFollow,
   type ReviewRepository,
 } from '../shared/review-pair';
 import { samePathHere, type ReviewWindowEntry, type ReviewWindows } from './review-windows';
@@ -374,6 +375,7 @@ export function registerReviewIpc(
       refIndex: Number.isInteger(value['refIndex']) ? (value['refIndex'] as number) : 0,
       checkId: typeof value['checkId'] === 'string' ? value['checkId'] : null,
       checkBack: typeof value['checkBack'] === 'string' ? value['checkBack'].slice(0, 200) : null,
+      away: followedAway(value['away']),
     });
   });
   ipcMain.on(REVIEW_PANEL_CHANNELS.action, (event, action: unknown) => {
@@ -558,4 +560,19 @@ export function registerReviewIpc(
       return target === null ? { error: noReview } : ((await discussions.call('recap', target, leftOut)) as DiscussionStatusView);
     },
   );
+}
+
+/** DSP-207: the walk window's location outside the walk, as the panel may follow it: a side, a path and whole line numbers, or nothing. */
+function followedAway(value: unknown): PanelFollow['away'] {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const away = value as Record<string, unknown>;
+  const side = away['side'];
+  const start = away['start'];
+  const end = away['end'];
+  if ((side !== 'base' && side !== 'target') || typeof away['path'] !== 'string' || !Number.isInteger(start) || !Number.isInteger(end) || (start as number) < 1 || (end as number) < (start as number)) {
+    return null;
+  }
+  return { side, path: away['path'], start: start as number, end: end as number };
 }

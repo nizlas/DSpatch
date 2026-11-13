@@ -901,6 +901,12 @@ export interface DiffHunk {
   readonly baseCount: number;
   readonly targetStart: number;
   readonly targetCount: number;
+  /**
+   * DSP-207: the hunk's changed lines that hold no text but whitespace, removed (`base`) and
+   * added (`target`), so the place a blank line belongs to is known without the file's text
+   * (see {@link markedChangedRows}). Absent where it was not read: no line is then taken as blank.
+   */
+  readonly blank?: { readonly base: readonly number[]; readonly target: readonly number[] };
 }
 
 export interface DiffFile {
@@ -967,7 +973,22 @@ export function parseDiff(
     // File headers come before the first hunk. After it, a line that starts with
     // `--- ` is a deleted line whose text begins with `-- `, not a header.
     let inHunks = false;
+    // The open hunk's next removed and added line, and its blank ones (DSP-207).
+    let nextBase = 0;
+    let nextTarget = 0;
+    let blank: { base: number[]; target: number[] } | null = null;
     for (const line of lines) {
+      if (inHunks && blank !== null && (line.startsWith('-') || line.startsWith('+'))) {
+        const empty = line.slice(1).trim() === '';
+        if (line.startsWith('-')) {
+          if (empty) blank.base.push(nextBase);
+          nextBase += 1;
+        } else {
+          if (empty) blank.target.push(nextTarget);
+          nextTarget += 1;
+        }
+        continue;
+      }
       if (!inHunks && line.startsWith('Binary files ')) {
         binary = true;
       } else if (!inHunks && line.startsWith('--- ')) {
@@ -987,6 +1008,9 @@ export function parseDiff(
           hunkNumber += 1;
           const baseCount = match[2] === undefined ? 1 : Number(match[2]);
           const targetCount = match[4] === undefined ? 1 : Number(match[4]);
+          blank = { base: [], target: [] };
+          nextBase = Number(match[1]);
+          nextTarget = Number(match[3]);
           hunks.push({
             id: `H${String(hunkNumber)}`,
             path: entry.path,
@@ -994,6 +1018,7 @@ export function parseDiff(
             baseCount,
             targetStart: Number(match[3]),
             targetCount,
+            blank,
           });
           added += targetCount;
           deleted += baseCount;
@@ -1673,12 +1698,52 @@ export interface MarkedLines {
  * replacement put the new ones in place of, where the place lies on those new lines, and lines
  * removed strictly inside it. Other removals of the same hunk are not the place's. A place at
  * From is the mirror image.
+ *
+ * DSP-207: a changed blank line (whitespace only) of the same hunk belongs to the place when the
+ * nearest changed line with text, in the hunk's row order, is one of the place's; at an equal
+ * distance the one above wins. So the blank line after an added block is the block's, removed
+ * and added alike, a blank line between two places goes to one of them, and none is taken across
+ * unchanged code (a hunk is changed rows only) or with another change that has text. A blank line
+ * whose nearest change is no place's stays outside the walk, where it can be found and decided.
  */
 export function markedChangedRows(
   rows: readonly DiffRow[],
   focus: { readonly side: RevisionSide; readonly start: number; readonly end: number },
 ): readonly number[] {
-  return referenceRows(rows, focus).indexes.filter((index) => rows[index]?.kind === 'added' || rows[index]?.kind === 'deleted');
+  const own = referenceRows(rows, focus).indexes.filter((index) => rows[index]?.kind === 'added' || rows[index]?.kind === 'deleted');
+  return withBlankRows(rows, own);
+}
+
+const isChangedRow = (row: DiffRow | undefined): boolean => row !== undefined && row.kind !== 'context';
+const isBlankRow = (row: DiffRow | undefined): boolean => row !== undefined && row.text.trim() === '';
+
+/** `own` with the blank changed rows of their hunks whose nearest changed row with text is in `own` (DSP-207). */
+function withBlankRows(rows: readonly DiffRow[], own: readonly number[]): readonly number[] {
+  if (own.length === 0) {
+    return own;
+  }
+  const mine = new Set(own);
+  const hunks = new Set(own.map((index) => rows[index]?.hunkId ?? null).filter((id): id is string => id !== null));
+  const out = new Set(own);
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row === undefined || row.hunkId === null || !hunks.has(row.hunkId) || mine.has(index) || !isChangedRow(row) || !isBlankRow(row)) {
+      continue;
+    }
+    const sameHunk = (at: number): boolean => isChangedRow(rows[at]) && rows[at]?.hunkId === row.hunkId;
+    let nearest: number | null = null;
+    for (let distance = 1; nearest === null && (sameHunk(index - distance) || sameHunk(index + distance)); distance += 1) {
+      if (sameHunk(index - distance) && !isBlankRow(rows[index - distance])) {
+        nearest = index - distance;
+      } else if (sameHunk(index + distance) && !isBlankRow(rows[index + distance])) {
+        nearest = index + distance;
+      }
+    }
+    if (nearest !== null && mine.has(nearest)) {
+      out.add(index);
+    }
+  }
+  return [...out].sort((a, b) => a - b);
 }
 
 /** A place's changed rows as one exact decision scope: removed lines on `base`, added on `target`. */
@@ -1724,7 +1789,15 @@ export function diffSkeletonRows(hunks: readonly DiffHunk[], needBase: number, n
     target = (hunk.targetCount === 0 ? hunk.targetStart + 1 : hunk.targetStart) + hunk.targetCount;
   }
   const after = Math.max(needBase - base + 2, needTarget - target + 2, 1);
-  return buildDiffRows(new Array<string>(base - 1 + after).fill(''), new Array<string>(target - 1 + after).fill(''), hunks);
+  // Text only says blank or not (DSP-207): a changed line the hunk names blank is empty, any
+  // other line holds a mark, so a hunk read without that knowledge has no blank lines.
+  const baseLines = new Array<string>(base - 1 + after).fill('x');
+  const targetLines = new Array<string>(target - 1 + after).fill('x');
+  for (const hunk of hunks) {
+    for (const line of hunk.blank?.base ?? []) baseLines[line - 1] = '';
+    for (const line of hunk.blank?.target ?? []) targetLines[line - 1] = '';
+  }
+  return buildDiffRows(baseLines, targetLines, hunks);
 }
 
 /**
@@ -1762,6 +1835,60 @@ export function walkChangedLines(walk: Pick<Walk, 'steps'>, files: readonly Diff
         out[out.length - 1] = { ...last, end: line };
       } else {
         out.push({ path, side, start: line, end: line });
+      }
+    }
+  }
+  return out;
+}
+
+/** DSP-207: a run of changed lines, on one side of one hunk, that no walk place covers. */
+export interface OutsideChange extends CodeLocation {
+  readonly hunkId: string;
+  /** Every line of the run holds no text but whitespace, as the diff read it. */
+  readonly blank: boolean;
+}
+
+/**
+ * The changed lines no place of any walk covers (DSP-207): every changed line of the diff, less
+ * the union of the walks' {@link walkChangedLines}, as runs of consecutive lines on one side of
+ * one hunk, in diff order. These are the changes the walk window offers apart from the walks, so
+ * that every changed line can be found and decided through it; nothing here is decided by being
+ * listed, and a blank line stays a line to decide.
+ */
+export function changesOutsideWalks(walks: readonly Pick<Walk, 'steps'>[], files: readonly DiffFile[]): OutsideChange[] {
+  const covered = new Set<string>();
+  for (const walk of walks) {
+    for (const location of walkChangedLines(walk, files)) {
+      for (let line = location.start; line <= location.end; line += 1) {
+        covered.add(changedLineKey(location.path, location.side, line));
+      }
+    }
+  }
+  const out: OutsideChange[] = [];
+  for (const file of files) {
+    if (file.binary) {
+      continue;
+    }
+    for (const hunk of file.hunks) {
+      for (const location of hunkLocations(hunk)) {
+        const blank = new Set(location.side === 'base' ? (hunk.blank?.base ?? []) : (hunk.blank?.target ?? []));
+        let run: { start: number; end: number; blank: boolean } | null = null;
+        const close = (): void => {
+          if (run !== null) {
+            out.push({ path: hunk.path, side: location.side, start: run.start, end: run.end, hunkId: hunk.id, blank: run.blank });
+            run = null;
+          }
+        };
+        for (let line = location.start; line <= location.end; line += 1) {
+          if (covered.has(changedLineKey(hunk.path, location.side, line))) {
+            close();
+          } else if (run === null) {
+            run = { start: line, end: line, blank: blank.has(line) };
+          } else {
+            run = { start: run.start, end: line, blank: run.blank && blank.has(line) };
+          }
+        }
+        close();
       }
     }
   }
