@@ -31,9 +31,10 @@ import {
   markedChangedRows,
   changesOutsideWalks,
   diffSkeletonRows,
+  lineCoverage,
+  type LineCoverage,
   type OutsideChange,
   type MarkedLines,
-  hunkLocations,
   placeDecisionView,
   scopeLocations,
   stillHeld,
@@ -54,7 +55,6 @@ import {
   type LocalText,
   type ReviewPreferences,
   type Place,
-  type PlanState,
   type ReviewBridge,
   type ReviewBundle,
   type ReviewDecision,
@@ -272,7 +272,7 @@ interface Remaining {
   readonly undecided: readonly { readonly stepId: string; readonly placeIndex: number; readonly label: LocalText; readonly where: readonly CodeLocation[]; readonly lines: number; readonly undecided: number }[];
 }
 
-function remainingOf(bundle: ReviewBundle, outside: readonly OutsideChange[], holds: HoldsAt): Remaining {
+function remainingOf(bundle: ReviewBundle, outside: readonly OutsideChange[], holds: HoldsAt, counts: LineCoverage): Remaining {
   const held = (location: CodeLocation): { decided: number; outcomes: Set<string> } => {
     const outcomes = new Set<string>();
     let decided = 0;
@@ -285,16 +285,7 @@ function remainingOf(bundle: ReviewBundle, outside: readonly OutsideChange[], ho
     }
     return { decided, outcomes };
   };
-  let total = 0;
-  let decided = 0;
-  for (const file of bundle.files) {
-    for (const hunk of file.binary ? [] : file.hunks) {
-      for (const location of hunkLocations(hunk)) {
-        total += location.end - location.start + 1;
-        decided += held(location).decided;
-      }
-    }
-  }
+  const { total, decided } = counts;
   const byPath = new Map(bundle.files.map((file) => [file.path, file] as const));
   const undecided: Remaining['undecided'][number][] = [];
   for (const walk of bundle.definition.walks) {
@@ -1075,7 +1066,9 @@ function OpenReview({
   const coverage = useMemo(() => computeCoverage(bundle.definition, bundle.files, shownState), [bundle, shownState]);
   // DSP-207: what is left — the changes no walk place covers, and the walk places not yet decided.
   const outside = useMemo(() => changesOutsideWalks(bundle.definition.walks, bundle.files), [bundle]);
-  const remaining = useMemo(() => remainingOf(bundle, outside, holds), [bundle, outside, holds]);
+  // The one line-by-line count of the coverage tab and What is left (DSP-207).
+  const lineCounts = useMemo(() => lineCoverage(bundle.definition.walks, bundle.files, holds), [bundle, holds]);
+  const remaining = useMemo(() => remainingOf(bundle, outside, holds, lineCounts), [bundle, outside, holds, lineCounts]);
   // What the active place's mark names besides its file and lines (DSP-175).
   const focusRevision = useMemo(() => ({ repository: bundle.repository, base: bundle.base.sha, target: bundle.target.sha }), [bundle.repository, bundle.base.sha, bundle.target.sha]);
 
@@ -2759,7 +2752,7 @@ function OpenReview({
                     setNavRequest((count) => count + 1);
                   }}
                 />
-                <CoverageTable coverage={coverage} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />
+                <CoverageTable coverage={lineCounts} findings={coverage.openFindings} questions={coverage.openQuestions} words={words} onOpen={(hunk) => goAway(hunkLocation(hunk))} />
               </>
             )}
             {tab === 'notes' && (
@@ -3418,47 +3411,53 @@ function WalkList({
   );
 }
 
-function planWord(state: PlanState, words: ReviewWords): string {
-  return state === 'full' ? words.coverage.yes : state === 'partial' ? words.coverage.part : words.coverage.no;
-}
-
-function decisionWord(decision: ReviewDecision | null, words: ReviewWords): string {
-  if (decision === null || decision.outcome === 'withdrawn') {
-    return words.decisions.remaining;
-  }
-  return decision.outcome === 'accepted' ? words.decisions.accepted : words.decisions.exempted;
-}
-
+/**
+ * The coverage, line by line (DSP-207), from the same count as What is left (`lineCoverage`). Every
+ * changed line counts once in the total. Being in a walk (a walk place marks it) and having a decision
+ * (the person's, or an agent's assessment the person accepted) are separate facts, each counted in
+ * lines; a hunk partly in a walk or partly decided shows exactly its own lines, never the whole hunk.
+ * Reading progress (steps opened or marked walked through) is the walks' own and is not counted here.
+ */
 function CoverageTable({
   coverage,
+  findings,
+  questions,
   words,
   onOpen,
 }: {
-  readonly coverage: CoverageSummary;
+  readonly coverage: LineCoverage;
+  readonly findings: number;
+  readonly questions: number;
   readonly words: ReviewWords;
   readonly onOpen: (hunk: DiffHunk) => void;
 }): JSX.Element {
   const [onlyOutside, setOnlyOutside] = useState(false);
-  const outside = coverage.hunks.filter((entry) => entry.planned === 'none');
+  const outside = coverage.hunks.filter((entry) => entry.inWalk < entry.lines);
   const rows = onlyOutside ? outside : coverage.hunks;
   const c = words.coverage;
-  const linesWithPartial = (value: { full: number; partialHunks: number }): string =>
-    `${c.lines(value.full)}${value.partialHunks > 0 ? c.partly(value.partialHunks) : ''}`;
   return (
-    <div className="rv-coverage">
-      <p className="rv-legend">{c.intro(coverage.totalLines)}</p>
-      <table className="rv-totals">
+    <div className="rv-coverage" data-ev="coverage-table">
+      <p className="rv-legend">{c.intro(coverage.total)}</p>
+      <table
+        className="rv-totals"
+        data-ev="coverage-totals"
+        data-total={coverage.total}
+        data-in-walk={coverage.inWalk}
+        data-decided={coverage.decided}
+        data-undecided={coverage.undecided}
+      >
         <tbody>
-          <tr><th>{c.planned}</th><td>{linesWithPartial(coverage.plannedLines)}</td></tr>
-          <tr><th>{c.opened}</th><td>{linesWithPartial(coverage.shownLines)}</td></tr>
-          <tr><th>{c.walked}</th><td>{linesWithPartial(coverage.walkedLines)}</td></tr>
-          <tr><th>{c.accepted}</th><td>{c.lines(coverage.acceptedLines)}</td></tr>
-          <tr><th>{c.exempted}</th><td>{c.lines(coverage.exemptedLines)}</td></tr>
-          <tr><th>{c.remaining}</th><td>{c.lines(coverage.remainingLines)}</td></tr>
-          <tr><th>{c.agent}</th><td>{c.agentNone}</td></tr>
-          <tr><th>{c.open}</th><td>{coverage.openFindings} / {coverage.openQuestions}</td></tr>
+          <tr><th>{c.inWalk}</th><td>{c.ofLines(coverage.inWalk, coverage.total)}</td></tr>
+          <tr><th>{c.inNoWalk}</th><td>{c.ofLines(coverage.total - coverage.inWalk, coverage.total)}</td></tr>
+          <tr><th>{c.decided}</th><td>{c.ofLines(coverage.decided, coverage.total)}</td></tr>
+          <tr className="rv-totals-part"><th>{c.accepted}</th><td>{c.lines(coverage.accepted)}</td></tr>
+          <tr className="rv-totals-part"><th>{c.agentAccepted}</th><td>{c.lines(coverage.agentAccepted)}</td></tr>
+          <tr className="rv-totals-part"><th>{c.exempted}</th><td>{c.lines(coverage.exempted)}</td></tr>
+          <tr><th>{c.remaining}</th><td>{c.ofLines(coverage.undecided, coverage.total)}</td></tr>
+          <tr><th>{c.open}</th><td>{findings} / {questions}</td></tr>
         </tbody>
       </table>
+      <p className="rv-sub">{c.note}</p>
       <label className="rv-check">
         <input type="checkbox" checked={onlyOutside} onChange={(event) => setOnlyOutside(event.target.checked)} />{' '}
         {c.onlyOutside(outside.length)}
@@ -3468,15 +3467,24 @@ function CoverageTable({
           <tr>
             <th>{c.change}</th>
             <th>±</th>
-            <th>{c.planned}</th>
-            <th>{c.opened}</th>
-            <th>{c.walked}</th>
+            <th>{c.inWalk}</th>
+            <th>{c.decided}</th>
             <th>{c.remaining}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((entry) => (
-            <tr key={entry.hunk.id} className="rv-hunk-row" onClick={() => onOpen(entry.hunk)}>
+            <tr
+              key={entry.hunk.id}
+              className="rv-hunk-row"
+              data-ev="coverage-hunk"
+              data-path={entry.hunk.path}
+              data-lines={entry.lines}
+              data-in-walk={entry.inWalk}
+              data-decided={entry.lines - entry.undecided}
+              data-undecided={entry.undecided}
+              onClick={() => onOpen(entry.hunk)}
+            >
               <td>
                 <span className="rv-path">{fileName(entry.hunk.path)}</span>{' '}
                 <span className="rv-sub">
@@ -3486,19 +3494,9 @@ function CoverageTable({
                 </span>
               </td>
               <td>{entry.lines}</td>
-              <td title={entry.plannedBy.join(', ')}>
-                {planWord(entry.planned, words)}
-                {entry.plannedBy.length > 0 ? ` (${entry.plannedBy.join(', ')})` : ''}
-              </td>
-              <td>{planWord(entry.shown, words)}</td>
-              <td>{planWord(entry.walked, words)}</td>
-              <td>
-                {/* DSP-201: a hunk decided in part says how much, line by line. */}
-                {entry.decision === null && entry.acceptedLines + entry.exemptedLines > 0
-                  ? words.decisions.partly(entry.acceptedLines, entry.exemptedLines, entry.lines)
-                  : decisionWord(entry.decision, words)}
-                {entry.openFindings > 0 ? ` · ${words.openFindings(entry.openFindings)}` : ''}
-              </td>
+              <td>{c.ofLines(entry.inWalk, entry.lines)}</td>
+              <td>{c.ofLines(entry.lines - entry.undecided, entry.lines)}</td>
+              <td>{entry.undecided}</td>
             </tr>
           ))}
         </tbody>

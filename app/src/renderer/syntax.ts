@@ -92,19 +92,20 @@ const FAMILIES: Readonly<Record<string, LanguageFamily>> = {
   markdown: 'markdown',
 };
 
-/** The structure family of a path's language, or null where none is known (DSP-207). */
-export function languageFamily(path: string): LanguageFamily | null {
+/** The name of a path's language among those whose structure is read (DSP-207), or null. */
+export function structureLanguage(path: string): string | null {
   const language = languageOf(path);
   const grammar = language === null ? undefined : hljs.getLanguage(language);
   if (grammar === undefined) {
     return null;
   }
-  for (const [name, family] of Object.entries(FAMILIES)) {
-    if (hljs.getLanguage(name) === grammar) {
-      return family;
-    }
-  }
-  return null;
+  return Object.keys(FAMILIES).find((name) => hljs.getLanguage(name) === grammar) ?? null;
+}
+
+/** The structure family of a path's language, or null where none is known (DSP-207). */
+export function languageFamily(path: string): LanguageFamily | null {
+  const name = structureLanguage(path);
+  return name === null ? null : (FAMILIES[name] ?? null);
 }
 
 /**

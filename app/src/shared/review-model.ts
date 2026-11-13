@@ -1856,14 +1856,7 @@ export interface OutsideChange extends CodeLocation {
  * listed, and a blank line stays a line to decide.
  */
 export function changesOutsideWalks(walks: readonly Pick<Walk, 'steps'>[], files: readonly DiffFile[]): OutsideChange[] {
-  const covered = new Set<string>();
-  for (const walk of walks) {
-    for (const location of walkChangedLines(walk, files)) {
-      for (let line = location.start; line <= location.end; line += 1) {
-        covered.add(changedLineKey(location.path, location.side, line));
-      }
-    }
-  }
+  const covered = walkLineKeys(walks, files);
   const out: OutsideChange[] = [];
   for (const file of files) {
     if (file.binary) {
@@ -1893,6 +1886,102 @@ export function changesOutsideWalks(walks: readonly Pick<Walk, 'steps'>[], files
     }
   }
   return out;
+}
+
+/** The changed lines the walks' places cover, as {@link changedLineKey}s: the union of every walk's {@link walkChangedLines}. */
+function walkLineKeys(walks: readonly Pick<Walk, 'steps'>[], files: readonly DiffFile[]): Set<string> {
+  const covered = new Set<string>();
+  for (const walk of walks) {
+    for (const location of walkChangedLines(walk, files)) {
+      for (let line = location.start; line <= location.end; line += 1) {
+        covered.add(changedLineKey(location.path, location.side, line));
+      }
+    }
+  }
+  return covered;
+}
+
+/** One hunk's changed lines, counted line by line (DSP-207). */
+export interface HunkLineCoverage {
+  readonly hunk: DiffHunk;
+  readonly lines: number;
+  /** Of them, covered by a place of some walk. */
+  readonly inWalk: number;
+  /** Of them, with a decision holding: the person's acceptance or exemption, or an agent's assessment the person accepted. */
+  readonly accepted: number;
+  readonly exempted: number;
+  readonly agentAccepted: number;
+  /** Of them, with nothing holding. */
+  readonly undecided: number;
+}
+
+/** The whole change, counted line by line: the hunks' sums. */
+export interface LineCoverage {
+  readonly total: number;
+  readonly inWalk: number;
+  readonly accepted: number;
+  readonly exempted: number;
+  readonly agentAccepted: number;
+  readonly decided: number;
+  readonly undecided: number;
+  readonly hunks: readonly HunkLineCoverage[];
+}
+
+/**
+ * DSP-207: the one count of the walk window's coverage, line by line. Every changed line of the
+ * diff is counted once in the total; it is in a walk when a walk place's marked lines (the union of
+ * {@link walkChangedLines}) include it, and decided when a decision holds on it (`holds`, the same
+ * the Review section reads). Being in a walk and being decided are separate facts: a line can be
+ * either, both or neither, and a hunk partly covered or partly decided counts only its own lines.
+ */
+export function lineCoverage(walks: readonly Pick<Walk, 'steps'>[], files: readonly DiffFile[], holds: HoldsAt): LineCoverage {
+  const covered = walkLineKeys(walks, files);
+  const hunks: HunkLineCoverage[] = [];
+  for (const file of files) {
+    if (file.binary) {
+      continue;
+    }
+    for (const hunk of file.hunks) {
+      let lines = 0;
+      let inWalk = 0;
+      let accepted = 0;
+      let exempted = 0;
+      let agentAccepted = 0;
+      for (const location of hunkLocations(hunk)) {
+        for (let line = location.start; line <= location.end; line += 1) {
+          lines += 1;
+          if (covered.has(changedLineKey(hunk.path, location.side, line))) {
+            inWalk += 1;
+          }
+          const held = holds(hunk.path, location.side, line);
+          if (held?.outcome === 'exempted') {
+            exempted += 1;
+          } else if (held?.outcome === 'accepted') {
+            if (held.by.kind === 'human') {
+              accepted += 1;
+            } else {
+              agentAccepted += 1;
+            }
+          }
+        }
+      }
+      hunks.push({ hunk, lines, inWalk, accepted, exempted, agentAccepted, undecided: lines - accepted - exempted - agentAccepted });
+    }
+  }
+  const sum = (pick: (entry: HunkLineCoverage) => number): number => hunks.reduce((total, entry) => total + pick(entry), 0);
+  const accepted = sum((entry) => entry.accepted);
+  const exempted = sum((entry) => entry.exempted);
+  const agentAccepted = sum((entry) => entry.agentAccepted);
+  return {
+    total: sum((entry) => entry.lines),
+    inWalk: sum((entry) => entry.inWalk),
+    accepted,
+    exempted,
+    agentAccepted,
+    decided: accepted + exempted + agentAccepted,
+    undecided: sum((entry) => entry.undecided),
+    hunks,
+  };
 }
 
 /** The lines of `locations` on which nothing holds: no decision of the person's and no accepted delegated assessment. */

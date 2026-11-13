@@ -1202,6 +1202,9 @@ function TimelinePaneView({
     [rows, structures, level],
   );
   const structureName = structures.find((entry) => entry.structure.reliable && entry.structure.name !== '')?.structure.name ?? '';
+  // DSP-207: no function, declaration or section was found with certainty at any side, and the walk
+  // named none: the context is the lines around the place, and the pane says so.
+  const contextUncertain = station.place.unit === null && station.place.context.length === 0 && structures.length > 0 && structures.every((entry) => !entry.structure.reliable);
 
   // Visible rows: every place of the pane at the chosen level — so choosing another of
   // them moves the focus without folding or unfolding anything — the latest navigation's
@@ -1780,6 +1783,11 @@ function TimelinePaneView({
           {shownWord}
         </span>
         {content !== null && content.error === null && !changed && <span className="rv-unchanged-tag">{words.view.unchangedHere}</span>}
+        {level === 'unit' && contextUncertain && (
+          <span className="rv-sub rv-pane-uncertain" data-ev="pane-context-uncertain" title={words.view.contextUncertainTitle}>
+            {words.view.contextUncertain}
+          </span>
+        )}
         {isActive && (
           // What the mark in this pane is, in full (DSP-175): the place, the repository,
           // the revision and side its lines are at, and the lines — not a file name alone.

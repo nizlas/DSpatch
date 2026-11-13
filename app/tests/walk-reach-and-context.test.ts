@@ -21,6 +21,7 @@ import {
   currentLineDecisions,
   diffSkeletonRows,
   heldOf,
+  lineCoverage,
   markedChangedLines,
   markedChangedRows,
   parseDiff,
@@ -173,6 +174,27 @@ test('what no walk covers: a new large file with a small walk, and substantive c
   assert.equal(lines + 6, 300 + 4);
 });
 
+test('the coverage counts lines: a hunk partly in a walk and partly decided counts only its own lines, the same as What is left', () => {
+  const big: DiffFile = fileOf('src/big.cpp', [], Array.from({ length: 300 }, (_, index) => (index === 99 ? '' : `int v${String(index)};`)), [{ baseStart: 0, baseCount: 0, targetStart: 1, targetCount: 300 }]);
+  const walk = walkOf(place('p1', 'target', 95, 99, 'src/big.cpp'));
+  const exempted: ReviewDecision = { ...accepted('d2', [{ path: 'src/big.cpp', side: 'target', start: 1, end: 10 }]), outcome: 'exempted', reason: 'generated' };
+  const holds = holdsOf([accepted('d1', [{ path: 'src/big.cpp', side: 'target', start: 95, end: 100 }]), exempted], [big]);
+  // An agent's assessment the person accepted, on lines 200–204: counted as decided, apart from the person's own.
+  const withAgent: HoldsAt = (path, side, line) =>
+    path === 'src/big.cpp' && side === 'target' && line >= 200 && line <= 204
+      ? { id: 'a1', outcome: 'accepted', by: { kind: 'agent-delegated', adapterId: 'copilot', mandate: 'm' }, at: 't', reason: '', over: [], scopeUncertain: false }
+      : holds(path, side, line);
+  const counted = lineCoverage([walk], [big], withAgent);
+  assert.deepEqual(
+    [counted.total, counted.inWalk, counted.accepted, counted.exempted, counted.agentAccepted, counted.decided, counted.undecided],
+    [300, 6, 6, 10, 5, 21, 279],
+  );
+  assert.deepEqual([counted.hunks[0]?.lines, counted.hunks[0]?.inWalk, counted.hunks[0]?.undecided], [300, 6, 279], 'the hunk is not counted as covered or decided whole');
+  // In a walk and in no walk add up to the total, with the same lines What is left lists.
+  const outside = changesOutsideWalks([walk], [big]).reduce((sum, entry) => sum + entry.end - entry.start + 1, 0);
+  assert.equal(counted.inWalk + outside, counted.total);
+});
+
 test('an earlier decision keeps only its stored lines when the place grows; the new line stays undecided', () => {
   const file = fileOf(PATH, BASE, TARGET, [IF_HUNK]);
   const rows = buildDiffRows(BASE, TARGET, file.hunks);
@@ -211,15 +233,72 @@ const CPP = [
   'int twice(int x) { return 2 * x; }', // 72
 ];
 
-test('a long method: its documentation, two-line signature, the change in its nested blocks and its end, with folds between', () => {
+/** A documented method of `body` lines with a two-line signature and the change in nested blocks near its end. */
+function method(name: string, body: number): string[] {
+  return [
+    '/**',
+    ` * ${name} does its work.`,
+    ' */',
+    `bool Box::${name}(const Settings &settings,`,
+    '                 Mode mode) {',
+    ...Array.from({ length: body }, (_, index) => `  step(${String(index)});`),
+    '  try {',
+    '    if (mode == Mode::Fast) {',
+    '      run("}");',
+    '    }',
+    '  } catch (const Error &error) {',
+    '    log(error);',
+    '  }',
+    '  return true;',
+    '}',
+  ];
+}
+
+test('the whole method is the default: documentation, two-line signature, nested change and end, with no fold', () => {
   const found = codeStructure(CPP, PATH, 62, 62);
   assert.deepEqual([found.kind, found.name, found.start, found.headEnd, found.end, found.reliable], ['method', 'MctAdapter::apply', 3, 8, 68, true]);
   assert.deepEqual(found.control, { start: 61, end: 63 }, 'the innermost control structure, braces in strings and comments ignored');
-  const shown = structureLines({ side: 'target', structure: found, focus: { start: 62, end: 62 } });
-  assert.deepEqual(shown[0], [3, 8], 'documentation and signature first');
-  assert.ok(shown.some(([start, end]) => start <= 58 && end >= 66), 'the change with its control structures');
-  assert.ok(shown.some(([start, end]) => start <= 68 && end >= 68), 'the closing line');
-  assert.ok(!shown.some(([start, end]) => start <= 30 && end >= 30), 'the middle of the long body is folded');
+  assert.deepEqual(structureLines({ side: 'target', structure: found, focus: { start: 62, end: 62 } }), [[3, 68]]);
+  // About 40 and about 80 lines: whole too.
+  for (const body of [25, 65]) {
+    const lines = method('apply', body);
+    const change = lines.indexOf('      run("}");') + 1;
+    const unit = codeStructure(lines, 'box.cpp', change, change);
+    assert.deepEqual([unit.start, unit.headEnd, unit.end], [1, 5, lines.length], `${String(lines.length)} lines`);
+    assert.deepEqual(structureLines({ side: 'target', structure: unit, focus: { start: change, end: change } }), [[1, lines.length]], `${String(lines.length)} lines, whole`);
+  }
+});
+
+test('a truly large method folds between its head, the change with its control structure, and its end', () => {
+  const lines = method('process', 400);
+  const change = lines.indexOf('      run("}");') + 1;
+  const unit = codeStructure(lines, 'box.cpp', change, change);
+  const shown = structureLines({ side: 'target', structure: unit, focus: { start: change, end: change } });
+  assert.deepEqual(shown[0], [1, 5], 'documentation and signature first');
+  assert.ok(shown.some(([start, end]) => start <= change - 2 && end >= change + 4), 'the change with its try and if');
+  assert.ok(shown.some(([start, end]) => start <= lines.length && end >= lines.length), 'the closing line');
+  assert.ok(!shown.some(([start, end]) => start <= 200 && end >= 200), 'the middle of the long body is folded');
+});
+
+test('uncertain structure: a lambda in a call is no function, a macro brace is no block, broken braces and huge files fall back honestly', () => {
+  // A lambda passed to a call: the enclosing function is the context, not the call's name.
+  const lambda = ['void Box::sort(std::vector<int> &values) {', '  std::sort(values.begin(), values.end(), [](int a, int b) {', '    return a < b;', '  });', '}'];
+  const inLambda = codeStructure(lambda, 'box.cpp', 3, 3);
+  assert.deepEqual([inLambda.kind, inLambda.name, inLambda.start, inLambda.end], ['method', 'Box::sort', 1, 5]);
+  const callback = ['function load(items) {', '  items.forEach((item) => {', '    use(item);', '  });', '}'];
+  assert.deepEqual([codeStructure(callback, 'a.js', 3, 3).name, codeStructure(callback, 'a.js', 3, 3).start], ['load', 1]);
+  // A brace in a #define is no block: the function after it is still found.
+  const macro = ['#define BEGIN_SCOPE namespace scope {', '#define END_SCOPE \\', '  }', 'int twice(int x) {', '  return 2 * x;', '}'];
+  assert.deepEqual([codeStructure(macro, 'm.cpp', 5, 5).kind, codeStructure(macro, 'm.cpp', 5, 5).name], ['function', 'twice']);
+  // Conditional builds that leave braces unbalanced: no boundary is relied on.
+  const broken = ['#ifdef WIDE', 'int f(long x) {', '#else', 'int f(int x) {', '#endif', '  return x;', '}'];
+  const fallback = codeStructure(broken, 'b.cpp', 6, 6);
+  assert.deepEqual([fallback.kind, fallback.reliable], ['nearby', false]);
+  // A file over the highlighter's limit: comments and strings cannot be set aside, so no boundary.
+  const huge = ['int big() {', ...Array.from({ length: 60_000 }, (_, index) => `  value(${String(index)}); // "{" in a comment`), '}'];
+  const large = codeStructure(huge, 'big.cpp', 30_000, 30_000);
+  assert.deepEqual([large.kind, large.reliable], ['nearby', false]);
+  assert.ok(large.end - large.start <= 24, 'only the lines around');
 });
 
 test('a short function is shown whole; code outside functions is its declaration; unknown languages say they found no boundary', () => {

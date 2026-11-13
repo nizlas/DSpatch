@@ -183,6 +183,9 @@ export interface ReviewWords {
     readonly moreAbove: string;
     readonly moreBelow: string;
     readonly wholeContext: string;
+    /** DSP-207: the context level found no function or section with certainty; the lines around are shown. */
+    readonly contextUncertain: string;
+    readonly contextUncertainTitle: string;
     readonly hiddenLines: (count: number) => string;
     /** A fold that opens a few lines of a larger one. */
     readonly moreLines: (count: number, hidden: number) => string;
@@ -290,22 +293,19 @@ export interface ReviewWords {
   };
   readonly coverage: {
     readonly intro: (total: number) => string;
-    readonly planned: string;
-    readonly opened: string;
-    readonly walked: string;
+    readonly inWalk: string;
+    readonly inNoWalk: string;
+    readonly decided: string;
     readonly accepted: string;
+    readonly agentAccepted: string;
     readonly exempted: string;
     readonly remaining: string;
-    readonly agent: string;
-    readonly agentNone: string;
     readonly open: string;
     readonly lines: (count: number) => string;
-    readonly partly: (count: number) => string;
+    readonly ofLines: (part: number, total: number) => string;
+    readonly note: string;
     readonly onlyOutside: (count: number) => string;
     readonly change: string;
-    readonly yes: string;
-    readonly no: string;
-    readonly part: string;
   };
   /** DSP-207: What is left — changes no walk covers, and walk places not decided yet. */
   readonly remaining: {
@@ -516,6 +516,8 @@ const sv: ReviewWords = {
     moreAbove: 'Visa 20 rader till ovanför',
     moreBelow: 'Visa 20 rader till nedanför',
     wholeContext: 'Visa hela sammanhanget',
+    contextUncertain: 'Sammanhang: raderna runt platsen (gräns osäker)',
+    contextUncertainTitle: 'Ingen funktion, deklaration eller sektion kunde fastställas säkert här, till exempel på grund av makron, ett okänt språk eller en mycket stor fil. Raderna runt platsen visas; vidga med veckningarna eller Hela filen.',
     hiddenLines: (count) => `⋯ visa ${String(count)} oförändrade rader`,
     moreLines: (count, hidden) => `⋯ visa ${String(count)} rader till (${String(hidden)} dolda)`,
     restOfUnit: (name, count) => `⋯ visa resten av ${name} (${String(count)} rader)`,
@@ -625,24 +627,20 @@ const sv: ReviewWords = {
     hereTitle: 'Anteckningar här',
   },
   coverage: {
-    intro: (total) =>
-      `Räknat i ändrade rader i diffen (tillägg + borttagningar): ${String(total)}. Varje rad är ett eget faktum; inget av dem följer av något annat.`,
-    planned: 'Ingår i en walk',
-    opened: 'I kodställen du har öppnat',
-    walked: 'I steg du markerat som genomgångna',
-    accepted: 'Accepterat av dig',
-    exempted: 'Undantaget av dig',
-    remaining: 'Inget beslut',
-    agent: 'Accepterat av en agent',
-    agentNone: 'inget – delegerad granskning finns inte i den här vyn',
+    intro: (total) => `Räknat i ändrade rader i diffen (tillägg + borttagningar): ${String(total)}. Varje rad räknas en gång; att ingå i en walk och att ha ett beslut är skilda fakta.`,
+    inWalk: 'I en walk',
+    inNoWalk: 'I ingen walk',
+    decided: 'Med beslut',
+    accepted: 'accepterat av dig',
+    agentAccepted: 'agentbedömning som du accepterat',
+    exempted: 'undantaget av dig',
+    remaining: 'Utan beslut',
     open: 'Öppna fynd / frågor',
     lines: (count) => `${String(count)} rader`,
-    partly: (count) => ` + ${String(count)} ändringar delvis`,
-    onlyOutside: (count) => `Visa bara ändringar utanför alla walks (${String(count)})`,
+    ofLines: (part, total) => `${String(part)} av ${String(total)}`,
+    note: 'Samma radräkning som Det som återstår. Hur långt du läst (öppnade steg och steg markerade som genomgångna) visas vid walkarna och räknas inte här.',
+    onlyOutside: (count) => `Visa bara ändringar med rader i ingen walk (${String(count)})`,
     change: 'Ändring',
-    yes: 'ja',
-    no: 'nej',
-    part: 'delvis',
   },
   remaining: {
     title: 'Det som återstår',
@@ -871,6 +869,8 @@ const en: ReviewWords = {
     moreAbove: 'Show 20 more lines above',
     moreBelow: 'Show 20 more lines below',
     wholeContext: 'Show the whole context',
+    contextUncertain: 'Context: the lines around this place (boundary uncertain)',
+    contextUncertainTitle: 'No function, declaration or section could be found with certainty here, for example because of macros, an unknown language or a very large file. The lines around the place are shown; widen them with the folds or Whole file.',
     hiddenLines: (count) => `⋯ show ${String(count)} unchanged lines`,
     moreLines: (count, hidden) => `⋯ show ${String(count)} more lines (${String(hidden)} hidden)`,
     restOfUnit: (name, count) => `⋯ show the rest of ${name} (${String(count)} lines)`,
@@ -980,24 +980,20 @@ const en: ReviewWords = {
     hereTitle: 'Notes here',
   },
   coverage: {
-    intro: (total) =>
-      `Counted in changed lines of the diff (additions + deletions): ${String(total)}. Each row is a separate fact; none follows from another.`,
-    planned: 'In a walk',
-    opened: 'In code places you opened',
-    walked: 'In steps you marked walked through',
-    accepted: 'Accepted by you',
-    exempted: 'Exempted by you',
+    intro: (total) => `Counted in changed lines of the diff (additions + deletions): ${String(total)}. Each line counts once; being in a walk and having a decision are separate facts.`,
+    inWalk: 'In a walk',
+    inNoWalk: 'In no walk',
+    decided: 'With a decision',
+    accepted: 'accepted by you',
+    agentAccepted: 'agent assessment you accepted',
+    exempted: 'exempted by you',
     remaining: 'No decision',
-    agent: 'Accepted by an agent',
-    agentNone: 'none – delegated review is not available in this view',
     open: 'Open findings / questions',
     lines: (count) => `${String(count)} lines`,
-    partly: (count) => ` + ${String(count)} changes partly`,
-    onlyOutside: (count) => `Show only changes outside every walk (${String(count)})`,
+    ofLines: (part, total) => `${String(part)} of ${String(total)}`,
+    note: 'The same line count as What is left. How far you have read (steps opened or marked walked through) is shown with the walks and not counted here.',
+    onlyOutside: (count) => `Show only changes with lines in no walk (${String(count)})`,
     change: 'Change',
-    yes: 'yes',
-    no: 'no',
-    part: 'partly',
   },
   remaining: {
     title: 'What is left',

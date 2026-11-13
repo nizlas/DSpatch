@@ -4396,3 +4396,7 @@
   margin: 0.3rem 1.2rem;
 }
 
+/* DSP-207: the context level found no certain boundary; said beside the file name. */
+.rv-pane-uncertain {
+  font-style: italic;
+}

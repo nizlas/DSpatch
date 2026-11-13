@@ -1,5 +1,5 @@
 import { referenceRows, type DiffRow, type Place, type RevisionSide } from '../shared/review-model';
-import { highlightLines, languageFamily } from './syntax';
+import { HIGHLIGHT_LIMIT, highlightLines, languageFamily, structureLanguage } from './syntax';
 
 /**
  * The code a walk place lies in (DSP-207): the enclosing function or method with its
@@ -31,7 +31,15 @@ export interface CodeStructure {
 interface Masked {
   readonly code: readonly string[];
   readonly commentOnly: readonly boolean[];
+  /**
+   * False when the highlighter could not read the file (over its size limit): comments and strings
+   * are then not set aside, and no boundary read from the code can be relied on.
+   */
+  readonly complete: boolean;
 }
+
+/** Languages whose preprocessor lines (`#define`, `#if`, …) are set aside: a brace in a macro is no block. */
+const PREPROCESSED = new Set(['c', 'cpp', 'objectivec', 'csharp']);
 
 const masks = new WeakMap<readonly string[], Map<string, Masked>>();
 
@@ -43,7 +51,16 @@ function masked(lines: readonly string[], path: string): Masked {
   const tokens = highlightLines(lines, path);
   const code: string[] = [];
   const commentOnly: boolean[] = [];
+  const preprocessed = PREPROCESSED.has(structureLanguage(path) ?? '');
+  let continued = false;
   lines.forEach((line, index) => {
+    // A preprocessor line, and the lines a trailing backslash continues it on, hold no code here.
+    if (preprocessed && (continued || /^\s*#/.test(line))) {
+      continued = /\\\s*$/.test(line);
+      code.push(' '.repeat(line.length));
+      commentOnly.push(false);
+      return;
+    }
     const parts = tokens[index] ?? [{ kind: 'plain' as const, text: line }];
     let text = '';
     let hasComment = false;
@@ -58,7 +75,8 @@ function masked(lines: readonly string[], path: string): Masked {
     code.push(text);
     commentOnly.push(hasComment && text.trim() === '');
   });
-  const result = { code, commentOnly };
+  const size = lines.reduce((total, line) => total + line.length + 1, 0);
+  const result = { code, commentOnly, complete: size <= HIGHLIGHT_LIMIT };
   const byPath = masks.get(lines) ?? new Map<string, Masked>();
   byPath.set(path, result);
   masks.set(lines, byPath);
@@ -71,6 +89,9 @@ function masked(lines: readonly string[], path: string): Masked {
  */
 export function codeStructure(lines: readonly string[], path: string, start: number, end: number): CodeStructure {
   const family = languageFamily(path);
+  if ((family === 'brace' || family === 'indent') && !masked(lines, path).complete) {
+    return nearby(lines, start, end);
+  }
   const found =
     family === 'brace' ? braceStructure(lines, path, start, end)
     : family === 'indent' ? indentStructure(lines, path, start, end)
@@ -90,10 +111,16 @@ interface Block {
   readonly header: string;
 }
 
-const blockCache = new WeakMap<readonly string[], Map<string, readonly Block[]>>();
+interface Blocks {
+  readonly blocks: readonly Block[];
+  /** Every brace closed one opened before it, and none left open: otherwise a macro or a conditional build broke them, and no boundary is relied on. */
+  readonly balanced: boolean;
+}
+
+const blockCache = new WeakMap<readonly string[], Map<string, Blocks>>();
 
 /** Every `{ … }` of the file, with the text before its brace back to the previous statement. */
-function blocksOf(lines: readonly string[], path: string): readonly Block[] {
+function blocksOf(lines: readonly string[], path: string): Blocks {
   const known = blockCache.get(lines)?.get(path);
   if (known !== undefined) {
     return known;
@@ -101,6 +128,7 @@ function blocksOf(lines: readonly string[], path: string): readonly Block[] {
   const { code, commentOnly } = masked(lines, path);
   const blocks: Block[] = [];
   const stack: { line: number; column: number }[] = [];
+  let balanced = true;
   code.forEach((text, index) => {
     for (let column = 0; column < text.length; column += 1) {
       const char = text[column];
@@ -108,17 +136,20 @@ function blocksOf(lines: readonly string[], path: string): readonly Block[] {
         stack.push({ line: index + 1, column });
       } else if (char === '}') {
         const open = stack.pop();
-        if (open !== undefined) {
+        if (open === undefined) {
+          balanced = false;
+        } else {
           const { headerStart, header } = headerOf(code, commentOnly, open.line, open.column);
           blocks.push({ open: open.line, close: index + 1, headerStart, header });
         }
       }
     }
   });
-  const byPath = blockCache.get(lines) ?? new Map<string, readonly Block[]>();
-  byPath.set(path, blocks);
+  const result = { blocks, balanced: balanced && stack.length === 0 };
+  const byPath = blockCache.get(lines) ?? new Map<string, Blocks>();
+  byPath.set(path, result);
   blockCache.set(lines, byPath);
-  return blocks;
+  return result;
 }
 
 const MAX_HEADER_LINES = 12;
@@ -152,6 +183,15 @@ function blockKind(block: Block): { kind: BlockKind; name: string } {
   const header = block.header.replace(/^\}\s*/, '');
   if (header === '' || CONTROL.test(header)) {
     return { kind: header === '' ? 'other' : 'control', name: '' };
+  }
+  // A block opened inside an argument list (a lambda passed to a call, a callback, an initializer)
+  // is no function of its own: its header leaves a parenthesis open.
+  let depth = 0;
+  for (const char of header) {
+    depth += char === '(' ? 1 : char === ')' ? -1 : 0;
+  }
+  if (depth > 0) {
+    return { kind: 'other', name: '' };
   }
   const paren = header.indexOf('(');
   const classWord = CLASS_LIKE.exec(header);
@@ -199,7 +239,10 @@ function docStart(lines: readonly string[], commentOnly: readonly boolean[], lin
 const SHORT_CONTROL = 30;
 
 function braceStructure(lines: readonly string[], path: string, start: number, end: number): CodeStructure | null {
-  const blocks = blocksOf(lines, path);
+  const { blocks, balanced } = blocksOf(lines, path);
+  if (!balanced) {
+    return null;
+  }
   const { commentOnly } = masked(lines, path);
   // Innermost first: the blocks the place lies in.
   const around = blocks.filter((block) => block.headerStart <= start && block.close >= end).sort((a, b) => b.open - a.open || a.close - b.close);
@@ -488,7 +531,14 @@ export function placeStructures(rows: readonly DiffRow[], focus: Place['focus'])
 }
 
 /** A unit up to this many lines is shown whole; a longer one keeps its head, the change and its end in view, with folds between. */
-const WHOLE_UNIT = 30;
+/*
+ * A unit up to this many lines is shown whole (Niclas, 13 November 2026: the whole function is the
+ * default). A walk pane shows about 30 to 40 lines at a time, so a unit this long is four to five
+ * pane heights: its head and its change are then several screens apart, and the head is found by
+ * scrolling a long way, which is the repeated expanding in another form. Only beyond it are the
+ * parts between the head, the change and the end folded, each fold named and opened in one click.
+ */
+const WHOLE_UNIT = 150;
 /** Lines between a long unit's head and its change, or its change and its end, still shown rather than folded. */
 const UNIT_BRIDGE = 12;
 
