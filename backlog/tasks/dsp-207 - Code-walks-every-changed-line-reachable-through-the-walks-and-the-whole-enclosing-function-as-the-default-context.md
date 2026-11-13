@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-13 16:40'
-updated_date: '2026-11-13 18:23'
+updated_date: '2026-11-13 18:49'
 labels:
   - review
   - walks
@@ -59,4 +59,6 @@ Uncertain boundaries: preprocessor lines (C, C++, Objective-C, C#) set aside; a 
 Checks: tests/walk-reach-and-context.test.ts 14 tests; Linux test job green (review group 393/393, run 43479034877). walk-reach-trial 68/68 on Windows and on Linux (dock run 43479029845, every other dock trial green again: dock 54, prefs 20, Accept scope 32, walk marking 37, walk delegation 23, threads 110, views 62). Counts agree in the window: 342 changed lines, 34 in a walk + 308 in no walk, 9 decided; table.cpp 5 of 300 in a walk and decided, 295 without.
 
 Seen and left: in a new file whose lines are all added, the walk pane's folds say 'unchanged lines' for hidden added lines (wording from before DSP-207).
+
+Fold labels, 13 November 2026: a walk pane's folds (and an opened location's pane) said 'show N unchanged lines' even where the hidden lines were added or removed (a new file, other changes). They now say 'show N more lines' / 'visa N rader till' (named folds kept), count the rows they open in the view shown (Before leaves out added rows, After removed ones), and are not drawn when they would open none; the diff window's folds between hunks are unchanged. Presentation only. Checks: wording test in tests/walk-reach-and-context.test.ts (15/15); walk-reach-trial 72/72 on Windows, with the new file table.cpp showing 'show 134 more lines' and 'show 151 more lines', the first opening exactly lines 2-135, and no fold in Before. The Linux dock run 43485683558 was cancelled by Niclas's decision; earlier Linux runs of the other trials are reused.
 <!-- SECTION:NOTES:END -->
