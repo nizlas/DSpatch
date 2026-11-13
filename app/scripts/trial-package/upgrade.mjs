@@ -5,7 +5,9 @@
  * completed with a SIMULATED provider, a loop of the person's own in the project — then this
  * release's .deb is installed over it. The new client meets the previous release's host, which a
  * closed window leaves running, ends it, and shows the same conversation, the same agent and
- * project choices and the same loop; and again after a restart.
+ * project choices and the same loop; and again after a restart. A review preference the previous
+ * release saved is kept, and About DSpatch, copied as the person copies it, names this release for
+ * the app and for the running host after Restart host and after a restart (DSP-205).
  *
  *     node scripts/trial-package/upgrade.mjs --from v0.1.4 [--to <this release's .deb>]
  *
@@ -174,10 +176,112 @@ async function fetchTo(url, file) {
   if (!answer.ok) throw new Error(`${url}: HTTP ${String(answer.status)}`);
   fs.writeFileSync(file, Buffer.from(await answer.arrayBuffer()));
 }
-function launch(port) {
+/** Starts the installed client; with `inspect`, its main process also answers on that inspector port. */
+function launch(port, inspect = 0) {
   const env = { HOME: `/home/${USER}`, USER, LOGNAME: USER, PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', DISPLAY, ...simulated };
-  docker('exec', '-d', '-u', USER, NAME, 'env', '-i', ...Object.entries(env).map(([key, value]) => `${key}=${value}`), 'bash', '-c', `exec dspatch --remote-debugging-port=${String(port)} >>/tmp/client.log 2>&1`);
+  const inspector = inspect === 0 ? '' : ` --inspect=${String(inspect)}`;
+  docker('exec', '-d', '-u', USER, NAME, 'env', '-i', ...Object.entries(env).map(([key, value]) => `${key}=${value}`), 'bash', '-c', `exec dspatch${inspector} --remote-debugging-port=${String(port)} >>/tmp/client.log 2>&1`);
 }
+
+/** The client's main process, over the inspector (as in scripts/icon-trial.mjs). */
+class Main {
+  constructor(port) {
+    this.port = port;
+    this.pending = new Map();
+    this.sequence = 0;
+  }
+  close() {
+    this.ws?.close();
+    this.ws = undefined;
+  }
+  async attach() {
+    await poll('the main process inspector', async () => {
+      try {
+        const target = (await (await fetch(`http://127.0.0.1:${String(this.port)}/json/list`, { signal: AbortSignal.timeout(1500) })).json())[0];
+        if (!target) return false;
+        const socket = new WebSocket(target.webSocketDebuggerUrl);
+        await new Promise((resolve, reject) => {
+          socket.onopen = resolve;
+          socket.onerror = () => reject(new Error('inspector open failed'));
+        });
+        socket.onmessage = (event) => {
+          const answer = JSON.parse(event.data);
+          const waiting = this.pending.get(answer.id);
+          this.pending.delete(answer.id);
+          if (answer.error) waiting?.reject(new Error(JSON.stringify(answer.error)));
+          else waiting?.resolve(answer.result);
+        };
+        this.ws = socket;
+        return true;
+      } catch {
+        return false;
+      }
+    }, 60_000);
+  }
+  cmd(method, params = {}) {
+    return new Promise((resolve, reject) => {
+      const requestId = ++this.sequence;
+      const timer = setTimeout(() => { this.pending.delete(requestId); reject(new Error(`inspector timeout: ${method}`)); }, 15_000);
+      this.pending.set(requestId, {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
+      this.ws.send(JSON.stringify({ id: requestId, method, params }));
+    });
+  }
+  async ev(expression) {
+    const answer = await this.cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    if (answer.exceptionDetails) throw new Error(JSON.stringify(answer.exceptionDetails).slice(0, 600));
+    return answer.result?.value;
+  }
+}
+
+/**
+ * DSP-205: About DSpatch as the person reaches it, Help > About DSpatch over the start window, and
+ * its text as Copy version information puts it on the clipboard (GTK's dialog text is not readable
+ * from here; Copy puts the dialog's own text). The dialog is found on the container's X display by
+ * its title and Copy pressed through the X server, as scripts/prefs-trial.mjs does on Linux.
+ */
+async function aboutCopied(main, name) {
+  const placeholder = 'dsp-205 trial placeholder';
+  const clipboard = () => main.ev(`process.mainModule.require('electron').clipboard.readText()`);
+  const openAbout = () =>
+    main.ev(`(() => { const { Menu, BrowserWindow } = process.mainModule.require('electron'); const item = Menu.getApplicationMenu().getMenuItemById('dspatch-about'); const w = BrowserWindow.getAllWindows().find((each) => !each.isDestroyed() && !each.webContents.getURL().includes('window=')); if (!item || !w) return false; item.click(undefined, w, w.webContents); return item.label; })()`);
+  const dialogs = () => xdo(`search --name '^About DSpatch$'`).split('\n').filter((line) => /^\d+$/.test(line.trim()));
+  for (const keys of [['shift+Tab', 'Return'], ['Left', 'Return'], ['Tab', 'Return']]) {
+    await main.ev(`process.mainModule.require('electron').clipboard.writeText(${JSON.stringify(placeholder)})`);
+    check(`Help > About DSpatch is in the menu (${name})`, (await openAbout()) === 'About DSpatch');
+    const [dialog] = await poll('the About DSpatch dialog on the X display', () => {
+      const found = dialogs();
+      return found.length > 0 ? found : false;
+    }, 15_000);
+    xdo(`windowfocus --sync ${dialog.trim()}`);
+    xdo(`key --clearmodifiers ${keys.join(' ')}`);
+    const text = await poll('the clipboard or the dialog closed', async () => {
+      const now = await clipboard();
+      if (now !== placeholder) return now;
+      return dialogs().length === 0 ? '' : false;
+    }, 10_000).catch(() => '');
+    if (dialogs().length > 0) xdo(`key --window ${dialog.trim()} Escape`);
+    await poll('the dialog closed', () => dialogs().length === 0, 10_000).catch(() => undefined);
+    if (text !== '') {
+      note(`Copy reached with (${name})`, keys.join(' '));
+      fs.writeFileSync(path.join(evidence, `about-${name.replace(/\W+/g, '-')}.txt`), `${text}\n`);
+      return text;
+    }
+  }
+  return '';
+}
+/** About's two lines name this release, for the app and for the host that runs now. */
+function checkAbout(text, host, name) {
+  const named = (build) => `${version} (${build})`;
+  check(`About DSpatch names the app as ${version} (${name})`, text.split('\n')[0]?.startsWith(`DSpatch ${version} (`), text);
+  check(`About DSpatch names the running host as ${version}, the host that runs now (${name})`, host.appVersion === version && text.includes(`Running host: ${named(host.commit)}`), JSON.stringify({ text, host: { appVersion: host.appVersion, commit: host.commit, pid: host.pid } }));
+}
+
+/** The review preferences as the review windows' own bridge reads them, and their file. */
+const preferencesOf = async (review) => JSON.parse(await review.ev('window.dspatchReview.getPreferences().then((answer) => JSON.stringify(answer))'));
+const preferencesFile = () => inside(USER, `cat ${data}/reviews/preferences.json 2>/dev/null || true`, true);
 async function quit(window) {
   const pid = inside(USER, 'pgrep -o -x dspatch');
   inside(USER, `kill -TERM ${pid}`);
@@ -296,6 +400,12 @@ async function main() {
   const reviewBefore = JSON.parse(await reviewLine(firstReview));
   const reviewFilesBefore = reviewFiles();
   check('a review with a delegated result is on disk from the previous release', reviewBefore.result !== '' && reviewFilesBefore.length >= 1, JSON.stringify({ reviewBefore, reviewFilesBefore }));
+  // DSP-205: the person's review preferences, the walk window's two column widths, saved through
+  // the previous release's own review window as a drag of its dividers saves them.
+  const preferencesSet = { ...(await preferencesOf(firstReview)), explanationWidth: 640, navigationWidth: 400 };
+  const savedPreferences = JSON.parse(await firstReview.ev(`window.dspatchReview.setPreferences(${JSON.stringify(preferencesSet)}).then((answer) => JSON.stringify(answer))`));
+  const preferencesBefore = preferencesFile();
+  check('the previous release saves the review preferences', savedPreferences.saved === true && preferencesBefore.includes('640') && preferencesBefore.includes('400'), JSON.stringify({ savedPreferences, preferencesBefore }));
   await firstReview.shot('01b-previous-release-review');
   firstReview.close();
   const previousHost = running();
@@ -329,7 +439,7 @@ async function main() {
 
   stage = 'the new client meets the previous host';
   const second = new Win(9392, 'upgraded');
-  launch(second.port);
+  launch(second.port, 9492);
   // Two ways to meet the previous host. When the two builds can work together (the same host
   // contract), the window opens on the previous host and offers Restart host. When this release
   // changed the contract, as 0.1.8 did, this client cannot use that host: before any window it
@@ -379,6 +489,10 @@ async function main() {
   const lineNow = await second.until('the host line now', `${q('host-link')}?.textContent ?? false`, 30_000);
   check('the window then says it is on this computer, with no restart pending', /On this computer/.test(lineNow) && !/Restart needed/.test(lineNow), lineNow.replace(/\s+/g, ' ').trim());
   await second.shot('02-new-client-on-this-release');
+  const secondMain = new Main(9492);
+  await secondMain.attach();
+  checkAbout(await aboutCopied(secondMain, 'after Restart host'), running(), 'after Restart host');
+  secondMain.close();
   await second.until('the chat again', `${q('prompt')}!==null || ${q('open-project-0')}!==null`, 60_000);
   if ((await second.ev(`${q('prompt')}===null`)) === true) await second.openProject();
   await second.until('the earlier conversation through this release\'s host', `document.body.innerText.includes(${JSON.stringify(marker)})`, 60_000);
@@ -400,6 +514,8 @@ async function main() {
       ? reviewAfter.decision === 'awaiting' && reviewAfter.result === 'awaiting your assessment' && totals(reviewAfter.summary) === totals(reviewBefore.summary)
       : reviewAfter.summary === reviewBefore.summary && reviewAfter.result !== '';
   check('the review and its delegated result are as the previous release left them (an earlier agent approval now awaits the person)', reread && reviewFilesBefore.every((file) => reviewFiles().includes(file)), JSON.stringify({ reviewBefore, reviewAfter }));
+  const preferencesAfter = await preferencesOf(secondReview);
+  check('the review preferences are as the previous release saved them, in the window and on disk', preferencesAfter.explanationWidth === 640 && preferencesAfter.navigationWidth === 400 && preferencesAfter.language === preferencesSet.language && preferencesFile() === preferencesBefore, JSON.stringify({ preferencesAfter, file: preferencesFile() }));
   await secondReview.shot('03b-upgraded-review');
   secondReview.close();
   check('the conversation, the agent choice, the project and the own loop are as they were', same(before.conversations, after.conversations) && after.agent === before.agent && same(before.folders, after.folders) && after.ownLoop === before.ownLoop, JSON.stringify({ before, after }));
@@ -407,7 +523,7 @@ async function main() {
 
   stage = 'this release restarted';
   const third = new Win(9393, 'restarted');
-  launch(third.port);
+  launch(third.port, 9493);
   await third.attach();
   await third.openProject();
   await third.until('the earlier conversation after a restart', `document.body.innerText.includes(${JSON.stringify(marker)})`, 60_000);
@@ -415,6 +531,11 @@ async function main() {
   const again = belongings();
   check('everything of the person\'s is still there after the restart', same(before.conversations, again.conversations) && again.agent === before.agent && same(before.folders, again.folders) && again.ownLoop === before.ownLoop, JSON.stringify(again));
   check('no second conversation was made of the old one', again.conversations.length === 1);
+  check('the review preferences file is as the previous release saved it', preferencesFile() === preferencesBefore, preferencesFile());
+  const thirdMain = new Main(9493);
+  await thirdMain.attach();
+  checkAbout(await aboutCopied(thirdMain, 'after a restart'), running(), 'after a restart');
+  thirdMain.close();
   await third.shot('04-restarted');
   await quit(third);
 }
