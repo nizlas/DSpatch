@@ -4587,6 +4587,9 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
     pinnedDir: start.config.bundledRoot ?? start.config.appPath,
     dataDir: start.config.userDataDir,
     log,
+    // Read when asked, after the line below has settled which folder sessions use.
+    programFolder: (tool) =>
+      tool === 'claude' ? claudeSupportDir() : path.join(start.config.userDataDir, 'provider-support', tool),
   });
   // A working copy with its own `npm run claude:install` keeps using that one.
   if (start.config.bundledRoot !== undefined || !claudeSupportStatus().installed) {

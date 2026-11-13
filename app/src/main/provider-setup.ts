@@ -126,6 +126,13 @@ export interface ProviderSetupOptions {
   /** The environment a login runs in. */
   readonly env?: NodeJS.ProcessEnv;
   readonly spawnLogin?: (command: string, args: readonly string[]) => ChildProcessWithoutNullStreams;
+  /**
+   * The folder whose program sessions actually run, when it is not the fetched one. A working
+   * copy that ran `npm run claude:install` keeps its own `claude-support`, so its sign-in status
+   * and its sign-in have to be asked of that program; asking the fetched folder, which such a
+   * copy never fills, answered "not signed in" and then failed to start the sign-in at all.
+   */
+  readonly programFolder?: (tool: SupportTool) => string;
 }
 
 const realFetch = async (url: string, signal: AbortSignal): Promise<Buffer> => {
@@ -418,13 +425,19 @@ export class ProviderSetup {
 
   private run(tool: SupportTool, args: readonly string[]): ChildProcessWithoutNullStreams {
     const start = this.options.spawnLogin ?? ((command, list) => spawn(command, [...list], { env: this.options.env ?? process.env, stdio: 'pipe', windowsHide: true }));
-    return start(this.program(tool), args);
+    return start(this.program(tool, this.folderInUse(tool)), args);
+  }
+
+  /** Where the program that sessions run lives: the fetched folder unless the host says otherwise. */
+  private folderInUse(tool: SupportTool): string {
+    return this.options.programFolder?.(tool) ?? this.folderOf(tool);
   }
 
   /** Whether Claude Code has a subscription login here, by its own account of it. */
   claudeSignedIn(): Promise<boolean> {
     return new Promise((resolve) => {
-      if (this.programState('claude') !== 'ready') {
+      const inUse = this.folderInUse('claude');
+      if (inUse === this.folderOf('claude') ? this.programState('claude') !== 'ready' : !fs.existsSync(this.program('claude', inUse))) {
         resolve(false);
         return;
       }

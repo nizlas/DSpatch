@@ -273,6 +273,41 @@ describe('signing in', () => {
     return { fake, steps, setup };
   };
 
+  // DSP-208, 13 November 2026: a working copy with its own claude-support never fills the
+  // fetched folder, and the sign-in spawned the fetched claude.exe anyway: ENOENT.
+  it("signs in with, and asks the status of, the program sessions use when the host names another folder", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'login-own-'));
+    const own = path.join(root, 'claude-support');
+    const exe = process.platform === 'win32' ? 'claude.exe' : 'claude';
+    const program = path.join(own, 'node_modules', '@anthropic-ai', `claude-agent-sdk-${process.platform}-${process.arch}`, exe);
+    fs.mkdirSync(path.dirname(program), { recursive: true });
+    fs.writeFileSync(program, '');
+    const commands: string[] = [];
+    const children: ReturnType<typeof fakeLogin>[] = [];
+    const setup = new ProviderSetup({
+      supportDir: path.join(root, 'provider-support'),
+      pinnedDir: root,
+      dataDir: root,
+      log: () => undefined,
+      programFolder: (tool) => (tool === 'claude' ? own : path.join(root, 'provider-support', tool)),
+      spawnLogin: (command) => {
+        commands.push(command);
+        const fake = fakeLogin();
+        children.push(fake);
+        return fake.child as never;
+      },
+    });
+    assert.equal(setup.programState('claude'), 'absent', 'the fetched folder is empty, as in a working copy');
+    const status = setup.claudeSignedIn();
+    await new Promise((resolve) => setImmediate(resolve));
+    children[0]?.child.stdout.write('{"loggedIn": true}');
+    await new Promise((resolve) => setImmediate(resolve));
+    children[0]?.child.emit('close', 0);
+    assert.equal(await status, true);
+    setup.startLogin('claude', () => undefined);
+    assert.deepEqual(commands, [program, program]);
+  });
+
   it('never asks Claude for the path that bills through an API key', () => {
     const { fake } = started('claude');
     assert.deepEqual(fake.args[0], ['auth', 'login', '--claudeai']);
