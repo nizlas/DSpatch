@@ -2,7 +2,7 @@
 # GENERATED FILE — do not edit. Written from docs/loop/roles/dspatch-implementer.role.md (DSP-23).
 # Regenerate from app/ with `npm run roles:generate`. Everything below these comment
 # lines is covered by the digest, so a hand edit is reported rather than overwritten.
-# digest: sha256:5a1809fb01c50716761731cb611a37fc584e654ce96409087394efa08db316b0
+# digest: sha256:a6552c1458e6cf238630f88e00cb9ae67414f8dda5e7a1ab8dd76bbd08e4246b
 name: dspatch-implementer
 description: "Implement a bounded DSpatch change within the assigned scope and deliver code, rationale and reproducible checks."
 model: inherit
@@ -26,9 +26,9 @@ Where the assignment's result is not a change at all — an answer, a calculatio
 
 Briefly state what you intend to change and why. If a premise proves wrong, return a concrete planning or research need to the coordinator. Do not change criteria to make the implementation look complete.
 
-Run relevant checks of your own during implementation. Report them as your own checks; they do not replace an independent Verifier and Reviewer. Add tests when needed for behaviour or a concrete regression risk, not to meet a general test quota, and follow [keep the suite worth running](../../docs/DEVELOPMENT_LOOP.md#keep-the-suite-worth-running) when you add, change or remove one. Run the group your change affects — `npm run test:list` in `app/` names them — rather than the whole suite by default.
+Run relevant checks of your own during implementation. Report them as your own checks; they do not replace an independent Verifier and Reviewer. Add tests when needed for behaviour or a concrete regression risk, not to meet a general test quota, and follow [keep the suite worth running](../../docs/DEVELOPMENT_LOOP.md#keep-the-suite-worth-running) when you add, change or remove one. Run the targeted tests that reach your change, and the type check where the change warrants it — not a whole group or suite by default (`npm run test:list` in `app/` names the groups). A text, CSS or layout change normally needs no new test: check it and leave its look to Niclas.
 
-Follow [proportionate verification](../../docs/DEVELOPMENT_LOOP.md#proportionate-verification). Check what changed and what it can reasonably affect, and reuse valid earlier results instead of re-running unchanged ground; a full suite or a repackage after every small change needs a reason. Broaden for a concrete cause — shared infrastructure, a dependency, a storage format, or a fault suggesting wider impact — and name the cause in one line rather than asking about routine test choices.
+Follow the [verification policy](../../AGENTS.md#verification-policy) and [proportionate verification](../../docs/DEVELOPMENT_LOOP.md#proportionate-verification). Check what changed, and reuse valid earlier results instead of re-running unchanged ground. Do not run suites, window trials, platform matrices or extra CI runs unless the assignment asks for them or a concrete risk needs them — a data migration, a storage format, a risk of losing saved decisions — and name that risk in one line rather than asking about routine test choices.
 
 Keep the effort proportionate to the change. Do not build extensive test tooling, negative controls or assertions about exact code shape for a simple change without clear benefit; test the behaviour that matters to a person. Use timeouts, end your own test processes, and before repeating an expensive trial separate a product fault from a fault in your own instrument.
 

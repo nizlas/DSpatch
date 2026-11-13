@@ -194,19 +194,19 @@ Verifier checks before and after testing. Reviewer checks against the same snaps
 
 **Niclas's decision, 19 September 2026.** Verification concentrates on what changed and on the functions a change can reasonably affect. **Full retesting is an exception that needs a concrete reason.** This governs how we build DSpatch. It says nothing about how Maestro should run the user's agents, which is [INTERACTION_MODEL.md](INTERACTION_MODEL.md).
 
-These are the rules the rest of this document, [AGENTS.md](../AGENTS.md), [the handoff contract](loop/HANDOFF.md) and the role sources in `docs/loop/roles/` now defer to.
+**The governing rule is AGENTS.md's [verification policy](../AGENTS.md#verification-policy)** (Niclas, 13 November 2026): Niclas does the manual product and UI trials; the agent runs the smallest relevant check of the concrete change, usually a few targeted unit tests and the type check where the change warrants it; no suites, window trials, platform matrices or extra CI runs unless he asks or a concrete risk needs them. This section explains how that is applied and never asks for more. The rest of this document, [the handoff contract](loop/HANDOFF.md) and the role sources in `docs/loop/roles/` defer to both.
 
 **Choose the smallest sufficient check.** A provider call is tried through the adapter. A handover is tried with a bounded flow. The whole agent loop is used when it is the whole that needs verifying.
 
-**Reach the state the cheapest honest way, and stop as soon as you have looked.** When what is being checked is how something *looks or behaves in a given state*, the question is only how to get the window into that state — not how to exercise everything around it. Niclas's own formulation, 21 September, is usually the right one: start the thing, watch the first node for two seconds, stop. That costs seconds, needs no new apparatus, and uses the product as it stands.
+**Reach the state the cheapest honest way, and stop as soon as you have looked.** When a check in a window is warranted at all (Niclas asked for it, or a concrete risk needs it) and what is being checked is how something *looks or behaves in a given state*, the question is only how to get the window into that state — not how to exercise everything around it. Niclas's own formulation, 21 September, is usually the right one: start the thing, watch the first node for two seconds, stop. That costs seconds, needs no new apparatus, and uses the product as it stands.
 
 Weigh the alternatives before choosing. Walking a whole run to arrive at a working node establishes nothing extra unless the question is how the state is *reached*. But building a hook to force the state is not automatically cheaper: a new kind of observation can mean new plumbing through the bridge, the preload, the type declarations and the scripted gates, which costs more than the walk it was meant to replace. **A shortcut that requires building a road is not a shortcut.** Prefer what already exists, cut the duration rather than the realism, and if a state genuinely cannot be reached without new apparatus, say so — that is a finding about our own testability, not a reason to pay for either route in silence.
 
-**Separate presentation from provider behaviour.** Layout, Markdown and scrolling are tried in the real window, with saved content or controlled streaming. Real provider calls are needed when the provider's actual behaviour is the question. Say what each trial shows.
+**Leave presentation to Niclas.** Layout, colours, text and scrolling are his to assess in the real window. The agent checks the change itself (the rule, the class, the wording) and hands it over, saying what he should look at. Real provider calls are needed only when the provider's actual behaviour is the question. Say what each check shows.
 
 **Reuse valid results.** Unchanged parts are not retested routinely. Ask whether the change affects an earlier result and top it up where it does. Bind results to the right code version without making every new version trigger every test.
 
-**Broaden only for a concrete reason** — shared infrastructure, dependencies, a storage format, or a fault suggesting wider impact. State the reason briefly in the work report. Do not ask Niclas about routine test choices.
+**Broaden only for a concrete risk** that targeted tests cannot reasonably cover — a data migration, a storage format, a risk of losing saved decisions — or when Niclas asks. Name the risk briefly in the work report; general words about safety or regressions are not a reason. Do not ask Niclas about routine test choices.
 
 **Keep the effort proportionate.** Do not build extensive test tooling, negative controls or assertions about exact code shape for simple changes without clear benefit. Check the behaviour that matters to the user. **A correct, briefly visible intermediate state does not have to be held open long enough for a test to catch it** — if an instrument cannot sample it, that is the instrument's problem, not the product's.
 
@@ -214,9 +214,11 @@ Weigh the alternatives before choosing. Walking a whole run to arrive at a worki
 
 **Bound waiting and repetition.** Use sensible timeouts and end your own test processes. When a trial is slow or fails, separate a product fault from a fault in the test tooling and from needless waiting before running it again. Do not repeat the same expensive trial without new information.
 
-**Stop when verification is enough.** When the relevant criteria are checked and no concrete blocking risk remains, move to delivery. Packaging and full test suites are not repeated after every small change without a reason.
+**Stop when verification is enough.** When the relevant checks pass, verification is done; move to delivery. Niclas's outstanding manual trial does not block delivery for `Review`. Packaging, test suites and window trials are not run after a change without a reason, and a release runs only what packaging and publishing require.
 
-Keep meaningful regression testing, and keep reporting honestly what was not tried. The goal is sufficient reliability for proportionate effort.
+**Do not start extra CI.** Workflows that run automatically are the mandatory CI. Starting another one (`linux-verify` is started by hand) or repeating a trial "to be safe" is an extra run the policy rules out unless Niclas asks or a release step needs it.
+
+Keep the targeted tests that protect real behaviour, and keep reporting honestly what was not tried and what Niclas should try himself. The goal is sufficient reliability for proportionate effort.
 
 <a id="keep-the-suite-worth-running"></a>
 
@@ -226,7 +228,7 @@ The same principle applied to the tests themselves. A suite nobody dares run bec
 
 **A new test earns its place.** It protects a concrete behaviour or a concrete risk that nothing already covers. Not every change needs one, and the number of tests is not a measure of anything.
 
-**Run the smallest sufficient selection.** Each run answers a concrete question: what changed, and what it can reasonably affect, including the dependencies it affects. `npm run test:list` in `app/` names the groups; a presentation change does not need the chat service's tests.
+**Run the smallest sufficient selection.** Each run answers a concrete question about what changed: run the test files that reach the changed code, not their whole group. `npm run test:list` in `app/` names the groups; a group or the suite is run only for a concrete reason the [verification policy](../AGENTS.md#verification-policy) accepts. A text, CSS or layout change normally needs no new test.
 
 **Frequent checks answer in seconds.** Tests that spawn processes, run git or wait on a clock are separated from the rest, so a multi-minute trial is a deliberate choice rather than the default cost of checking anything.
 

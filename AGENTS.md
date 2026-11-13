@@ -83,8 +83,35 @@ This binds the coordinator and every specialist of the development loop. The coo
 - Preserve decisions, attempts and relevant results in the task. On interruption, record the latest verified state, remaining problems and a concrete next step. Resolve an unknown outcome before repeating the action.
 - Present questions and decision material as copyable Markdown in the normal chat report. Use separate question forms only when Niclas explicitly requests them. Collect questions that can wait until the next iteration, stating the recommendation, when an answer is needed and what can continue within the mandate. Deferral or silence is not approval. Follow the loop's reporting rules during a loop run.
 - Preserve the user's existing changes. Bind diffs and execution results to actual file content and identified snapshots, including uncommitted code. Cancellation and restart must not silently reset files, reapply changes or launch commands twice.
-- Check relevant behaviour with proportionate scope, following [proportionate verification](docs/DEVELOPMENT_LOOP.md#proportionate-verification): concentrate on what changed and on what it can reasonably affect, reuse valid earlier results, and treat full retesting as an exception needing a concrete reason stated in the report. The same section's [keep the suite worth running](docs/DEVELOPMENT_LOOP.md#keep-the-suite-worth-running) governs adding, changing and removing tests, and which group to run. Report what changed, why, the tested revision or snapshot, checks performed and remaining work. Distinguish provider documentation from observed functionality; missing measurements are unknown, not zero.
+- Verify by the [verification policy](#verification-policy) below. Report what changed, why, the tested revision or snapshot, the checks performed, what Niclas should try himself and remaining work. Distinguish provider documentation from observed functionality; missing measurements are unknown, not zero.
 - Do not mark UX criteria requiring Niclas's testing as accepted based on agent tests. Use `Review` when a reviewable result awaits assessment and follow BACKLOG.md's status rules.
+
+<a id="verification-policy"></a>
+
+## Verification policy
+
+**Niclas's decision, 13 November 2026. This is the default for every task**: in every session, after a context compaction, for the coordinator and for every specialist of the development loop. It replaces earlier general demands for broad verification wherever they differ; other documents follow it.
+
+Niclas normally does the manual product and UI trials himself. The agent's default is the smallest relevant verification of the concrete change: usually a few targeted unit tests, and the type check where the change warrants it.
+
+- Do not run whole test suites, broad regression groups or window trials as routine.
+- Do not start Xvfb, Windows or multi-platform matrices for ordinary changes.
+- Small text, CSS and layout changes normally need no new automated tests. Check the change itself and leave it to Niclas for visual assessment.
+- For logic changes, choose existing targeted tests, and add a test only when it catches a meaningful fault or an important boundary.
+- When the relevant checks pass, verification is done. Do not broaden or repeat it without a concrete new reason.
+- Documentation and report changes do not trigger product trials.
+- Do not create large trial scripts, screenshot collections or evaluation reports for small changes.
+- Report briefly what was checked and what Niclas should try himself. His outstanding manual trial does not block delivery for `Review`.
+
+**Exceptions.** Broader verification is right when Niclas explicitly asks for it, or when the change carries a concrete risk that targeted tests cannot reasonably cover, such as a data migration or a risk of losing saved decisions. Justify the scope by that risk. General words about "safety" or "regressions" are not a reason.
+
+**Releases.** Run the checks that packaging and publishing actually require: the release's own build, staging, checksums and the publishing workflow. A release does not by itself mean running every manual scenario, every platform or window trials that have already passed again.
+
+**CI.** Keep the CI checks that run automatically apart from extra runs the agent starts itself. Do not start extra workflows or duplicated trials "to be safe". `linux-verify` is started by hand and is such an extra run, unless Niclas asks for it or a release step needs it. If mandatory CI forces a disproportionately large run, report that separately so the policy can be adjusted.
+
+**Critical contracts keep their specific checks.** A check that a document requires for a genuinely critical contract stands: the release workflow's staging and checksums, the host contract's compatibility, saved data and their formats. It is not a general demand for broad verification.
+
+[Proportionate verification](docs/DEVELOPMENT_LOOP.md#proportionate-verification) in DEVELOPMENT_LOOP.md explains how this is applied; it follows this policy and never asks for more.
 
 <a id="agentloopen-under-utvecklingen"></a>
 

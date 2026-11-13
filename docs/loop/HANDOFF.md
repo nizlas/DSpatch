@@ -15,7 +15,7 @@ The coordinator sends a bounded assignment containing the following information.
 - **Current decisions:** relevant user direction in plain language, including corrections since the previous attempt.
 - **Source material:** relevant VISION section, current task file, code and previous reports. Read AGENTS.md.
 - **Initial state:** branch, base revision, existing changes and candidate snapshot if established.
-- **Assessment:** applicable criteria, required checks and what needs human feedback. Scope the checks by [proportionate verification](../DEVELOPMENT_LOOP.md#proportionate-verification): name the smallest sufficient check rather than asking for a full suite by default, and if the assignment does need a wider sweep, say why in the handoff so the specialist does not have to guess.
+- **Assessment:** applicable criteria, required checks and what needs human feedback. Scope the checks by the [verification policy](../../AGENTS.md#verification-policy) and [proportionate verification](../DEVELOPMENT_LOOP.md#proportionate-verification): name the smallest sufficient check rather than asking for a full suite by default, and if the assignment does need a wider sweep, say why in the handoff so the specialist does not have to guess.
 - **Delivery:** the report file, then the final response to the coordinator; any explicitly permitted log directory. No further delegation.
 
 The specialist must check material contradictions or missing authority with the coordinator. Normal reversible choices may be made within a clear assignment.
