@@ -133,7 +133,8 @@ The preparation established this by reading code on 13 November 2026, from the c
   - this brief;
   - `docs/loop/roles/run/dspatch-mission-coordinator.role.md`;
   - `docs/loop/graphs/dspatch-mission-loop.graph.json`;
-  - `.dspatch/loops/dspatch-mission-loop.loop.json`.
+  - `.dspatch/loops/dspatch-mission-loop.loop.json`;
+  - `docs/missions/adaptive-execution/start-engine.ps1`.
 
   A sub-goal that needs one of these changed is a `needs-decision`.
 - **Role sources the run itself uses.** A change to `docs/loop/roles/dspatch-{implementer,reviewer,verifier,researcher,backlog-planner}.role.md` takes effect for the next run's own steps. Make it only as a deliberate part of a sub-goal, name the effect in the review, and record it in STATE.md.
@@ -204,10 +205,22 @@ git -C C:/Users/nicla/development/DSpatch worktree add --detach C:/Users/nicla/d
 ```
 
 ```bash
-cd C:/Users/nicla/development/DSpatch-engine/app && npm ci && npm run claude:install && npm run build && npm start
+cd C:/Users/nicla/development/DSpatch-engine/app && npm ci && npm run claude:install && npm run build
 ```
 
-`npm start` runs the built app without the dev server, so nothing reloads when the mission edits renderer files, and its local host runs from that checkout's own `dist/host`. Its data and logins are your ordinary DSpatch profile. End a host another DSpatch left running (**End host**) before you start the engine window. Do not start a second DSpatch on that profile while a run is active, because it would ask to replace the running host, and replacing it stops the run. For your own trials of the mission's results, use `npm run dev -- --isolated-profile <folder>` from the working copy.
+Then start it, always with the launcher:
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/nicla/development/DSpatch/docs/missions/adaptive-execution/start-engine.ps1
+```
+
+**Why the launcher.** It starts the engine with exactly the environment a Windows login gives: the machine's and the user's variables and the login session's own. Nothing is inherited from whatever started it.
+- **What went wrong without it.** Started from a Claude Code session, DSpatch inherited that session's variables, among them `CLAUDE_CODE_OAUTH_SCOPES` and `ANTHROPIC_BASE_URL`. Claude then could not be opened, because DSpatch's Claude adapter refuses Claude Code's OAuth variables and endpoint overrides (DSP-109), as it should.
+- **What it refuses.** It will not start if such a variable is set in Windows' own environment.
+- **Checking it.** `-ListNames` prints the variable names it would use, never their values.
+- **Console output** goes to `%LOCALAPPDATA%\DSpatch-engine-console.log`.
+
+The launcher runs the built app (`electron .`, as `npm start` would) without the dev server, so nothing reloads when the mission edits renderer files, and its local host runs from that checkout's own `dist/host`. Its data and logins are your ordinary DSpatch profile. End a host another DSpatch left running (**End host**) before you start the engine window. Do not start a second DSpatch on that profile while a run is active, because it would ask to replace the running host, and replacing it stops the run. For your own trials of the mission's results, use `npm run dev -- --isolated-profile <folder>` from the working copy.
 
 **Starting a run.**
 
@@ -237,7 +250,7 @@ cd C:/Users/nicla/development/DSpatch-engine/app && npm ci && npm run claude:ins
    ```bash
    git -C C:/Users/nicla/development/DSpatch-engine checkout --detach <commit>
    ```
-3. Run `npm ci` if dependencies changed, then `npm run build && npm start`.
+3. Run `npm ci` if dependencies changed, then `npm run build`, and start it with the launcher above.
 4. Start the next run.
 
 ## 8 What is left to Niclas

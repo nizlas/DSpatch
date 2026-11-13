@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-13 20:54'
-updated_date: '2026-11-13 21:45'
+updated_date: '2026-11-13 22:31'
 labels: []
 dependencies: []
 ordinal: 127000
@@ -51,6 +51,8 @@ Checks: tests/loop-graph.test.ts 41/41; npm run typecheck:node clean; the missio
 Night run prepared, 13 November 2026 (Niclas: the whole mission in one autonomous run). The graph now allows 180 calls and 60 rework rounds, under the runner's own 200-transition bound. The review gained a stalled verdict, which separates repeated attempts on one problem from ordinary rework. A blocked, stalled or waiting sub-goal no longer ends the run. The brief now separates the mission's own design decisions from those that stop for Niclas. The engine checkout C:\Users\nicla\development\DSpatch-engine is built at 81a5949 with Claude support installed; Electron's install script had to be run by hand. Its window and host were started and recorded as 1.0.0 at 81a59496614a from that checkout, with ownRepo set to the engine checkout. The workspace for the working copy is remembered with the mission loop chosen; the store was backed up first. The app did not open the workspace on its own, so Niclas opens it from the recent list. Not done, and Niclas's to do: the one-time Claude consent in this profile, opening the workspace, keeping the machine awake, and starting the run.
 
 Start blocked, 13 November 2026: 'The sign-in could not start: spawn ...\provider-support\claude\...\claude.exe ENOENT'. The cause was in the code, not the installation. A build from a working copy with its own app/claude-support (npm run claude:install) runs sessions from that folder and never fills <data>/provider-support/claude. The setup dialog still asked that empty fetched folder for the sign-in status and spawned the sign-in from it. The status answered 'not signed in', and the spawn failed. Fixed in c04536b (ProviderSetup.programFolder, given by the host), with a targeted test in tests/provider-setup.test.ts (20/20) and a clean typecheck:node. Checked against the rebuilt engine with the real claude.exe: auth status reports signed in, and the sign-in would spawn the engine's own claude.exe (which exists) with auth login --claudeai. The engine checkout moved to c04536b and was rebuilt between runs, with no run active, and restarted: client and host are 1.0.0 at c04536b0eacb.
+
+Second start block, 13 November 2026: '"DSpatch" could not be opened: CLAUDE_CODE_OAUTH_SCOPES is set.' The cause: the engine had been started from the Claude Code session preparing it, and inherited that session's environment. That environment held about 55 names not in the Windows login environment, among them CLAUDE_CODE_OAUTH_SCOPES and ANTHROPIC_BASE_URL (both refused by assessAuthentication, DSP-109), CLAUDE_CODE_* session variables, USE_STAGING_OAUTH, GIT_ASKPASS and CHROME_CRASHPAD_PIPE_NAME. None is set in the User or Machine environment. The adapter's check stays as it is. docs/missions/adaptive-execution/start-engine.ps1 now starts the engine with an environment built only from the Machine, User and volatile login variables plus Windows' per-process defaults. It refuses to start if a guarded name is set globally, and its console output goes to a file. Checked with the built engine's assessAuthentication over variable names only: the launcher's environment is accepted, and the inherited one is refused with exactly the reported error. Client and host were restarted through the launcher, with no run active: 1.0.0 at c04536b0eacb.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
