@@ -20,6 +20,8 @@ Requested by Niclas on 13 November 2026. Revisit this at the next planning pass 
 
 Start with `docs/INTERACTION_MODEL.md`, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md`, existing related task records and the runnable loop definitions. Follow the proportionate verification policy in `AGENTS.md`: inspect first, use only targeted checks where needed, and leave manual product assessment to Niclas. This note schedules consideration in near-term planning; it does not claim implementation or start a broad investigation now.
 
+**Extended on 13 November 2026.** This follow-up is now carried out by the mission in [DSP-209](backlog/tasks/dsp-209%20-%20Adaptive-execution-and-shared-context-the-main-assignment-run-through-the-mission-loop.md), which implements [ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md](docs/ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md) through DSpatch's own run engine with the loop *DSpatch mission loop*. [DSP-208](backlog/tasks/dsp-208%20-%20Prepare-a-long-running-adaptive-execution-assignment-through-DSpatchs-own-loop-engine.md) prepared it. Its start brief and working state are in `docs/missions/adaptive-execution/`. Niclas starts it, so it has not started yet.
+
 
 The sequence begins with **DSP-7**, a preparatory [development-loop](docs/DEVELOPMENT_LOOP.md) probe in Cursor: real specialist calls, planning quality and recovery. Its ID was assigned later but it comes first in execution order. Consult its task status rather than repeating a completed calibration.
 
