@@ -891,7 +891,18 @@ export function describeRunToolPolicy(
  */
 export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
   { attribute: 'model', honoured: false, by: 'DSP-18 for the runner; DSP-8 decides task-aware selection' },
-  { attribute: 'limits', honoured: false, by: 'DSP-18' },
+  {
+    attribute: 'limits',
+    honoured: true,
+    by: 'the runner (DSP-18): the graph\'s maxCalls and maxReworkRounds bound the whole run, and maxMinutes bounds each step, a node\'s own value over the graph\'s',
+    caveat:
+      'maxCalls and maxReworkRounds are read from the graph only, not from a node, and maxReworkRounds ' +
+      'counts every rework edge in the run together. A graph-level maxMinutes is a default for each ' +
+      'step, not a bound on the run, and a live step with none is stopped after 20 minutes. maxTasks only refuses ' +
+      'a value below one. There is no bound on the run\'s wall time, tokens or cost. A spent bound takes ' +
+      'the node\'s limit-reached edge where one is drawn and otherwise ends the run as limit-reached; it ' +
+      'never pauses it.',
+  },
   { attribute: 'requirements', honoured: false, by: 'DSP-18 to apply them; DSP-23 to generate roles from them' },
   {
     attribute: 'archive',
@@ -902,7 +913,14 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
       'dry run is not — by construction, since a dry run reaches no filesystem — so a dry run ' +
       'reports the path a real run would use and writes nothing at it.',
   },
-  { attribute: 'onRuntimeFault', honoured: false, by: 'DSP-18' },
+  {
+    attribute: 'onRuntimeFault',
+    honoured: true,
+    by: 'the runner (DSP-18): stop-and-reconcile, its only value, ends the run at the fault with nothing retried',
+    caveat:
+      'The run ends; it is not held for a person and cannot be resumed from where it stopped. ' +
+      'Continuing means a new run, which starts at the entry.',
+  },
   {
     attribute: 'report',
     honoured: true,

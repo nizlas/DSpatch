@@ -151,7 +151,7 @@ test('the example graph says which attributes nothing honours yet', () => {
   }).filter((finding) => finding.code === 'not-yet-honoured');
 
   const attributes = notices.map((notice) => notice.message.split('"')[1]);
-  for (const expected of ['model', 'limits', 'requirements', 'onRuntimeFault']) {
+  for (const expected of ['model', 'requirements']) {
     assert.ok(
       attributes.includes(expected),
       `"${expected}" is set by the example graph, so its unhonoured state must be reported. ` +
@@ -168,16 +168,19 @@ test('the example graph says which attributes nothing honours yet', () => {
   const partly = checkLoopGraph(parsed.graph, { resolveRole: createFileRoleResolver(repoRoot) })
     .filter((finding) => finding.code === 'partly-honoured')
     .map((finding) => finding.message.split('"')[1]);
-  for (const nowHonoured of ['archive', 'report']) {
+  // `limits` and `onRuntimeFault` left it on 13 November 2026 (DSP-208): the runner
+  // enforces maxCalls, maxReworkRounds and maxMinutes and ends a run at a runtime fault,
+  // so an author editing a limit was being told that nothing would act on it.
+  for (const nowHonoured of ['archive', 'report', 'limits', 'onRuntimeFault']) {
     assert.equal(
       attributes.includes(nowHonoured),
       false,
-      `"${nowHonoured}" is honoured since DSP-74 and must stop reporting itself unhonoured`,
+      `"${nowHonoured}" is honoured and must stop reporting itself unhonoured`,
     );
     assert.ok(
       partly.includes(nowHonoured),
-      `"${nowHonoured}" is honoured only where a run has somewhere to file results, and an ` +
-        `author setting it is owed that sentence. Reported as partly honoured: ${partly.join(', ')}`,
+      `"${nowHonoured}" is honoured only in part, and an author setting it is owed the sentence ` +
+        `saying where it stops. Reported as partly honoured: ${partly.join(', ')}`,
     );
   }
 });
