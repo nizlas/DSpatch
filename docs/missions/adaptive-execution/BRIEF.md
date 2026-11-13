@@ -195,7 +195,7 @@ In STATE.md a sub-goal is **pending**, **in progress**, **reviewed** (accepted b
 
 ## 7 Operating the run (for Niclas)
 
-**Once, before the first run: a stable engine.** This was done on 13 November 2026, at commit `81a5949`: `C:\Users\nicla\development\DSpatch-engine` is built, and its window and host were started from it and recorded as `1.0.0 at 81a59496614a`. Electron's own install script had to be run by hand (`node node_modules/electron/install.js`), because npm skipped it in the new checkout. The workspace for the working copy is remembered with **DSpatch mission loop** chosen; a backup of the store from before that change is `dspatch-projects.backup-before-dsp-208-20261113.json`.
+**Once, before the first run: a stable engine.** This was done on 13 November 2026: `C:\Users\nicla\development\DSpatch-engine` is built at commit `c04536b`, and its window and host were started from it and recorded as `1.0.0 at c04536b0eacb`. That commit includes the fix that lets this kind of build sign in to Claude with its own `claude-support`; before it, the setup dialog failed with ENOENT on a fetched `claude.exe` that such a build never has. Electron's own install script had to be run by hand (`node node_modules/electron/install.js`), because npm skipped it in the new checkout. The workspace for the working copy is remembered with **DSpatch mission loop** chosen; a backup of the store from before that change is `dspatch-projects.backup-before-dsp-208-20261113.json`.
 
 Run the mission from a separate checkout of DSpatch. The mission then edits the working copy without touching the program that runs it. To set it up again:
 

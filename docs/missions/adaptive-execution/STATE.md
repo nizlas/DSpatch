@@ -5,7 +5,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 ## Where the mission stands
 
 - **Status:** prepared, not started. The first run is the night run: it maps the vision, plans, and goes straight on to implementing and reviewing sub-goals for as long as feasible work remains (BRIEF.md, sections 3 and 6).
-- **Engine commit the runs use:** `81a5949`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
+- **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Last recorded commit of mission work:** none.
 - **Sub-goal in progress:** none.
 - **Waiting on Niclas:** nothing.
