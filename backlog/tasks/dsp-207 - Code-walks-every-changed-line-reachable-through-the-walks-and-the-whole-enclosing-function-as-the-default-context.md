@@ -6,7 +6,7 @@ title: >-
 status: Review
 assignee: []
 created_date: '2026-11-13 16:40'
-updated_date: '2026-11-13 17:40'
+updated_date: '2026-11-13 18:23'
 labels:
   - review
   - walks
@@ -47,4 +47,16 @@ Changes: blank-line rule in markedChangedRows (a changed blank line belongs to t
 Checks: tests/walk-reach-and-context.test.ts 11 tests; review group 390/390 on Linux (run 43468659094; on Windows review-context.test.ts fails one Windows-path case unrelated to this change, passing on Linux); typecheck. scripts/walk-reach-trial.mjs 50/50 on Windows and on Linux under Xvfb; dock run 43471913630 all trials green (dock 54, prefs 20, Accept scope 32, walk marking 37, walk delegation 23, threads 110, views 62, walk reach 50). Simulated provider.
 
 Not established: the structure finder reads text, not a compiler's AST (lambdas in calls, macros); files over 1 MB unhighlighted so comments are not set aside; the older hunk-based coverage table remains below What is left; other window managers, Wayland, other distributions.
+
+Final correction, 13 November 2026 (Niclas: the 30-line limit was too low; check the old coverage table; honest uncertain boundaries). No release.
+
+Whole functions: units up to 150 lines are shown whole (a walk pane shows about 28-37 lines, so 150 lines are four to five pane heights); only longer units fold between head, change with its control structure, and end, with named folds. The arrival scroll and the person's expansions and scroll positions are unchanged; Accept and delegation unchanged (checked at every level and in the mandate).
+
+The old coverage table counted walk coverage per hunk from the references (a hunk whole only when fully referenced, partial ones as '+ N changes partly' with no lines; '13 lines + 3 changes partly' where What is left counted 27), 'No decision' left out accepted agent assessments, and 'Accepted by an agent' was a fixed 'none'. It now shows lineCoverage (shared/review-model.ts), the same count as What is left: in a walk / in no walk, with a decision (yours, agent assessments you accepted, exemptions), without one, per hunk too; reading progress is no longer mixed in.
+
+Uncertain boundaries: preprocessor lines (C, C++, Objective-C, C#) set aside; a block opened inside a call's arguments (lambda, callback) is no function; unbalanced braces or a file over 1 MB give the lines around, and the pane says 'Context: the lines around this place (boundary uncertain)'.
+
+Checks: tests/walk-reach-and-context.test.ts 14 tests; Linux test job green (review group 393/393, run 43479034877). walk-reach-trial 68/68 on Windows and on Linux (dock run 43479029845, every other dock trial green again: dock 54, prefs 20, Accept scope 32, walk marking 37, walk delegation 23, threads 110, views 62). Counts agree in the window: 342 changed lines, 34 in a walk + 308 in no walk, 9 decided; table.cpp 5 of 300 in a walk and decided, 295 without.
+
+Seen and left: in a new file whose lines are all added, the walk pane's folds say 'unchanged lines' for hidden added lines (wording from before DSP-207).
 <!-- SECTION:NOTES:END -->

@@ -7,8 +7,8 @@ Niclas reported two things on 13 November 2026:
 There is no release; he assesses the result first.
 
 Both examples were recreated in [`app/scripts/walk-reach-trial.mjs`](../../../app/scripts/walk-reach-trial.mjs), DSpatch's real windows over a generic C++ project:
-- **Linux, under Xvfb:** 50 of 50 checks, in linux-verify's `dock` job (run 43468653156);
-- **Windows, locally:** 50 of 50.
+- **Linux, under Xvfb:** in linux-verify's `dock` job, 50 of 50 checks first (run 43468653156) and 68 of 68 after the final correction (run 43479029845);
+- **Windows, locally:** 50 of 50, then 68 of 68.
 
 The provider is SIMULATED, so the trial shows scope and bookkeeping, not the quality of a walk or a review. The screenshots in [linux-xvfb/](linux-xvfb/) are from the Linux run.
 
@@ -91,19 +91,60 @@ Otherwise it showed four lines around the change. For C++, and for any place pre
   - Outside functions, the declaration with the lines around it up to blank lines.
 - **Python:** the `def` or `class` with its decorators and comments, its whole signature, the body by indentation, and the control structure.
 - **YAML, INI and TOML, Markdown:** the section or heading the place is in.
-- **No known structure:** the lines around the place up to blank lines, at most twelve on each side. These are marked as not reliable: no fold claims a function name.
+- **No boundary found with certainty:** the lines around the place up to blank lines, at most twelve on each side. These are marked as not reliable: no fold claims a function name, and the pane says beside the file name "Context: the lines around this place (boundary uncertain)". This happens when:
+  - the language's structure is not known;
+  - the braces do not balance, as a conditional build (`#ifdef` with two function headers) or a block-opening macro leaves them;
+  - the file is over 1 MB, where the highlighter does not read it and comments and strings cannot be set aside.
+
+**Robustness.** The finder is a reader of the text, not a compiler's parser, so three shapes are handled on purpose:
+- Preprocessor lines of C, C++, Objective-C and C# (and the lines a trailing backslash continues) are set aside, so a brace in a `#define` is no block.
+- A block opened inside a call's argument list, such as a lambda passed to `std::sort` or a callback, is not taken for a function. The enclosing named function is the context instead.
 
 **At each side.** The structure is found at both sides of the diff, from the base's text and from the target's. A function whose signature or ends changed is shown in Before, After and Before → After ([04-W3.1-before.png](linux-xvfb/04-W3.1-before.png), [05](linux-xvfb/05-W3.1-before-after.png)).
 
-**Short and long units:**
-- **Up to 30 lines,** a unit is shown whole ([02-W1.2-short-function.png](linux-xvfb/02-W1.2-short-function.png)).
-- **A longer one** keeps its documentation and signature, the change with its control structure, and its end in view.
-- **The parts between** fold into "show the rest of `<name>` (n lines)". A gap of up to 12 lines is shown rather than folded.
-- **Examples:** [01](linux-xvfb/01-W1.1-if-block-blank-line-and-function-head.png) and [06](linux-xvfb/06-W3.2-long-function.png).
+**The whole function is the default.**
+- **Up to 150 lines,** a unit is shown whole, with no fold: documentation, signature, body and end. The head is read by scrolling the pane; no click is needed.
+- **Why 150.** A walk pane shows about 28 to 37 lines at a time (28 measured on Windows, about 30 on the Linux runner's window), so 150 lines are four to five pane heights. Below that, scrolling from the change to the head is short. Beyond it the head and the change are several screens apart, which is the repeated expanding in another form.
+- **A unit over 150 lines** keeps its documentation and signature, the change with its enclosing control structure, and its end in view. The parts between fold into "show the rest of `<name>` (n lines)", which opens in one click. A gap of up to 12 lines is shown rather than folded.
+- **Examples:**
+  - a 40-line function: [10](linux-xvfb/10-W3.3-forty-line-function-whole.png);
+  - an 80-line function: [11](linux-xvfb/11-W3.4-eighty-line-function-whole.png);
+  - the user's 128-line function, read by scrolling up: [01b](linux-xvfb/01b-W1.1-function-head-by-scrolling.png);
+  - the 470-line function, folded: [06](linux-xvfb/06-W3.2-long-function.png).
+
+The first version folded every unit over 30 lines; Niclas found that too low (13 November 2026).
 
 **Where the pane opens.** When the head and the change fit in the pane together, the pane opens with the head at the top; otherwise the change is centred, as before. This happens only where a pane is placed anyway: on arrival and when the level or the view changes. A remembered scroll position, the person's level, expansions and pane sizes are kept.
 
 **Shown context decides nothing.** It never widens Accept, a delegation or the coverage. The trial checks that the place decides about exactly 128–131 at the change, context and whole-file levels. Only the place's own changed rows are strong, other changes are weak and unchanged code is plain. The arrival flash and the syntax colours are as before.
+
+## 3. The coverage table
+
+### What it counted
+
+The table below What is left came from `computeCoverage`:
+- **"In a walk", "In code places you opened", "In steps you marked walked through":** counted per hunk, from the walks' references, not the places' marked lines.
+  - A hunk counted with all its lines only when references covered every one of its new lines.
+  - A hunk covered in part was shown as "+ N changes partly", with none of its lines.
+  - So the table said "13 lines + 3 changes partly" where What is left counted 27 lines in walks.
+- **"Accepted by you" and "Exempted by you":** exact lines.
+- **"No decision":** the total less those two. A line with an agent's assessment the person had accepted was counted as without a decision.
+- **"Accepted by an agent":** the fixed text "none – delegated review is not available in this view", untrue since delegation came.
+- **The filter:** it counted whole hunks outside every walk, so a hunk partly in a walk, or a blank line, never showed.
+
+### What it counts now
+
+The table now shows `lineCoverage` in [`shared/review-model.ts`](../../../app/src/shared/review-model.ts). That is the count What is left uses: the same union of the walks' marked lines, and the same holding decisions the Review section reads. Every changed line counts once.
+
+| Row | What it is |
+| --- | --- |
+| In a walk / In no walk | Covered by a walk place's marked lines, or not; the two add up to the total |
+| With a decision | The person's acceptances, agent assessments the person accepted, and the person's exemptions, each shown |
+| No decision | Nothing holds on the line |
+
+- **Each hunk's row** shows its lines, how many are in a walk, how many have a decision, and how many have none. A hunk partly covered or partly decided shows exactly its own lines.
+- **The filter** lists hunks with any line in no walk.
+- **Reading progress** (steps opened, or marked walked through) is no longer counted here: it is the walks' own and is shown with them. A note under the totals says so.
 
 ## Verification
 
@@ -113,7 +154,7 @@ Otherwise it showed four lines around the change. For C++, and for any place pre
 | --- | --- |
 | An earlier decision of 128–130, made in the diff window | Kept as stored |
 | The place over 128–130 | Marks, draws strong and decides about exactly 128–131, at every level. Accept records 128–131 beside the diff's 128–130 |
-| Arrival at W1.1 | The function's documentation and two-line signature are in view, the body is folded and named, and the end is drawn |
+| W1.1's 128-line function | Drawn whole, documentation (line 6) to end (133), with no fold; its documentation and two-line signature are read by scrolling up, with no click |
 | A short function | Shown whole |
 | A declaration outside functions | Shown with the lines around it |
 | Two places in one hunk | The first takes the lines it replaced and the blank line between them; the second keeps its own line |
@@ -123,9 +164,19 @@ Otherwise it showed four lines around the change. For C++, and for any place pre
 | Delegating the first walk | Mandates its marked lines, line 131 with them, and no line outside the walk |
 | What is left | Lists the whitespace change, the lone blank line ("blank lines only"), the substantive change and the new file's rest. Each was opened and decided about exactly, with exactly those rows strong |
 | The undecided walk places | Each was opened and accepted |
-| The end | 327 of 327 changed lines have a decision (100%), every one the person's, and the same after a restart |
+| Functions of 40 and 80 lines (W3.3, W3.4) | Drawn whole with documentation and two-line signature, no fold, only the place's line strong, no uncertainty claimed |
+| A lambda passed to `std::sort` (W3.5) | The enclosing method is the context, not the call |
+| Braces a conditional build leaves unbalanced (W3.6) | The lines around, no fold naming a function, and "boundary uncertain" beside the file name ([12](linux-xvfb/12-W3.6-uncertain-boundary.png)); the unknown language of W2.4 says the same |
+| `table.cpp`, partly in a walk and partly accepted | The table, What is left and the hunk's row agree: 342 lines, 34 in a walk and 308 in no walk (what What is left lists), 9 decided. The hunk shows 5 of 300 in a walk, 5 decided, 295 without ([13](linux-xvfb/13-coverage-table-exact-counts.png), [13b](linux-xvfb/13b-coverage-table-partly-covered-hunk.png)) |
+| The end | Every changed line has a decision (100%), every one the person's; the table says the same (none without a decision), and so does the record after a restart |
 
-**Unit tests:** `tests/walk-reach-and-context.test.ts`, 11 tests, in the `review` group. On Linux the group passed 390 of 390 (run 43468659094).
+**Unit tests:** `tests/walk-reach-and-context.test.ts`, 14 tests, in the `review` group. They add:
+- whole methods of about 40, 66 and 80 lines;
+- a truly large one that folds;
+- lambdas and callbacks in calls, a `#define` brace, unbalanced braces and a file over 1 MB;
+- `lineCoverage` for a hunk partly in a walk and partly decided, agent assessments counted apart, agreeing with What is left.
+
+On Linux the group passed 393 of 393 after the correction (run 43479034877; first 390 of 390 in run 43468659094).
 
 **Existing trials,** in the same Linux run:
 - Accept scope: 32 checks;
@@ -135,12 +186,22 @@ Otherwise it showed four lines around the change. For C++, and for any place pre
 
 All passed. After its DSP-202 expectation above, the walk marking trial passed 37 of 37 on Windows and on Linux. That Linux run, dock run 43471913630, passed every trial of the dock job again, this one's 50 of 50 among them.
 
+**After the final correction** (whole functions up to 150 lines, the exact coverage table, uncertain boundaries):
+- **This trial:** 68 of 68, on Windows and on Linux. In dock run 43479029845 its counts were the same on both: 342 changed lines, 34 in a walk, 9 decided, and \`table.cpp\` 5 of 300 in a walk and decided.
+- **The rest of that dock run:** every other trial passed again, unchanged:
+  - dock: 54 checks;
+  - view preferences: 20;
+  - Accept scope: 32;
+  - walk marking: 37;
+  - walk delegation: 23;
+  - review threads: 110;
+  - syntax colours and views: 62.
+- **Tests:** the Linux test job passed in run 43479034877.
+
+The screenshots in [linux-xvfb/](linux-xvfb/) are from dock run 43479029845.
+
 ## Not established
 
-- **The structure finder is a reader of the text, not a compiler's parser.**
-  - A call that takes a lambda can look like a function header.
-  - Macros that open blocks can mislead it.
-  - The trial covers the shapes listed above, not every codebase.
-- **Very large files** (over 1 MB) are not highlighted, so their comments and strings are not set aside when the structure is read.
-- **The older coverage table** below What is left still counts by hunk ("in a walk … changes partly"), as it did; What is left is the exact count.
+- **The structure finder is a reader of the text, not a compiler's parser.** Balanced macros that change what code means (a macro used as a function header, for example `TEST(Suite, Name) {`), or code the preprocessor removes while its braces still balance, can still be read as ordinary code. The trial and the tests cover the shapes listed above, not every codebase.
+- **A paragraph of statements at file level** (no blank lines, outside any function) is taken as one declaration and folded like a unit when long. In a new file whose lines are all added, such folds say "unchanged lines" for hidden added lines; that wording comes from before DSP-207 and is unchanged here.
 - **Other window managers, Wayland** and **Linux distributions other than the runner's** are not tried.

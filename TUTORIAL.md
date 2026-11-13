@@ -164,7 +164,7 @@ Useful controls while walking:
 
 | Control | Use it to |
 | --- | --- |
-| **The change / The context / Whole file** | Adjust how much surrounding code you see. **The context** shows the function or method the place is in, with its documentation and signature; in a long function the parts between its head, the change and its end are folded and named. Outside functions it shows the declaration, class or section, and only the lines around the place where the language's structure is not known. |
+| **The change / The context / Whole file** | Adjust how much surrounding code you see. **The context** shows the whole function or method the place is in, with its documentation and signature; only in a very long one (over about 150 lines) are the parts between its head, the change and its end folded and named. Outside functions it shows the declaration, class or section. Where no function or section can be found with certainty (an unknown language, macros or conditional builds, a very large file) it shows the lines around the place and says the boundary is uncertain. |
 | **Before / Before → After / After** | Read the old version, comparison or new version. |
 | **Wrap lines** | Fit long lines within the current pane width. |
 | Pane dividers | Give the code you are reading more space. |
