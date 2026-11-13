@@ -478,8 +478,26 @@ function adapterFiles() {
   base.push('        emit(frame);');
   target.push('        emit(frame, pass);'); // 629: the user's W3.2, deep in a long function
   both('      }', '    } catch (const Error &error) {', '      log(error);', '    }', '  }', '  finish(frame);', '}');
+  // DSP-207 correction: functions of about 40 and 80 lines, documented, with a two-line signature
+  // and the change near their end; and a lambda passed to a call.
+  for (const [name, body] of [['validateForty', 30], ['validateEighty', 70]]) {
+    both('', '/**', ` * ${name} checks a frame.`, ' */', `bool MctAdapter::${name}(const Frame &frame,`, '                          Mode mode) {');
+    for (let n = 1; n <= body; n += 1) both(`  check(frame, ${String(n)});`);
+    both('  if (mode == Mode::Strict) {');
+    base.push('    reject(frame);');
+    target.push('    reject(frame, mode);');
+    both('  }', '  return true;', '}');
+  }
+  both('', '/** Sorts the values. */', 'void MctAdapter::sortValues(std::vector<int> &values) {', '  std::sort(values.begin(), values.end(), [](int a, int b) {');
+  base.push('    return a < b;');
+  target.push('    return a > b;');
+  both('  });', '}');
   return { base, target };
 }
+
+/** A new file whose conditional build leaves its braces unbalanced: no function boundary can be relied on. */
+const PLATFORM = 'src/platform.cpp';
+const PLATFORM_LINES = ['#include "platform.h"', '#ifdef WIDE_INDEX', 'long index_of(const Table &table) {', '#else', 'int index_of(const Table &table) {', '#endif', '  int found = table.find();', '  return found;', '}'];
 const lineOf = (lines, text) => lines.indexOf(text) + 1;
 
 // --- What the trial reads in the page ----------------------------------------------------------
@@ -526,8 +544,45 @@ async function clickAt(page, selector, modifiers = 0) {
   }
 }
 
+/**
+ * The active pane scrolled from its top to its bottom: every line it draws and every fold, as a
+ * pane draws only the rows near what is in view. Its scroll position is put back after.
+ */
+async function sweepPane(walk) {
+  const info = JSON.parse(
+    await walk.ev(`(() => { let at = document.querySelector('[data-focus-active]'); while (at && !(/(auto|scroll)/.test(getComputedStyle(at).overflowY) && at.scrollHeight > at.clientHeight)) at = at.parentElement; window.__sweep = at; return JSON.stringify({ height: at?.scrollHeight ?? 0, view: at?.clientHeight ?? 0, top: at?.scrollTop ?? 0 }); })()`),
+  );
+  const lines = new Set();
+  const folds = new Set();
+  // A third of the view at a time, with time for the pane to draw the rows it scrolled to, and the very bottom last.
+  const tops = [];
+  for (let top = 0; top < info.height; top += Math.max(80, Math.floor(info.view / 3))) tops.push(top);
+  tops.push(info.height);
+  for (const top of tops) {
+    await walk.ev(`window.__sweep.scrollTop = ${String(top)}; true`);
+    await delay(350);
+    const part = JSON.parse(await walk.ev(`JSON.stringify({ lines: [...window.__sweep.querySelectorAll('[data-sel-side="target"][data-sel-line]')].map((row) => Number(row.dataset.selLine)), folds: [...window.__sweep.querySelectorAll('.rv-gap')].map((fold) => fold.textContent.trim()) })`));
+    part.lines.forEach((line) => lines.add(line));
+    part.folds.forEach((fold) => folds.add(fold));
+  }
+  await walk.ev(`window.__sweep.scrollTop = ${String(info.top)}; true`);
+  await delay(200);
+  return { lines, folds: [...folds] };
+}
+
+/** The active pane scrolled so a target line is at its top, as a reader scrolls up to it. */
+async function scrollToLine(walk, line) {
+  await walk.ev(`(() => { const scroller = window.__sweep; scroller.scrollTop = 0; return true; })()`);
+  await delay(200);
+  for (let step = 0; step < 40; step += 1) {
+    const found = await walk.ev(`(() => { const row = window.__sweep.querySelector('[data-sel-side="target"][data-sel-line="${String(line)}"]'); if (row) { row.scrollIntoView({ block: 'start' }); return true; } window.__sweep.scrollTop += window.__sweep.clientHeight / 2; return false; })()`);
+    await delay(150);
+    if (found === true) return;
+  }
+}
+
 /** The walk's steps in order, and moving to one with Previous and Next, as a reader does. */
-const STEP_ORDER = ['W1.1', 'W1.2', 'W1.3', 'W2.1', 'W2.2', 'W2.3', 'W2.4', 'W3.1', 'W3.2'];
+const STEP_ORDER = ['W1.1', 'W1.2', 'W1.3', 'W2.1', 'W2.2', 'W2.3', 'W2.4', 'W3.1', 'W3.2', 'W3.3', 'W3.4', 'W3.5', 'W3.6'];
 async function goStep(walk, stepId) {
   for (let tries = 0; tries < 20; tries += 1) {
     const now = await walk.ev(`(document.body.innerText.match(/(W\\d+\\.\\d+) · place/) ?? [])[1] ?? ''`);
@@ -537,7 +592,7 @@ async function goStep(walk, stepId) {
     await delay(500);
   }
   await walk.until(`${stepId} active`, `document.body.innerText.includes(${JSON.stringify(`${stepId} · place`)})`, 15_000);
-  await walk.until('no animation running', `document.getAnimations().every((animation) => animation.playState !== 'running')`, 10_000);
+  await walk.until('no animation running', `document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.target?.closest?.('.rv-row') == null)`, 10_000);
   await delay(400);
 }
 
@@ -561,6 +616,7 @@ async function main() {
   fs.writeFileSync(path.join(project, ADAPTER), `${adapter.target.join('\n')}\n`);
   fs.writeFileSync(path.join(project, NOTES), `${notesTarget.join('\n')}\n`);
   fs.writeFileSync(path.join(project, TABLE), `${range(1, 300).map((line) => `int table${String(line)} = ${String(line)};`).join('\n')}\n`);
+  fs.writeFileSync(path.join(project, PLATFORM), `${PLATFORM_LINES.join('\n')}\n`);
   git('add', '.');
   git('commit', '-qm', 'Commit 2');
   const target = git('rev-parse', 'HEAD');
@@ -598,6 +654,10 @@ async function main() {
     { id: 'W3', title: 'Frames', question: 'How are frames processed?', steps: [
       step('W3.1', 'sum takes two values', [ref(ADAPTER, 'target', lineOf(T, 'int MctAdapter::sum(int a,'), lineOf(T, '  return a + b;'))]),
       step('W3.2', 'emit gets the pass', [ref(ADAPTER, 'target', 629, 629)]),
+      step('W3.3', 'A forty-line function', [ref(ADAPTER, 'target', lineOf(T, '    reject(frame, mode);'), lineOf(T, '    reject(frame, mode);'))]),
+      step('W3.4', 'An eighty-line function', [ref(ADAPTER, 'target', T.lastIndexOf('    reject(frame, mode);') + 1, T.lastIndexOf('    reject(frame, mode);') + 1)]),
+      step('W3.5', 'A lambda passed to sort', [ref(ADAPTER, 'target', lineOf(T, '    return a > b;'), lineOf(T, '    return a > b;'))]),
+      step('W3.6', 'A conditional build', [ref(PLATFORM, 'target', 7, 7)]),
     ] },
   ];
   fs.writeFileSync(path.join(walkFolder, 'reach.review.json'), `${JSON.stringify({ format: 'dspatch-review/1', title: 'The adapter', repository: project, base, target, walks }, null, 2)}\n`);
@@ -618,19 +678,25 @@ async function main() {
 
   stage = 'the user\'s first example: the if-block and its blank line';
   const walk = await openWalk(diff);
-  await walk.until('no animation running', `document.getAnimations().every((animation) => animation.playState !== 'running')`, 10_000);
+  await walk.until('no animation running', `document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.target?.closest?.('.rv-row') == null)`, 10_000);
   await delay(400);
   const first = await activeRows(walk);
   check('the place marks new lines 128–131: the if-block and the blank line after it', sameSet(first, ['target:128', 'target:129', 'target:130', 'target:131']), JSON.stringify(first));
   let shown = await pane(walk);
   const blankRow = shown.rows.find((row) => row.side === 'target' && row.line === 131);
   check('the blank line 131 is drawn strong, as the place\'s', blankRow?.strong === true && blankRow.text.trim() === '', JSON.stringify(blankRow));
+  // The correction: a function of 128 lines is shown whole, with no fold; its head is read by scrolling, not by clicks.
+  note('rows a walk pane shows at a time', String(shown.rows.filter((row) => row.inView).length));
+  await walk.shot('01-W1.1-if-block-blank-line');
+  const swept = await sweepPane(walk);
+  check('the whole 128-line function is drawn, documentation (6) to end (133), with no fold inside it', range(6, 133).every((line) => swept.lines.has(line)) && !swept.folds.some((fold) => /configure/.test(fold)), JSON.stringify({ missing: range(6, 133).filter((line) => !swept.lines.has(line)).slice(0, 10), folds: swept.folds }));
+  await scrollToLine(walk, 6);
+  await delay(300);
+  shown = await pane(walk);
   const signature = shown.rows.find((row) => row.text.startsWith('bool MctAdapter::configure('));
   const doc = shown.rows.find((row) => row.text.includes('Configures the adapter'));
-  check('the function\'s documentation and two-line signature are drawn and in view on arrival, with no click', signature?.inView === true && doc?.inView === true && shown.rows.some((row) => row.text.trim() === 'Mode mode) {' && row.inView), JSON.stringify({ signature, doc }));
-  check('the long body between them is one fold that names the function', shown.folds.some((fold) => /configure/.test(fold)), JSON.stringify(shown.folds));
-  check('the function\'s closing line is drawn', shown.rows.some((row) => row.side === 'target' && row.line === 133 && row.text === '}'), '');
-  await walk.shot('01-W1.1-if-block-blank-line-and-function-head');
+  check('scrolled up, with no click, its documentation and two-line signature are there to read', signature?.inView === true && doc?.inView === true && shown.rows.some((row) => row.text.trim() === 'Mode mode) {' && row.inView), JSON.stringify({ signature, doc }));
+  await walk.shot('01b-W1.1-function-head-by-scrolling');
   const section = await reviewSectionPage();
   let said = await marked(section);
   check('the Review section decides about the same lines, and sees the earlier decision on 3 of the 4', said[0]?.marked === 'target:128-131' && said[0]?.lines === 4 && said[0]?.accepted === 3, JSON.stringify(said));
@@ -662,6 +728,7 @@ async function main() {
   await goStep(walk, 'W2.4');
   shown = await pane(walk);
   check('a language with no known structure: the lines around, and no fold claiming a function', shown.rows.some((row) => row.text === 'one changed line') && shown.rows.some((row) => row.text === 'Release notes') && !shown.folds.some((fold) => /Rest of/i.test(fold)), JSON.stringify(shown));
+  check('and the pane says the context boundary is uncertain', (await walk.ev(`[...document.querySelectorAll('[data-ev="pane-context-uncertain"]')].some((e) => e.offsetParent !== null && /uncertain/.test(e.textContent))`)) === true, '');
   await goStep(walk, 'W3.1');
   await walk.click('code-view-before');
   await delay(500);
@@ -683,16 +750,81 @@ async function main() {
   check('the strong rows are exactly the place\'s marked rows: new line 629 and the old line it replaced', sameSet(shown.rows.filter((row) => row.strong).map((row) => `${row.side}:${String(row.line)}`), placeRows) && placeRows.includes('target:629') && placeRows.length === 2, JSON.stringify({ strong: shown.rows.filter((row) => row.strong), placeRows }));
   await walk.shot('06-W3.2-long-function');
 
+  stage = 'whole functions of about 40 and 80 lines, a lambda, and an uncertain boundary';
+  for (const [stepId, name, shot] of [['W3.3', 'validateForty', '10-W3.3-forty-line-function-whole'], ['W3.4', 'validateEighty', '11-W3.4-eighty-line-function-whole']]) {
+    await goStep(walk, stepId);
+    shown = await pane(walk);
+    const first = lineOf(T, ` * ${name} checks a frame.`) - 1;
+    const signatureLine = lineOf(T, `bool MctAdapter::${name}(const Frame &frame,`);
+    const last = T.indexOf('}', signatureLine) + 1;
+    const sweep = await sweepPane(walk);
+    check(`${stepId}: the ${String(last - first + 1)}-line function is drawn whole, documentation and two-line signature included, with no fold inside it`, range(first, last).every((line) => sweep.lines.has(line)) && !sweep.folds.some((fold) => fold.includes(name)), JSON.stringify({ first, last, missing: range(first, last).filter((line) => !sweep.lines.has(line)).slice(0, 8), folds: sweep.folds }));
+    check(`${stepId}: the place's line is the only strong new line, and no uncertainty is claimed`, shown.rows.filter((row) => row.strong && row.side === 'target').every((row) => row.text === '    reject(frame, mode);') && (await walk.ev(`[...document.querySelectorAll('[data-ev="pane-context-uncertain"]')].some((e) => e.offsetParent !== null && e.closest('.rv-pane-active') !== null)`)) === false, '');
+    await scrollToLine(walk, first);
+    await delay(300);
+    await walk.shot(shot);
+  }
+  await goStep(walk, 'W3.5');
+  shown = await pane(walk);
+  check('a lambda passed to sort: the enclosing method, not the call, is the context', shown.rows.some((row) => row.text === 'void MctAdapter::sortValues(std::vector<int> &values) {') && shown.rows.some((row) => row.text.includes('Sorts the values')), JSON.stringify(shown.rows.slice(-8)));
+  await goStep(walk, 'W3.6');
+  shown = await pane(walk);
+  const uncertain = await walk.ev(`[...document.querySelectorAll('[data-ev="pane-context-uncertain"]')].filter((e) => e.offsetParent !== null).map((e) => e.textContent).join(' ')`);
+  check('braces a conditional build leaves unbalanced: the lines around, and the pane says the boundary is uncertain', /uncertain/.test(uncertain) && shown.rows.some((row) => row.text === '  int found = table.find();') && !shown.folds.some((fold) => /index_of/.test(fold)), JSON.stringify({ uncertain, rows: shown.rows.map((row) => row.text) }));
+  await walk.shot('12-W3.6-uncertain-boundary');
+
   stage = 'a delegation of the first walk keeps to its places\' lines';
   await goStep(walk, 'W1.1');
   const sectionAgain = await reviewSectionPage();
-  const job = await delegate(sectionAgain, key, 'all', 1);
+  // The panel follows the walk a moment after it moves: let it settle before the Review section is used.
+  await sectionAgain.until('the panel at W1.1', `document.body.innerText.includes('W1.1')`, 15_000).catch(() => undefined);
+  await delay(1500);
+  await sectionAgain.shot('before-delegating');
+  // As the walk delegation trial delegates, with one more press of Start when no job is recorded
+  // after it (a press while the panel redraws is not taken).
+  const walkJobsNow = () => recordNow(key).jobs.filter((entry) => entry.kind === 'review' && entry.scope?.kind === 'walk');
+  await sectionAgain.click('walk-delegate');
+  await sectionAgain.until('the two choices', `${q('walk-basis-all')}!==null`, 15_000);
+  await sectionAgain.ev(`${q('walk-basis-all')}.click()`);
+  await sectionAgain.until('the agent picker', `${q('walk-delegate-agent-start')}!==null`, 15_000);
+  await sectionAgain.shot('delegate-all-1');
+  for (let press = 0; press < 3 && walkJobsNow().length === 0; press += 1) {
+    if ((await sectionAgain.ev(`${q('walk-delegate-agent-start')}!==null`)) === true) await sectionAgain.click('walk-delegate-agent-start');
+    await poll('a walk job recorded', () => walkJobsNow().length > 0, 30_000).catch(() => undefined);
+  }
+  const job = { job: await poll('the walk\'s review done', () => { const last = walkJobsNow().at(-1); return last !== undefined && last.state !== 'running' && last.state !== 'cancelling' ? last : false; }, 180_000) };
   const mandate = job.job.scope.ranges.map((entry) => `${entry.side}:${String(entry.start)}-${String(entry.end)}`).sort();
   check('the mandate is the walk\'s marked lines, the blank line 131 with them, and no line outside the walk', mandate.includes('target:128-131') && mandate.includes('target:137-137') && mandate.includes('target:4-4') && !mandate.some((entry) => /^target:(148|150|151|153)-/.test(entry)), JSON.stringify(mandate));
 
-  stage = 'what is left';
+  stage = 'a hunk partly in a walk and partly decided: every count agrees';
+  await goStep(walk, 'W2.3');
+  const tableSection = await reviewSectionPage();
+  await confirmAccept(tableSection, 0, 'new lines 140–144 in table.cpp');
+  await poll('the table place accepted', () => rangesOf(key, 'walk').includes('target:140-144'), 15_000);
   await walk.ev(`[...document.querySelectorAll('.rv-tab')].find((button) => /Coverage/.test(button.textContent))?.click(); true`);
-  await walk.until('What is left', `${q('coverage-remaining')}!==null`, 15_000);
+  await walk.until('What is left', `${q('coverage-remaining')}!==null && ${q('coverage-totals')}!==null`, 15_000);
+  const counts = JSON.parse(
+    await walk.ev(`JSON.stringify((() => {
+      const left = ${q('coverage-remaining')}.dataset;
+      const totals = ${q('coverage-totals')}.dataset;
+      const table = [...document.querySelectorAll('[data-ev="coverage-hunk"]')].find((row) => row.dataset.path === ${JSON.stringify(TABLE)})?.dataset ?? {};
+      const outsideLines = [...document.querySelectorAll('[data-ev="coverage-outside"]')].reduce((sum, e) => sum + Number(e.dataset.end) - Number(e.dataset.start) + 1, 0);
+      return { left: { total: Number(left.total), decided: Number(left.decided) }, totals: { total: Number(totals.total), inWalk: Number(totals.inWalk), decided: Number(totals.decided), undecided: Number(totals.undecided) }, table: { lines: Number(table.lines), inWalk: Number(table.inWalk), decided: Number(table.decided), undecided: Number(table.undecided) }, outsideLines, legend: ${q('coverage-totals')}.innerText.replace(/\\s+/g, ' ') };
+    })())`),
+  );
+  check('the coverage table and What is left count the same lines: the same total and the same decided', counts.left.total === counts.totals.total && counts.left.decided === counts.totals.decided && counts.totals.decided + counts.totals.undecided === counts.totals.total, JSON.stringify(counts));
+  check('in a walk and in no walk add up to the total, with exactly the lines What is left lists', counts.totals.inWalk + counts.outsideLines === counts.totals.total, JSON.stringify(counts));
+  check('table.cpp, partly in a walk and partly decided: 5 of 300 in a walk, 5 decided, 295 without a decision, never the whole hunk', counts.table.lines === 300 && counts.table.inWalk === 5 && counts.table.decided === 5 && counts.table.undecided === 295, JSON.stringify(counts.table));
+  note('the coverage table says', counts.legend);
+  await walk.ev(`${q('coverage-totals')}.scrollIntoView({ block: 'start' }); true`);
+  await delay(300);
+  await walk.shot('13-coverage-table-exact-counts');
+  await walk.ev(`[...document.querySelectorAll('[data-ev="coverage-hunk"]')].find((row) => row.dataset.path === ${JSON.stringify(TABLE)})?.scrollIntoView({ block: 'center' }); true`);
+  await delay(300);
+  await walk.shot('13b-coverage-table-partly-covered-hunk');
+  await walk.ev(`${q('coverage-remaining')}.scrollIntoView({ block: 'start' }); true`);
+
+  stage = 'what is left';
   const outside = JSON.parse(await walk.ev(`JSON.stringify([...document.querySelectorAll('[data-ev="coverage-outside"]')].map((e) => ({ path: e.dataset.path, side: e.dataset.side, start: Number(e.dataset.start), end: Number(e.dataset.end), text: e.parentElement.innerText })))`));
   note('in no walk', JSON.stringify(outside.map((entry) => `${entry.path}:${entry.side}:${String(entry.start)}-${String(entry.end)}`)));
   const has = (filePath, side, start, end) => outside.some((entry) => entry.path === filePath && entry.side === side && entry.start === start && entry.end === end);
@@ -734,6 +866,8 @@ async function main() {
   }
   const summary = await walk.ev(`JSON.stringify({ total: Number(${q('coverage-remaining')}.dataset.total), decided: Number(${q('coverage-remaining')}.dataset.decided), text: ${q('coverage-remaining-summary')}.textContent, outsideOpen: [...document.querySelectorAll('[data-ev="coverage-outside"]')].filter((e) => e.dataset.decided !== String(Number(e.dataset.end) - Number(e.dataset.start) + 1)).length, undecided: document.querySelectorAll('[data-ev="coverage-undecided"]').length })`).then(JSON.parse);
   check('every changed line has a decision, made by the person through the walk window: 100%', summary.total > 0 && summary.decided === summary.total && /\(100%\)/.test(summary.text) && summary.outsideOpen === 0 && summary.undecided === 0, JSON.stringify(summary));
+  const finalTotals = JSON.parse(await walk.ev(`JSON.stringify({ ...${q('coverage-totals')}.dataset })`));
+  check('the coverage table says the same: every line decided, none without a decision', Number(finalTotals.total) === summary.total && Number(finalTotals.decided) === summary.total && Number(finalTotals.undecided) === 0, JSON.stringify(finalTotals));
   check('no decision was made by anything but the person: every mark is manual, from the walk, the diff or an opened change', recordNow(key).marks.every((mark) => mark.op === 'manual' && ['walk', 'diff', 'opened', undefined].includes(mark.origin?.kind)), JSON.stringify(recordNow(key).marks.map((mark) => [mark.op, mark.origin?.kind])));
   await walk.shot('09-what-is-left-all-decided');
 
