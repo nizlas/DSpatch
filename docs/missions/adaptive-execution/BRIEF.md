@@ -8,10 +8,10 @@ Every step of every run reads this brief in full, then STATE.md, before anything
 
 ## 1 The assignment
 
-Realise the direction in [ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md](../../ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md) (version 0.1, 13 November 2026), in increments, starting from its section *Relationship to existing work and next increment*:
+Realise **the whole vision** in [ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md](../../ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md) (version 0.1, 13 November 2026). Niclas decided on 13 November 2026 that all of it is in scope, in one long autonomous run: context carried into a loop, adaptive loops with visible skipped steps, returning to interactive chat, structured parallel execution, communication during execution, integration and ownership of the result, the runtime's responsibilities, and the working policy and user experience. Build it in increments, starting from its section *Relationship to existing work and next increment*:
 
 1. Map the vision to the current engine, adapter and UI capabilities **by reading code**: what already works, what needs wiring, what is missing.
-2. Then choose the smallest useful implementation steps, in roughly this order of value: faithful context transfer from conversation to loop, explicit method selection (adaptive routing with visible skipped steps), and, where the runtime supports it, a bounded parallel split with integration. Communication between agents and returning to interactive chat follow from the mapping; the vision does not ask for all of it at once.
+2. Plan sub-goals over the whole vision, and go straight from the plan into implementing it when the material is enough. Order them by dependency and value; the vision's own order is a good start: faithful context transfer from conversation to loop, explicit method selection (adaptive routing with visible skipped steps), returning to chat, then a bounded parallel split with integration and communication between agents, where the runtime supports it. Each reviewed sub-goal is followed by the next one.
 3. Judge the whole against the vision's success criteria, its last paragraph:
    - "implement that" preserves the preceding decisions;
    - a small task can continue in chat without being submitted again;
@@ -20,7 +20,9 @@ Realise the direction in [ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md](../../ADAPTI
 
    Assess speed from useful delivery time, integration rework and human effort, with cost visible. Judge quality from the result, not from the number of agents.
 
-The mission may conclude that a part of the vision should not be built now. That is a finding to record with its reason, not a requirement to drop silently.
+The mission may conclude that a part of the vision cannot or should not be built in this run. That is a finding to record with its reason, as skipped or blocked, never as met.
+
+**Done** means that the vision's agreed requirements are implemented and reviewed, with their limitations and the points Niclas should check by hand stated. Untested or blocked work is never reported as done. Niclas's product approval is separate from all of it.
 
 ## 2 Read first, in this order
 
@@ -60,7 +62,22 @@ These were said by Niclas on 13 November 2026, in Swedish, in the conversation t
 
 **What the vision itself says about its status.** The vision records an agreed direction. It is not a claim that anything is implemented, and not a mandate to build all of it at once. Its detailed protocols and defaults remain design choices.
 
-**Decisions that need Niclas, and how to raise them.** Under *follow the decided design*, any change to the architecture, a control boundary, the permission model, the division of responsibility between person, agent and engine, or the product scope needs his decision. So does any departure from a decided document. Stop with `needs-decision`: state the decisions affected, the proposed departure and its consequences, and your recommendation. Continue independent sub-goals first where there are any. Ordinary implementation choices inside decided bounds are yours.
+**The night run (Niclas, 13 November 2026).** These replace anything above or below that says otherwise.
+- The whole mission runs in one run, overnight, without routine approvals from Niclas.
+- There is no stop after planning and no batch limit.
+- Plans are followed directly by implementation, and each reviewed sub-goal by the next.
+- Separate review stays, and concrete findings go back for correction.
+- The mission makes ordinary design and implementation decisions, architecture included, within the vision and the project's rules. It does not stop for them.
+- No release, and no update of the engine that is running the mission.
+
+**Which decisions are the mission's, and which stop for Niclas.** Niclas's authorisation of 13 November 2026 is the explicit approval that *follow the decided design* in AGENTS.md asks for, for the decisions the vision calls for: architecture, the division of work between engine, agents and person that the vision describes, and the design of the features it names. Make them and record each significant one in STATE.md under *Decisions taken by the mission*, with the reason and the alternatives. A decided document that the vision supersedes may be updated to match it, saying which decision it records. Decisions that stop for Niclas:
+- changing the mission's scope (adding work the vision does not ask for, or dropping a requirement it does);
+- an irreversible action outside the mandate: deleting history or someone else's work, pushing, publishing, touching accounts or anything outside this repository;
+- missing permissions or access;
+- a decisive question the brief, the vision and the documents cannot settle, where either answer would build something different;
+- a departure from a decided design that the vision does not cover, such as the permission model or a control boundary in the content-exclusion contract, or a change in what a provider may receive.
+
+Record the question, your recommendation and what can continue without it, and **go on with work that does not depend on the answer**. The run ends with `needs-decision` only when everything left depends on Niclas.
 
 ## 4 What the engine does today
 
@@ -120,7 +137,13 @@ The preparation established this by reading code on 13 November 2026, from the c
 
   A sub-goal that needs one of these changed is a `needs-decision`.
 - **Role sources the run itself uses.** A change to `docs/loop/roles/dspatch-{implementer,reviewer,verifier,researcher,backlog-planner}.role.md` takes effect for the next run's own steps. Make it only as a deliberate part of a sub-goal, name the effect in the review, and record it in STATE.md.
-- **The engine stays fixed.** Engine changes take effect only when Niclas moves the run's engine to a newer commit between runs (see section 7). Never restart, rebuild or replace the DSpatch that is running the mission, and never stop its host.
+- **The engine stays fixed.** Engine changes take effect only when Niclas moves the run's engine to a newer commit between runs (see section 7). Never restart, rebuild or replace the DSpatch that is running the mission, and never stop its host. It runs from a separate checkout, `C:\Users\nicla\development\DSpatch-engine`, which no step touches. Do not start another DSpatch on Niclas's profile either: a second host would ask to replace the running one. A sub-goal that needs the app running for a check uses `npm run dev -- --isolated-profile <a temporary folder>` from the working copy, and only where the verification policy allows a window check at all.
+- **Reconcile before redoing.** At the start of every run, and whenever STATE.md and the working copy disagree, an interrupted step may have left changes nobody recorded. Keep them, establish what they are and how far they got, and decide what remains before anything is done again. Never reset, stash away or overwrite uncommitted work to get a clean start.
+- **What the agents can reach.** The night run uses Niclas's existing choice: Claude, model `opus`, with his existing login. Claude steps run with DSpatch's chat permissions:
+  - read and edit anywhere under the working copy, and run shell commands;
+  - nothing that would need a prompt: the mode is `dontAsk`, so anything not pre-approved is refused instead of waiting;
+  - no web tools, so research works from the code, the repository's documents and installed packages;
+  - no MCP servers and no settings files.
 - **Backlog.** The coordinator appends one dated line to DSP-209's notes at the end of each run (`backlog task edit DSP-209 --append-notes "..."`). It changes no other card and sets no status.
 - **Content.** No private endpoints, credentials or internal discussions in the repository (AGENTS.md *Public repository content*). Repository content is in English.
 
@@ -130,40 +153,41 @@ The hard limits are in the graph and can be changed in the loop editor:
 
 | Limit | Value |
 | --- | --- |
-| `maxCalls` per run | 30 |
-| `maxReworkRounds` per run | 4 |
+| `maxCalls` per run | 180: about forty sub-goals with their rework, plus mapping, research and the whole assessment |
+| `maxReworkRounds` per run | 60, counting every sub-goal's rework together, so ordinary rework never reaches it |
+| The runner's own transition bound | 200, not set from the graph; 180 calls ends the run first |
 | Step time, default | 45 minutes |
 | Step time, implementer | 120 minutes |
 | Step time, whole assessment | 60 minutes |
 | Step time, coordinator and final report | 30 minutes |
+| Wall time, tokens and cost for the whole run | no bound in the engine; cost and usage are recorded |
 
-The soft limits below are the coordinator's to keep. They live here, and Niclas changes them between runs.
+The soft limits below are the coordinator's and the reviewer's to keep. They live here, and Niclas changes them between runs.
 
 | Soft limit | Value |
 | --- | --- |
-| Sub-goals accepted per run (the batch) | at most **3**; then `batch-done` |
-| Rework rounds per sub-goal | at most **2** |
+| Batch | **none** for the night run: continue while feasible work remains |
+| Rework rounds per sub-goal | ordinary rework continues while each round changes the findings; the review answers `stalled` when the same concrete finding survives two rounds, or a third round would be needed |
+| A stalled or blocked sub-goal | recorded with its open findings, then work goes on with sub-goals that do not depend on it. A retry later is a new, differently briefed attempt, at most one. |
 | Independent verifications per sub-goal | at most **1**, asked for by the reviewer |
-| No progress | two rounds that leave the reviewer's concrete findings unchanged, or the same blockage twice: `no-progress` |
-| Starting a sub-goal | not when fewer than 8 of the run's calls are likely to remain |
 
-**Continue** when there are concrete review findings and the next round has a clear path to improvement, or when the next sub-goal's dependencies are met and the batch is not spent.
+**Continue** while there is feasible work: concrete review findings with a path to improvement, or a sub-goal whose dependencies are met.
 
-**Pause with the state saved** (STATE.md written first) when:
-- a decision of Niclas's or a new login is needed: `needs-decision`, or `blocked` for a login;
-- there is a real technical blockage: `blocked`;
-- repeated attempts are not progressing: `no-progress`;
-- the batch or a limit is spent: `batch-done`.
+**End the run with the state saved** (STATE.md written first) only when no feasible work remains:
+- everything left waits on Niclas: `needs-decision`;
+- everything left is stalled or blocked by the work itself: `no-progress`;
+- an obstacle stops the whole mission, such as a login or access only Niclas can give: `blocked`;
+- the whole is assessed and reported: the final report.
 
-A hard limit or a provider fault ends the run without a coordinator step. STATE.md then shows the last boundary, and the next run reconciles.
+A hard limit, a provider fault, a lost login or the machine sleeping ends the run without a coordinator step. STATE.md then shows the last coordinator visit, and the next run reconciles. The engine cannot resume an interrupted run on its own, and nothing here restarts one automatically; a new run is started by Niclas.
 
 **Statuses, kept apart**
 
 | Situation | Where it shows | What it means |
 | --- | --- | --- |
 | Reported complete | terminal *Reported complete: awaits Niclas* | The whole assessment found nothing required open. It is still not approved. |
-| Paused | *Paused: batch done*, *Paused: needs Niclas's decision*, *Paused: no progress*; an engine `limit-reached`; or Pause in the control bar | State saved; a new run continues. |
-| Blocked | terminal *Blocked* | A concrete obstacle; STATE.md says what is needed. |
+| Paused | *Paused: needs Niclas's decision*, *Paused: no progress*, *Paused: batch done* (unused tonight); an engine `limit-reached`; or Pause in the control bar | State saved; a new run continues. |
+| Blocked | terminal *Blocked* | An obstacle stops the whole mission; STATE.md says what is needed. A single blocked sub-goal is recorded in STATE.md and does not end the run. |
 | Aborted | Cancel in the control bar, or a fault | The run ended mid-step; the next run reconciles first. |
 | Stopped | *Stopped: no outcome named* or *Ended without complete reporting* | The run could not route. Read the reply; the next run reconciles. |
 
@@ -180,7 +204,7 @@ git -C C:/Users/nicla/development/DSpatch worktree add --detach C:/Users/nicla/d
 ```
 
 ```bash
-cd C:/Users/nicla/development/DSpatch-engine/app && npm ci && npm run build && npm start
+cd C:/Users/nicla/development/DSpatch-engine/app && npm ci && npm run claude:install && npm run build && npm start
 ```
 
 `npm start` runs the built app without the dev server, so nothing reloads when the mission edits renderer files, and its local host runs from that checkout's own `dist/host`. Its data and logins are your ordinary DSpatch profile. End a host another DSpatch left running (**End host**) before you start the engine window. Do not start a second DSpatch on that profile while a run is active, because it would ask to replace the running host, and replacing it stops the run. For your own trials of the mission's results, use `npm run dev -- --isolated-profile <folder>` from the working copy.

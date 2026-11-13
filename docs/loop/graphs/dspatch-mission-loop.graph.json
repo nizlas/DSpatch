@@ -7,13 +7,13 @@
   "target": "cursor",
   "entry": "coordinator",
   "onRuntimeFault": "stop-and-reconcile",
-  "notes": "DSP-208, 13 November 2026, prepared for the adaptive-execution mission (docs/missions/adaptive-execution/BRIEF.md). The mandate a run is started with names the start brief and the working-state file; every step is told to read them.\n\nWHY A HUB. The engine routes only on outcomes a step names and has no lists, counters per edge or skip state. So the coordinator is the hub: every path returns to it, and its outcome chooses the next step. A step it does not choose is simply not visited; the coordinator records why in the working-state file, which is where skipped is told apart from done until the engine can show it.\n\nWHY BATCHES. A run lives in memory and cannot be resumed after a restart or a fault (stop-and-reconcile ends it). The working-state file in the project is the checkpoint, written by the coordinator before every outcome, and a new run started with the same mandate continues from it. Accepted sub-goals are committed locally, so a resumed run finds their effects in Git rather than repeating them.\n\nWHAT STAYS FIXED IN A RUN. The graph is read once when the run starts and held for its lifetime; role files are read for the run as well. The mission's instructions forbid it to edit this graph, its definition, the mission coordinator role or the start brief, so a later run is not driven by instructions an earlier run rewrote.\n\nLIMITS. maxCalls bounds a batch and is the backstop behind the brief's softer batch rule; maxReworkRounds counts every rework edge in the run together. A spent bound ends the run as limit-reached with the state as the coordinator last wrote it.\n\nRESULTS. Every step leaves a stored result, so the next step is handed the body itself rather than a path into the run's own storage.",
+  "notes": "DSP-208, 13 November 2026, prepared for the adaptive-execution mission (docs/missions/adaptive-execution/BRIEF.md). The mandate a run is started with names the start brief and the working-state file; every step is told to read them.\n\nWHY A HUB. The engine routes only on outcomes a step names and has no lists, counters per edge or skip state. So the coordinator is the hub: every path returns to it, and its outcome chooses the next step. A step it does not choose is simply not visited; the coordinator records why in the working-state file, which is where skipped is told apart from done until the engine can show it.\n\nWHY BATCHES. A run lives in memory and cannot be resumed after a restart or a fault (stop-and-reconcile ends it). The working-state file in the project is the checkpoint, written by the coordinator before every outcome, and a new run started with the same mandate continues from it. Accepted sub-goals are committed locally, so a resumed run finds their effects in Git rather than repeating them.\n\nWHAT STAYS FIXED IN A RUN. The graph is read once when the run starts and held for its lifetime; role files are read for the run as well. The mission's instructions forbid it to edit this graph, its definition, the mission coordinator role or the start brief, so a later run is not driven by instructions an earlier run rewrote.\n\nCONTINUING PAST ONE SUB-GOAL. A sub-goal that is blocked, stalled or waiting on Niclas does not end the run: the coordinator records it and goes on with work that does not depend on it. The needs-decision, no-progress and blocked endings mean that no feasible work is left, not that one sub-goal stopped.\n\nLIMITS. See the note on limits. A spent bound ends the run as limit-reached with the state as the coordinator last wrote it.\n\nRESULTS. Every step leaves a stored result, so the next step is handed the body itself rather than a path into the run's own storage.",
   "limits": {
     "maxTasks": 1,
-    "maxCalls": 30,
-    "maxReworkRounds": 4,
+    "maxCalls": 180,
+    "maxReworkRounds": 60,
     "maxMinutes": 45,
-    "note": "A batch of up to three sub-goals: about three calls each (coordinator, implementer, review), two more for an independent verification, two per rework round, and a planning pass on the first run. 30 calls leaves room for that and stops a batch that runs away. maxReworkRounds counts the whole run's rework edges together; the brief's rule of at most two rounds per sub-goal is the coordinator's to keep. maxMinutes here is each step's default, not a bound on the run: the implementer has 120 and the whole-assessment 60. Guesses, recorded as guesses; change them in the editor."
+    "note": "Sized for a whole night's run on 13 November 2026 (Niclas: the whole mission in one run, no batch stop). A sub-goal costs about three calls (coordinator, implementer, review), two more for an independent verification and two per rework round, so 180 calls is room for some forty sub-goals with their rework and the mapping, research and whole assessment around them. It stays under the runner's own bound of 200 transitions (DEFAULT_MAX_TRANSITIONS in loop-run.ts, not set from the graph), so the run ends on this declared bound, as limit-reached, before it could end on that one as a fault. maxReworkRounds counts the rework edges of every sub-goal together, so it is set high enough that ordinary rework across many sub-goals never reaches it; repeated attempts on one problem are stopped by the review's own stalled verdict, not by this number. maxMinutes is each step's default, not a bound on the run: the implementer has 120, the whole assessment 60. Change them in the editor."
   },
   "archive": {
     "path": "results/",
@@ -42,7 +42,7 @@
       "id": "coordinator",
       "kind": "agent",
       "label": "Coordinator: reconcile and choose",
-      "purpose": "Read the start brief and the working-state file the mandate names, reconcile them with the working copy and with what the arriving step handed you, record what happened, and choose the step the mission needs next. When you choose implement, your result is the implementer's brief for exactly one sub-goal. When a review accepted a sub-goal, record it and commit it as the brief allows before choosing again. Write the working-state file before you name your outcome.",
+      "purpose": "Read the start brief and the working-state file the mandate names, reconcile them with the working copy and with what the arriving step handed you, record what happened, and choose the step the mission needs next. When you choose implement, your result is the implementer's brief for exactly one sub-goal. When a review accepted a sub-goal, record it and commit it as the brief allows, then go straight on to the next feasible sub-goal. When a sub-goal is blocked, stalled or waits on Niclas, record why and go on with sub-goals that do not depend on it. End the run only when no feasible work remains or the whole is assessed. Write the working-state file before you name your outcome.",
       "role": {
         "id": "dspatch-mission-coordinator",
         "source": { "kind": "role-source", "path": "docs/loop/roles/run/dspatch-mission-coordinator.role.md" }
@@ -151,13 +151,13 @@
       "id": "review",
       "kind": "agent",
       "label": "Review the sub-goal",
-      "purpose": "Judge the implementer's result against the sub-goal's acceptance criteria in the coordinator's brief, the governing decisions it names and the actual code. Answer accept, rework with concrete findings the implementer can act on, verify when a specific claim needs an independent check you cannot make by reading (at most once per sub-goal, naming the claims), or needs-decision when only Niclas can settle it. Accept only what the evidence supports; a check nobody ran is unknown. Your acceptance is an agent's review, not Niclas's approval.",
+      "purpose": "Judge the implementer's result against the sub-goal's acceptance criteria in the coordinator's brief, the governing decisions it names, the actual code, and how it fits the sub-goals already reviewed. Answer accept, rework with concrete findings the implementer can act on, verify when a specific claim needs an independent check you cannot make by reading (at most once per sub-goal, naming the claims), needs-decision when only Niclas can settle it, or stalled when this sub-goal is not converging: the same concrete finding survives two rework rounds, or a third rework round would be needed. Reviewing does not mean running the implementer's checks again. Accept only what the evidence supports; a check nobody ran is unknown. Your acceptance is an agent's review, not Niclas's approval.",
       "role": {
         "id": "dspatch-reviewer",
         "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-reviewer.role.md" }
       },
       "model": { "policy": "inherit" },
-      "outcomes": ["accept", "rework", "verify", "needs-decision", "could-not-review"],
+      "outcomes": ["accept", "rework", "verify", "needs-decision", "stalled", "could-not-review"],
       "whenUndeclared": "could-not-review",
       "report": { "writtenBy": "self" },
       "consumes": ["coordinator", "implementer"],
@@ -224,7 +224,7 @@
       "id": "batch-paused",
       "kind": "terminal",
       "label": "Paused: batch done",
-      "purpose": "This run's batch is done and the working-state file says where the mission stands. Start a new run with the same mandate to continue.",
+      "purpose": "The coordinator ended the run at a boundary the brief sets, with the working-state file saying where the mission stands. The night run of 13 November 2026 sets no batch, so it ends here only if Niclas's brief adds one. Start a new run with the same mandate to continue.",
       "ending": "report-delivered",
       "view": { "x": 120, "y": 600 }
     },
@@ -232,7 +232,7 @@
       "id": "needs-decision",
       "kind": "terminal",
       "label": "Paused: needs Niclas's decision",
-      "purpose": "A decision only Niclas can make holds the next step. The question, the recommendation and what can continue without it are in the coordinator's last result and the working-state file.",
+      "purpose": "Every sub-goal that remains waits on a decision only Niclas can make, so no feasible work is left. The questions, the recommendations and the work done meanwhile are in the working-state file.",
       "ending": "not-success",
       "view": { "x": 340, "y": 600 }
     },
@@ -240,7 +240,7 @@
       "id": "no-progress",
       "kind": "terminal",
       "label": "Paused: no progress",
-      "purpose": "Repeated attempts did not change the concrete findings. The attempts and the coordinator's reading of why are in the working-state file.",
+      "purpose": "No sub-goal that remains can make progress: each is stalled, blocked or waiting, and none is a decision for Niclas alone. The attempts, the open findings and the coordinator's reading of why are in the working-state file.",
       "ending": "not-success",
       "view": { "x": 560, "y": 600 }
     },
@@ -248,7 +248,7 @@
       "id": "blocked",
       "kind": "terminal",
       "label": "Blocked",
-      "purpose": "A concrete obstacle prevents progress: missing access, a login only Niclas can renew, or a blocking technology. What is needed to continue is in the working-state file.",
+      "purpose": "A concrete obstacle stops the whole mission, not one sub-goal: missing access, a login only Niclas can renew, or a blocking technology. What is needed to continue is in the working-state file.",
       "ending": "not-success",
       "view": { "x": 780, "y": 600 }
     },
@@ -300,6 +300,7 @@
     { "id": "rv-rework", "from": "review", "to": "implementer", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["coordinator", "review"], "label": "rework with findings" },
     { "id": "rv-verify", "from": "review", "to": "verifier", "when": { "on": "outcome", "outcome": "verify" }, "delivers": ["coordinator", "implementer", "review"], "label": "verify these claims" },
     { "id": "rv-decision", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["review"], "label": "needs a decision" },
+    { "id": "rv-stalled", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "stalled" }, "delivers": ["implementer", "review"], "label": "not converging", "notes": "Repeated attempts on one problem, told apart from ordinary rework across sub-goals: the review stops the sub-goal's rework loop and hands it to the coordinator, which records it as blocked with the open findings and goes on with sub-goals that do not depend on it." },
     { "id": "rv-open", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "could-not-review" }, "delivers": ["review"], "label": "no verdict" },
 
     { "id": "m-complete", "from": "mission-review", "to": "final-report", "when": { "on": "outcome", "outcome": "complete" }, "delivers": ["mission-review"], "label": "complete" },

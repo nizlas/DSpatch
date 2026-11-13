@@ -4,7 +4,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** prepared, not started. The first run maps the vision and plans.
+- **Status:** prepared, not started. The first run is the night run: it maps the vision, plans, and goes straight on to implementing and reviewing sub-goals for as long as feasible work remains (BRIEF.md, sections 3 and 6).
 - **Engine commit the runs use:** not recorded yet. The first run records the commit of the DSpatch that runs it, and every later run checks it.
 - **Last recorded commit of mission work:** none.
 - **Sub-goal in progress:** none.
@@ -40,6 +40,18 @@ One section per sub-goal once it starts, with:
 - what Niclas should try himself;
 - steps skipped and why.
 
+## Requirements of the vision
+
+The first run lists the vision's requirements here, one line each with its status (met by reviewed sub-goals, open, skipped with the reason, or blocked) and the sub-goals that carry it, so that the whole assessment can see what is left.
+
+## Decisions taken by the mission
+
+None yet. Give each one:
+- the decision;
+- the reason;
+- the alternatives considered;
+- the sub-goal it belongs to.
+
 ## Decisions needed from Niclas
 
 None yet. Give each one:
@@ -48,6 +60,10 @@ None yet. Give each one:
 - the recommendation;
 - what can continue without it.
 
+## Next action
+
+What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
 ## Run log
 
-One line per run, appended at its end: the date, the batch, the ending and why.
+One line per run, appended at its end where the run ends at a terminal: the date, what it did, the ending and why. A run that ended on a fault or a limit has no line; the next run adds one for it when it reconciles.
