@@ -92,7 +92,7 @@ This is available in the traditional diff, code-walk panes and code opened throu
 2. Choose **Explain this** beside the selection or in its right-click menu. **Ctrl+Shift+E** is the shortcut.
 3. Read the answer in the review's **Discussion** panel.
 
-**Explain this sends a question immediately.** For your own wording, choose **Ask…**, or go directly to the existing Discussion composer after selecting the code. The selection appears as a removable quote; type your question and press **Enter**. **Shift+Enter** inserts a line break. Selecting text or choosing Ask does not itself send anything.
+**Explain this sends a question immediately.** For your own wording, choose **Ask…**, or go directly to the existing Discussion composer after selecting the code. The selection appears as a removable quote; type your question and press **Enter**. **Shift+Enter** inserts a line break. The field grows with what you write and scrolls inside once it fills about 40% of the window. Selecting text or choosing Ask does not itself send anything.
 
 For example, select a collection or flag and ask:
 
@@ -170,7 +170,7 @@ Useful controls while walking:
 | Pane dividers | Give the code you are reading more space. |
 | **Show in diff**, where offered | Move the conventional diff to the corresponding change. |
 
-The stronger focus highlight identifies the current step's relevant code. It is separate from both the diff's addition/removal colours and the review-status strips. Use the step and file labels to stay oriented rather than interpreting green as approval.
+The stronger focus highlight identifies the current step's relevant code. It is separate from both the diff's addition/removal colours and the review-status strips. The colour of the code's text shows only its syntax (comments, strings, keywords, types, function names); what changed is shown by the row backgrounds alone. Use the step and file labels to stay oriented rather than interpreting green as approval.
 
 You can **select code and use Explain this or ask your own question here too**. The answer arrives in the same Discussion you used from the diff. The diff and walk windows navigate independently unless you explicitly use an action such as Show in diff.
 

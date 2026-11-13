@@ -3,9 +3,10 @@ id: DSP-206
 title: >-
   Code and review views: syntax colours in walk panes and the diff view, a
   readable collapsed agent report, and a growing Discussion input
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-13 10:10'
+updated_date: '2026-11-13 16:28'
 labels:
   - review
   - ui
@@ -29,10 +30,24 @@ Presentation and input only: Accept, delegation's exact line scope, coverage and
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 C/C++ (and other common languages through the chosen highlighter) show comments, strings, keywords, types and function names in distinct colours in walk panes and the diff view, on strong and weak green/red and unchanged rows, in Before, After, Before -> After and Whole file; unknown languages are plain without errors
-- [ ] #2 Each revision is tokenised from its own whole file: a place starting inside a multi-line comment shows it as a comment, and different base and target content is coloured from its own side; exact text, indentation, line numbers, selection and copying are unchanged, and tokens are not recomputed on scrolling or switching panes
-- [ ] #3 Syntax colours keep a readable contrast on every diff background and during the arrival flash; DSP-202's own/other/context backgrounds, the arrival flash on the arriving place's changed lines, review bands and agent edges are unchanged
-- [ ] #4 A collapsed or expanded agent report in the diff view is fully readable and clickable with a long walk title, a narrow window and enlarged zoom, and the code starts below it without overlap; reports start collapsed and keep the person's choice across updates
-- [ ] #5 The Discussion input is one line when empty, grows with typed and pasted text and soft wrapping up to a window-dependent maximum where it scrolls inside, shrinks on deletion and after a send, keeps the draft on a failed send, and keeps draft, focus, caret and selection on width, window, zoom and re-docking changes; consistent in the walk window, docked in the diff view and in its own window; send and newline shortcuts unchanged
-- [ ] #6 Targeted regression tests and a real-window trial under Xvfb cover the three changes, with screenshots judged for readability and layout; Accept, delegation's exact line scope, coverage and human decisions are unchanged
+- [x] #1 C/C++ (and other common languages through the chosen highlighter) show comments, strings, keywords, types and function names in distinct colours in walk panes and the diff view, on strong and weak green/red and unchanged rows, in Before, After, Before -> After and Whole file; unknown languages are plain without errors
+- [x] #2 Each revision is tokenised from its own whole file: a place starting inside a multi-line comment shows it as a comment, and different base and target content is coloured from its own side; exact text, indentation, line numbers, selection and copying are unchanged, and tokens are not recomputed on scrolling or switching panes
+- [x] #3 Syntax colours keep a readable contrast on every diff background and during the arrival flash; DSP-202's own/other/context backgrounds, the arrival flash on the arriving place's changed lines, review bands and agent edges are unchanged
+- [x] #4 A collapsed or expanded agent report in the diff view is fully readable and clickable with a long walk title, a narrow window and enlarged zoom, and the code starts below it without overlap; reports start collapsed and keep the person's choice across updates
+- [x] #5 The Discussion input is one line when empty, grows with typed and pasted text and soft wrapping up to a window-dependent maximum where it scrolls inside, shrinks on deletion and after a send, keeps the draft on a failed send, and keeps draft, focus, caret and selection on width, window, zoom and re-docking changes; consistent in the walk window, docked in the diff view and in its own window; send and newline shortcuts unchanged
+- [x] #6 Targeted regression tests and a real-window trial under Xvfb cover the three changes, with screenshots judged for readability and layout; Accept, delegation's exact line scope, coverage and human decisions are unchanged
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done 13 November 2026, no release; Niclas assesses the result first. Evidence and screenshots: docs/evaluations/dsp-206/README.md.
+
+Root causes: (1) the review surface's own lexer knew only TS/JS by extension and four kinds, so C/C++ and every other language were one colour; (2) .rv-agent-reviews, a flex item with overflow:auto above the diff, had an automatic minimum height of 0 and shrank with the diff, cutting the folded report line; reproduced in the trial with the old rule (28 px block for 152 px of content); (3) the Discussion textarea had three fixed rows, and .rv textarea (font: inherit) outweighed its own rule and reset its line height.
+
+Changes: renderer/syntax.ts with highlight.js 11.12.0 over each revision's whole file, tokens per line, cached per file; one dark palette with a lifted set on strong backgrounds and plain text during the arrival flash; old lexer removed from shared/review-model.ts; .rv-agent-reviews flex: none; the composer sized by field-sizing: content, one line empty, capped at 40vh, selector .rv textarea.rv-discussion-composer. TUTORIAL.md says the field grows and that text colour is syntax only.
+
+Checks: tests/syntax.test.ts 10/10 and review-model tests pass; typecheck passes. scripts/view-trial.mjs 62/62 on Windows and on Linux under Xvfb (linux-verify dock run 43459863352, which also passed the dock 54, prefs 20, Accept scope 32, walk marking 37, walk delegation 23 and review thread 110 trials). Contrast measured on 2,772 drawn tokens, lowest 4.57:1. Simulated provider throughout.
+
+Not established: Wayland and other window managers; grammar accuracy beyond the examples; highlighting time on large files (over 1 MB is plain); a failed send in a real window. Seen and left: at the diff window's minimum width and 150% zoom the file head's title row and the selection-actions row crowd each other (pre-existing).
+<!-- SECTION:NOTES:END -->
