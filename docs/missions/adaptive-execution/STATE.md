@@ -14,7 +14,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S19 and S22 on the parallel path (decision 44), from call 15 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** S20 (`implement`, decision 45), from call 26 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S19, S22, S25 and S25b are reviewed and committed.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -151,10 +151,11 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S25b | S25's follow-up from its review. (N1, R7) the editor's compact control bar shows its phase explanation and its last note only in hover text, so they get a visible place and the mode hover is shortened. (N3) **Cancel run** for a `walk-loop` run the editor only watches. (N2) the chat marks a cancel from the editor as "stop requested" | R3, R7 | S25 | **reviewed** (see its record) | 1 | `(DSP-209 S25b)` after `3726249` |
 | S18a | Edge routing around nodes; back and rework edges styled; node size by kind (`shared/loop-edge-routing.ts`, `GraphCanvas.tsx`) | R2, R7 | — | **reviewed** (parallel, decision 41; see *S17 and S18a, parallel*) | 1 | `52bc9c4`, merged `88a49dc`, test line `d6b2a3b` |
 | S18b | Layered layout and an explicit **Arrange** action; places nodes that have no position (`shared/loop-layout.ts`) | R2 | S18a | pending | 0 | — |
-| S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | **in progress**: sent with S22 through `implement-parallel` on call 15 (decision 44) | 1 | — |
-| S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3 | S16, S18a (S19 for the model) | pending | 0 | — |
+| S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | **reviewed** (parallel with S22, round 2; see *S19 and S22, parallel*) | 1 | `a9ea3dc`/`2798903`, `bcd8a8b`, `8323a90`, `fac761a`/`87b09ba`, `dbb2025` |
+| S19b | S19's open review points: (1) Cursor and Copilot are not checked against a model list before a run, so the "never fall back silently" rule is unverified for them: add the check where the adapter offers a list, or record that it cannot be checked and say so in the refusal or node help; (2) `entryFromQuery` in `project-host.ts` leaves a `select` entry step out of the "Runs with …" line | R6 | S19 | pending | 0 | — |
+| S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3, R7 | S16, S18a, S19 (all reviewed) | **in progress**: sent to `implement` on call 26 (decision 45) | 1 | — |
 | S21 | Step-report cards in chat, branches grouped, integrator's combined report, opt-in `SUBGOAL:` line | R4 | S16, S20 | pending | 0 | — |
-| S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **in progress**: sent with S19 through `implement-parallel` on call 15 (decision 44) | 1 | — |
+| S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **reviewed** (parallel with S19; see *S19 and S22, parallel*) | 1 | `4bce22c`/`a40d3b8`, `bcd8a8b` (test line), `151612c`/`0b0fb3d` |
 | S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b | pending | 0 | — |
 | S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1 | S17, S23a | pending | 0 | — |
 
@@ -384,6 +385,65 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S19 and S22, parallel — reviewed (agent review, not Niclas's approval)
+
+- **Path.** Run `chat-loop-2026-11-14T09-54-18-366Z`. Sent on coordinator visit 5 (call 15, decision 44) from base `3cb096a`. The path ran slicer, `branches` visits 2–4, `integrate` visits 2–5 and `parallel-review` visits 2–3, calls 16–25. Review round 1 had one blocking finding against S19, and round 2 accepted it. Recorded on coordinator visit 6 (call 26).
+- **Slices, per visit:**
+
+| Visit | Slice | Commit | Ending | Merged as |
+| --- | --- | --- | --- | --- |
+| 2 | s19 | `a9ea3dc` | finished | `2798903` |
+| 2 | s22 | `4bce22c` | finished | `a40d3b8` |
+| 3 | s19 | none | finished, nothing to rework | — |
+| 3 | s22 | `151612c` | finished (`JSX` import) | `0b0fb3d` |
+| 4 | s19 | `fac761a` | finished (round-1 finding) | `87b09ba` |
+| 4 | s22 | none | finished, no rework asked | — |
+
+- **The integrator's own commits:**
+  - `bcd8a8b`: the graph is passed to `prepareLoopRun`, and both tests join the `loop` group.
+  - `8323a90`: the graph is passed through the request builders instead, which keeps the call shape `loop-provider` reads.
+  - `dbb2025`: `personModel` is passed at both `runLiveGraph` calls in `project-host.ts`, at lines 2698 and 3168.
+- **Git check.** `3cb096a..dbb2025` holds those 11 commits and changes 24 files (2,460 insertions, 82 deletions). The temporary branches `.../branches/v2/{s19,s22}`, `v3/…` and `v4/…` are kept for Niclas. Only the main and engine worktrees remain.
+- **Conflicts:** none on any visit.
+- **Proposals, all resolved:**
+  - `branches#2/m1` (s19 to s22): the card shows a model only when the entry carries `modelSource`.
+  - `branches#2/m2`: the graph reaches `prepareLoopRun`. The integrator also accepted s19's helpers in `loop-run.ts` and the name `modelPolicy`.
+  - `branches#4/m1`: the host wiring of `personModel`.
+- **What S19 does.**
+  - A node's `fixed` model is honoured on every step.
+  - A new node field, `model: { policy: "select", options, default }`.
+  - A new edge field, `selectsModel`, whose reason comes from `declaredReasonFrom`.
+  - `node-entered` and `branch-started` carry `{ model, modelOption, modelReason, modelSource }` as data; there are no new journal kinds.
+  - Claude switches model on the next turn; other adapters open a new session.
+  - On Claude, a model the account does not list is refused before the run starts.
+  - The node panel lets the person edit the policy.
+  - GRAPH_FORMAT and the node help explain it.
+  - **Round-1 finding, fixed:** an `inherit` step used to fall back to the entry step's model while the record named the person's. `prepareLoopRun` now returns `personModel`, which both the executor (`modelOfStep`) and the journal (`runModel`) use. A test covers it.
+  - **Behaviour change, stated:**
+    - a non-entry step's `fixed` model is now honoured;
+    - in a graph whose entry fixes a model, `inherit` steps now run the person's model for the provider, not the entry's.
+    
+    No shipped graph is affected (decision 37).
+- **What S22 does.**
+  - `buildFinalRunCard` in the new `shared/loop-final-card.ts` is pure and derived, never stored.
+  - The new `renderer/FinalRunCard.tsx` shows it at the end of the run's chat entry.
+  - `RecordedRunEnding` gains additive fields for commits and upstream. `run-record-store.ts` adds `readRunCommits`, and the host records HEAD at the run's start and end.
+  - The card covers the ending kinds, counters from S16, and "not recorded" for older records.
+  - A run shows as "running" rather than "interrupted" while the host still runs it.
+- **Review verdict: accept** (round 2). The integrator's account matches Git. Open points, not blocking:
+  1. Cursor and Copilot models are not checked before a run. This is now **S19b**.
+  2. `entryFromQuery` leaves a `select` entry step out of the "Runs with …" line. This is now **S19b**.
+  3. `readRunCommits` makes up to five synchronous git calls in the host at the end of a run, each with a 10 s timeout. Left open.
+  4. No test covers the host's two `personModel` lines; only the typecheck does.
+- **Checked, by the integrator** (the review reused these):
+  - On the final state: `npm run typecheck` exit 0, `loop-model-select` 13/13, `loop-provider` 20/20, `loop-live` 71/71, `loop-final-card` 15/15.
+  - Earlier, and still valid: `loop-transcript` 48/48, `loop-record` 42/42, `run-record-store` 14/14, and `loop-graph` with `loop-graph-write` and `loop-node-help` 74/74.
+- **Not in the engine.** Both change host code, so they need an engine rebuild and **Restart host** at Niclas's next transition, never during a run. No host method was added.
+- **Niclas tries, after the transition:**
+  - **S19:** in a scratch graph, give the implementer a `select` policy and an edge with `selectsModel`, then run it. The node panel and the record should show the model chosen and the reason. A graph whose entry has a fixed model should run its other steps with your model.
+  - **S22:** end runs as completed, cancelled, and paused-then-cancelled. Each should get exactly one final card with the right status, commits and next action, and reopening the conversation should show no duplicate.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### S25b — S25's follow-up — reviewed (agent review, not Niclas's approval)
@@ -729,6 +789,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
     S16 review suggestion S1 is still open: any step that receives a fan-out's result is labelled integrator. S22 must not show that label as fact. It shows counters only.
 
     Alternatives: run the two in sequence (slower, about the same number of calls); keep S19 alone and do S22 with S20 (S20 also needs S18a and S19 for the model).
+45. **S20 goes to the one implementer (`implement`)** (visit 6). Its parts are branch activity in the engine (`runInstance` emits step activity with `sliceId`), host forwarding, the node summary, the **Branches** panel, the chat detail and a separate client window. They all hinge on one undecided shape: how branch activity is carried and folded per S16's `LiveOutputAddress`. Each UI part depends on that shape, so slicing would leave every branch guessing it. The previous parallel pair also needed four branch visits and five integrator visits. Alternatives: `implement-parallel` with an engine slice and a window slice (the interface is not yet fixed); S19b first (small, and not on the R3 path).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -747,6 +808,13 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 6 (call 26).** S19 and S22 are reviewed and recorded, and their code is in `2798903`..`dbb2025`. This file is committed after them. S20 went to `implement` (decision 45). **Next:**
+1. Record S20's review and commit it.
+2. Then S21, which needs S20 and settles S16 review suggestion S1, the integrator label.
+3. Then S19b (small), S18b, S23a and S23b.
+
+Every UI brief carries R7. Host code changes in S19, S20 and S22, so the engine needs a rebuild and **Restart host** at the next transition. If this run ends first, the next run reconciles S20 from the uncommitted working copy.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 5 (call 15).** S25b is reviewed and committed together with this file. Then S19 and S22 were sent through `implement-parallel` (decision 44), from that commit, with no tracked change left uncommitted.
 
