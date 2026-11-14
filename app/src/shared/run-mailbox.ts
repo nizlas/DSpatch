@@ -78,8 +78,12 @@ export function createRunMailbox(input: {
   readonly visitId: string;
   readonly sliceIds: readonly string[];
   readonly post: JournalPost;
-  /** The person's instructions to the run that have arrived since the last ask; none when left out. */
-  readonly takeInstructions?: () => readonly { readonly id: string; readonly text: string }[];
+  /**
+   * The person's instructions to the run that have arrived since the last ask; none when left out.
+   * Given the branches they will be addressed to (every one that has not ended), so the caller can
+   * say they were sent to those branches rather than delivered (DSP-209 S12).
+   */
+  readonly takeInstructions?: (recipients: readonly string[]) => readonly { readonly id: string; readonly text: string }[];
 }): RunMailbox {
   const known = new Set(input.sliceIds);
   const running = new Set<string>();
@@ -122,7 +126,8 @@ export function createRunMailbox(input: {
   // The person's instructions become messages to every branch that has not ended when they are
   // taken — running ones, and slices still waiting for a free place — never to one that ended.
   const takeInstructions = (): void => {
-    for (const instruction of input.takeInstructions?.() ?? []) {
+    const recipients = [...known].filter((id) => !ended.has(id));
+    for (const instruction of input.takeInstructions?.(recipients) ?? []) {
       sequence += 1;
       record({
         id: `${input.visitId}/m${String(sequence)}`,
@@ -134,7 +139,7 @@ export function createRunMailbox(input: {
         critical: false,
         base: null,
         branch: null,
-        recipients: [...known].filter((id) => !ended.has(id)),
+        recipients,
       });
     }
   };

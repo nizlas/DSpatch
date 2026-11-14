@@ -3245,8 +3245,9 @@ function registerLoopMethods(): void {
           },
           // DSP-209 S11: the person's instructions while a fan-out runs reach every branch as a
           // mailbox message, taken from the same queue a step's prompt takes them from, and said
-          // in the conversation as delivered when each branch next checks its messages.
-          takeInstructions: ({ nodeId, occurrence }) => {
+          // in the conversation as sent to those branches (DSP-209 S12: not as delivered; which
+          // branch received it is in the journal and the run report).
+          takeInstructions: ({ nodeId, occurrence, recipients }) => {
             const taken = chatLoopInstructions.takeFor(request.runId);
             if (taken.length === 0) {
               return [];
@@ -3257,9 +3258,10 @@ function registerLoopMethods(): void {
               runId: request.runId,
               instructionIds: taken.map((entry) => entry.id),
               nodeId,
-              nodeLabel: `${lookup.node(nodeId)?.label ?? nodeId} (its branches, when each next checks its messages)`,
+              nodeLabel: lookup.node(nodeId)?.label ?? nodeId,
               occurrence,
               atUtc: new Date().toISOString(),
+              toBranches: [...recipients],
             };
             noteRunMessageEvent(chatLoopMessages, payload);
             sendToSender(LOOP_INSTRUCTION_EVENT, payload);
@@ -3366,6 +3368,13 @@ function registerLoopMethods(): void {
           undeliveredNote(chatLoopInstructions.peekFor(request.runId)) +
           steeredNote(chatLoopSteered);
         const cancelled = abort.signal.aborted;
+        // DSP-209 S6/S12: whether the chat can take the handover turn, decided before the ending is
+        // written so the record (and the run report) says it.
+        const handedOver = delivery.result.handedOver;
+        const handoverRefusal =
+          !cancelled && delivery.result.status === 'handed-over' && handedOver !== null
+            ? { refusal: chatService.handoverRefusal(request.runId, session.conversationId) }
+            : null;
         const recorded = closeChatLoopRecord(record, {
           kind: cancelled ? 'cancelled' : 'finished',
           result: delivery.result,
@@ -3374,6 +3383,14 @@ function registerLoopMethods(): void {
           modelRequested,
           cancelled,
           messages: [...chatLoopMessages.values()],
+          ...(handoverRefusal === null
+            ? {}
+            : {
+                handover:
+                  handoverRefusal.refusal === null
+                    ? { turn: 'queued' as const, note: null }
+                    : { turn: 'refused' as const, note: handoverRefusal.refusal },
+              }),
         });
         endedStatus = delivery.result.status;
         /*
@@ -3393,8 +3410,7 @@ function registerLoopMethods(): void {
         // so a refusal can be said on the run's own ending; sent in `finally`, after the run
         // has released the working copy the chat turn needs.
         let handoverNote: string | null = null;
-        const handedOver = delivery.result.handedOver;
-        if (!cancelled && delivery.result.status === 'handed-over' && handedOver !== null) {
+        if (handoverRefusal !== null && handedOver !== null) {
           const fromStep = lookup.node(handedOver.nodeId)?.label ?? handedOver.nodeId;
           const snapshots = recorded.ending.snapshots;
           const text = buildHandoverTurn({
@@ -3410,7 +3426,7 @@ function registerLoopMethods(): void {
                 ? null
                 : [...snapshots.changed, ...snapshots.added, ...snapshots.removed].map((file) => file.relPath),
           });
-          const refusal = chatService.handoverRefusal(request.runId, session.conversationId);
+          const refusal = handoverRefusal.refusal;
           if (refusal === null) {
             handoverToSend = { runId: request.runId, fromStep, text };
           } else {
@@ -3844,6 +3860,7 @@ function noteRunMessageEvent(
           occurrence: payload.occurrence,
           atUtc: payload.atUtc,
           ...(payload.during === true ? { during: true } : {}),
+          ...(payload.toBranches === undefined ? {} : { toBranches: payload.toBranches }),
         },
       });
     } else if (payload.kind === 'unconfirmed') {
@@ -3912,6 +3929,8 @@ function closeChatLoopRecord(
     readonly modelRequested: string;
     readonly cancelled: boolean;
     readonly messages?: readonly RecordedRunMessage[];
+    /** DSP-209 S12: what became of a handed-over run's handover turn. */
+    readonly handover?: RecordedRunEnding['handover'];
   },
 ): ChatLoopRecordInfo {
   const atUtc = new Date().toISOString();
@@ -3987,6 +4006,18 @@ function closeChatLoopRecord(
     cancelled: input.cancelled || (input.inspection?.cancelled ?? false),
     cost: input.inspection?.cost ?? 'unknown',
     ...(input.messages === undefined || input.messages.length === 0 ? {} : { messages: input.messages }),
+    // DSP-209 S12: per session, for the run report's usage and cost per step and per branch.
+    ...(input.inspection === null
+      ? {}
+      : {
+          sessions: input.inspection.sessions.map((session) => ({
+            nodeId: session.nodeId,
+            sessionId: session.dspatchSessionId,
+            turns: session.turns,
+            costCents: session.costCents,
+          })),
+        }),
+    ...(input.handover === undefined ? {} : { handover: input.handover }),
   };
   record.finish(ending);
   const failures = record.failures();

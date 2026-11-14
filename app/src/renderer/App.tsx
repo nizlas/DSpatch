@@ -174,6 +174,7 @@ import {
   type LoopTurn,
   type LoopTurnEvent,
 } from '../shared/loop-transcript';
+import type { RunReport } from '../shared/loop-run-report';
 
 const HEADING = 'DSpatch';
 
@@ -1290,6 +1291,7 @@ function Workbench({
             occurrence: payload.occurrence,
             atUtc: payload.atUtc,
             ...(payload.during === true ? { during: true } : {}),
+            ...(payload.toBranches === undefined ? {} : { toBranches: payload.toBranches }),
           },
         });
         return;
@@ -6876,8 +6878,37 @@ function LoopTurnEntry({
           </p>
         </details>
       )}
+      {/* DSP-209 S12: the run report, from what DSpatch recorded. Folded; nothing opens by itself. */}
+      {turn.report === undefined ? null : <RunReportView report={turn.report} testId={`${at}-report`} />}
       <RunStanding standing={standing} />
     </article>
+  );
+}
+
+/**
+ * DSP-209 S12: the run report under the run's ending, folded behind its one-line summary.
+ * Every line is the builder's; this only lays them out.
+ */
+function RunReportView({ report, testId }: { readonly report: RunReport; readonly testId: string }): JSX.Element {
+  return (
+    <details className="turn__counts" data-ev={testId}>
+      <summary className="turn__counts-summary">{report.summary}</summary>
+      {report.sections.map((section) => (
+        <div key={section.id} data-ev={`${testId}-${section.id}`}>
+          <p className="app__note">
+            <strong>{section.title}</strong>
+          </p>
+          <ul className="app__note">
+            {section.lines.map((line, index) => (
+              <li key={`${section.id}-${String(index)}`}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <p className="app__note" data-ev={`${testId}-closing`}>
+        {report.closing}
+      </p>
+    </details>
   );
 }
 

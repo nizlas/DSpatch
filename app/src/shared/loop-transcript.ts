@@ -51,6 +51,7 @@ import {
   type RunOutcomeKind,
 } from './loop-record';
 import type { RunJournalEntry, RunResult, RunStatus } from './loop-run';
+import { buildRunReport, checkSkippedCorroboration, type RunReport } from './loop-run-report';
 import type { TerminalEnding } from './loop-graph';
 
 /** One agent node's own words during a loop run. */
@@ -287,6 +288,12 @@ export interface LoopTurn {
    * with where it was sent. While a run is watched, the window holds them instead.
    */
   readonly messages?: readonly LoopInstruction[];
+  /**
+   * DSP-209 S12: the run report, built from the journal and the record once the run has ended —
+   * the same builder for a watched run and one read back from disk. Absent while the run is
+   * going, for a run that never started, and where no journal came back.
+   */
+  readonly report?: RunReport;
 }
 
 export type LoopTurnEvent =
@@ -485,7 +492,13 @@ export function loopTurnsAfter(
       if (turn.ending !== null) {
         return turns;
       }
-      return replaced({ ...turn, ending: describeLoopEnding(event.outcome, turn) });
+      const outcome = event.outcome;
+      // DSP-209 S12: the report from what the run recorded, the replies this window was given.
+      const report =
+        outcome.kind === 'finished' || outcome.kind === 'cancelled'
+          ? buildRunReport({ journal: outcome.result.journal, replies: turn.replies, ending: outcome.recorded?.ending ?? null })
+          : null;
+      return replaced({ ...turn, ending: describeLoopEnding(outcome, turn), ...(report === null ? {} : { report }) });
     }
     case 'send-threw': {
       if (turn.ending !== null) {
@@ -618,7 +631,10 @@ export function describeLoopEnding(
         // view rather than being summarised away.
         shortText:
           lead === '' && recordedOutcome !== null
-            ? briefRunOutcome(recordedOutcome, terminalNodeId, outcome.result.terminalEnding)
+            ? withCorroboration(
+                briefRunOutcome(recordedOutcome, terminalNodeId, outcome.result.terminalEnding),
+                checkSkippedCorroboration(terminalNodeId, outcome.recorded?.ending.snapshots),
+              )
             : null,
         // DSP-209 S6: a handover the chat could not take is the one thing to act on here.
         actionNote:
@@ -1379,6 +1395,8 @@ export function loopTurnsFromRecords(
       abandoned: false,
       ending: endingFromRecord(record, entry.error),
       restoredFrom: 'record',
+      // DSP-209 S12: the same report the run had when it was watched, from its record.
+      report: buildRunReport({ journal: record.journal, replies: record.replies, ending: record.ending }),
       ...((): { messages?: readonly LoopInstruction[] } => {
         const messages = messagesFromEnding(identity.runId, record.ending?.messages);
         return messages.length === 0 ? {} : { messages };
@@ -1556,11 +1574,20 @@ function endingFromRecord(record: ParsedRunRecord, readError: string | null): Lo
     // record of what was believed at the time belongs. What the column states now is
     // derived from the outcome the run actually recorded, so an old conclusion is not
     // presented as a current finding.
-    shortText:
-      ending.cancelled ? null : briefRunOutcome(ending.outcome, ending.terminalNodeId, ending.terminalEnding),
+    shortText: ending.cancelled
+      ? null
+      : withCorroboration(
+          briefRunOutcome(ending.outcome, ending.terminalNodeId, ending.terminalEnding),
+          checkSkippedCorroboration(ending.terminalNodeId, ending.snapshots),
+        ),
     actionNote: unreadable,
     text: `${ending.outcomeText} ${ending.note}`.trim(),
   };
+}
+
+/** DSP-209 S12 (S4 finding i): the short line, and beside it what DSpatch observed. Never routes. */
+function withCorroboration(short: string | null, corroboration: string | null): string | null {
+  return short === null || corroboration === null ? short : `${short} ${corroboration}`;
 }
 
 function endingKindFromRecordedStatus(

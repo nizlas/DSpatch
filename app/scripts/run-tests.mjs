@@ -86,6 +86,7 @@ const AREAS = {
       'loop-recap.test.ts',
       'loop-fan-out.test.ts',
       'loop-mailbox-run.test.ts',
+      'loop-run-report.test.ts',
       'run-mailbox.test.ts',
       { file: 'loop-parallel-loop.test.ts', heavy: true },
       { file: 'loop-fan-out-run.test.ts', heavy: true },

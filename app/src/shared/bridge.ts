@@ -3302,6 +3302,8 @@ export type LoopInstructionEventPayload =
       readonly atUtc: string;
       /** DSP-147: taken into the running work through its runtime's steering. */
       readonly during?: boolean;
+      /** DSP-209 S12: sent to these branches of a fan-out by its mailbox; not yet delivered to any. */
+      readonly toBranches?: readonly string[];
     }
   | {
       readonly kind: 'run-ended';

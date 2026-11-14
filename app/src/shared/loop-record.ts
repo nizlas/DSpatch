@@ -328,6 +328,28 @@ export interface RecordedRunEnding {
    * The prompts on the `agent-reply` lines remain the evidence of what a step was given.
    */
   readonly messages?: readonly RecordedRunMessage[];
+  /**
+   * DSP-209 S12: every provider session the run opened — one per agent step, one per fan-out
+   * branch (`<node>/<slice>`) — with its turns and the cost it reported. For the run report's
+   * usage and cost per step and per branch. Absent in records written before it: not recorded.
+   */
+  readonly sessions?: readonly RecordedSessionUsage[];
+  /**
+   * DSP-209 S12: for a run handed over, what became of the handover turn when the run ended:
+   * `queued` to be sent into the chat (whether it arrived is not recorded here), or `refused`
+   * with the reason. Absent for every other ending and in records written before it.
+   */
+  readonly handover?: { readonly turn: 'queued' | 'refused'; readonly note: string | null };
+}
+
+/** DSP-209 S12: one provider session of a run, as its ending records it. */
+export interface RecordedSessionUsage {
+  /** The step, or `<step>/<slice>` for a fan-out branch. */
+  readonly nodeId: string;
+  readonly sessionId: string;
+  readonly turns: number;
+  /** In cents, or `null`: the provider reported none, which is not zero. */
+  readonly costCents: number | null;
 }
 
 /** DSP-147: one message sent into a running loop run, as the run's ending records it. */

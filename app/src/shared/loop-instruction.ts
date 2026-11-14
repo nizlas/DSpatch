@@ -57,6 +57,12 @@ export interface LoopInstructionDelivery {
    * step's prompt when it started (DSP-32), or for a chat turn sent as the next message.
    */
   readonly during?: boolean;
+  /**
+   * DSP-209 S12: taken by a fan-out's mailbox and sent to these branches, each of which gets it
+   * when it next checks its messages. Not a delivery to any of them; the run journal and the run
+   * report say which branch received it.
+   */
+  readonly toBranches?: readonly string[];
 }
 
 export interface LoopInstruction {
@@ -200,6 +206,13 @@ export function loopInstructionStatusText(instruction: LoopInstruction): string 
   const chat = instruction.scope === 'chat';
   const delivered = instruction.delivered;
   if (delivered !== null) {
+    if (delivered.toBranches !== undefined) {
+      const count = delivered.toBranches.length;
+      return (
+        `Sent to ${String(count)} branch${count === 1 ? '' : 'es'} of “${delivered.nodeLabel}”; ` +
+        'each gets it when it next checks its messages. The run report says which did.'
+      );
+    }
     if (delivered.during === true) {
       // DSP-147: the runtime's receipt, and no more: not "read", not "applied", and not
       // "while it worked", because the receipt is also given for a following turn.
@@ -280,7 +293,7 @@ export function loopInstructionInline(
 export function loopInstructionBadgeText(instruction: LoopInstruction): string {
   switch (loopInstructionState(instruction)) {
     case 'delivered':
-      return 'reached the agent';
+      return instruction.delivered?.toBranches === undefined ? 'reached the agent' : 'sent to the branches';
     case 'never-delivered':
       return 'never reached an agent';
     case 'unconfirmed':

@@ -687,7 +687,12 @@ export interface RunOptions {
    * taken while a fan-out runs. They reach every branch that has not ended as a mailbox message
    * from the person, delivered when each next checks its messages. Left out, none.
    */
-  readonly takeInstructions?: (at: { readonly nodeId: string; readonly occurrence: number }) => readonly {
+  readonly takeInstructions?: (at: {
+    readonly nodeId: string;
+    readonly occurrence: number;
+    /** DSP-209 S12: the branches they will be addressed to. Sent, not yet delivered to any. */
+    readonly recipients: readonly string[];
+  }) => readonly {
     readonly id: string;
     readonly text: string;
   }[];
@@ -1450,7 +1455,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     readonly arrival: ArrivalRef | null;
     readonly received: readonly RecordedResult[];
     readonly placement: ArchivePlacement | null;
-  }): Promise<{ readonly execution: StepExecution; readonly calls: number }> => {
+  }): Promise<{ readonly execution: StepExecution; readonly calls: number; readonly bound?: 'maxCalls' }> => {
     const { node, occurrence } = visit;
     const fanOut = node.fanOut;
     const failed = (summary: string, extra: Partial<StepExecution> = {}, spent = 0) => ({
@@ -1486,10 +1491,14 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     // Room for every branch, asked before any starts, so a fan-out never stops half-started.
     const maxCalls = graph.limits?.maxCalls;
     if (maxCalls !== undefined && calls + slices.length > maxCalls) {
-      return failed(
-        `"${node.id}" has ${String(slices.length)} slices, one call each, and the run has ` +
-          `${String(Math.max(0, maxCalls - calls))} of its ${String(maxCalls)} calls left, so no branch was started.`,
-      );
+      // DSP-209 S12: marked as a bound in the record, so the report does not read it as a branch failing.
+      return {
+        ...failed(
+          `"${node.id}" has ${String(slices.length)} slices, one call each, and the run has ` +
+            `${String(Math.max(0, maxCalls - calls))} of its ${String(maxCalls)} calls left, so no branch was started.`,
+        ),
+        bound: 'maxCalls' as const,
+      };
     }
 
     // One base for every branch, recorded before the first starts (mission decision 6).
@@ -1518,7 +1527,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       post: (kind, detail, data) => {
         record(kind, detail, { nodeId: node.id, data });
       },
-      ...(takeInstructions === undefined ? {} : { takeInstructions: () => takeInstructions({ nodeId: node.id, occurrence }) }),
+      ...(takeInstructions === undefined ? {} : { takeInstructions: (recipients) => takeInstructions({ nodeId: node.id, occurrence, recipients }) }),
     });
     interface BranchOutcome {
       readonly slice: Slice;
@@ -1594,6 +1603,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             base: base?.commit ?? '(none)',
             ...(base === null ? {} : { baseKind: base.kind, untrackedNotIncluded: base.untrackedNotIncluded }),
             concurrency: effective,
+            // DSP-209 S12: what the slice owned, as the runner read it, for the run report.
+            ownedPaths: slice.ownedPaths.join(', '),
           },
         },
       );
@@ -1853,6 +1864,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           kind: current.kind,
           occurrence,
           callId,
+          // DSP-209 S12: the label, as terminals already carry it, so the run report names steps.
+          label: current.label ?? current.id,
           spendsACall: spendsACall(current),
           ...(current.role ? { role: current.role.id, roleSource: current.role.source.path } : {}),
           // Which arrival this was, because what the step is given now depends on it
@@ -1965,6 +1978,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     control?.stepStarted(step);
     // DSP-209 S10b: a fan-out node's one visit runs its branch instances, each its own call.
     let fanOutCalls: number | null = null;
+    let fanOutBound: 'maxCalls' | null = null;
     try {
       if (current.fanOut !== undefined) {
         const fanned = await runFanOutVisit({
@@ -1979,6 +1993,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         });
         execution = fanned.execution;
         fanOutCalls = fanned.calls;
+        fanOutBound = fanned.bound ?? null;
       } else execution = await options.executor({
         ...(handoffDeclined ? { handoffDeclined: true } : {}),
         ...(continuedAfterHandoff === null ? {} : { continuedAfterHandoff }),
@@ -2117,6 +2132,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           ...(producedOutcome === null
             ? {}
             : { outcome: producedOutcome.name, outcomeSource: producedOutcome.source }),
+          // DSP-209 S12: a fan-out that started no branch because too few calls were left.
+          ...(fanOutBound === null ? {} : { fanOutBound }),
           stepMs,
           providerTurns: execution.providerTurns,
           callsSoFar: calls,
