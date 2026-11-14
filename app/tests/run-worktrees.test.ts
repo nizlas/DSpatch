@@ -17,10 +17,14 @@ import {
   baseCommit,
   commitLeftovers,
   createWorktree,
+  fanOutWorktreesRoot,
   listRunBranches,
   removeWorktree,
   runGit,
   sliceBranch,
+  WORKTREE_OWNER_FORMAT,
+  worktreeDirName,
+  worktreeOwnerFile,
 } from '../src/main/run-worktrees';
 
 const roots: string[] = [];
@@ -129,6 +133,52 @@ describe('run worktrees (DSP-209 S10a)', () => {
     assert.equal(git(repo, 'rev-parse', 'dspatch/run/run-1/work/v1/a'), firstCommit, 'the first visit\'s branch is kept as it was');
     await removeWorktree(runGit, repo, second.path);
     await removeWorktree(runGit, repo, other.path);
+  });
+
+  // DSP-209 S24: a fan-out on DSpatch's own repository failed on Windows with "Filename too long"
+  // for long backlog/tasks names, and no branch started. The worktree root here is made deep on
+  // purpose, so the tracked file's path in the worktree passes 260 characters: only the
+  // command-local core.longpaths lets it check out, commit and be removed.
+  it('puts each slice in a short, owned folder, and checks out, commits and removes a tracked path over 260 characters', async () => {
+    const { repo } = repository('long');
+    const longName = `dsp-999 - ${'Long-backlog-title-'.repeat(8)}end.md`;
+    fs.mkdirSync(path.join(repo, 'backlog', 'tasks'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'backlog', 'tasks', longName), 'task\n', 'utf8');
+    git(repo, 'add', '--all');
+    git(repo, 'commit', '--quiet', '-m', 'a long tracked path');
+    const worktreesRoot = path.join(path.dirname(repo), 'r'.repeat(60), 's'.repeat(60));
+    const base = await baseCommit(runGit, repo);
+
+    const tree = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-long', nodeId: 'branches', visit: 1, sliceId: 's16', worktreesRoot });
+    assert.equal(path.dirname(tree.path), path.resolve(worktreesRoot));
+    assert.equal(path.basename(tree.path), worktreeDirName('run-long', 'branches', 1, 's16'));
+    assert.match(path.basename(tree.path), /^w[0-9a-f]{10}$/);
+    assert.ok(path.join(tree.path, 'backlog', 'tasks', longName).length > 260, 'the case Windows refuses without long paths');
+    assert.equal(git(tree.path, '-c', 'core.longpaths=true', 'status', '--porcelain'), '', 'every tracked file is checked out');
+    assert.deepEqual(JSON.parse(fs.readFileSync(worktreeOwnerFile(tree.path), 'utf8')), {
+      format: WORKTREE_OWNER_FORMAT,
+      runId: 'run-long',
+      nodeId: 'branches',
+      visit: 1,
+      sliceId: 's16',
+      branch: 'dspatch/run/run-long/branches/v1/s16',
+      base: base.commit,
+      repo: path.resolve(repo),
+    });
+    assert.notEqual(worktreeDirName('run-long', 'branches', 2, 's16'), path.basename(tree.path), 'another visit gets another folder');
+
+    fs.writeFileSync(path.join(tree.path, 'b.txt'), 'from the branch\n', 'utf8');
+    assert.notEqual(await commitLeftovers(runGit, tree.path, 'slice s16'), null);
+    assert.equal(git(repo, 'show', `dspatch/run/run-long/branches/v1/s16:backlog/tasks/${longName}`, '--'), 'task');
+    await removeWorktree(runGit, repo, tree.path);
+    assert.equal(fs.existsSync(tree.path), false);
+    assert.equal(fs.existsSync(worktreeOwnerFile(tree.path)), false);
+  });
+
+  it('chooses a short root under LOCALAPPDATA on Windows, and the run folder elsewhere', () => {
+    assert.equal(fanOutWorktreesRoot({ platform: 'win32', localAppData: 'C:\\Users\\p\\AppData\\Local', runDir: 'C:\\run' }), path.join('C:\\Users\\p\\AppData\\Local', 'DSpatch', 'wt'));
+    assert.equal(fanOutWorktreesRoot({ platform: 'win32', localAppData: undefined, runDir: '/data/run' }), path.join('/data/run', 'worktrees'));
+    assert.equal(fanOutWorktreesRoot({ platform: 'linux', localAppData: '/x', runDir: '/data/run' }), path.join('/data/run', 'worktrees'));
   });
 
   it('refuses a worktree inside the working copy, and a branch name git would not accept', async () => {

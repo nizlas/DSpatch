@@ -3,7 +3,7 @@
  *
  * GRAPH_FORMAT.md's *Fan-out*: one base commit for all branches, recorded before the first
  * starts; one worktree per branch, outside the working copy, on its own temporary branch
- * `dspatch/run/<runId>/<node>/v<visit>/<sliceId>`; DSpatch commits what a branch left there when it ends; the
+ * `dspatch/run/<runId>/<node>/v<visit>/<sliceId>`, in a short folder (S24); DSpatch commits what a branch left there when it ends; the
  * worktree is removed when the run ends and the branch is kept for the person and the
  * integrator. Mission decisions 6, 7 and 24.
  *
@@ -15,6 +15,8 @@
  */
 
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import type { FanOutDriver } from '../shared/loop-run';
@@ -29,6 +31,16 @@ export interface GitResult {
 export type GitRunner = (args: readonly string[], cwd: string) => Promise<GitResult>;
 
 const GIT_TIMEOUT_MS = 30_000;
+
+/**
+ * DSP-209 S24: every git call that checks out, reads or removes a worktree's files carries
+ * `core.longpaths=true` for that one command. Git for Windows otherwise stops at Windows'
+ * 260-character path limit: a fan-out on DSpatch's own repository failed with "Filename too
+ * long" on long `backlog/tasks/` names and "Could not reset index file", and no branch
+ * started. Set per command, never in the repository's or the person's git configuration;
+ * git ignores it on other platforms.
+ */
+const LONG_PATHS = ['-c', 'core.longpaths=true'] as const;
 
 /** The default runner: the `git` on the path, with a timeout, no shell, no window. */
 export const runGit: GitRunner = (args, cwd) =>
@@ -66,6 +78,47 @@ export function runBranchPrefix(runId: string): string {
 function placeSegment(nodeId: string): string {
   const safe = nodeId.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '').replace(/(\.lock|\.)+$/i, '');
   return safe === '' ? 'node' : safe;
+}
+
+/**
+ * The folder name of one slice's worktree: `w` and ten hex digits of a SHA-256 over the run,
+ * the node, the visit and the slice (DSP-209 S24).
+ *
+ * Short on purpose. The worktree's files sit under this folder, and the path the person's
+ * shell, editor and the branch agent's own tools see is the folder's path plus the file's;
+ * the old `<runId>/worktrees/<node>/v<visit>/<slice>` layout alone was 110 characters, which
+ * with a 183-character tracked path passed Windows' 260. The name is deterministic, so the
+ * same slice of the same visit always has the same folder, and an owner file beside it
+ * ({@link WORKTREE_OWNER_FORMAT}) and the branch name say whose it is.
+ */
+export function worktreeDirName(runId: string, nodeId: string, visit: number, sliceId: string): string {
+  const digest = createHash('sha256').update([runId, nodeId, String(visit), sliceId].join('\u0000')).digest('hex');
+  return `w${digest.slice(0, 10)}`;
+}
+
+/**
+ * Where a run's worktrees go (DSP-209 S24). On Windows, `%LOCALAPPDATA%\DSpatch\wt`: local
+ * to the machine (a worktree must not roam with a profile) and short, so a worktree's own
+ * path stays far below the limit. Elsewhere, and where `LOCALAPPDATA` is not set, the old
+ * place beside the run's results. Every run shares the root; the folder names keep them apart.
+ */
+export function fanOutWorktreesRoot(input: {
+  readonly platform: NodeJS.Platform;
+  readonly localAppData: string | undefined;
+  readonly runDir: string;
+}): string {
+  if (input.platform === 'win32' && input.localAppData !== undefined && input.localAppData !== '') {
+    return path.join(input.localAppData, 'DSpatch', 'wt');
+  }
+  return path.join(input.runDir, 'worktrees');
+}
+
+/** The `format` of the owner file written beside each worktree folder, as `<folder>.json`. */
+export const WORKTREE_OWNER_FORMAT = 'dspatch-worktree-owner';
+
+/** The owner file of a worktree folder: `<folder>.json`, beside it, never inside it. */
+export function worktreeOwnerFile(worktreePath: string): string {
+  return `${worktreePath}.json`;
 }
 
 /**
@@ -115,12 +168,13 @@ export interface RunWorktree {
 }
 
 /**
- * A worktree for one slice, at `<worktreesRoot>/<node>/v<visit>/<sliceId>` on a new branch
- * from `base`, named by {@link sliceBranch}.
+ * A worktree for one slice, at `<worktreesRoot>/<worktreeDirName>` on a new branch from
+ * `base`, named by {@link sliceBranch}, with an owner file beside it naming the run, node,
+ * visit, slice and branch.
  *
- * `worktreesRoot` is `<userData>/loop-runs/<runId>/worktrees`; it must lie outside the
+ * `worktreesRoot` comes from {@link fanOutWorktreesRoot}; it must lie outside the
  * repository, and the call refuses otherwise rather than writing into the person's folder.
- * Refuses an existing branch of that name rather than reusing it.
+ * Refuses an existing branch of that name rather than reusing it, and an existing folder.
  */
 export async function createWorktree(
   git: GitRunner,
@@ -134,7 +188,7 @@ export async function createWorktree(
     readonly worktreesRoot: string;
   },
 ): Promise<RunWorktree> {
-  const target = path.resolve(input.worktreesRoot, placeSegment(input.nodeId), `v${String(input.visit)}`, input.sliceId);
+  const target = path.resolve(input.worktreesRoot, worktreeDirName(input.runId, input.nodeId, input.visit, input.sliceId));
   const relative = path.relative(path.resolve(input.repo), target);
   if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
     throw new Error(`The worktree for slice "${input.sliceId}" would be inside the working copy (${target}); it was not made.`);
@@ -144,9 +198,23 @@ export async function createWorktree(
   if (!format.ok) {
     throw new Error(`"${branch}" is not a usable branch name, so no worktree was made: ${format.stderr.trim()}`);
   }
-  const added = await git(['worktree', 'add', '-b', branch, target, input.base], input.repo);
+  if (fs.existsSync(target)) {
+    throw new Error(`The worktree folder for slice "${input.sliceId}" already exists (${target}); it was not reused.`);
+  }
+  const added = await git([...LONG_PATHS, 'worktree', 'add', '-b', branch, target, input.base], input.repo);
   if (!added.ok) {
-    throw new Error(`git could not make the worktree for slice "${input.sliceId}": ${added.stderr.trim()}`);
+    throw new Error(`git could not make the worktree for slice "${input.sliceId}" at ${target}: ${added.stderr.trim()}`);
+  }
+  // The owner file is a convenience for a person who finds the folder; the branch name and
+  // the run journal say the same, so a failure to write it does not fail the slice.
+  try {
+    fs.writeFileSync(
+      worktreeOwnerFile(target),
+      `${JSON.stringify({ format: WORKTREE_OWNER_FORMAT, runId: input.runId, nodeId: input.nodeId, visit: input.visit, sliceId: input.sliceId, branch, base: input.base, repo: path.resolve(input.repo) }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch {
+    // See above.
   }
   return { sliceId: input.sliceId, path: target, branch, base: input.base };
 }
@@ -158,11 +226,11 @@ export async function createWorktree(
  * repository's own and are not bypassed.
  */
 export async function commitLeftovers(git: GitRunner, worktree: string, message: string): Promise<string | null> {
-  const added = await git(['add', '--all'], worktree);
+  const added = await git([...LONG_PATHS, 'add', '--all'], worktree);
   if (!added.ok) {
     throw new Error(`git could not stage the branch's work in ${worktree}: ${added.stderr.trim()}`);
   }
-  const staged = await git(['diff', '--cached', '--name-only'], worktree);
+  const staged = await git([...LONG_PATHS, 'diff', '--cached', '--name-only'], worktree);
   if (!staged.ok) {
     throw new Error(`git could not read what the branch changed in ${worktree}: ${staged.stderr.trim()}`);
   }
@@ -170,7 +238,7 @@ export async function commitLeftovers(git: GitRunner, worktree: string, message:
     return null;
   }
   const committed = await git(
-    ['-c', 'user.name=DSpatch', '-c', 'user.email=dspatch@localhost', 'commit', '--quiet', '-m', message],
+    [...LONG_PATHS, '-c', 'user.name=DSpatch', '-c', 'user.email=dspatch@localhost', 'commit', '--quiet', '-m', message],
     worktree,
   );
   if (!committed.ok) {
@@ -186,15 +254,16 @@ export async function commitLeftovers(git: GitRunner, worktree: string, message:
  * the caller commits leftovers first.
  */
 export async function removeWorktree(git: GitRunner, repo: string, worktree: string): Promise<void> {
-  const removed = await git(['worktree', 'remove', '--force', worktree], repo);
+  const removed = await git([...LONG_PATHS, 'worktree', 'remove', '--force', worktree], repo);
   if (!removed.ok) {
     throw new Error(`git could not remove the worktree ${worktree}: ${removed.stderr.trim()}`);
   }
+  fs.rmSync(worktreeOwnerFile(worktree), { force: true });
 }
 
 /**
  * DSP-209 S10b: the fan-out driver the runner is handed for a run over `repo`, with its
- * worktrees under `worktreesRoot` (`<userData>/loop-runs/<runId>/worktrees`).
+ * worktrees under `worktreesRoot` ({@link fanOutWorktreesRoot}).
  *
  * `close` commits leftovers **before** removing the worktree (S10a review finding iv). When
  * the commit is refused — a signing requirement, a hook, the repository's author policy — the
