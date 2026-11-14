@@ -2842,7 +2842,7 @@ export function LoopEditor(): React.JSX.Element {
               ...(watchNote === null ? [] : [{ label: 'About this run', text: watchNote }]),
               {
                 label: 'Help',
-                text: 'When on, hovering a box shows its purpose in a few words, and the node panel opens "About this kind of step" with the whole of it: its purpose, what DSpatch does at that kind of step and what it requires. Off by default.',
+                text: 'When on, hovering a box shows a short description of the step — its purpose when that is short, otherwise its role’s summary — and the node panel opens "About this kind of step" with the whole of it: its purpose, what DSpatch does at that kind of step and what it requires. Off by default.',
               },
             ]}
           />
