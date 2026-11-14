@@ -672,3 +672,37 @@ test('an attempt keeps its reported end and local process across a save, and a f
   assert.equal(again?.attempts[0]?.runEnd, 'forced');
   assert.equal(again?.attempts[0]?.adapterProcess, true);
 });
+
+// DSP-209 S6: a handover turn DSpatch sent is kept apart from the person's prompt.
+test('a handover round-trips, an older file reads without one, and a damaged one is dropped', () => {
+  const { store, directory } = storeIn('handover');
+  const message = {
+    ordinal: 0,
+    dspatchRunId: 'run-1',
+    prompt: '',
+    answer: 'Continuing.',
+    deltaCount: 1,
+    toolEvents: 0,
+    terminalStatus: 'finished',
+    errorMessage: null,
+    totalTokens: null,
+    startedAtUtc: '2026-11-14T03:00:00.000Z',
+    finishedAtUtc: '2026-11-14T03:00:01.000Z',
+    resentContext: null,
+  };
+  const handover = { runId: 'chat-loop-1', fromStep: 'Do what was asked', text: 'DSpatch: handover' };
+  const original = conversation({ messages: [{ ...message, handover }, { ...message, ordinal: 1, dspatchRunId: 'run-2', prompt: 'thanks' }] });
+  store.write(original);
+  const back = store.read(original.conversationId).conversation?.messages ?? [];
+  assert.deepEqual(back[0]?.handover, handover);
+  assert.equal(back[0]?.prompt, '');
+  assert.equal('handover' in (back[1] ?? {}), false, 'a message the person sent has no handover');
+
+  const file = path.join(directory, `${original.conversationId}.json`);
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { messages: Record<string, unknown>[] };
+  saved.messages[0]!['handover'] = { runId: 7 };
+  fs.writeFileSync(file, JSON.stringify(saved), 'utf8');
+  const damaged = store.read(original.conversationId).conversation?.messages ?? [];
+  assert.equal(damaged.length, 2);
+  assert.equal('handover' in (damaged[0] ?? {}), false);
+});

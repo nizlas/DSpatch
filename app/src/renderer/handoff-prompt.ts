@@ -39,7 +39,9 @@ export function handoffPromptView(report: LoopControlReport): HandoffPromptView 
       {
         choice: 'interactive',
         label: 'Continue interactively',
-        title: 'End the loop run here as handed over, and continue the work with the agent in this chat.',
+        title:
+          'End the loop run here as handed over. DSpatch then sends the run’s mandate and what it ' +
+          'did to the agent in this chat, once, and the work continues there; you do not type it again.',
         answer: { ...bound, choice: 'interactive' },
       },
       {
@@ -50,6 +52,18 @@ export function handoffPromptView(report: LoopControlReport): HandoffPromptView 
       },
     ],
   };
+}
+
+/**
+ * DSP-209 S6: whether `Use loop` stays ticked after a run settled. A run handed over to
+ * interactive work unticks it, so the next ordinary message continues in the chat instead of
+ * starting a new loop run unasked. Every other ending leaves the tick as the person set it.
+ */
+export function loopStaysTickedAfter(outcome: {
+  readonly kind: string;
+  readonly result?: { readonly status: string };
+}): boolean {
+  return !(outcome.kind === 'finished' && outcome.result?.status === 'handed-over');
 }
 
 /**

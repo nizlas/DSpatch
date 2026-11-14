@@ -235,4 +235,26 @@ describe('context snapshot (DSP-209 S1)', () => {
     assert.equal(one.text.replaceAll(one.id, ''), two.text.replaceAll(two.id, ''), 'the same text apart from the id');
     assert.notEqual(one.id, two.id);
   });
+
+  // DSP-209 S6: a handover turn is DSpatch's text, and must never be quoted as the person's.
+  it('never presents a handover turn as the person\'s words, and names it under DSpatch\'s own heading', () => {
+    const handover = { runId: 'chat-loop-3', fromStep: 'Do what was asked', text: 'DSPATCH-HANDOVER-TEXT implement that' };
+    const withIt = buildContextSnapshot(
+      input({
+        messages: [
+          message(0, 'Use SQLite for the store.', 'Fine.'),
+          { ...message(1, '', 'Continuing with the plan.'), handover },
+        ],
+      }),
+    );
+    assert.ok(withIt !== null);
+    assert.doesNotMatch(withIt.text, /DSPATCH-HANDOVER-TEXT/);
+    assert.doesNotMatch(withIt.personWordsText, /DSPATCH-HANDOVER-TEXT|chat-loop-3/);
+    assert.deepEqual(withIt.parts.personWords.map((quote) => quote.messageNumber), [1]);
+    assert.equal(headingAbove(withIt.text, 'Message 2: DSpatch\'s handover from loop run chat-loop-3'), "--- Turns DSpatch sent itself: not the person's words ---");
+    // A conversation without one reads exactly as before.
+    const without = buildContextSnapshot(input());
+    assert.ok(without !== null);
+    assert.doesNotMatch(without.text, /Turns DSpatch sent itself/);
+  });
 });

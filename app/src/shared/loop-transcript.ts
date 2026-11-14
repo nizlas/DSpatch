@@ -620,7 +620,10 @@ export function describeLoopEnding(
           lead === '' && recordedOutcome !== null
             ? briefRunOutcome(recordedOutcome, terminalNodeId, outcome.result.terminalEnding)
             : null,
-        actionNote: recordFault(outcome),
+        // DSP-209 S6: a handover the chat could not take is the one thing to act on here.
+        actionNote:
+          [outcome.handoverNote ?? null, recordFault(outcome)].filter((note): note is string => note !== null).join(' ') ||
+          null,
         text: withRecordedOutcome(
           outcome,
           `${lead}${describeRunResult(outcome.result, measuredFileChanges(outcome))}`,

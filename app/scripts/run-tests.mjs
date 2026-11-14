@@ -82,6 +82,7 @@ const AREAS = {
       'loop-graph.test.ts',
       'loop-graph-open.test.ts',
       'handoff-prompt.test.ts',
+      'handover-turn.test.ts',
       'loop-handoff.test.ts',
       'loop-graph-write.test.ts',
       'loop-instruction.test.ts',

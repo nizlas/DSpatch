@@ -1411,6 +1411,15 @@ export interface TestFreshness {
 // them. `ConnectionStatus` is not part of a conversation and never reaches one.
 
 /** One turn of a saved conversation, in the order it was sent. */
+/** DSP-209 S6: a handover turn DSpatch sent after a loop run was handed over. */
+export interface StoredHandover {
+  /** The loop run that was handed over; at most one handover turn per run id. */
+  readonly runId: string;
+  /** The step that recommended continuing interactively. */
+  readonly fromStep: string;
+  readonly text: string;
+}
+
 export interface StoredMessage {
   /**
    * Position in the conversation, written down rather than left to array order.
@@ -1450,6 +1459,12 @@ export interface StoredMessage {
    * truth about those messages.
    */
   readonly resentContext: string | null;
+  /**
+   * DSP-209 S6: this turn was DSpatch's handover from a loop run, not the person's message.
+   * `prompt` is then empty, because the person typed nothing; `text` is exactly what was sent.
+   * Absent in files written before S6 and on every turn the person sent.
+   */
+  readonly handover?: StoredHandover;
   /**
    * DSP-145, DSP-146: the commands the agent ran in this turn, as DSpatch recorded them
    * (`requestedBy` says whether DSpatch started them). Absent in files written before
@@ -1721,6 +1736,8 @@ export interface UiAgentEvent {
    * told" about that message rather than in general.
    */
   readonly resentContext?: string;
+  /** DSP-209 S6: on `run.started`, this run is DSpatch's handover turn, not the person's message. */
+  readonly handover?: { readonly runId: string; readonly fromStep: string };
   /**
    * DSP-145: on `command.started` and `command.finished`, the command DSpatch's tool ran
    * for the agent, as the transcript's short action line needs it. The whole record stays
@@ -3154,6 +3171,11 @@ export type ChatLoopRunOutcome =
       readonly journalText: string;
       readonly workspaceNote: string;
       readonly recorded?: ChatLoopRecordInfo;
+      /**
+       * DSP-209 S6: why a run that ended handed over could not be continued in the chat, in one
+       * line. Absent when the handover turn was sent, and for every other ending.
+       */
+      readonly handoverNote?: string;
     }
   | {
       readonly kind: 'cancelled';

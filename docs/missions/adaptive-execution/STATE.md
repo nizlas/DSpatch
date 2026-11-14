@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 sent to the implementer (coordinator visit 8, call 21).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 sent to the implementer (coordinator visit 9, call 24).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), then the S5b commit made on coordinator visit 8 (`(DSP-209 S5b)` in `git log`, the commit after `7797e94`).
-- **Sub-goal in progress:** S6 (continue interactively without resubmitting), sent to the implementer on coordinator visit 8.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), then the S6 commit made on coordinator visit 9 (`(DSP-209 S6)` in `git log`, the commit after `7724c35`).
+- **Sub-goal in progress:** S7 (the chat knows what a loop did, plus carried clean-ups), sent to the implementer on coordinator visit 9.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
@@ -33,9 +33,9 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | reviewed | 1 | `3fb6574` |
 | S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | reviewed | 1 | `b07ce40` |
 | S5a | Handoff request in the engine: node capability, app tool on loop steps, hold, explicit answer, `handed-over` | — | reviewed | 1 | `7797e94` |
-| S5b | Handoff in the window: inline prompt and buttons; chat loop's work node enables it; role text; AGENT_BEHAVIOUR §4 status | S5a | reviewed | 1 | S5b commit after `7797e94` |
-| S6 | Continue interactively without resubmitting | S5a, S5b, S1 | pending | 0 | |
-| S7 | The chat knows what a loop did (one-time run recap) | S1 | pending | 0 | |
+| S5b | Handoff in the window: inline prompt and buttons; chat loop's work node enables it; role text; AGENT_BEHAVIOUR §4 status | S5a | reviewed | 1 | `7724c35` |
+| S6 | Continue interactively without resubmitting | S5a, S5b, S1 | reviewed | 1 | S6 commit after `7724c35` |
+| S7 | The chat knows what a loop did (one-time run recap) | S1 | in progress | 1 | |
 | S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | pending | 0 | |
 | S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | pending | 0 | |
 | S10 | Bounded fan-out node, isolated worktrees, one integrator | S8, S9 (S3 useful) | pending | 0 | |
@@ -65,7 +65,7 @@ Statuses:
 
 **S6 — Continue interactively.** On `handed-over`, one chat turn into the conversation's session, idempotent by run id, with the mandate verbatim, snapshot reference, the run's decisions/results/questions/changed files and the reason; shown as DSpatch's handover, not the person's message; *Use loop* unticked; same tool policy. *Acceptance:* exactly one turn; contains mandate and account; nothing typed; no resend after restart; stored apart from person's text as `resentContext` is. *Checks:* `chat-service` test, `conversation-store` parse test, type check.
 
-**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii) and S3's finding (iii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; move `SkippingRoute` / `skippingRoutesOf` off `outcomeInstructions`'s doc comment in `loop-chat.ts`; move the handoff code off `stepSessionId`'s doc comment in `loop-live.ts` (S5a finding i); make `chatLoopContextSnapshot` fall back to `null` with the failure recorded. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
+**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii) and S3's finding (iii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; move `SkippingRoute` / `skippingRoutesOf` off `outcomeInstructions`'s doc comment in `loop-chat.ts`; move the handoff code off `stepSessionId`'s doc comment in `loop-live.ts` (S5a finding i); make `chatLoopContextSnapshot` fall back to `null` with the failure recorded; S6 findings (i) the handover refused when the chat's current conversation is not the run's, and (ii) a handover send failing after the pre-check shown as one line in the chat. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
 
 **S8 — Reconcile parallelism.** Reconciliation section in `CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md` saying which §9 open decisions the vision settles (2–3 agents, worktrees for writers, single integrator, mailbox, slicer as a role), naming the first increment (one-level fan-out of one node with one integration point); GRAPH_FORMAT spec for `fanOut`, the slice block and S5's capability. Documentation only.
 
@@ -145,9 +145,19 @@ Statuses:
 - **Niclas tries:** through **Use loop**, a task suited to conversation (a choice only he can make) — prompt with the reason, bar reads "Waiting for you"; **Continue in the loop** — same step carries on, no second prompt; in a new run, **Continue interactively** — run ends as handed over (continuing in the chat without resending comes with S6).
 - **Steps skipped:** research (code settled it); independent verification (not asked for).
 
-### S6 — Continue interactively without resubmitting
+### S6 — Continue interactively without resubmitting — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 8 (call 21). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 8 (call 21); implemented (call 22, `done`); review `accept` (call 23); committed on coordinator visit 9 (call 24).
+- **What was done.** New `app/src/shared/handover-turn.ts`: `buildHandoverTurn()` (mandate verbatim, snapshot id as reference, steps and endings from the journal via `handoverStepsFrom()`, reason and last reply quoted as the agent's words, reply cut at 2,000 characters with the cut stated, changed files as names or "not known"/"none observed", supplied-by-DSpatch line, fields on one line) and `handoverLabel()`. `chat-service.ts`: `sendPrompt` and new `sendHandover()` share one `sendTurn` body (same session, provider, model, tool policy); `handoverRefusal()` refuses already-handed-over (this process or saved messages), no open session, a running chat turn; saved prompt `''`. `bridge.ts`: optional `StoredMessage.handover { runId, fromStep, text }` (decision 17); `conversation-store.ts` reads only this shape, older files as absent, damaged dropped. `project-host.ts`: records each step's reply by visit; on a not-cancelled `handed-over` ending builds the text and pre-checks; a refusal comes back as `handoverNote`, shown by `loop-transcript.ts` as "The task was not continued in the chat: …"; the send starts last in `finally`, after the working-copy lock is released. `context-snapshot.ts`: a handover never counts as the person's words; listed under "Turns DSpatch sent itself: not the person's words"; ids unchanged without one. DSP-121 recap labels it "DSpatch sent this, not the person"; output unchanged otherwise. Renderer: `turn-routing.ts` gives a handover's `run.started` an empty prompt; `HandoverMessage` label in `App.tsx` with the exact text behind a closed disclosure on saved messages; *Use loop* unticked after a handed-over ending (`loopStaysTickedAfter()`, decision 18); *Continue interactively* title corrected (S5b finding i). AGENT_BEHAVIOUR §4 status "decided and built". Tests: new `handover-turn.test.ts` (3); cases in `chat-service`, `conversation-store`, `context-snapshot`, `handoff-prompt`.
+- **Review verdict: accept.** Six criteria met by reading. Non-blocking findings, **carried into S7** (same files): (i) `handoverRefusal`/`sendHandover` do not check that the chat service's current conversation is the run's `session.conversationId`; if the person switched conversation during the run the handover could land in another one — add the run's conversation id to the refusal; (ii) a send that fails after the pre-check (provider refusal, a chat turn starting in the gap) goes only to the host log and ledger — show one line in the chat column. Stated limitation: (iii) `pendingHandover` relies on the adapter emitting `run.started` inside `send`, the same assumption as the DSP-121 recap.
+- **Checked, by the implementer only** (from `app/`, single files): `chat-service` whole file 72/72 (60 s timeout), `handover-turn` 3/3, `context-snapshot` 9/9, `conversation-store` 24/24, `handoff-prompt` 4/4, `loop-transcript` 48/48, `loop-handoff` 11/11, `run-record-store` 10/10, `loop-chat` 80/80; `npm run typecheck` exit 0. `JOURNAL_KINDS` unchanged. The reviewer read the code and did not rerun.
+- **Untested:** the host path from a handed-over ending to the send; the label's look; a real provider; Copilot (never offered the tool on loop steps).
+- **Niclas tries:** in a run that recommends interactive work, press **Continue interactively** — run ends handed over, *Use loop* unticks, the chat continues by itself with "Continued from the loop run — handed over by …", nothing typed; restart DSpatch and reopen — still shown as DSpatch's, no second send.
+- **Steps skipped:** research (code settled it); independent verification (not asked for).
+
+### S7 — The chat knows what a loop did
+
+- **Attempt 1:** briefed on coordinator visit 9 (call 24). Not yet reviewed.
 
 ## Requirements of the vision
 
@@ -172,9 +182,9 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Not repeated after refusal [S5a] — met by reviewed sub-goal
 - Recorded as handed over [S5a] — met by reviewed sub-goal (`handed-over` status, journal, record)
 - Safe point before the switch [S5a] — met by reviewed sub-goal (read after the turn settles; no step starts during the hold)
-- Continue once without pasting again [S6] — open
+- Continue once without pasting again [S6] — met by reviewed sub-goal (host path untested; Niclas's trial)
 - Chat gets the run's results, and the reverse [S7, S2] — open
-- No extra permissions on a mode change [S5, S6] — open
+- No extra permissions on a mode change [S5a, S6] — met by reviewed sub-goals (same `sendTurn` body, same session and policy)
 - Parallelism optional and bounded (2–3) [S10] — open
 - Branches get bounded assignments and ownership [S10] — open
 - Worktrees from a known base [S10] — open
@@ -197,7 +207,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — proposed **skipped** (Q2), not met
 - Reconcile the parallelism document [S8] — open
 
-**Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — implemented and agent-reviewed; awaits Niclas's trial; (2) small task continues in chat without resubmission [S4, S5, S6] — open; (3) branches exchange a finding before completion [S10, S11; scripted adapter only, live trial is Niclas's] — open; (4) combined result keeps scope and provenance [S10, S12] — open.
+**Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — implemented and agent-reviewed; awaits Niclas's trial; (2) small task continues in chat without resubmission [S4, S5a, S5b, S6] — implemented and agent-reviewed; awaits Niclas's trial; (3) branches exchange a finding before completion [S10, S11; scripted adapter only, live trial is Niclas's] — open; (4) combined result keeps scope and provenance [S10, S12] — open.
 
 ## Decisions taken by the mission
 
@@ -213,6 +223,8 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
 13. **"Done, check skipped" ends as `not-success` with its own sentences** (S4). Reason: `success` means "Assignment met"; `not-success` draws a neutral mark. Alternatives: `report-delivered` (would claim a report); a new `TerminalEnding` value (changes the graph-format contract for no gain).
 14. **One trailing `:` after the outcome name is accepted, by one shared reader** (S4). Reason: a step writing `RESULT: done-unchecked: docs only` otherwise lost its outcome and the skip; every existing name reads the same. Alternative: fix only the comment and leave colon-writers routed to the fallback.
+17. **The handover text is stored in `StoredMessage.handover`, with the saved prompt empty** (S6). Reason: a reader that ignores a flag can never quote DSpatch's text as the person's words. Alternative: keep the text in `prompt` with a flag.
+18. **After a handover the window unticks *Use loop*** (S6). Reason: no hidden mode where the box is ticked but the next send bypasses the loop. Alternative: leave it ticked and bypass.
 16. **`StepHold` `'handoff'` removed; the wait shows through `describeControl`** (S5b). Reason: a `StepHold` names why a step's release waits (`run-held`); a handoff waits after the step ran and has its own journal kinds. Alternative: a new reducer-state field producing `'handoff'` (changes existing control tests).
 15. **S5 split into S5a (engine) and S5b (window)** (coordination). Reason: S5 spans engine, tools, control port, record, IPC and renderer; one review round over all of it risks stalling, and the engine part can be tested with a scripted executor on its own. Alternative: one sub-goal (larger rework risk).
 12. **The bundled chat loop's check becomes skippable** (S4). The chat loop's notes record the interaction-model correction's "a successful work step always reaches check"; the vision (adaptive loops) and BACKLOG's near-term follow-up ("mandatory checking in the small chat loop is not evidence") supersede that for this graph, under Niclas's 13 November authorisation (BRIEF §3). The graph's notes are updated to say which decision they now record. A skipped check ends at a terminal that never reads as "met". Alternatives: keep check mandatory and demonstrate skips only in a new graph (leaves the vision's main case unbuilt); make check skippable in the development loop too (not asked for; that loop guards code changes).
@@ -228,7 +240,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 8 (call 21).** S5b reviewed and committed. S6 sent to the implementer, carrying S5b finding (i). When the review returns: if accepted, record and commit S6, then brief S7 (carries the misplaced-comment and start-path findings). If S6 stalls, nothing else depends on it; go on with S7, S8, S9. If a run ends before S6's review is recorded, the next run reconciles S6's files (`app/src/host/project-host.ts`, `app/src/main/chat-service.ts`, `app/src/main/conversation-store.ts`, `app/src/shared/bridge.ts`, `app/src/shared/context-snapshot.ts`, `app/src/renderer/App.tsx`, `app/src/renderer/handoff-prompt.ts`, their tests) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 9 (call 24).** S6 reviewed and committed. S7 sent to the implementer, with the carried clean-ups from S2, S3, S5a and S6. When the review returns: if accepted, record and commit S7, then brief S8 (documents only) and S9 (research). If a run ends before S7's review is recorded, the next run reconciles S7's files (`app/src/main/chat-service.ts`, `app/src/host/project-host.ts`, `app/src/shared/loop-chat.ts`, `app/src/main/loop-live.ts`, `app/src/shared/context-snapshot.ts`, `app/src/shared/bridge.ts`, renderer continuity files, their tests) before briefing again.
 
 ## Run log
 

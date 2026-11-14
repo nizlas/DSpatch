@@ -74,6 +74,7 @@ import type {
   StoredBaseline,
   StoredBaselineFile,
   StoredConversation,
+  StoredHandover,
   StoredMessage,
   StoredSession,
   StoredSessionProvider,
@@ -92,6 +93,7 @@ import type {
 import { WORKING_COPY_LOCK, type WorkingCopyLock } from './working-copy-lock';
 import { UncertainWorkStore } from './uncertain-work-store';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
+import { handoverLabel } from '../shared/handover-turn';
 import {
   CLAUDE_CHAT_MODEL,
   providerAvailability,
@@ -625,10 +627,20 @@ export function buildResendContext(input: {
           ? 'no ending was ever reported for this turn'
           : `ended as ${message.terminalStatus}`
       }) ---`,
-      'The person asked:',
-      message.prompt.trim() === ''
-        ? '[no prompt was recorded for this turn]'
-        : clip(message.prompt, limits.maxPromptChars, 'message'),
+      // DSP-209 S6: a handover turn is DSpatch's, never the person's; every other message
+      // reads exactly as it did.
+      ...(message.handover === undefined
+        ? [
+            'The person asked:',
+            message.prompt.trim() === ''
+              ? '[no prompt was recorded for this turn]'
+              : clip(message.prompt, limits.maxPromptChars, 'message'),
+          ]
+        : [
+            `DSpatch sent this, not the person: a handover from loop run ${message.handover.runId}, ` +
+              `after "${message.handover.fromStep}" recommended continuing interactively and the person chose to.`,
+            clip(message.handover.text, limits.maxPromptChars, 'handover'),
+          ]),
       'You answered:',
       message.answer.trim() === ''
         ? '[nothing was received for this turn before DSpatch stopped listening]'
@@ -825,6 +837,8 @@ interface TurnRecord {
    * it. The two are joined only in the string handed to the provider.
    */
   readonly resentContext: string | null;
+  /** DSP-209 S6: DSpatch's handover from a loop run, when this turn is one; `prompt` is then empty. */
+  readonly handover: StoredHandover | null;
   readonly startedAtUtc: string;
   deltaCount: number;
   deltaText: string;
@@ -1517,6 +1531,12 @@ export class ChatService {
 
   /** The recap attached to the send in flight, for the turn record to pick up. */
   private pendingResentContext: string | null = null;
+
+  /** DSP-209 S6: the handover the next `run.started` belongs to, the way the recap is carried. */
+  private pendingHandover: StoredHandover | null = null;
+
+  /** DSP-209 S6: run ids a handover was started for in this process, before any turn is saved. */
+  private readonly handoversStarted = new Set<string>();
 
   /** How this session relates to the conversation's earlier one. */
   private continuity: SessionContinuity = FIRST_SESSION_CONTINUITY;
@@ -3204,8 +3224,63 @@ export class ChatService {
     prompt: string,
     acknowledgedAttemptIds: readonly AttemptAcknowledgement[] = [],
   ): Promise<{ readonly dspatchRunId: string }> {
+    return this.sendTurn(prompt, acknowledgedAttemptIds, null);
+  }
+
+  /**
+   * DSP-209 S6: why a handover turn for this run would not be sent now, or `null` when it
+   * would. Asked before the loop run returns, so a refusal can be said on its ending.
+   */
+  handoverRefusal(runId: string): string | null {
+    // First, because it is true of the conversation whatever state the session is in.
+    if (
+      this.handoversStarted.has(runId) ||
+      (this.conversationId !== null &&
+        this.mergedMessages(this.conversationId).some((message) => message.handover?.runId === runId))
+    ) {
+      return 'the task was already handed over to this chat once.';
+    }
+    if (this.openSession() === null) {
+      return 'no chat session is open.';
+    }
+    if (this.runningTurn() !== undefined) {
+      return 'a chat turn is still running, and DSpatch does not interrupt it.';
+    }
+    return null;
+  }
+
+  /**
+   * DSP-209 S6: send DSpatch's handover from a loop run as one turn, through the ordinary
+   * send path: the same session, provider, model and tool policy, and nothing granted.
+   *
+   * At most once per run id, ever: refused when this process already started one and when
+   * the conversation already holds one, so a second ending signal or a restart sends nothing.
+   * The person typed nothing, so the saved prompt is empty and the text is kept apart in
+   * `handover`. Never throws: a refusal comes back in words.
+   */
+  async sendHandover(
+    handover: StoredHandover,
+  ): Promise<{ readonly sent: boolean; readonly reason: string | null }> {
+    const refusal = this.handoverRefusal(handover.runId);
+    if (refusal !== null) {
+      return { sent: false, reason: refusal };
+    }
+    this.handoversStarted.add(handover.runId);
+    try {
+      await this.sendTurn('', [], handover);
+      return { sent: true, reason: null };
+    } catch (error) {
+      return { sent: false, reason: describeError(error) };
+    }
+  }
+
+  private async sendTurn(
+    prompt: string,
+    acknowledgedAttemptIds: readonly AttemptAcknowledgement[],
+    handover: StoredHandover | null,
+  ): Promise<{ readonly dspatchRunId: string }> {
     const { adapter, session } = this.requireSession();
-    if (prompt.trim() === '') {
+    if (handover === null && prompt.trim() === '') {
       throw new Error('An empty prompt is not sent.');
     }
     // DSP-149: a model the provider does not list for this account is refused here,
@@ -3264,6 +3339,7 @@ export class ChatService {
     // `run.started` is emitted while `send` is still pending, so the turn record
     // is created by the event handler. The prompt is left here for it to pick up.
     this.pendingPrompt = prompt;
+    this.pendingHandover = handover;
     // What actually goes to the provider. When the earlier provider session could
     // not be resumed, the model has been told nothing, so DSpatch's own record of
     // the conversation goes in front of the first message. The user's text is kept
@@ -3271,8 +3347,10 @@ export class ChatService {
     // not something the user wrote.
     const resent = this.pendingResendContext;
     this.pendingResentContext = resent;
-    const sentText = resent === null ? prompt : `${resent}\n\n${prompt}`;
-    const attempt = ledger.open('agent-turn', promptLabel(prompt), {
+    // DSP-209 S6: a handover sends DSpatch's own text, which is never the person's prompt.
+    const body = handover === null ? prompt : handover.text;
+    const sentText = resent === null ? body : `${resent}\n\n${body}`;
+    const attempt = ledger.open('agent-turn', promptLabel(handover === null ? prompt : handoverLabel(handover.fromStep)), {
       adapterProcess: adapter.runsLocalProcess === true,
     });
     this.pendingAttemptId = attempt.attemptId;
@@ -3294,7 +3372,9 @@ export class ChatService {
       lockHandedOver = true;
       // DSP-147: a steering message that waited for the previous turn to end went in as
       // this message; it is recorded and shown as sent that way, now that it was taken.
-      this.noteSteeringSentAsNextMessage(prompt);
+      if (handover === null) {
+        this.noteSteeringSentAsNextMessage(prompt);
+      }
       // Only once the provider has taken it. A send that was refused resent
       // nothing, so the next attempt must carry the recap again.
       this.pendingResendContext = null;
@@ -3333,6 +3413,7 @@ export class ChatService {
       // keeps a send that threw before any run existed from attaching its recap to
       // somebody else's turn.
       this.pendingResentContext = null;
+      this.pendingHandover = null;
     }
   }
 
@@ -5973,6 +6054,7 @@ export class ChatService {
         dspatchRunId: event.dspatchRunId,
         prompt: this.pendingPrompt,
         resentContext: this.pendingResentContext,
+        handover: this.pendingHandover,
         startedAtUtc: event.at,
         deltaCount: 0,
         deltaText: '',
@@ -6183,12 +6265,19 @@ export class ChatService {
             }
           })()
         : null;
-    this.options.send(
+    const shown =
       event.type === 'run.started' && this.pendingResentContext !== null
         ? { ...ui, resentContext: this.pendingResentContext }
         : reported === null
           ? ui
-          : { ...ui, modelReported: reported },
+          : { ...ui, modelReported: reported };
+    // DSP-209 S6: a handover turn says so on its `run.started`, so the window shows it as
+    // DSpatch's and never puts the last thing the person typed in front of it.
+    const handover = this.pendingHandover;
+    this.options.send(
+      event.type === 'run.started' && handover !== null
+        ? { ...shown, handover: { runId: handover.runId, fromStep: handover.fromStep } }
+        : shown,
     );
   }
 }
@@ -6301,6 +6390,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     dspatchRunId: turn.dspatchRunId,
     prompt: turn.prompt,
     resentContext: turn.resentContext,
+    ...(turn.handover === null ? {} : { handover: turn.handover }),
     // The final message when there is one, because it is the provider's own complete
     // text; the assembled deltas otherwise, because a turn that was interrupted has
     // only those and they are still what was received.

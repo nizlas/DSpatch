@@ -2678,3 +2678,88 @@ test('SIMULATED: a stopped turn is saved with how it ended, and reads as it did 
   assert.equal(message.terminalEnd, 'stopped');
   assert.equal(savedTurnStatusLabel(message), turnStatusLabel({ status: 'cancelled', end: 'stopped' }));
 });
+
+/**
+ * DSP-209 S6: after a loop run was handed over, DSpatch sends one turn into the chat, so the
+ * agent continues the task without the person typing it again. Through the ordinary send path,
+ * at most once per run id, and saved as DSpatch's handover rather than as the person's words.
+ */
+test('SIMULATED: a handover is sent once, saved apart from the person, and never sent again', async () => {
+  const name = 'handover-once';
+  const workspace = makeDir(name);
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  const store = storeFor(name);
+  const first = serviceOver(`${name}-1`, workspace, store);
+  const session = await first.service.startChatSession({ kind: 'folder', path: workspace });
+  const handover = {
+    runId: 'chat-loop-7',
+    fromStep: 'Do what was asked',
+    text: '=== DSpatch: handover from loop run chat-loop-7 ===\n| implement that',
+  };
+  assert.deepEqual(await first.service.sendHandover(handover), { sent: true, reason: null });
+  assert.deepEqual(first.adapter.sent, [handover.text], 'the provider is sent exactly the handover text');
+  first.adapter.emit({ type: 'assistant.message', text: 'Continuing: here is the plan.' });
+  first.adapter.emit({ type: 'run.finished', status: 'finished' });
+
+  const again = await first.service.sendHandover(handover);
+  assert.equal(again.sent, false);
+  assert.match(again.reason ?? '', /already handed over/);
+  assert.equal(first.adapter.sent.length, 1, 'a second ending signal sends nothing');
+
+  const saved = store.read(session.conversationId).conversation?.messages ?? [];
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]?.prompt, '', 'the person typed nothing');
+  assert.deepEqual(saved[0]?.handover, handover);
+  await first.service.dispose();
+
+  // A restart reads the saved handover and sends nothing.
+  const second = serviceOver(`${name}-2`, workspace, store);
+  await second.service.resumeConversation(session.conversationId);
+  assert.match(second.service.handoverRefusal('chat-loop-7') ?? '', /already handed over/);
+  assert.equal((await second.service.sendHandover(handover)).sent, false);
+  assert.deepEqual(second.adapter.sent, []);
+  await second.service.dispose();
+});
+
+test('SIMULATED: a handover does not interrupt a chat turn that is still running', async () => {
+  const { service, adapter, logs } = await openFakeSession('handover-busy');
+  await service.sendPrompt('a turn that is still going');
+  const refused = await service.sendHandover({ runId: 'chat-loop-8', fromStep: 'Work', text: 'handover' });
+  assert.equal(refused.sent, false);
+  assert.match(refused.reason ?? '', /still running/);
+  assert.deepEqual(adapter.sent, ['a turn that is still going']);
+  void logs;
+  await service.dispose();
+});
+
+test('SIMULATED: the recap labels a handover as DSpatch\'s, and reads every other message as before', async () => {
+  const { buildResendContext } = await import('../src/main/chat-service.ts');
+  const base = {
+    ordinal: 0,
+    dspatchRunId: 'r0',
+    prompt: 'what does this do',
+    answer: 'It dispatches.',
+    deltaCount: 1,
+    toolEvents: 0,
+    terminalStatus: 'finished',
+    errorMessage: null,
+    totalTokens: null,
+    startedAtUtc: '2026-11-14T03:00:00.000Z',
+    finishedAtUtc: '2026-11-14T03:00:01.000Z',
+    resentContext: null,
+  };
+  const input = { workspacePath: 'C:/p', reviewedDiff: null, test: null, reason: 'a test' };
+  const plain = buildResendContext({ ...input, messages: [base] }) ?? '';
+  assert.match(plain, /The person asked:\nwhat does this do/);
+  const withHandover =
+    buildResendContext({
+      ...input,
+      messages: [
+        base,
+        { ...base, ordinal: 1, dspatchRunId: 'r1', prompt: '', handover: { runId: 'chat-loop-9', fromStep: 'Work', text: 'DSPATCH-HANDOVER-TEXT' } },
+      ],
+    }) ?? '';
+  assert.match(withHandover, /DSpatch sent this, not the person: a handover from loop run chat-loop-9/);
+  assert.match(withHandover, /DSPATCH-HANDOVER-TEXT/);
+  assert.equal(withHandover.split('The person asked:').length - 1, 1, 'only the person\'s own message is labelled theirs');
+});

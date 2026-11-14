@@ -62,6 +62,11 @@ export interface TurnState {
    * told — is a question about a particular message.
    */
   readonly resentContext: string | null;
+  /**
+   * DSP-209 S6: this turn is DSpatch's handover from a loop run, not a message from the
+   * person; `prompt` is then empty. `null` for every turn the person sent.
+   */
+  readonly handover: { readonly runId: string; readonly fromStep: string } | null;
   readonly answer: string;
   readonly deltaCount: number;
   readonly toolsStarted: number;
@@ -179,8 +184,11 @@ export function routeEvent(
     const turn: TurnState = {
       dspatchRunId: event.dspatchRunId,
       dspatchSessionId: event.dspatchSessionId,
-      prompt: promptForNewRun,
+      // DSP-209 S6: a handover turn DSpatch started has no prompt of the person's, so the
+      // composer's last text is not put in front of it.
+      prompt: event.handover === undefined ? promptForNewRun : '',
       resentContext: event.resentContext ?? null,
+      handover: event.handover ?? null,
       answer: '',
       deltaCount: 0,
       toolsStarted: 0,

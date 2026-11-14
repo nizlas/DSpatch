@@ -36,6 +36,7 @@ import type {
   SampleProjectsView,
   ScriptedRunReport,
   StartSessionRequest,
+  StoredHandover,
   StoredRunRecordEntry,
   StoredSession,
   StoredSessionProvider,
@@ -170,6 +171,7 @@ import {
 } from '../main/run-record-store';
 import { readGitWorkingCopyState } from '../main/git-state';
 import { buildContextSnapshot, earlierRunFromRecord, type ContextSnapshot } from '../shared/context-snapshot';
+import { buildHandoverTurn, handoverStepsFrom } from '../shared/handover-turn';
 import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
@@ -3075,6 +3077,10 @@ function registerLoopMethods(): void {
       let endedStatus: RunStatus | null = null;
       let endedNote = 'The run ended without saying how.';
       let endedTerminal: string | null = null;
+      // DSP-209 S6: each step's reply by visit, for the handover; and the handover itself,
+      // sent only once the run has let go of the working copy, in the `finally` below.
+      const repliesByVisit = new Map<string, string>();
+      let handoverToSend: StoredHandover | null = null;
       const governed = new GovernedRunControl(loopControl, resourceGovernor(), abort.signal);
       const began = loopControl.beginRun(request.runId, abort.signal);
       if (!began.started) {
@@ -3273,6 +3279,7 @@ function registerLoopMethods(): void {
           // it as the answer to the mandate, so it is forwarded as it was written.
           onAgentReply: (reply) => {
             const nodeLabel = lookup.node(reply.nodeId)?.label ?? reply.nodeId;
+            repliesByVisit.set(`${reply.nodeId}:${String(reply.occurrence)}`, reply.text);
             if (reply.terminalEnd === 'unconfirmed') {
               unconfirmedSteps.push({ sessionId: reply.sessionId, nodeLabel });
             }
@@ -3336,12 +3343,41 @@ function registerLoopMethods(): void {
         endedNote = cancelled
           ? `The run was cancelled. Files stay as they are. ${recorded.ending.outcomeText}`
           : recorded.ending.outcomeText;
+        // DSP-209 S6: a run the person handed over continues in this chat, once. Decided here
+        // so a refusal can be said on the run's own ending; sent in `finally`, after the run
+        // has released the working copy the chat turn needs.
+        let handoverNote: string | null = null;
+        const handedOver = delivery.result.handedOver;
+        if (!cancelled && delivery.result.status === 'handed-over' && handedOver !== null) {
+          const fromStep = lookup.node(handedOver.nodeId)?.label ?? handedOver.nodeId;
+          const snapshots = recorded.ending.snapshots;
+          const text = buildHandoverTurn({
+            runId: request.runId,
+            mandate: request.mandate,
+            contextSnapshotId: contextSnapshot?.id ?? null,
+            steps: handoverStepsFrom(delivery.result.journal, (nodeId) => lookup.node(nodeId)?.label ?? nodeId),
+            fromStep,
+            reason: handedOver.reason,
+            lastReply: repliesByVisit.get(`${handedOver.nodeId}:${String(handedOver.occurrence)}`) ?? null,
+            changedPaths:
+              snapshots.beforeId === null || snapshots.afterId === null
+                ? null
+                : [...snapshots.changed, ...snapshots.added, ...snapshots.removed].map((file) => file.relPath),
+          });
+          const refusal = chatService.handoverRefusal(request.runId);
+          if (refusal === null) {
+            handoverToSend = { runId: request.runId, fromStep, text };
+          } else {
+            handoverNote = `The task was not continued in the chat: ${refusal}`;
+          }
+        }
         return {
           kind: cancelled ? 'cancelled' : 'finished',
           result: delivery.result,
           journalText: delivery.journalText,
           workspaceNote,
           recorded,
+          ...(handoverNote === null || cancelled ? {} : { handoverNote }),
         };
       } catch (error) {
         // The record is closed on this path too. A run that threw still happened in
@@ -3402,6 +3438,16 @@ function registerLoopMethods(): void {
          * is the chat.
          */
         offerReadyAgainAfterRun(request.definitionKey ?? null);
+        // DSP-209 S6: last, once the run has ended everywhere and let go of the working copy.
+        // Not awaited: the run's answer to the window does not wait for the chat turn.
+        const handover = handoverToSend;
+        if (handover !== null) {
+          void chatService.sendHandover(handover).then((sent) => {
+            if (!sent.sent) {
+              log(`[loop] ${request.runId}: the handover turn was not sent: ${sent.reason ?? 'no reason given'}`);
+            }
+          });
+        }
       }
     },
   );

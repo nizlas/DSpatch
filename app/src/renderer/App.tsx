@@ -106,6 +106,8 @@ import {
   type TurnState,
 } from './turn-routing';
 import { HandoffPrompt, LoopControlBar, useLoopControl } from './LoopControlBar';
+import { loopStaysTickedAfter } from './handoff-prompt';
+import { handoverLabel } from '../shared/handover-turn';
 import { Markdown } from './Markdown';
 import {
   decideScroll,
@@ -2351,6 +2353,12 @@ function Workbench({
           // Not guarded by the generation: a run whose wait was abandoned still ends,
           // and its ending belongs on the entry that echoed its mandate.
           applyLoopTurnEvent({ kind: 'run-settled', runId, outcome });
+          // DSP-209 S6: handed over means the work goes on in this chat, so the tick comes off
+          // and the loop stops standing ready, exactly as unticking it by hand does.
+          if (!loopStaysTickedAfter(outcome)) {
+            setUseLoop(false);
+            void window.dspatch.prepareChatLoop(false, null).catch(() => undefined);
+          }
           if (sendGeneration.current === generation) {
             if (outcome.kind === 'refused' || outcome.kind === 'failed') {
               setActionError(
@@ -4060,7 +4068,12 @@ function TurnFactsSection({ turns }: { readonly turns: readonly TurnState[] }): 
             <li className="files__row" key={turn.dspatchRunId}>
               <div>
                 <p className="files__path">
-                  {String(index + 1)}. {turn.prompt.length > 80 ? `${turn.prompt.slice(0, 80)}…` : turn.prompt}
+                  {String(index + 1)}.{' '}
+                  {turn.handover !== null
+                    ? handoverLabel(turn.handover.fromStep)
+                    : turn.prompt.length > 80
+                      ? `${turn.prompt.slice(0, 80)}…`
+                      : turn.prompt}
                 </p>
                 <p className="files__meta">
                   {turn.status} · {String(turn.deltaCount)} text fragments · {String(turn.toolsFinished)} of{' '}
@@ -4915,10 +4928,14 @@ function RestoredMessage({
           </span>
         </p>
       )}
-      <UserMessage
-        text={message.prompt === '' ? '(no prompt recorded for this turn)' : message.prompt}
-        testId={`${at}-prompt`}
-      />
+      {message.handover === undefined ? (
+        <UserMessage
+          text={message.prompt === '' ? '(no prompt recorded for this turn)' : message.prompt}
+          testId={`${at}-prompt`}
+        />
+      ) : (
+        <HandoverMessage fromStep={message.handover.fromStep} text={message.handover.text} testId={`${at}-handover`} />
+      )}
       {/* AC#5's second half: a saved reply is read back formatted, not as the raw
           characters it was stored as. */}
       {/* DSP-165: the saved outcome in the live turn's words, so a stopped turn reads the same
@@ -7208,6 +7225,33 @@ const CLICK_SLOP_PX = 4;
  * problem as a reply arriving, so it is answered by the same module:
  * `scrollTopAfterResize` holds the message where it was on screen.
  */
+/**
+ * DSP-209 S6: in place of the person's message, the turn DSpatch sent after a loop run was
+ * handed over. Labelled as DSpatch's, never drawn as the person's bubble; the exact text
+ * sits behind a disclosure, closed, where the saved message has it.
+ */
+function HandoverMessage({
+  fromStep,
+  text,
+  testId,
+}: {
+  readonly fromStep: string;
+  readonly text: string | null;
+  readonly testId: string;
+}): JSX.Element {
+  return (
+    <div className="turn__handover" data-ev={testId}>
+      <p className="app__note">{handoverLabel(fromStep)}</p>
+      {text === null ? null : (
+        <details>
+          <summary>What DSpatch sent ({String(text.length)} characters)</summary>
+          <pre className="turn__answer">{text}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function UserMessage({
   text,
   testId,
@@ -7456,7 +7500,11 @@ function Turn({
           </p>
         </details>
       )}
-      <UserMessage text={turn.prompt} testId={`turn-${String(index)}-prompt`} />
+      {turn.handover === null ? (
+        <UserMessage text={turn.prompt} testId={`turn-${String(index)}-prompt`} />
+      ) : (
+        <HandoverMessage fromStep={turn.handover.fromStep} text={null} testId={`turn-${String(index)}-handover`} />
+      )}
       {/*
         The reply, as Markdown, while it streams and afterwards (DSP-59 #2, #5).
         The element keeps its `data-ev` name and its text, so what the scripted runs

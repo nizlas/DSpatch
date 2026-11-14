@@ -31,7 +31,7 @@ import type { StoredMessage } from './bridge';
 import type { ParsedRunRecord } from './loop-record';
 
 /** What the builder reads of a saved message. A `StoredMessage` is one. */
-export type SnapshotMessage = Pick<StoredMessage, 'ordinal' | 'prompt' | 'answer' | 'resentContext'>;
+export type SnapshotMessage = Pick<StoredMessage, 'ordinal' | 'prompt' | 'answer' | 'resentContext' | 'handover'>;
 
 /** An earlier loop run started from the same conversation, as S2 maps it from the run record. */
 export interface EarlierRunSummary {
@@ -340,6 +340,14 @@ export function buildContextSnapshot(given: ContextSnapshotInput): ContextSnapsh
   }
 
   const instructionReferences = [...input.instructionFiles];
+  // DSP-209 S6: turns DSpatch sent itself, named under its own heading, never as the person's.
+  const handovers = ordered
+    .filter((message) => message.handover !== undefined)
+    .map((message) => ({
+      messageNumber: message.ordinal + 1,
+      runId: oneLine(message.handover?.runId ?? ''),
+      fromStep: oneLine(message.handover?.fromStep ?? ''),
+    }));
   const messageNumbers = [
     ...new Set([...personWords, ...agentExcerpts].map((quote) => quote.messageNumber)),
   ].sort((left, right) => left - right);
@@ -347,6 +355,7 @@ export function buildContextSnapshot(given: ContextSnapshotInput): ContextSnapsh
   const body = renderBody({
     where,
     mandate: mandate.text,
+    handovers,
     personWords,
     agentExcerpts,
     earlierRuns,
@@ -389,6 +398,10 @@ export function buildContextSnapshot(given: ContextSnapshotInput): ContextSnapsh
  * with that recap, the recap is taken off, because it is DSpatch talking, not the person.
  */
 function typedText(message: SnapshotMessage): string {
+  // DSP-209 S6: a handover turn is DSpatch's own text; the person typed nothing in it.
+  if (message.handover !== undefined) {
+    return '';
+  }
   const recap = message.resentContext;
   if (recap !== null && recap !== '' && message.prompt.startsWith(recap)) {
     return message.prompt.slice(recap.length).replace(/^\s+/, '');
@@ -415,6 +428,7 @@ function quoted(text: string): string[] {
 function renderBody(parts: {
   readonly where: string;
   readonly mandate: string;
+  readonly handovers: readonly { readonly messageNumber: number; readonly runId: string; readonly fromStep: string }[];
   readonly personWords: readonly SnapshotQuote[];
   readonly agentExcerpts: readonly SnapshotQuote[];
   readonly earlierRuns: readonly EarlierRunSummary[];
@@ -510,6 +524,20 @@ function renderBody(parts: {
       : relevant.map((cut) => `- ${cut.account}`)),
   ];
 
+  // DSP-209 S6: only when there is one, so every other snapshot reads exactly as before.
+  const sentByDspatch =
+    parts.handovers.length === 0
+      ? []
+      : [
+          "--- Turns DSpatch sent itself: not the person's words ---",
+          ...parts.handovers.map(
+            (handover) =>
+              `Message ${String(handover.messageNumber)}: DSpatch's handover from loop run ` +
+              `${handover.runId}, after "${handover.fromStep}" recommended continuing interactively ` +
+              'and the person chose to. Its text is in that message, not repeated here.',
+          ),
+          '',
+        ];
   const full = [
     ...about,
     '',
@@ -517,6 +545,7 @@ function renderBody(parts: {
     '',
     ...person,
     '',
+    ...sentByDspatch,
     ...agent,
     '',
     ...runs,
@@ -550,7 +579,14 @@ function inputFingerprint(input: ContextSnapshotInput, limits: ContextSnapshotLi
     JSON.stringify([
       input.conversationId,
       input.mandate,
-      ordered.map((message) => [message.ordinal, message.prompt, message.answer, message.resentContext]),
+      ordered.map((message) => [
+        message.ordinal,
+        message.prompt,
+        message.answer,
+        message.resentContext,
+        // DSP-209 S6: only where there is one, so every id made before it stays the same.
+        ...(message.handover === undefined ? [] : [message.handover.runId, message.handover.text]),
+      ]),
       input.earlierRuns.map((run) => [
         run.runId,
         run.mandate,

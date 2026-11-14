@@ -14,6 +14,7 @@ import type {
   PartialWriteInfo,
   StoredAttempt,
   StoredConversation,
+  StoredHandover,
   StoredSession,
   StoredSessionProvider,
   StoredSteering,
@@ -773,6 +774,19 @@ function parseConversation(raw: Record<string, unknown>, filePath: string): Stor
   };
 }
 
+/** DSP-209 S6: the handover field when it has the shape this build writes, otherwise nothing. */
+function storedHandoverField(value: unknown): { readonly handover?: StoredHandover } {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const runId = value['runId'];
+  const fromStep = value['fromStep'];
+  const text = value['text'];
+  return typeof runId === 'string' && runId !== '' && typeof fromStep === 'string' && typeof text === 'string'
+    ? { handover: { runId, fromStep, text } }
+    : {};
+}
+
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
@@ -803,6 +817,9 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
       // both cases: no record was kept of a recap, because there was none.
       resentContext:
         typeof entry['resentContext'] === 'string' ? entry['resentContext'] : null,
+      // DSP-209 S6: a handover turn DSpatch sent. Absent in files written before it, and kept
+      // only in the shape this build writes, so a damaged field reads as no handover.
+      ...storedHandoverField(entry['handover']),
       answer: asString(entry['answer'], ''),
       deltaCount: asNumber(entry['deltaCount'], 0),
       toolEvents: asNumber(entry['toolEvents'], 0),

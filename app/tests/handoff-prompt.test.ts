@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { handoffPromptView, sendHandoffAnswer } from '../src/renderer/handoff-prompt';
+import { handoffPromptView, loopStaysTickedAfter, sendHandoffAnswer } from '../src/renderer/handoff-prompt';
 import {
   initialControlState,
   type HandoffAnswerAction,
@@ -83,5 +83,17 @@ describe('the handoff prompt in the chat (DSP-209 S5b)', () => {
       throw new Error('the host is not reachable');
     }, view.choices[1]!);
     assert.match(failed ?? '', /could not be sent: the host is not reachable/);
+  });
+
+  // DSP-209 S6: what the button promises is what happens, and the tick follows the handover.
+  it('says that DSpatch sends the run\'s material to the chat once, and unticks Use loop only on a handover', () => {
+    const view = handoffPromptView(report(true));
+    assert.match(view?.choices[0]?.title ?? '', /sends the run’s mandate and what it did to the agent in this chat, once/);
+    assert.equal(loopStaysTickedAfter({ kind: 'finished', result: { status: 'handed-over' } }), false);
+    for (const status of ['completed', 'limit-reached', 'runtime-fault']) {
+      assert.equal(loopStaysTickedAfter({ kind: 'finished', result: { status } }), true);
+    }
+    assert.equal(loopStaysTickedAfter({ kind: 'cancelled', result: { status: 'handed-over' } }), true);
+    assert.equal(loopStaysTickedAfter({ kind: 'refused' }), true);
   });
 });
