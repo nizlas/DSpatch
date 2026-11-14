@@ -89,6 +89,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'declaredFailures',
     // DSP-209 S5a: what the step may do beyond its role, after the names it may answer with.
     'capabilities',
+    // DSP-209 S21: what the step is asked to declare in its reply, beside what it may do.
+    'declares',
     // DSP-209 S10a: how the step's work is split, beside what else it may do.
     'fanOut',
     'report',

@@ -145,6 +145,7 @@ import {
   SKIPS_HELP,
   SELECTS_MODEL_HELP,
   SUGGEST_INTERACTIVE_HELP,
+  DECLARES_SUBGOAL_HELP,
 } from '../shared/loop-node-help';
 import { GraphCanvas } from './GraphCanvas';
 import { Markdown } from './Markdown';
@@ -3619,6 +3620,28 @@ function NodeInspector({
               {(node.capabilities ?? []).includes('suggest-interactive')
                 ? SUGGEST_INTERACTIVE_HELP.detail
                 : SUGGEST_INTERACTIVE_HELP.whenEmpty}
+            </span>
+          </label>
+        )}
+
+        {node.kind !== 'agent' ? null : (
+          <label className="check setting">
+            <input
+              type="checkbox"
+              checked={(node.declares ?? []).includes('subgoal')}
+              onChange={(event) =>
+                onChange({
+                  ...node,
+                  declares: event.target.checked ? ['subgoal'] : undefined,
+                })
+              }
+            />
+            <span className="setting-name">
+              {DECLARES_SUBGOAL_HELP.name} <code>declares: subgoal</code>
+            </span>
+            <span className="muted">
+              {' '}
+              {(node.declares ?? []).includes('subgoal') ? DECLARES_SUBGOAL_HELP.detail : DECLARES_SUBGOAL_HELP.whenEmpty}
             </span>
           </label>
         )}

@@ -1722,6 +1722,70 @@ body {
   color: var(--text);
 }
 
+/*
+ * DSP-209 S21: a step's report in a loop run's chat entry. A step card is framed lightly
+ * and labelled, so it never reads as the run's final card; attention is a word and a border.
+ */
+.step-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.625rem;
+  border-left: 3px solid var(--line);
+  user-select: text;
+}
+
+.step-card--combined {
+  border-left-color: var(--ok);
+}
+
+.step-card--attention {
+  border-left-color: var(--unknown);
+}
+
+.step-card--failure {
+  border-left-color: var(--no);
+}
+
+.step-card__label {
+  margin: 0;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.step-card__heading {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.step-card__attention {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--unknown);
+}
+
+.step-card--failure .step-card__attention {
+  color: var(--no);
+}
+
+.step-card__toggle {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.step-card__branches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-left: 0.5rem;
+}
+
 /* DSP-209 S20: a fan-out's branches, in the editor, the chat and the branch window. */
 .branch-list {
   display: flex;

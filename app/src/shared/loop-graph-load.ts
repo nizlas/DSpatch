@@ -31,6 +31,7 @@ import {
   FAN_OUT_ISOLATIONS,
   FAN_OUT_MAX_CONCURRENT,
   NODE_CAPABILITIES,
+  NODE_DECLARATIONS,
   NODE_KINDS,
   REPORT_WRITTEN_BY_SELF,
   REQUIREMENTS,
@@ -50,6 +51,7 @@ import type {
   FanOutIsolation,
   FanOutPolicy,
   NodeCapability,
+  NodeDeclaration,
   FailureKind,
   LoopEdge,
   LoopGraph,
@@ -585,6 +587,8 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
     }
     // DSP-209 S5a. A list of known capability names, on an agent node only.
     const capabilities = parseCapabilities(entry['capabilities'], `${pointer}/capabilities`, nodeId, kind as NodeKind, findings);
+    // DSP-209 S21. A list of known declaration names, on an agent node only.
+    const declares = parseDeclares(entry['declares'], `${pointer}/declares`, nodeId, kind as NodeKind, findings);
     // DSP-209 S10a. The shape here; what it points at is checked with the whole graph.
     const fanOut = parseFanOut(entry['fanOut'], `${pointer}/fanOut`, nodeId, kind as NodeKind, findings);
 
@@ -595,6 +599,7 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       ...(nonEmptyString(entry['purpose']) ? { purpose: entry['purpose'] as string } : {}),
       ...(required === true ? { required: true as const } : {}),
       ...(capabilities === null ? {} : { capabilities }),
+      ...(declares === null ? {} : { declares }),
       ...(fanOut === null ? {} : { fanOut }),
       ...(ending ? { ending } : {}),
       ...(role ? { role } : {}),
@@ -1252,6 +1257,53 @@ function parseCapabilities(
     }
     if (!items.includes(entry as NodeCapability)) {
       items.push(entry as NodeCapability);
+    }
+  });
+  return items.length === 0 ? null : items;
+}
+
+/**
+ * DSP-209 S21: a node's `declares`. `null` for none written, or an empty list, so a node
+ * without it parses exactly as before. Agent nodes only: only an agent writes a reply.
+ */
+function parseDeclares(
+  value: unknown,
+  pointer: string,
+  nodeId: string,
+  kind: NodeKind,
+  findings: Findings,
+): readonly NodeDeclaration[] | null {
+  if (value === undefined) {
+    return null;
+  }
+  const known = NODE_DECLARATIONS.map((name) => `"${name}"`).join(', ');
+  if (!Array.isArray(value)) {
+    findings.error('bad-declares', pointer, `Node "${nodeId}": "declares" must be a list of names: ${known}.`, { nodeId });
+    return null;
+  }
+  if (value.length > 0 && kind !== 'agent') {
+    findings.error(
+      'declares-on-a-non-agent',
+      pointer,
+      `Node "${nodeId}" is a ${kind} node and gives "declares", which only an agent step can use: ` +
+        `it asks the agent for a line in its reply. Remove "declares" from this node.`,
+      { nodeId },
+    );
+    return null;
+  }
+  const items: NodeDeclaration[] = [];
+  value.forEach((entry, index) => {
+    if (!(NODE_DECLARATIONS as readonly unknown[]).includes(entry)) {
+      findings.error(
+        'unknown-declaration',
+        `${pointer}/${String(index)}`,
+        `Node "${nodeId}": ${JSON.stringify(entry)} is not a declaration DSpatch knows. Known: ${known}.`,
+        { nodeId },
+      );
+      return;
+    }
+    if (!items.includes(entry as NodeDeclaration)) {
+      items.push(entry as NodeDeclaration);
     }
   });
   return items.length === 0 ? null : items;

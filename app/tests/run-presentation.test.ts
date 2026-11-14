@@ -69,8 +69,9 @@ const FAN_OUT: readonly Line[] = [
   branch('branch-ended', 'fan', 1, 'a', 'finished'),
   branch('branch-ended', 'fan', 1, 'b', 'finished'),
   ['node-produced', 'fan', { product: 'success' }],
-  edge('e2', 'fan', 'merge', { delivers: 'fan' }),
-  entered('merge', 1, 'agent', 'e2'),
+  // Decision 47 (S21): the fan-out's success edge, straight to a step whose drawn role is the integrator.
+  edge('e2', 'fan', 'merge', { delivers: 'fan', when: 'success' }),
+  ['node-entered', 'merge', { kind: 'agent', occurrence: 1, callId: 1, label: 'MERGE', arrivedBy: 'e2', role: 'project-integrate' }],
   ['node-produced', 'merge', { product: 'outcome', outcome: 'done', outcomeSource: 'step-declared' }],
   edge('e3', 'merge', 'end'),
   entered('end', 1, 'terminal', 'e3'),
@@ -154,6 +155,23 @@ describe('run presentation (DSP-209 S16)', () => {
     const byId = new Map(branchViewsFromJournal(RUN, lines).map((item) => [item.sliceId, item.messages]));
     assert.deepEqual(byId.get('a'), { sent: 1, delivered: 0, acknowledged: 0, undelivered: 0 });
     assert.deepEqual(byId.get('b'), { sent: 0, delivered: 0, acknowledged: 0, undelivered: 1 });
+  });
+
+  it('names the integrator only by the fan-out’s success edge and the integrator role (decision 47)', () => {
+    const withoutRole = FAN_OUT.map((line): Line =>
+      line[0] === 'node-entered' && line[1] === 'merge' ? ['node-entered', 'merge', { kind: 'agent', occurrence: 1, callId: 1, label: 'MERGE', arrivedBy: 'e2', role: 'project-check' }] : line,
+    );
+    const roles = (lines: readonly Line[]): string[] =>
+      stepReportsFrom({ runId: RUN, journal: journal(lines) }).filter((report) => report.visit.nodeId === 'merge').map((report) => report.role);
+    assert.deepEqual(roles(FAN_OUT), ['integrator']);
+    assert.deepEqual(roles(withoutRole), ['step'], 'another role on the same step is an ordinary step');
+    // A reply's SUBGOAL: line fills subGoal, as the agent's claim.
+    const [merge] = stepReportsFrom({
+      runId: RUN,
+      journal: journal(FAN_OUT),
+      replies: [{ nodeId: 'merge', occurrence: 1, text: 'Merged.\nSUBGOAL: S21 — Step reports\nRESULT: done' }],
+    }).filter((report) => report.visit.nodeId === 'merge');
+    assert.deepEqual(merge?.subGoal, { id: 'S21', title: 'Step reports' });
   });
 
   it('names the integrator by the edge that delivers the fan-out, and reads branch tasks from slices', () => {

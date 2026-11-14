@@ -51,6 +51,7 @@ import {
   type RunOutcomeKind,
 } from './loop-record';
 import type { RunJournalEntry, RunResult, RunStatus } from './loop-run';
+import { stepReportsFrom, type StepReport } from './run-presentation';
 import { buildRunReport, checkSkippedCorroboration, type RunReport } from './loop-run-report';
 import { buildFinalRunCard, type FinalRunCard } from './loop-final-card';
 import type { TerminalEnding } from './loop-graph';
@@ -92,6 +93,45 @@ export interface LoopAgentReply {
    * an empty message.
    */
   readonly prompt?: string;
+  /**
+   * DSP-209 S21: the fan-out branch this reply is from, or absent for a step's own reply.
+   * Live, from the host's reply; read back, from the journal's `branch-started` session.
+   */
+  readonly sliceId?: string;
+}
+
+/**
+ * DSP-209 S21: the run's step reports for the chat's cards, from S16's `stepReportsFrom`,
+ * each `replyIndex` an index into `replies`. Derived on every read and never stored.
+ */
+export function stepReportsForTurn(
+  runId: string,
+  journal: readonly RunJournalEntry[],
+  replies: readonly LoopAgentReply[],
+): readonly StepReport[] {
+  return stepReportsFrom({
+    runId,
+    journal,
+    replies: replies.map((reply) => ({
+      nodeId: reply.nodeId,
+      ...(reply.occurrence === undefined ? {} : { occurrence: reply.occurrence }),
+      ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }),
+      text: reply.text,
+    })),
+  });
+}
+
+/** DSP-209 S21: which slice each branch session ran, from the journal's `branch-started`. */
+function slicesBySession(journal: readonly RunJournalEntry[]): ReadonlyMap<string, string> {
+  const slices = new Map<string, string>();
+  for (const entry of journal) {
+    const sessionId = entry.data?.['sessionId'];
+    const sliceId = entry.data?.['sliceId'];
+    if (entry.kind === 'branch-started' && typeof sessionId === 'string' && typeof sliceId === 'string') {
+      slices.set(sessionId, sliceId);
+    }
+  }
+  return slices;
 }
 
 export type LoopEndingKind =
@@ -302,6 +342,12 @@ export interface LoopTurn {
    * included); on a run read back that the host still runs, its status is `running`.
    */
   readonly finalCard?: FinalRunCard;
+  /**
+   * DSP-209 S21: one report per visit and per branch, for the step-report cards, once the
+   * run's journal is in hand (its end, or its record). Derived, never stored; while a run is
+   * watched the window derives the same from the journal it holds.
+   */
+  readonly stepReports?: readonly StepReport[];
 }
 
 export type LoopTurnEvent =
@@ -536,11 +582,17 @@ export function loopTurnsAfter(
                 outcome.result.journal,
                 null,
               );
+      // DSP-209 S21: the step reports, from the same journal.
+      const stepReports =
+        outcome.kind === 'finished' || outcome.kind === 'cancelled'
+          ? stepReportsForTurn(turn.runId, outcome.result.journal, turn.replies)
+          : null;
       return replaced({
         ...turn,
         ending: describeLoopEnding(outcome, turn),
         ...(report === null ? {} : { report }),
         ...(finalCard === null ? {} : { finalCard }),
+        ...(stepReports === null ? {} : { stepReports }),
       });
     }
     case 'send-threw': {
@@ -1403,11 +1455,10 @@ export function loopTurnsFromRecords(
     // fact — nothing was reading it.
     const spoke = record.replies.filter((reply) => reply.text.trim() !== '');
     const silent = record.replies.filter((reply) => reply.text.trim() === '');
-    turns.push({
-      runId: identity.runId,
-      mandate: identity.mandate,
-      sentAtUtc: identity.startedAtUtc,
-      replies: spoke.map((reply) => ({
+    const sliceOf = slicesBySession(record.journal);
+    const replies: LoopAgentReply[] = spoke.map((reply) => {
+      const sliceId = reply.sessionId === undefined ? undefined : sliceOf.get(reply.sessionId);
+      return {
         nodeId: reply.nodeId,
         nodeLabel: reply.nodeLabel,
         text: reply.text,
@@ -1416,7 +1467,17 @@ export function loopTurnsFromRecords(
         // and `undefined` here is what makes the window say nothing rather than offer
         // an empty message as the brief that step was given.
         ...(reply.prompt === undefined ? {} : { prompt: reply.prompt }),
-      })),
+        // DSP-209 S21: a branch's reply, known by the session its `branch-started` names.
+        ...(sliceId === undefined ? {} : { sliceId }),
+      };
+    });
+    turns.push({
+      runId: identity.runId,
+      mandate: identity.mandate,
+      sentAtUtc: identity.startedAtUtc,
+      replies,
+      // DSP-209 S21: derived from the record's journal on every read, never stored.
+      stepReports: stepReportsForTurn(identity.runId, record.journal, replies),
       silentSteps: silent.map((reply) => ({
         nodeId: reply.nodeId,
         nodeLabel: reply.nodeLabel,

@@ -112,13 +112,14 @@ export interface StepReport {
   readonly visit: VisitIdentity;
   readonly nodeLabel: string;
   /**
-   * `integrator` by structure only: the arriving edge `delivers` a fan-out node's result.
+   * `integrator` by structure and role only (decision 47): the step a fan-out's `success`
+   * edge reaches directly, whose drawn role is in {@link INTEGRATOR_ROLE_IDS}.
    * `branch` is one branch instance of a fan-out visit. Never decided by a node's name.
    */
   readonly role: StepReportRole;
   /** Set for `branch` reports, `null` otherwise. */
   readonly sliceId: string | null;
-  /** DSP-209 S21 fills this; always `null` now. */
+  /** DSP-209 S21: the reply's `SUBGOAL:` line — the agent's claim, unchecked — or `null`. */
   readonly subGoal: null | { readonly id: string; readonly title: string };
   /** The outcome the step itself declared, a gate's verdict, or its declared failure; else `null`. */
   readonly declaredOutcome: string | null;
@@ -399,7 +400,30 @@ export interface PresentationReply {
   readonly nodeId: string;
   readonly occurrence?: number;
   readonly sliceId?: string;
+  /** DSP-209 S21: the reply's text, read only for its `SUBGOAL:` line. */
+  readonly text?: string;
 }
+
+/**
+ * DSP-209 S21: the sub-goal a reply claims, from its first whole `SUBGOAL: <id> — <title>`
+ * line, or `null`. Read for display only: it never routes and is never passed on. The
+ * separator may be an em dash, an en dash or a hyphen.
+ */
+export function subGoalClaimFrom(text: string): { readonly id: string; readonly title: string } | null {
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*\**SUBGOAL:\**\s*(\S+)\s+[—–-]\s+(.+?)\s*$/.exec(line);
+    if (match !== null) {
+      return { id: (match[1] ?? '').replace(/[*_`]/g, ''), title: (match[2] ?? '').trim() };
+    }
+  }
+  return null;
+}
+
+/**
+ * DSP-209 S21 (decision 47): the role ids that make a step the integrator. Read from the
+ * drawing's `role` as the run journalled it on `node-entered`, never from a node's name.
+ */
+export const INTEGRATOR_ROLE_IDS: ReadonlySet<string> = new Set(['project-integrate']);
 
 const ATTENTION_ORDER: readonly StepAttention[] = ['failure', 'question', 'action'];
 
@@ -484,18 +508,26 @@ export function stepReportsFrom(input: {
     }
   }
 
-  // The integrator is the step whose arriving edge delivers a fan-out node's result.
-  const delivered = new Map<number, readonly string[]>();
+  // The integrator (decision 47, narrowing S16's rule): the step a fan-out's `success` edge
+  // reaches directly, and only when the drawing gives that step the integrator role. By
+  // structure and role, never by a node's name; a step reached later is an ordinary step.
+  const integrators = new Set<number>();
   let lastEdge: RunJournalEntry | null = null;
   for (const entry of journal) {
     if (entry.kind === 'edge-taken') {
       lastEdge = entry;
     } else if (entry.kind === 'node-entered') {
-      const list = text(lastEdge?.data, 'delivers');
-      delivered.set(
-        entry.seq,
-        list === null || list === '(nothing)' ? [] : list.split(',').map((id) => id.trim()).filter((id) => id !== ''),
-      );
+      const from = text(lastEdge?.data, 'from');
+      const role = text(entry.data, 'role');
+      if (
+        from !== null &&
+        fanOutNodes.has(from) &&
+        text(lastEdge?.data, 'when') === 'success' &&
+        role !== null &&
+        INTEGRATOR_ROLE_IDS.has(role)
+      ) {
+        integrators.add(entry.seq);
+      }
       lastEdge = null;
     }
   }
@@ -511,13 +543,15 @@ export function stepReportsFrom(input: {
         reply.nodeId === visit.visit.nodeId &&
         (reply.occurrence === undefined || reply.occurrence === visit.visit.occurrence),
     );
-    const integrator = (delivered.get(visit.seq) ?? []).some((id) => fanOutNodes.has(id));
+    const integrator = integrators.has(visit.seq);
+    const replyText = replyAt < 0 ? undefined : replies[replyAt]?.text;
     reports.push({
       visit: visit.visit,
       nodeLabel: visit.label,
       role: integrator ? 'integrator' : 'step',
       sliceId: null,
-      subGoal: null,
+      // DSP-209 S21: the agent's own claim, from its reply; `null` when it made none.
+      subGoal: replyText === undefined ? null : subGoalClaimFrom(replyText),
       declaredOutcome: declared.get(visit.seq) ?? null,
       replyIndex: replyAt < 0 ? null : replyAt,
       attention: attention.get(visit.seq) ?? null,
@@ -534,7 +568,7 @@ export function stepReportsFrom(input: {
         nodeLabel: visit.label,
         role: 'branch',
         sliceId: branch.sliceId,
-        subGoal: null,
+        subGoal: branchReply < 0 || replies[branchReply]?.text === undefined ? null : subGoalClaimFrom(replies[branchReply]?.text ?? ''),
         declaredOutcome: null,
         replyIndex: branchReply < 0 ? null : branchReply,
         attention: branch.state === 'failed' ? 'failure' : null,

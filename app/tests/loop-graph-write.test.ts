@@ -44,6 +44,22 @@ describe('serialiseLoopGraph', () => {
     assert.equal(serialiseLoopGraph(restored.graph), written);
   });
 
+  it('DSP-209 S21: writes "declares" beside "capabilities" and reads it back unchanged', () => {
+    const parsed = parseLoopGraph(readGraphFile());
+    assert.ok(parsed.ok);
+    const agent = parsed.graph.nodes.find((node) => node.kind === 'agent');
+    assert.ok(agent !== undefined);
+    const configured = {
+      ...parsed.graph,
+      nodes: parsed.graph.nodes.map((node) => (node.id === agent.id ? { ...node, declares: ['subgoal' as const] } : node)),
+    };
+    const written = serialiseLoopGraph(configured);
+    const restored = parseLoopGraph(written);
+    assert.ok(restored.ok);
+    assert.deepEqual(restored.graph.nodes.find((node) => node.id === agent.id)?.declares, ['subgoal']);
+    assert.equal(serialiseLoopGraph(restored.graph), written);
+  });
+
   it('writes our own development loop back byte for byte', () => {
     const original = readGraphFile();
     const loaded = loadLoopGraph(original, {

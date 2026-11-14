@@ -102,6 +102,16 @@ export const SUGGEST_INTERACTIVE_HELP: SettingHelp = {
   whenEmpty: 'The step is not offered the tool, and the run never stops to ask about working interactively.',
 };
 
+/** DSP-209 S21: `declares: ["subgoal"]`, as the node panel explains it. */
+export const DECLARES_SUBGOAL_HELP: SettingHelp = {
+  name: 'Names its sub-goal',
+  detail:
+    'The step is asked, in one sentence of its prompt, for a whole line "SUBGOAL: <id> — <title>". ' +
+    'The chat shows it in the heading of the step\'s report as the agent\'s claim. It never routes ' +
+    'the run and is not passed to a later step; a step that leaves it out shows no sub-goal.',
+  whenEmpty: 'The step is not asked for a sub-goal, and its prompt is unchanged.',
+};
+
 /** DSP-209 S10a: a node's `fanOut`, as the node panel explains it. */
 export const FAN_OUT_HELP: SettingHelp = {
   name: 'Split this step over parallel branches',

@@ -89,6 +89,7 @@ const AREAS = {
       'loop-run-report.test.ts',
       'run-presentation.test.ts',
       'branch-presentation.test.ts',
+      'step-report-cards.test.ts',
       'graph-proposal.test.ts',
       'loop-edge-routing.test.ts',
       'loop-model-select.test.ts',

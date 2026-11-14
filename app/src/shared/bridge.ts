@@ -3259,6 +3259,8 @@ export interface ChatLoopReply {
   readonly nodeLabel: string;
   readonly occurrence: number;
   readonly text: string;
+  /** DSP-209 S21: the fan-out branch the reply is from, or absent for a step's own reply. */
+  readonly sliceId?: string;
   /** The provider run's terminal status, or `null` if it never reported one. */
   readonly terminalStatus: string | null;
   /**

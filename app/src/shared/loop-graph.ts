@@ -659,6 +659,10 @@ export interface FanOutPolicy {
 export const NODE_CAPABILITIES = ['suggest-interactive'] as const;
 export type NodeCapability = (typeof NODE_CAPABILITIES)[number];
 
+/** DSP-209 S21: what an agent node may be asked to declare in its reply, for display only. */
+export const NODE_DECLARATIONS = ['subgoal'] as const;
+export type NodeDeclaration = (typeof NODE_DECLARATIONS)[number];
+
 export interface LoopNode {
   readonly id: string;
   readonly kind: NodeKind;
@@ -678,6 +682,13 @@ export interface LoopNode {
    * Absent offers nothing, which is every drawing written before this field.
    */
   readonly capabilities?: readonly NodeCapability[];
+  /**
+   * DSP-209 S21: what this agent step is asked to declare. `subgoal` adds one sentence to
+   * its prompt asking for a `SUBGOAL: <id> — <title>` line, which the chat shows on the
+   * step's report as the agent's claim. Display only: it never routes and is never passed on.
+   * Absent asks for nothing, and the prompt is exactly what it was.
+   */
+  readonly declares?: readonly NodeDeclaration[];
   /**
    * DSP-209 S10a: this agent step's work is split over parallel branch instances, one per
    * slice in the slice block `slicesFrom`'s result holds. Format and validation only in this
@@ -1158,6 +1169,12 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
       'Claude, Cursor and Copilot loop steps are all given the tool by reading the adapters: Copilot ' +
       'runs loop steps under the chat policy, which passes DSpatch tools (DSP-209 S9). Not observed in ' +
       'a live run with any of them. A dry run calls no provider, so no step there can call it.',
+  },
+  {
+    attribute: 'declares',
+    honoured: true,
+    by: 'DSP-209 S21. "subgoal" adds one sentence to the step\'s prompt asking for a SUBGOAL: line; the chat shows that line on the step report as the agent\'s claim.',
+    caveat: 'Display only: the line never routes the run and is not passed to a later step. A step may leave it out.',
   },
   {
     attribute: 'required',

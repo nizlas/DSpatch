@@ -3399,6 +3399,8 @@ function registerLoopMethods(): void {
               // conversation can show what this call was told without waiting for the
               // file to be read back (DSP-94).
               prompt: reply.prompt,
+              // DSP-209 S21: which branch spoke, so the chat groups it under its fan-out step.
+              ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }),
             } satisfies ChatLoopReply);
           },
         });

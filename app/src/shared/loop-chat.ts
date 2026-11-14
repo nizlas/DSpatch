@@ -74,6 +74,17 @@ export const CHANGED_NOTHING_OUTCOME = 'changed-nothing';
 /** The token a step writes as a whole line to name its declared outcome. */
 export const RESULT_TOKEN = 'RESULT:';
 
+/** DSP-209 S21: the line a node with `declares: ["subgoal"]` is asked for. */
+export const SUBGOAL_TOKEN = 'SUBGOAL:';
+
+/**
+ * DSP-209 S21: the one sentence such a node's prompt gains. Display only, and it says so,
+ * so the step does not take the line for a verdict or a route.
+ */
+export const SUBGOAL_ASK =
+  `Also write one whole line "${SUBGOAL_TOKEN} <id> — <title>" naming the sub-goal this step worked on. ` +
+  'It is shown to the person as your claim on your step report; it does not route the run and is not passed to another step.';
+
 /**
  * A node's routing, reduced to the two fields that decide what a reply means.
  *
@@ -1310,7 +1321,8 @@ export function chatPromptFor(
   node: Pick<
     LoopNode,
     'id' | 'kind' | 'purpose' | 'outcomes' | 'declaredFailures' | 'label' | 'consumes' | 'produces'
-  >,
+  > &
+    Partial<Pick<LoopNode, 'declares'>>,
   options: {
     readonly entryId: string;
     readonly mandate: string;
@@ -1370,6 +1382,9 @@ export function chatPromptFor(
   // reads the task before it knows there are two folders has already started planning
   // against one.
   const folders = describeWorkingRootsForAgent(options.workingRoots ?? []);
+  // DSP-209 S21: only a node that declares `subgoal` is asked for the line; every other
+  // node's prompt is byte for byte what it was.
+  const subGoalAsk = (node.declares ?? []).includes('subgoal') ? ['', SUBGOAL_ASK] : [];
   const identity =
     options.step === undefined ? [] : stepIdentityPreamble(node, options.step);
   const isEntry = node.id === options.entryId;
@@ -1399,6 +1414,7 @@ export function chatPromptFor(
       // English and must stay ordinary English.
       ...declared,
       ...results,
+      ...subGoalAsk,
     ].join('\n');
   }
   const purpose = node.purpose?.trim();
@@ -1462,6 +1478,7 @@ export function chatPromptFor(
     '',
     ...declared,
     ...results,
+    ...subGoalAsk,
   ].join('\n');
 }
 

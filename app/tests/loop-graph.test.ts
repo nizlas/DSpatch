@@ -140,6 +140,20 @@ test('the example graph is our own loop, and it loads and validates against the 
   }
 });
 
+test('DSP-209 S21: "declares" loads on an agent node, and is refused elsewhere or with an unknown name', () => {
+  const withNode = (node: Record<string, unknown>): string =>
+    JSON.stringify({ ...minimal(), nodes: [{ id: 'start', kind: 'human', label: 'Start' }, node, { id: 'done', kind: 'terminal', label: 'Done' }] });
+  const agent = parseLoopGraph(withNode({ id: 'work', kind: 'agent', label: 'Work', declares: ['subgoal'] }));
+  assert.ok(agent.ok);
+  assert.deepEqual(agent.ok ? agent.graph.nodes.find((node) => node.id === 'work')?.declares : null, ['subgoal']);
+  const empty = parseLoopGraph(withNode({ id: 'work', kind: 'agent', label: 'Work', declares: [] }));
+  assert.equal(empty.ok && 'declares' in (empty.graph.nodes.find((node) => node.id === 'work') ?? {}), false, 'an empty list is none');
+  const onHuman = parseLoopGraph(withNode({ id: 'ask', kind: 'human', label: 'Ask', declares: ['subgoal'] }));
+  assert.ok(!onHuman.ok && codes(onHuman.findings).includes('declares-on-a-non-agent'));
+  const unknown = parseLoopGraph(withNode({ id: 'work', kind: 'agent', label: 'Work', declares: ['verdict'] }));
+  assert.ok(!unknown.ok && codes(unknown.findings).includes('unknown-declaration'));
+});
+
 test('the example graph says which attributes nothing honours yet', () => {
   const parsed = parseLoopGraph(fs.readFileSync(examplePath, 'utf8'));
   assert.equal(parsed.ok, true);
@@ -311,6 +325,7 @@ test('every attribute a graph can set has a row saying who honours it', () => {
     'declaredFailures',
     'required',
     'capabilities',
+    'declares',
     'fanOut',
     'view',
   ];

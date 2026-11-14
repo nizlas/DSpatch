@@ -55,7 +55,7 @@ Six kinds, and each one is drawn by [the reference figure](../assets/agentloop_g
 
 **The figure's three gates are not evidence for the gate rule, and this table used to imply they were.** Transcribing the figure on 16 September 2026 showed that *Plangrind*, *Jobbgrind* and *Skeptic* each draw exactly one arrow out, so all three fail the two-verdict rule above and had to be given an invented reject verdict and an invented edge before the graph would validate. The rule is right and the drawing is loose: a checkpoint drawn with one way out is a step, and the arrow that means *rejected* is the one a whiteboard leaves off. Our own loop's plan and implementation gates are the examples that satisfy it, each declaring accept, rework and needs-decision.
 
-Node attributes belong to the format, not to the editor: `id`, `kind`, `label`, `purpose`, `ending`, `role`, `model`, `limits`, `requirements`, `outcomes`, `whenUndeclared`, `declaredFailures`, `capabilities`, `report`, `produces`, `consumes`, `required`, `notes`, `view`. Edges have `id`, `from`, `to`, `when`, `delivers`, `skips`, `selectsModel`, `label` and `notes`.
+Node attributes belong to the format, not to the editor: `id`, `kind`, `label`, `purpose`, `ending`, `role`, `model`, `limits`, `requirements`, `outcomes`, `whenUndeclared`, `declaredFailures`, `capabilities`, `declares`, `report`, `produces`, `consumes`, `required`, `notes`, `view`. Edges have `id`, `from`, `to`, `when`, `delivers`, `skips`, `selectsModel`, `label` and `notes`.
 
 - **`model`** is a policy rather than a slug: `{"policy":"inherit"}`, `{"policy":"fixed","model":"…"}`, `{"policy":"select","options":[{"id":"small","model":"…","note":"…"}],"default":"small"}` or `{"policy":"described","description":"…"}`. `described` exists because [DSP-8](../../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) has not been decided: a graph can record how the model *should* be chosen without pretending the choice is automated. See [Choosing a step's model](#model-selection) for what a run does with each.
 - **`limits`** bound a step, and the same shape on the graph bounds the run: `maxCalls`, `maxReworkRounds`, `maxMinutes`, `maxTasks`, `note`.
@@ -152,6 +152,18 @@ An agent node may carry **`capabilities`**, a list of names for what DSpatch let
 - **Where it is offered, and where not.** Claude, Cursor and Copilot loop steps are all offered the tool, by reading the adapters: Copilot runs loop steps under its chat policy (`copilotPolicyFor('loop')`), whose chat surface passes DSpatch tools. This was corrected on 14 November 2026 (DSP-209 S9, mission decision 21); an earlier version of this line said Copilot loop steps were not offered it, which was wrong by reading. None of the three has been observed calling it in a live run. A dry run calls no provider, so no step there can call it; a run with no control a person could answer through continues in the loop and says so.
 
 Validation refuses a value that is not a list (`bad-capabilities`), an unknown name (`unknown-capability`) and the field on a node that is not an agent (`capabilities-on-a-non-agent`). An empty list means the same as none, and a drawing without the field loads, saves and behaves exactly as before.
+
+<a id="declares"></a>
+
+### What a step is asked to declare
+
+An agent node may carry **`declares`**, a list of names for what the step is asked to state in its reply for the person reading the run. There is one: **`subgoal`**. DSP-209 S21.
+
+- **What it does.** The step's prompt gets one more sentence asking for a whole line `SUBGOAL: <id> — <title>`. The chat shows that line in the heading of the step's report, marked as the agent's claim.
+- **What it does not do.** The line never routes the run, is not checked against anything, and is not passed to a later step: what a step receives is still decided by `consumes` and the arriving edge's `delivers`. A step that leaves the line out shows no sub-goal.
+- **Without it.** A node without `declares` is sent exactly the prompt it was sent before, byte for byte.
+
+Validation refuses a value that is not a list (`bad-declares`), an unknown name (`unknown-declaration`) and the field on a node that is not an agent (`declares-on-a-non-agent`). An empty list means the same as none.
 
 <a id="fan-out"></a>
 

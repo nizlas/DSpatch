@@ -142,13 +142,31 @@ import type { RunJournalEntry } from '../shared/loop-run';
 import { branchViewsFromJournal, type BranchView } from '../shared/run-presentation';
 import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
 import { BranchList } from './BranchList';
+import { StepReportCard } from './StepReportCard';
+import {
+  branchGroupKey,
+  branchReplyGroups,
+  reportForReply,
+  reportForVisit,
+  stepCardHeading,
+  stepCardLabel,
+} from '../shared/step-report-cards';
 
-/** DSP-209 S20: the journal kinds a run's Branches list is folded from. */
+/**
+ * DSP-209 S20: the journal kinds a run's Branches list is folded from. S21: and its step
+ * reports, whose attention reads faults, waits for a person and handoffs.
+ */
 const BRANCH_JOURNAL_KINDS: ReadonlySet<string> = new Set([
   'run-started',
   'node-entered',
   'node-produced',
   'edge-taken',
+  'runtime-fault',
+  'awaiting-human',
+  'waiting-for-person',
+  'person-answered',
+  'handoff-requested',
+  'handoff-answered',
   'branch-started',
   'branch-ended',
   'message-sent',
@@ -194,6 +212,7 @@ import {
   loopMessageAnchor,
   mergeTranscript,
   messagesAtReply,
+  stepReportsForTurn,
   type ConversationStanding,
   type LoopTurn,
   type LoopTurnEvent,
@@ -1425,6 +1444,7 @@ function Workbench({
           // visit of a node the run entered twice.
           occurrence: reply.occurrence,
           ...(reply.prompt === undefined ? {} : { prompt: reply.prompt }),
+          ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }),
         },
       });
       // The step's turn is over, so it stops being the live one. Carried separately
@@ -3285,6 +3305,7 @@ function Workbench({
                         ? { views: loopBranchViews, activity: loopBranchSteps, labels: loopNodeLabels }
                         : null
                     }
+                    liveJournal={item.turn.runId === loopBranchJournal?.runId ? loopBranchJournal.entries : null}
                   />
                 ) : (
                   <InstructionEntry
@@ -6776,9 +6797,12 @@ function LoopTurnEntry({
   liveStanding,
   liveMessages,
   branches,
+  liveJournal,
 }: {
   readonly turn: LoopTurn;
   readonly index: number;
+  /** DSP-209 S21: the journal this window holds for the run it watches, or `null`. */
+  readonly liveJournal: readonly RunJournalEntry[] | null;
   /**
    * DSP-209 S20: this run's fan-out branches, as the window watched them, or `null`. The
    * same list and the same way to open a branch's output as the loop editor.
@@ -6827,6 +6851,64 @@ function LoopTurnEntry({
     (ordinals, item) => [...ordinals, (ordinals[ordinals.length - 1] ?? -1) + (item.kind === 'handoff' ? 0 : 1)],
     [],
   );
+  // DSP-209 S21: the run's step reports — from its end or record, else from the journal this
+  // window holds while it watches — and its branch replies grouped by fan-out visit.
+  const reports =
+    turn.stepReports ?? (liveJournal === null ? null : stepReportsForTurn(turn.runId, liveJournal, turn.replies));
+  const branchGroups = branchReplyGroups(turn.replies);
+  // Fan-out nodes whose branch reports are grouped in the trail; S20's list sits inside them.
+  const groupedNodes = new Set(turn.replies.flatMap((reply) => (reply.sliceId === undefined ? [] : [reply.nodeId])));
+  /** One reply as a step report card: heading, attention, excerpt, Full report, then details. */
+  const replyCard = (item: TrailReply, itemIndex: number): JSX.Element => {
+    const replyIndex = replyOrdinals[itemIndex] ?? -1;
+    const reply = turn.replies[replyIndex];
+    const report = reportForReply(reports, replyIndex);
+    const occurrence = reply?.occurrence;
+    return (
+      <StepReportCard
+        key={`reply-${String(itemIndex)}`}
+        label={stepCardLabel(report)}
+        heading={stepCardHeading(`${item.nodeLabel} (${item.nodeId})`, report, occurrence === undefined ? null : { occurrence })}
+        attention={report?.attention ?? null}
+        text={item.text}
+        testId={`${at}-reply-${String(itemIndex)}-card`}
+        full={
+          /* Whole and untrimmed, like an ordinary answer. A summarised account of
+             what an agent did to the project would not be the agent's account.
+             Formatted for the same reason an ordinary reply is: a role's report
+             is the most heading-and-list-shaped text in the window. */
+          <AnswerWithMessages
+            text={item.text}
+            messages={messagesAtReply(messages, replyIndex)}
+            testId={`${at}-reply-${String(itemIndex)}`}
+          />
+        }
+        whileCollapsed={messagesAtReply(messages, replyIndex).map((entry) => (
+          <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={`${entry.testId}-shown`} inline />
+        ))}
+        details={
+          <>
+            {/* What this step did, beside the work it did it for. §9 asks for tool
+                detail expanded alongside the relevant work rather than in a log
+                somewhere else; a step that made no tool calls shows nothing. */}
+            <StepToolCalls
+              tools={toolsForStep(steps, turn.runId, item.nodeId, item.occurrence)}
+              testId={`${at}-reply-${String(itemIndex)}-tools`}
+            />
+            {/* And what it was told, beside what it answered. Closed, like the tool
+                calls above it, and absent where nothing was recorded. */}
+            <StepPrompt
+              sent={item.sent}
+              runId={turn.runId}
+              nodeId={item.nodeId}
+              nodeLabel={item.nodeLabel}
+              testId={`${at}-reply-${String(itemIndex)}-prompt`}
+            />
+          </>
+        }
+      />
+    );
+  };
   return (
     <article className="turn turn--loop" data-ev={at}>
       {/*
@@ -6865,37 +6947,46 @@ function LoopTurnEntry({
             {item.text}
           </p>
         ) : (
-          <div key={`reply-${String(itemIndex)}`}>
-            <p className="app__note" data-ev={`${at}-reply-${String(itemIndex)}-who`}>
-              {item.nodeLabel} ({item.nodeId}) answered
-              {item.occurrenceNote === '' ? '' : `, ${item.occurrenceNote}`}:
-            </p>
-            {/* Whole and untrimmed, like an ordinary answer. A summarised account of
-                what an agent did to the project would not be the agent's account.
-                Formatted for the same reason an ordinary reply is: a role's report
-                is the most heading-and-list-shaped text in the window. */}
-            <AnswerWithMessages
-              text={item.text}
-              messages={messagesAtReply(messages, replyOrdinals[itemIndex] ?? -1)}
-              testId={`${at}-reply-${String(itemIndex)}`}
-            />
-            {/* What this step did, beside the work it did it for. §9 asks for tool
-                detail expanded alongside the relevant work rather than in a log
-                somewhere else; a step that made no tool calls shows nothing. */}
-            <StepToolCalls
-              tools={toolsForStep(steps, turn.runId, item.nodeId, item.occurrence)}
-              testId={`${at}-reply-${String(itemIndex)}-tools`}
-            />
-            {/* And what it was told, beside what it answered. Closed, like the tool
-                calls above it, and absent where nothing was recorded. */}
-            <StepPrompt
-              sent={item.sent}
-              runId={turn.runId}
-              nodeId={item.nodeId}
-              nodeLabel={item.nodeLabel}
-              testId={`${at}-reply-${String(itemIndex)}-prompt`}
-            />
-          </div>
+          (() => {
+            const replyIndex = replyOrdinals[itemIndex] ?? -1;
+            const reply = turn.replies[replyIndex];
+            const groupKey = reply === undefined ? null : branchGroupKey(reply);
+            if (reply === undefined || groupKey === null) {
+              return replyCard(item, itemIndex);
+            }
+            // DSP-209 S21: a fan-out visit's branch reports, grouped under one card where the
+            // first of them falls; the others are shown inside it and not again.
+            const members = branchGroups.get(groupKey) ?? [];
+            if (members[0] !== replyIndex) {
+              return null;
+            }
+            const visitReport = reportForVisit(reports, reply.nodeId, reply.occurrence);
+            const nodeLabel = branches?.labels.get(reply.nodeId) ?? reply.nodeLabel.replace(` · ${reply.sliceId ?? ''}`, '');
+            return (
+              <StepReportCard
+                key={`reply-${String(itemIndex)}`}
+                label="Step report"
+                heading={stepCardHeading(nodeLabel, visitReport, reply)}
+                attention={visitReport?.attention ?? null}
+                text={null}
+                full={null}
+                testId={`${at}-fan-out-${String(itemIndex)}`}
+              >
+                {members.map((memberIndex) => {
+                  const position = trail.findIndex((entry, at2) => entry.kind !== 'handoff' && replyOrdinals[at2] === memberIndex);
+                  const member = trail[position];
+                  return member === undefined || member.kind === 'handoff' ? null : replyCard(member, position);
+                })}
+                {branches === null || !fanOutNodesIn(branches.views).includes(reply.nodeId) ? null : (
+                  <BranchList
+                    rows={branchRows(branches.views, reply.nodeId)}
+                    activity={branches.activity}
+                    heading={`${nodeLabel} — ${branchSummaryLine(branches.views, reply.nodeId) ?? ''}`}
+                  />
+                )}
+              </StepReportCard>
+            );
+          })()
         ),
       )}
       {/*
@@ -6968,10 +7059,11 @@ function LoopTurnEntry({
           </p>
         </details>
       )}
-      {/* DSP-209 S20: each fan-out step's branches, listed in the entry rather than in a hover. */}
+      {/* DSP-209 S20: each fan-out step's branches, listed in the entry rather than in a hover.
+          S21: under the fan-out's step card once a branch has reported; here until then. */}
       {branches === null
         ? null
-        : fanOutNodesIn(branches.views).map((nodeId) => (
+        : fanOutNodesIn(branches.views).filter((nodeId) => !groupedNodes.has(nodeId)).map((nodeId) => (
             <BranchList
               key={nodeId}
               rows={branchRows(branches.views, nodeId)}
@@ -7160,6 +7252,8 @@ function LiveStep({
   /** DSP-147: messages sent while this step worked, at the point each was sent. */
   readonly messages: readonly PlacedMessage[];
 }): JSX.Element {
+  // DSP-209 S21: whether Show live output is open, so messages are never hidden with it.
+  const [outputOpen, setOutputOpen] = useState(false);
   return (
     <div className="live-step" data-ev={testId}>
       <p className="app__note" data-ev={`${testId}-who`}>
@@ -7183,21 +7277,38 @@ function LiveStep({
         messages.map((entry) => (
           <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={entry.testId} inline />
         ))
-      ) : (
-        <AnswerWithMessages text={step.text} messages={messages} testId={`${testId}-text`} />
+      ) : outputOpen ? null : (
+        // DSP-209 S21 review R1: the person's messages stay in view while the output is
+        // closed (DSP-147); open, they are in place inside the text as before.
+        messages.map((entry) => (
+          <InstructionEntry key={entry.instruction.id} instruction={entry.instruction} testId={`${entry.testId}-shown`} inline />
+        ))
       )}
-      {step.tools.length === 0 ? null : (
-        <ul className="tool-calls__list tool-calls__list--live" data-ev={`${testId}-tools`}>
-          {step.tools.map((call) => (
-            <li
-              key={call.callId}
-              className={`tool-call tool-call--${call.status ?? 'running'}`}
-              data-ev={`${testId}-tool-${call.callId}`}
-            >
-              <span className="tool-call__summary">{call.summary}</span>
-            </li>
-          ))}
-        </ul>
+      {/* DSP-209 S21: the running step is one status line above; what it is writing and
+          the tools it calls are behind Show live output. Closed, the text is still in the
+          page, so nothing that read it before has lost it. */}
+      {step.text === '' && step.tools.length === 0 ? null : (
+        <details
+          className="live-step__output"
+          data-ev={`${testId}-output`}
+          onToggle={(event) => setOutputOpen(event.currentTarget.open)}
+        >
+          <summary className="step-card__toggle">Show live output</summary>
+          {step.text === '' ? null : <AnswerWithMessages text={step.text} messages={messages} testId={`${testId}-text`} />}
+          {step.tools.length === 0 ? null : (
+            <ul className="tool-calls__list tool-calls__list--live" data-ev={`${testId}-tools`}>
+              {step.tools.map((call) => (
+                <li
+                  key={call.callId}
+                  className={`tool-call tool-call--${call.status ?? 'running'}`}
+                  data-ev={`${testId}-tool-${call.callId}`}
+                >
+                  <span className="tool-call__summary">{call.summary}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
       )}
     </div>
   );
