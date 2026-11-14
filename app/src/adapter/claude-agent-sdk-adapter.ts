@@ -16,7 +16,7 @@ import type {
 } from './claude-sdk-shapes';
 import { ClaudeAdapterError, loadClaudeSdk, loadClaudeToolKit, type ClaudeToolKit } from './claude-support';
 
-import type { AgentAdapter } from './agent-adapter';
+import { joinTextBlocks, TEXT_BLOCK_SEPARATOR, type AgentAdapter } from './agent-adapter';
 import type {
   AdapterError,
   AgentCommandRecord,
@@ -2932,6 +2932,15 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           return;
         }
         const event = asRecord(raw['event']);
+        if (event['type'] === 'content_block_start') {
+          // A new text block after earlier text starts on its own paragraph, live as
+          // well as in the joined reply below.
+          if (asRecord(event['content_block'])['type'] === 'text' && run.assistantText !== '' && run.pendingText === '') {
+            run.pendingText = TEXT_BLOCK_SEPARATOR;
+            this.emitForRun(state, run, { ...base, type: 'assistant.delta', text: TEXT_BLOCK_SEPARATOR });
+          }
+          return;
+        }
         if (event['type'] !== 'content_block_delta') {
           return;
         }
@@ -2954,7 +2963,11 @@ export class ClaudeAgentSdkAdapter implements AgentAdapter {
           if (block['type'] === 'text' && topLevel && typeof block['text'] === 'string') {
             // Complete blocks, one per message; the deltas above carry the same text,
             // so the deltas received so far are now covered and are not kept twice.
-            run.assistantText += block['text'];
+            //
+            // Blocks are joined by a blank line, never glued: the text before a tool call
+            // ends mid-reply, and gluing it to the next block put `RESULT:` mid-line,
+            // where the outcome reader (which reads lines that open with it) never saw it.
+            run.assistantText = joinTextBlocks(run.assistantText, block['text']);
             run.pendingText = '';
           } else if (block['type'] === 'tool_use' && typeof block['id'] === 'string') {
             const name = typeof block['name'] === 'string' ? block['name'] : 'unknown';

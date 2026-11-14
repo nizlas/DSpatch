@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { AgentAdapter } from '../adapter/agent-adapter';
+import { joinTextBlocks, type AgentAdapter } from '../adapter/agent-adapter';
 import type {
   AgentCommandRecord,
   AgentEvent,
@@ -1420,7 +1420,7 @@ function waitForTurn(
       }
     }
     if (event.type === 'assistant.message') {
-      assistantText += event.text;
+      assistantText = joinTextBlocks(assistantText, event.text);
     }
     if (event.type === 'usage') {
       readings.push(...event.readings);

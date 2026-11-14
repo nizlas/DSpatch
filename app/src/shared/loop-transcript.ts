@@ -53,6 +53,7 @@ import {
 import type { RunJournalEntry, RunResult, RunStatus } from './loop-run';
 import { buildRunReport, checkSkippedCorroboration, type RunReport } from './loop-run-report';
 import type { TerminalEnding } from './loop-graph';
+import { ordinal } from './ordinal';
 
 /** One agent node's own words during a loop run. */
 export interface LoopAgentReply {
@@ -978,19 +979,6 @@ function occurrenceOf(nodeId: string, turn: LoopTurn): number {
   const spoke = turn.replies.filter((reply) => reply.nodeId === nodeId).length;
   const silent = (turn.silentSteps ?? []).filter((step) => step.nodeId === nodeId).length;
   return spoke + silent + 1;
-}
-
-function ordinal(value: number): string {
-  if (value === 2) {
-    return 'second';
-  }
-  if (value === 3) {
-    return 'third';
-  }
-  if (value === 4) {
-    return 'fourth';
-  }
-  return `${String(value)}th`;
 }
 
 /** Whether this entry is still open, for the badge beside it. */

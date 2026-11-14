@@ -39,6 +39,7 @@
  */
 
 import type { AttemptRef, StoredSteering } from './bridge';
+import { ordinal } from './ordinal';
 
 /** Which step took a message, recorded after it happened rather than predicted. */
 export interface LoopInstructionDelivery {
@@ -826,17 +827,4 @@ export function interleaveMessages<T>(
     pieces.push({ kind: 'text', text: text.slice(from) });
   }
   return pieces;
-}
-
-function ordinal(value: number): string {
-  if (value === 2) {
-    return 'second';
-  }
-  if (value === 3) {
-    return 'third';
-  }
-  if (value === 4) {
-    return 'fourth';
-  }
-  return `${String(value)}th`;
 }

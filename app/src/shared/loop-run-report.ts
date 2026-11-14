@@ -657,7 +657,7 @@ export function buildRunReport(input: RunReportInput): RunReport {
       ? ['Steps not reached: not recorded (older record).']
       : notReached.length === 0
         ? ['Every drawn step was visited or skipped.']
-        : notReached.map((step) => `“${step.label}” (${step.id}), a ${step.kind} step: the run never reached it.`),
+        : notReached.map((step) => `“${step.label}” (${step.id}), ${/^[aeiou]/.test(step.kind) ? 'an' : 'a'} ${step.kind} step: the run never reached it.`),
   );
 
   // DSP-209 S14: what is left for the person to examine, from recorded facts only; each line

@@ -20,6 +20,8 @@
  * an argument and computes none.
  */
 
+import { ordinal } from './ordinal';
+
 /** A fact that belongs behind the expander: interesting occasionally, never urgent. */
 export interface HeaderFact {
   readonly label: string;
@@ -563,17 +565,4 @@ export function handoffTrail(
     previous = { nodeId: reply.nodeId, nodeLabel: reply.nodeLabel };
   }
   return items;
-}
-
-function ordinal(value: number): string {
-  if (value === 2) {
-    return 'second';
-  }
-  if (value === 3) {
-    return 'third';
-  }
-  if (value === 4) {
-    return 'fourth';
-  }
-  return `${String(value)}th`;
 }

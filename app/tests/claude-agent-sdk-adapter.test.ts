@@ -410,6 +410,43 @@ function startConfig(dir: string, extra: Record<string, unknown> = {}) {
 
 // --- The adapter ---------------------------------------------------------------
 
+test('text blocks either side of a tool call are joined by a blank line, so a RESULT line stays a line', async () => {
+  const blockStart = (call: Call) => ({
+    type: 'stream_event',
+    parent_tool_use_id: null,
+    session_id: sessionOf(call),
+    uuid: 'u-block',
+    event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+  });
+  const { queryFn, spawnProcess } = fakeSdk(async function* (call) {
+    yield init(call);
+    yield blockStart(call);
+    yield delta(call, 'I checked the code.');
+    yield assistant(call, [
+      { type: 'text', text: 'I checked the code.' },
+      { type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: 'src/a.ts' } },
+    ]);
+    yield toolResult(call, 'tool-1');
+    yield blockStart(call);
+    yield delta(call, 'RESULT: planned');
+    yield assistant(call, [{ type: 'text', text: 'RESULT: planned' }]);
+    yield result(call);
+  });
+  const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
+  try {
+    const handle = await adapter.startSession(startConfig(workspace('text-blocks')));
+    const seen = collect(adapter, handle.dspatchSessionId);
+    const finished = seen.nextFinish();
+    await adapter.send(handle.dspatchSessionId, 'Plan it');
+    await finished;
+    assert.deepEqual(finalTexts(seen.events), ['I checked the code.\n\nRESULT: planned']);
+    const live = seen.events.flatMap((event) => (event.type === 'assistant.delta' ? [event.text] : [])).join('');
+    assert.equal(live, 'I checked the code.\n\nRESULT: planned', 'the live text separates the blocks the same way');
+  } finally {
+    await adapter.dispose();
+  }
+});
+
 test('maps the SDK stream to DSpatch events and passes the fixture configuration', async () => {
   const { queryFn, calls, spawnProcess } = fakeSdk(async function* (call) {
     yield init(call);
@@ -1446,8 +1483,10 @@ test('a failed run keeps the interrupted block\'s text; a finished run is the co
     finished = seen.nextFinish();
     await adapter.send(handle.dspatchSessionId, 'two');
     await finished;
-    // No duplication: the deltas are covered by the completed blocks.
-    assert.deepEqual(finalTexts(seen.events), ['A. B.']);
+    // No duplication: the deltas are covered by the completed blocks, which are joined
+    // by a blank line (this fixture streams no block starts, so the failed run above keeps
+    // the interrupted delta glued on).
+    assert.deepEqual(finalTexts(seen.events), ['A.\n\nB.']);
     assert.equal(lastFinished(seen.events), 'finished');
   } finally {
     await adapter.dispose();
@@ -3656,7 +3695,7 @@ test('a steering message Claude Code runs as a following turn keeps the run open
     await call.firstStreamed;
     yield assistant(call, [{ type: 'text', text: 'First part.' }]);
     yield result(call, { user_message_uuids: ['u-prompt'], queued_turn_count: 1 });
-    yield assistant(call, [{ type: 'text', text: ' Second part.' }]);
+    yield assistant(call, [{ type: 'text', text: 'Second part.' }]);
     yield result(call, { user_message_uuids: [streamedUuid(call)] });
   });
   const adapter = new ClaudeAgentSdkAdapter({ queryFn, spawnProcess, env: CLEAN_ENV });
@@ -3670,7 +3709,7 @@ test('a steering message Claude Code runs as a following turn keeps the run open
     assert.equal(outcome.state, 'delivered');
     assert.equal(seen.events.filter((event) => event.type === 'run.finished').length, 1);
     const message = seen.events.find((event) => event.type === 'assistant.message');
-    assert.equal(message?.type === 'assistant.message' ? message.text : '', 'First part. Second part.');
+    assert.equal(message?.type === 'assistant.message' ? message.text : '', 'First part.\n\nSecond part.');
     assert.equal(calls.length, 1);
   } finally {
     await adapter.dispose();

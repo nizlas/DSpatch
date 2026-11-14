@@ -149,3 +149,22 @@ export interface AgentAdapter {
    */
   dispose(): Promise<void>;
 }
+
+/**
+ * What separates two pieces of an agent's reply that arrived as separate messages or
+ * blocks: a blank line. A provider ends one block where it calls a tool and starts the
+ * next after it, and gluing them put the first word of the next block on the last line
+ * of the previous one, where a `RESULT:` line stops being a line (DSP-209 follow-up).
+ */
+export const TEXT_BLOCK_SEPARATOR = '\n\n';
+
+/**
+ * `earlier` and `next` as one reply, a blank line between them when both have text.
+ * Spaces the earlier block ended with are dropped, so the line before the break ends clean.
+ */
+export function joinTextBlocks(earlier: string, next: string): string {
+  if (earlier === '' || next === '') {
+    return earlier + next;
+  }
+  return earlier.replace(/[ \t]+$/, '') + TEXT_BLOCK_SEPARATOR + next;
+}
