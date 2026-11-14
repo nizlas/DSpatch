@@ -10,7 +10,7 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { parseRunRecord, type RunRecordIdentity } from '../src/shared/loop-record';
-import { graphVersionIdFor, RunRecordStore } from '../src/main/run-record-store';
+import { graphVersionIdFor, readRunCommits, RunRecordStore, type RunGit } from '../src/main/run-record-store';
 import { buildContextSnapshot, earlierRunFromRecord } from '../src/shared/context-snapshot';
 import { loopTurnStatusText, loopTurnsFromRecords } from '../src/shared/loop-transcript';
 
@@ -312,5 +312,81 @@ describe('the context a run was given', () => {
     assert.ok(snapshot !== null);
     assert.match(snapshot.text, /Run chat-loop-first: ended as completed, at "done"\./);
     assert.match(snapshot.text, /\| Fix the typo in README\./);
+  });
+});
+
+describe('DSP-209 S22: the commits a run made, as the host reads them with git', () => {
+  const START = 'a'.repeat(40);
+  const END = 'c'.repeat(40);
+  const MID = 'b'.repeat(40);
+
+  /** A scripted git: answers by the joined arguments, fails on anything else. */
+  function scripted(answers: Readonly<Record<string, string>>): RunGit {
+    return (_cwd, args) => {
+      const key = args.join(' ');
+      return key in answers ? { ok: true, stdout: answers[key] ?? '' } : { ok: false, stdout: '' };
+    };
+  }
+
+  it('lists the commits between start and end, newest first, with local and pushed kept apart', () => {
+    const git = scripted({
+      'rev-parse --verify --quiet HEAD': `${END}\n`,
+      'rev-parse --abbrev-ref HEAD': 'main\n',
+      'rev-parse --abbrev-ref --symbolic-full-name @{upstream}': 'origin/main\n',
+      'rev-list --left-right --count @{upstream}...HEAD': '0\t1\n',
+      'rev-list @{upstream}..HEAD': `${END}\n`,
+      [`merge-base --is-ancestor ${START} ${END}`]: '',
+      [`log --max-count=50 --format=%H%x1f%s ${START}..${END}`]: `${END}\x1fSecond\n${MID}\x1fFirst\n`,
+      [`rev-list --count ${START}..${END}`]: '2\n',
+    });
+    const commits = readRunCommits('C:/repo', START, git);
+    assert.deepEqual(commits, {
+      folder: 'C:/repo',
+      startHead: START,
+      endHead: END,
+      branch: 'main',
+      commits: [
+        { sha: END, subject: 'Second', onUpstream: false },
+        { sha: MID, subject: 'First', onUpstream: true },
+      ],
+      notListed: 0,
+      upstream: { name: 'origin/main', ahead: 1, behind: 0 },
+      note: null,
+    });
+  });
+
+  it('says what it could not read rather than reporting no commits', () => {
+    const git = scripted({ 'rev-parse --verify --quiet HEAD': `${END}\n`, 'rev-parse --abbrev-ref HEAD': 'HEAD\n' });
+    const commits = readRunCommits('C:/repo', null, git);
+    assert.equal(commits.branch, null);
+    assert.equal(commits.upstream, null);
+    assert.deepEqual(commits.commits, []);
+    assert.match(commits.note ?? '', /not read when the run started/);
+  });
+
+  it('keeps the commits through the record store’s ending line', () => {
+    const store = new RunRecordStore(path.join(scratch('commits'), 'loop-runs'));
+    const writer = store.open(identity({ runId: 'chat-loop-commits' }));
+    const commits = readRunCommits('C:/repo', END, scripted({ 'rev-parse --verify --quiet HEAD': `${END}\n` }));
+    writer.finish({
+      endedAtUtc: '2026-11-14T10:05:00.000Z',
+      kind: 'finished',
+      status: 'completed',
+      terminalNodeId: 'done',
+      terminalPurpose: null,
+      outcome: 'verification-not-performed',
+      outcomeText: 'text',
+      modelRequested: 'opus',
+      modelReported: null,
+      commands: [],
+      snapshots: { beforeId: null, beforeFileCount: 0, afterId: null, afterFileCount: 0, changed: [], added: [], removed: [], truncated: null },
+      note: '',
+      cancelled: false,
+      cost: 'unknown',
+      commits,
+    });
+    const read = parseRunRecord(fs.readFileSync(writer.filePath(), 'utf8'));
+    assert.deepEqual(read.ending?.commits, commits);
+    assert.equal(read.ending?.terminalPurpose, null);
   });
 });

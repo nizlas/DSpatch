@@ -166,6 +166,8 @@ import {
   graphVersionIdFor,
   recordedCommandsAtEnd,
   recordedSnapshotsFrom,
+  readRunCommits,
+  readRunStartHead,
   RunRecordStore,
   type RunRecordWriter,
 } from '../main/run-record-store';
@@ -3025,6 +3027,11 @@ function registerLoopMethods(): void {
       if (built.failure !== null) {
         log(`[loop] ${request.runId}: ${built.failure}`);
       }
+      // DSP-209 S22: HEAD of the open project's folder as the run starts, for the commits the
+      // ending records. Read-only git; `null` when there is no repository or no commit yet.
+      const startHead = { folder: workspacePath, head: readRunStartHead(workspacePath) };
+      const purposeOf = (nodeId: string): string | undefined =>
+        loaded.graph.nodes.find((node) => node.id === nodeId)?.purpose;
       const record = requireRunRecordStore().open({
         runId: request.runId,
         projectPath: workspacePath,
@@ -3111,6 +3118,7 @@ function registerLoopMethods(): void {
           note: began.note,
           modelRequested,
           cancelled: false,
+          startHead,
         });
         return { kind: 'failed', note: began.note };
       }
@@ -3385,6 +3393,8 @@ function registerLoopMethods(): void {
           modelRequested,
           cancelled,
           messages: [...chatLoopMessages.values()],
+          startHead,
+          purposeOf,
           ...(handoverRefusal === null
             ? {}
             : {
@@ -3461,6 +3471,7 @@ function registerLoopMethods(): void {
           modelRequested,
           cancelled: chatLoopAbort?.signal.aborted ?? false,
           messages: [...chatLoopMessages.values()],
+          startHead,
         });
         endedNote = `The loop could not be run: ${note}`;
         return { kind: 'failed', note };
@@ -3937,6 +3948,14 @@ function closeChatLoopRecord(
     readonly messages?: readonly RecordedRunMessage[];
     /** DSP-209 S12: what became of a handed-over run's handover turn. */
     readonly handover?: RecordedRunEnding['handover'];
+    /**
+     * DSP-209 S22: the project folder and its HEAD as the run started, so the ending records the
+     * commits the run made and the upstream. Absent: the ending records none, which reads
+     * "not recorded".
+     */
+    readonly startHead?: { readonly folder: string; readonly head: string | null };
+    /** DSP-209 S22: a terminal's `purpose` from the drawing the run loaded, by node id. */
+    readonly purposeOf?: (nodeId: string) => string | undefined;
   },
 ): ChatLoopRecordInfo {
   const atUtc = new Date().toISOString();
@@ -4024,6 +4043,26 @@ function closeChatLoopRecord(
           })),
         }),
     ...(input.handover === undefined ? {} : { handover: input.handover }),
+    // DSP-209 S22: for the final run card. Read-only git in the project folder, at the end.
+    ...(input.startHead === undefined
+      ? {}
+      : { commits: readRunCommits(input.startHead.folder, input.startHead.head) }),
+    ...((): { terminalPurpose?: string | null } => {
+      if (terminalNodeId === null || input.purposeOf === undefined) {
+        return {};
+      }
+      const purpose = input.purposeOf(terminalNodeId)?.trim() ?? '';
+      return { terminalPurpose: purpose === '' ? null : purpose };
+    })(),
+    ...(input.result?.status === 'runtime-fault' && input.result.fault !== null
+      ? {
+          fault: {
+            kind: input.result.fault.kind,
+            detail: input.result.fault.detail,
+            reconcile: input.result.fault.reconcile,
+          },
+        }
+      : {}),
   };
   record.finish(ending);
   const failures = record.failures();

@@ -25,6 +25,7 @@
  * collected on the writer and reported with the run's ending.
  */
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,6 +43,8 @@ import {
   type ParsedRunRecord,
   type RecordedAgentReply,
   type RecordedCommand,
+  type RecordedRunCommit,
+  type RecordedRunCommits,
   type RecordedSnapshots,
   type RecordedRunEnding,
   type RunRecordIdentity,
@@ -437,4 +440,117 @@ export class RunRecordStore {
       .filter((entry) => entry.record?.identity?.conversationId === conversationId)
       .reverse();
   }
+}
+
+/* ------------------------------------------------------------------------- */
+/* DSP-209 S22: the run's commits, for the final run card                     */
+/* ------------------------------------------------------------------------- */
+
+/** One git call: its output, or that it failed. Injected so the reading is testable without git. */
+export type RunGit = (cwd: string, args: readonly string[]) => { readonly ok: boolean; readonly stdout: string };
+
+const RUN_GIT_TIMEOUT_MS = 10_000;
+
+/** The ordinary runner: `git` on the path, bounded, quiet, its stderr kept out of DSpatch's output. */
+export const defaultRunGit: RunGit = (cwd, args) => {
+  try {
+    const stdout = execFileSync('git', ['-c', 'core.quotepath=false', ...args], {
+      cwd,
+      timeout: RUN_GIT_TIMEOUT_MS,
+      windowsHide: true,
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'buffer',
+    });
+    return { ok: true, stdout: stdout.toString('utf8') };
+  } catch {
+    return { ok: false, stdout: '' };
+  }
+};
+
+/** How many commits one ending lists; the rest are counted in `notListed`. */
+export const RUN_COMMITS_LISTED = 50;
+
+/** HEAD of `folder` as the run starts, or `null` when it cannot be read (no repository, no commit). */
+export function readRunStartHead(folder: string, git: RunGit = defaultRunGit): string | null {
+  const head = git(folder, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  const sha = head.stdout.trim();
+  return head.ok && sha !== '' ? sha : null;
+}
+
+/**
+ * What `folder` gained in Git between `startHead` and now, for the run's ending.
+ *
+ * Read only: every call is `rev-parse`, `log`, `rev-list` or `merge-base`, and nothing fetches,
+ * so "pushed" means the upstream ref as this clone last saw it. Anything git cannot say goes
+ * into `note` rather than reading as an empty list.
+ */
+export function readRunCommits(folder: string, startHead: string | null, git: RunGit = defaultRunGit): RecordedRunCommits {
+  const notes: string[] = [];
+  const endHead = readRunStartHead(folder, git);
+  const branchCall = git(folder, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const branchName = branchCall.stdout.trim();
+  const branch = branchCall.ok && branchName !== '' && branchName !== 'HEAD' ? branchName : null;
+
+  let upstream: RecordedRunCommits['upstream'] = null;
+  let localOnly: ReadonlySet<string> | null = null;
+  const upstreamCall = git(folder, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  const upstreamName = upstreamCall.stdout.trim();
+  if (endHead !== null && upstreamCall.ok && upstreamName !== '') {
+    const counts = git(folder, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
+    const [behind, ahead] = counts.stdout.trim().split(/\s+/).map((part) => Number.parseInt(part, 10));
+    if (counts.ok && behind !== undefined && ahead !== undefined && Number.isFinite(behind) && Number.isFinite(ahead)) {
+      upstream = { name: upstreamName, ahead, behind };
+    } else {
+      notes.push(`How far the branch is from its upstream ${upstreamName} could not be read.`);
+    }
+    const local = git(folder, ['rev-list', '@{upstream}..HEAD']);
+    localOnly = local.ok ? new Set(local.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '')) : null;
+  }
+
+  let commits: RecordedRunCommit[] = [];
+  let notListed = 0;
+  if (startHead === null) {
+    notes.push('HEAD was not read when the run started, so the commits it made are not known.');
+  } else if (endHead === null) {
+    notes.push('HEAD could not be read when the run ended, so the commits it made are not known.');
+  } else if (startHead !== endHead) {
+    const ancestor = git(folder, ['merge-base', '--is-ancestor', startHead, endHead]);
+    if (!ancestor.ok) {
+      notes.push(
+        `HEAD at the end (${endHead.slice(0, 12)}) does not descend from HEAD at the start (${startHead.slice(0, 12)}): ` +
+          'the branch was switched or history rewritten, so the commits listed are those on the end side only.',
+      );
+    }
+    const range = `${startHead}..${endHead}`;
+    const log = git(folder, ['log', `--max-count=${String(RUN_COMMITS_LISTED)}`, '--format=%H%x1f%s', range]);
+    const total = git(folder, ['rev-list', '--count', range]);
+    if (!log.ok) {
+      notes.push('git could not list the commits between the run’s start and its end.');
+    } else {
+      commits = log.stdout
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => {
+          const [sha = '', subject = ''] = line.split('\x1f');
+          return {
+            sha: sha.trim(),
+            subject: subject.trim(),
+            onUpstream: localOnly === null ? null : !localOnly.has(sha.trim()),
+          };
+        });
+      const counted = Number.parseInt(total.stdout.trim(), 10);
+      notListed = total.ok && Number.isFinite(counted) ? Math.max(0, counted - commits.length) : 0;
+    }
+  }
+  return {
+    folder,
+    startHead,
+    endHead,
+    branch,
+    commits,
+    notListed,
+    upstream,
+    note: notes.length === 0 ? null : notes.join(' '),
+  };
 }
