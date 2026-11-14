@@ -88,6 +88,8 @@ const AREAS = {
       'loop-mailbox-run.test.ts',
       'loop-run-report.test.ts',
       'run-presentation.test.ts',
+      'graph-proposal.test.ts',
+      'loop-edge-routing.test.ts',
       'ordinal.test.ts',
       'run-mailbox.test.ts',
       { file: 'loop-parallel-loop.test.ts', heavy: true },
