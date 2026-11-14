@@ -6,13 +6,92 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 - **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c reviewed after one rework round and committed (calls 39–43); S11 reviewed and committed (calls 44–46); S12 reviewed after one rework round and committed (calls 47–51); S13 reviewed and committed (calls 52–54); every planned sub-goal is reviewed; whole assessment (call 55) found two gaps; S14 reviewed and committed (calls 57–59); second whole assessment (call 60) returned `needs-decision`: everything required is reviewed except Q2, which only Niclas can settle; the run ends `needs-decision` (coordinator visit 21, call 61). Status then: **paused — needs Niclas's decision** (Q2); not reported complete, not approved.
 - **Run `chat-loop-2026-11-14T08-41-01-671Z`** (started 14 November 2026): Niclas added **S15** to the scope in its mandate (BACKLOG proposals S3-rename and S7-restart; Q2 stays open and does not block it). Coordinator visit 1 of this run (call 1): reconciled, chose `implement` for S15 (decision 32); implemented (call 2), review `accept` (call 3); recorded and committed on coordinator visit 2 (call 4), then sent to a third whole assessment, since S15 was added after the second. Third assessment (mission-review, call 5): `needs-decision`, only Q2 open. The run ends `needs-decision` (coordinator visit 3, call 6). Status: **paused — needs Niclas's decision** (Q2); not reported complete, not approved.
+- **Run `chat-loop-2026-11-14T09-03-54-467Z`** (started 14 November 2026): Niclas **extends the mission** in its mandate. He puts **Q2 (dialogue-based graph construction) in scope** explicitly, and adds a product scope of six requirement areas, R1–R6 (see *Extension of 14 November 2026* below). Completed work, S15 included, stays as it is. Coordinator visit 1 (call 1): reconciled with Git (below) and recorded the extension. There is no plan for R1–R6 yet, so the visit chose `plan` (decision 34). Status: **in progress**.
+- **Reconciled on run `chat-loop-2026-11-14T09-03-54-467Z`, visit 1:** HEAD `fa1854f` on `main`, which is this file's commit at the end of the previous run, after `9ec6902` (S15). There is nothing unrecorded since then. Working copy: only the untracked non-mission files named below; no tracked change. No `dspatch/*` branches, an empty stash, and only the main worktree and `DSpatch-engine` (detached at `2e22eb2`, the recorded engine commit).
 - **Engine commit the runs use:** `2e22eb2`, from `C:\Users\nicla\development\DSpatch-engine` (moved from `c04536b` on 14 November 2026 between runs, at Niclas's request, after the first run had ended; client and host started through `start-engine.ps1` and recorded as `1.0.0 at 2e22eb205d1b`, host contract `a93c7907a2d9ebd5`). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
 - **Sub-goal in progress:** none. S15 is reviewed and committed (visit 2 of run `chat-loop-2026-11-14T08-41-01-671Z`).
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
-- **Waiting on Niclas:** **Q2 stops "Reported complete"** (dialogue-based graph construction: confirm out of scope, or ask for it as a new sub-goal). Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
+- **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
+
+## Extension of 14 November 2026: understandable workflows (R1–R6)
+
+These are Niclas's requirements, given in run `chat-loop-2026-11-14T09-03-54-467Z`'s mandate (in English). They are condensed here so later runs keep them; the run record holds the full wording. They are **product requirements, not a prescribed breakdown**. Ordinary design choices within them are the mission's to make. Every requirement starts as **pending**.
+
+**Goal.** Make DSpatch's workflows understandable to create, edit and follow. Niclas should be able to discuss a workflow in chat, get a real editable and executable graph, and follow its execution without reading interleaved streams from several agents. The user flow to support is: discuss a workflow → create and refine its graph → open and edit it → start it explicitly → follow progress and any parallel branches → inspect an unmistakable final report and the details behind it.
+
+- **R1 — Create and revise graphs through conversation (Q2, now in scope).**
+  - Use the existing graph format and runtime capabilities.
+  - The result is a real loop in the loop editor: editable, saveable and executable through the normal app flow.
+  - Later conversation revises the same graph.
+  - Edits made in the editor are reconciled, never silently overwritten.
+  - Changes are validated and their effect is shown.
+  - A proposal is distinct from an applied change.
+  - Creating or changing a graph never runs it.
+  - Reuse the parallelism and dialogue-construction design document (§5, §6, §10); do not write a competing specification.
+- **R2 — Readable graph layout.**
+  - A clear main flow, with alternative paths and related stages arranged coherently.
+  - Edges routed around unrelated nodes, with clear arrowheads and connections.
+  - Rework and return paths distinct from the main flow.
+  - Fewer crossings and less wasted space, with labels kept readable.
+  - Works for small graphs and for graphs of about 25 nodes.
+  - Positions stay stable during execution.
+  - Manual layout is kept where supported, and automatic layout never silently destroys it.
+  - Navigation, zoom, selection and editing stay usable.
+  - Choose a maintainable approach after reading the code and dependencies; no hardcoded positions for one graph. A crossing-free layout is not required for arbitrary graphs.
+- **R3 — Parallel execution visible without hover.**
+  - A fan-out node shows a compact summary: branch count, and how many are working, finished, blocked or failed.
+  - An obvious action opens the branches. Each branch shows its task, status and agent/model.
+  - A branch's live output opens in a persistent detail view, with a separate window available to follow it beside the main view.
+  - Hover may add detail, but never carries essential status or navigation.
+  - Repeated visits and rework attempts are distinguished, so old branches never look current.
+  - Reuse run events and mailbox data. Never imply a sent message was received or acknowledged when it was not.
+- **R4 — A readable main chat during a loop run.**
+  - Concise step reports with prominent headings: the node, the sub-goal where known, and the visit or rework attempt.
+  - Labelled as step reports, not as the run's final report.
+  - Progress and completed reports without a flood of tool calls or every intermediate utterance. Full text, tool activity and live output stay reachable through the node or branch detail view.
+  - Parallel branch reports are grouped under their step or sub-goal, and the integrator's combined report is shown clearly.
+  - Failures, questions and required user actions are visible in the main flow.
+  - No extra model calls just for display summaries.
+  - **Presentation is not agent context:**
+    - every output and its provenance is kept;
+    - collapsing, hiding or opening never changes what is saved or passed on;
+    - the graph's context-delivery contracts hold;
+    - full stored results are never replaced by UI summaries;
+    - branch tool logs are not injected into every prompt.
+- **R5 — An unmistakable end-of-run card, owned by the runtime.**
+  - Every ended run gets one distinct final card: completed, waiting for a decision, blocked, limit spent, cancelled, runtime failure.
+  - It never depends on an agent or a reporting node, and needs no extra model call. An agent's narrative may supplement it.
+  - It shows:
+    - overall status and why the run ended;
+    - the assignment and the sub-goals this run addressed;
+    - what was completed, what remains and what is blocked;
+    - counts of agent steps, parallel branches and rework rounds, and elapsed time;
+    - usage, without invented cost;
+    - commits, and whether they are local or pushed, when known;
+    - the user's next action, or "none required".
+  - The counters are defined clearly. Sub-goals, node visits, branch invocations, provider API calls and tool calls are never conflated, and parallel work is never double-counted.
+  - Status and counters come from the journal. Implementation claims are attributed to agent reports, and anything not available reads "unknown".
+  - It keeps apart: this run's result and the mission's cumulative status; agent-reviewed and user-approved work; an ended run and an in-memory pause that can still continue.
+  - After an app or host restart, an interrupted run reads as interrupted, never as complete or automatically resumable.
+  - One authoritative card per run, with no duplicate on reopening; the full reports and journal stay behind links or expansion.
+- **R6 — One logical implementer with a model-selection policy.**
+  - Where small, medium and large implementer nodes differ only in model, one node with a policy replaces them. Role, assignment and downstream flow stay the same.
+  - The policy is inspectable and editable.
+  - Each invocation records the chosen provider/model and the reason, and the actual choice is shown during execution.
+  - Configured provider availability, account boundaries, permissions and user choices are respected. No new paid service or extra billing.
+  - Fixed-model graphs keep working.
+  - Nodes whose responsibilities, tools or routing differ are not merged.
+- **Integration and ownership.** Define the shared interfaces first, before dependent changes diverge: graph editing, node visits, branches, reports, live output, final run status and model selection. Keep graph semantics, visual layout and execution presentation distinct.
+- **Verification and operation (this mandate):**
+  - AGENTS.md's verification policy, with minimal targeted checks. They matter most for changed saved formats, graph references, terminal-state reporting, and the preservation of execution and context behaviour. Valid results are reused.
+  - No broad suites, Xvfb matrices, repeated verification packages or extra CI.
+  - Niclas judges visual quality and usability himself. Automated checks never establish that a graph is visually clear. Leave him concise trial instructions.
+  - Do not change or restart the running `DSpatch-engine` checkout. Record any engine rebuild or host restart for after the run.
+  - Keep unrelated working-copy changes and user data. Commit reviewed increments locally; no release.
+  - Keep implemented, reviewed, manually untested and blocked requirements apart.
 
 ## Mapping (planner, run `chat-loop-2026-11-14T01-36-57-404Z`, call 2)
 
@@ -48,6 +127,34 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | reviewed | 1 | `bb7dba1` |
 | S14 | Run report completion: steps not reached (from the drawing the run used) and a "left for Niclas to examine" section built from recorded facts; one integrated run of the `loop` test group | S12 | reviewed | 1 | `9ba0d86` |
 | S15 | Niclas's addition (14 November 2026): (a) renaming a node renames its id everywhere the drawing refers to it; (b) a removed loop recap stays removed after a restart; each with a targeted test | S3, S7 (both reviewed) | reviewed (sequential, decision 32) | 1 | `(DSP-209 S15)` in `git log`, after `3af3975` |
+
+**Extension plan (planner, run `chat-loop-2026-11-14T09-03-54-467Z`, call 2; accepted on coordinator visit 2).** The planner wrote no files. Its full map is in that call's result in the run record. The key facts it read from code:
+- the whole run uses one model, from the entry step (`loop-run-agent.ts:137-142`);
+- edges are one quadratic curve between node centres with no obstacle avoidance (`GraphCanvas.tsx:171-202`);
+- branch instances emit no live activity (`loop-live.ts:1822-1946`);
+- `loop.saveGraph` writes with no check against disk (`project-host.ts:2160-2176`);
+- chat sessions already get app tools (`project-host.ts:614`);
+- no bundled graph has small, medium and large implementer nodes;
+- there is no layout library in `app/package.json`.
+
+Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S23b.
+
+| Id | Sub-goal | Req | Depends on | Status | Attempts | Commit |
+| --- | --- | --- | --- | --- | --- | --- |
+| S16 | Shared run-presentation model, pure, in `shared/run-presentation.ts`: `VisitIdentity`, `BranchView`, `StepReport`, `LiveOutputAddress`, `RunCounters`, `ModelSelectionRecord`, journal folds | R3–R6 | — | in progress (parallel with S17, decision 35) | 1 | — |
+| S17 | Graph-edit proposal model, pure, in `shared/graph-proposal.ts`: `GraphEditProposal`, `describeGraphChange`, `reconcileDisk`, `manualEditsSince` | R1 | — | in progress (parallel with S16) | 1 | — |
+| S18a | Edge routing around nodes; back and rework edges styled; node size by kind (`shared/loop-edge-routing.ts`, `GraphCanvas.tsx`) | R2 | — | pending | 0 | — |
+| S18b | Layered layout and an explicit **Arrange** action; places nodes that have no position (`shared/loop-layout.ts`) | R2 | S18a | pending | 0 | — |
+| S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | pending | 0 | — |
+| S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3 | S16, S18a (S19 for the model) | pending | 0 | — |
+| S21 | Step-report cards in chat, branches grouped, integrator's combined report, opt-in `SUBGOAL:` line | R4 | S16, S20 | pending | 0 | — |
+| S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5 | S16 | pending | 0 | — |
+| S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b | pending | 0 | — |
+| S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1 | S17, S23a | pending | 0 | — |
+
+The acceptance criteria and checks for each sub-goal are the planner's, from call 2. Each brief repeats the ones it needs. Section 3 of that result defines the R5 counters: sub-goal, agent step (node visit), branch invocation, rework round, calls, provider turns, tool calls, elapsed time and usage. S16 implements those definitions.
+
+**After this run:** host code changes in S19, S20, S22, S23a and S23b. They need an engine rebuild and a **Restart host** at Niclas's next engine transition, never during this run. No new host method is planned (`remote-build.ts:25` hashes method names only).
 
 Statuses:
 - **pending**;
@@ -391,7 +498,8 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Cancel stops dispatch and accounts for tools in flight [S10b; sequential exists] — met by reviewed sub-goal for "cancel all" (each branch still commits its leftovers); per-branch cancel open
 - Verification policy for every branch [S10, S11] — met by reviewed sub-goals as role text (branch does its slice's verification; integrator targets integration)
 - UI says why a method was chosen and what each branch owns [S3, S5, S10, S12] — met by reviewed sub-goals (skip reasons, handover reasons, slices with owned paths, report; look untested)
-- Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — proposed **skipped** (Q2), not met
+- Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — **in scope by Niclas's decision of 14 November 2026** (Q2 answered); now R1, pending
+- R1–R6 (extension of 14 November 2026) — all **pending**; planned on visit 2 as S16–S23b. R1 [S17, S23a, S23b], R2 [S18a, S18b], R3 [S16, S20], R4 [S16, S21], R5 [S16, S22], R6 [S16, S19]
 - Reconcile the parallelism document [S8] — met by reviewed sub-goal (§10 of the parallelism document)
 
 **Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — implemented and agent-reviewed; awaits Niclas's trial; (2) small task continues in chat without resubmission [S4, S5a, S5b, S6] — implemented and agent-reviewed; awaits Niclas's trial; (3) branches exchange a finding before completion [S10a–S10c, S11] — implemented and agent-reviewed with a scripted executor only; no live provider has run concurrent branches; Niclas's trial; (4) combined result keeps scope and provenance [S10a–S10c, S12] — implemented and agent-reviewed (branches, commits, base, messages, per-branch usage in the report; scripted only); Niclas's trial.
@@ -430,6 +538,10 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 12. **The bundled chat loop's check becomes skippable** (S4). The chat loop's notes record the interaction-model correction's "a successful work step always reaches check"; the vision (adaptive loops) and BACKLOG's near-term follow-up ("mandatory checking in the small chat loop is not evidence") supersede that for this graph, under Niclas's 13 November authorisation (BRIEF §3). The graph's notes are updated to say which decision they now record. A skipped check ends at a terminal that never reads as "met". Alternatives: keep check mandatory and demonstrate skips only in a new graph (leaves the vision's main case unbuilt); make check skippable in the development loop too (not asked for; that loop guards code changes).
 33. **A waiting recap removal is stored on the conversation, as `StoredConversation.removedLoopRecaps`, saved when Remove is pressed** (S15, the implementer's choice, accepted by review). Reason: the removal belongs to the conversation, and the conversation file is already written atomically and parsed defensively. Alternatives: a placeholder message with `loopRecap { text: null }` (a turn that never happened); a separate store under `userData` (a second file to keep in step); leaving it in memory (the bug).
 32. **S15 goes to the one implementer (`implement`), not the parallel path** (run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1, as the mandate asks this choice to be recorded). Dependencies: none between (a) and (b). They write different files (a: `shared/loop-graph-editing.ts` and an editor test; b: `main/chat-service.ts`, maybe `main/conversation-store.ts`/`shared/bridge.ts`, and their tests) and share no interface, so the split is structurally possible. Expected benefit: low. Both parts are small; (a) is a few lines in one pure function. The parallel path costs about five calls (slicer, two branch instances, integrator, parallel review) against two (implementer, review), plus committing STATE first and a merge. The time it saves is about the length of (a), which the slicer and integrator steps use up. (b) also holds the one real design choice (where a removal is stored), which suits one coherent attempt. Alternatives: `implement-parallel` with slices (a) and (b) (it would work but brings no gain worth its cost); two sub-goals S15a/S15b (an extra review pair for no gain; the mandate names one S15). Parallelism is not a goal in itself (BRIEF §3).
+35. **S16 and S17 go together through `implement-parallel`** (visit 2). They write different new files (`shared/run-presentation.ts` and `shared/graph-proposal.ts`, each with its own test). Neither imports the other, so there is no interface between them, and both must exist before any dependent sub-goal starts. Done in sequence they would take two implementer and review pairs. In parallel they take a slicer, two branches, an integrator and one review, about the same number of calls, in roughly half the wall time, with one review checking both shared interfaces together. Alternatives: two sequential `implement` sub-goals (same calls, slower); one implementer for both (one large coherent brief, but no shared design to keep coherent).
+36. **Layout and routing are written in-house, with no new dependency** (planner N4, adopted). Reason: graphs have up to about 25 nodes, the code is deterministic and unit-testable, and it adds no bundle or licence cost. Alternative: elkjs (EPL-2.0, about 1.4 MB), which would make a licence choice for Niclas.
+37. **R6 is built as a capability, and no shipped graph is merged** (planner N1). No bundled graph has small, medium and large implementer nodes, so there is nothing to merge without inventing one. S19's test uses a scripted graph with a select policy. Models stay within the run's one provider (decision 8; planner N3).
+34. **R1–R6 start with `plan`, not with an implementer brief** (run `chat-loop-2026-11-14T09-03-54-467Z`, visit 1). Reason: there is no plan for them. They span the graph editor, the canvas layout, the run view, the chat transcript, the record and run report, and node model selection. The mandate asks for the shared interfaces to be defined before dependent changes diverge, and that needs a code-read map of what exists: `GraphCanvas.tsx`, `LoopEditor.tsx`, `loop-run-view.ts`, `loop-transcript.ts`, `loop-run-report.ts`, `loop-record.ts`, the drawing's position fields and the node's model fields. The app has no layout library among its dependencies (`app/package.json` has no elkjs, dagre or React Flow), so a layout approach is a real choice for the plan. Research is skipped for now: the code should settle most of it, and the planner can name a concrete uncertainty if one blocks a sub-goal. Alternatives: brief a first "shared interfaces" sub-goal directly (it would guess at the existing code); a separate research step first (no concrete uncertainty is named yet).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -440,11 +552,23 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 **Q3 — May a branch's message be pushed into another branch's running turn through steering (Claude `streamInput`, Cursor `Run.steer`)?** (from S9, 14 November 2026) Steering today carries only the person's input; using it for agent-to-agent text changes what that channel means. Affects S11's "immediate" delivery. Recommendation: not in this mission; deliver at `check_messages` (decision 23) and, if wanted later, push only with the text labelled as from that branch. Continues without it: all of S10 and S11.
 
+**Q5 — May the mission graph and its coordinator role opt into S21's `declares: ["subgoal"]` (and later S19's model policy), between runs?** These are BRIEF §5's fixed files, so Niclas has to edit them or allow the edit. Without that, the mission loop's own step cards show "sub-goal unknown". (From planner N2, 14 November 2026.) Recommendation: yes, as a between-runs edit after S21 is reviewed. Continues without it: everything.
+
 **Q2 — Dialogue-based graph construction: skipped in this mission?** The vision frames it as future; this mission makes the concepts reusable and explained, but builds no conversational graph assembly. Recommendation: record as skipped with that reason, not as met. Continues without it: everything; if wanted in scope, it becomes a sub-goal after S12.
+- **Answered by Niclas, 14 November 2026** (run `chat-loop-2026-11-14T09-03-54-467Z`'s mandate): **in scope.** He wrote: "Niclas explicitly approves including Q2, dialogue-based graph construction, in this assignment. Extend the existing mission and record this decision. Preserve completed work, including S15." It is requirement R1. It is no longer a question.
 
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-03-54-467Z`, coordinator visit 2 (call 3).** The plan was recorded (above); `git status` showed only this file changed, by visit 1. S16 and S17 went to `implement-parallel` (decision 35), after this file was committed. **Next:** when the parallel path returns, record:
+- the slices, their owned paths, and each branch's `dspatch/run/<runId>/branches/v<n>/<slice>` branch with its commit and ending;
+- what the integrator merged, and the commits that are S16's and S17's;
+- the review's verdict, findings and checks.
+
+Then commit this file, and go on to S18a (`implement`). If a branch failed or the integration was refused, record what is in the working copy and what is not. If this run ends first, the next run reconciles from `git log` after this file's commit and `git branch --list 'dspatch/*'`.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-03-54-467Z`, coordinator visit 1 (call 1).** Reconciled with Git; nothing was unrecorded. Recorded the Q2 answer (in scope) and R1–R6. Sent to the planner (`plan`, decision 34). **Next:** record the planner's map and plan as sub-goals S16 onward, with ids, dependencies, the shared interfaces first and the files each one owns. Then brief the first feasible sub-goal, choosing `implement` or `implement-parallel` by dependencies and expected benefit (decision 32's reasoning). Commit STATE.md before any `implement-parallel`. If this run ends before the plan returns, the next run starts by sending it to the planner again; the planner writes no files.
 
 **14 November 2026, run `chat-loop-2026-11-14T08-41-01-671Z`, coordinator visit 3 (call 6).** The third assessment returned `needs-decision`, and the run ends `needs-decision`: only Q2 stops *Reported complete*, and it is Niclas's. **Next run:** reconcile from this file's commit after `9ec6902`.
 - If Niclas answers Q2 as out of scope, record it as out of scope by his decision and send the whole to assessment for *Reported complete*.
