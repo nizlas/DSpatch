@@ -55,6 +55,7 @@ import type {
   LoopGraph,
   LoopNode,
   LoopTarget,
+  ModelOption,
   ModelPolicy,
   NodeKind,
   ReportPolicy,
@@ -769,22 +770,26 @@ function parseModel(
       'bad-model',
       pointer,
       `Node "${nodeId}" has a "model" that is not an object. Use ` +
-        `{"policy":"inherit"}, {"policy":"fixed","model":"..."} or ` +
-        `{"policy":"described","description":"..."}.`,
+        `{"policy":"inherit"}, {"policy":"fixed","model":"..."}, ` +
+        `{"policy":"described","description":"..."} or ` +
+        `{"policy":"select","options":[{"id":"...","model":"..."}],"default":"..."}.`,
       { nodeId },
     );
     return null;
   }
   const policy = value['policy'];
-  if (policy !== 'inherit' && policy !== 'fixed' && policy !== 'described') {
+  if (policy !== 'inherit' && policy !== 'fixed' && policy !== 'described' && policy !== 'select') {
     findings.error(
       'bad-model-policy',
       `${pointer}/policy`,
       `Node "${nodeId}" has model policy ${JSON.stringify(policy)}; it must be inherit, ` +
-        `fixed or described.`,
+        `fixed, described or select.`,
       { nodeId },
     );
     return null;
+  }
+  if (policy === 'select') {
+    return parseModelSelect(value, pointer, nodeId, findings);
   }
   if (policy === 'fixed') {
     const model = nonEmptyString(value['model']);
@@ -815,6 +820,66 @@ function parseModel(
     return { policy, description };
   }
   return { policy };
+}
+
+/**
+ * DSP-209 S19: a `select` policy. Every option needs an id and a model, ids are unique, and
+ * the default names one of them, so a visit can never run with a model nobody wrote down.
+ */
+function parseModelSelect(
+  value: Readonly<Record<string, unknown>>,
+  pointer: string,
+  nodeId: string,
+  findings: Findings,
+): ModelPolicy | null {
+  const raw = value['options'];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    findings.error(
+      'select-model-without-options',
+      `${pointer}/options`,
+      `Node "${nodeId}" selects its model but lists no options. Give at least one ` +
+        `{"id":"...","model":"..."}, or use another policy.`,
+      { nodeId },
+    );
+    return null;
+  }
+  const options: ModelOption[] = [];
+  let ok = true;
+  raw.forEach((entry, index) => {
+    const at = `${pointer}/options/${String(index)}`;
+    const id = isRecord(entry) ? nonEmptyString(entry['id']) : null;
+    const model = isRecord(entry) ? nonEmptyString(entry['model']) : null;
+    if (id === null || model === null) {
+      findings.error(
+        'bad-model-option',
+        at,
+        `Node "${nodeId}": each model option needs an "id" and a "model".`,
+        { nodeId },
+      );
+      ok = false;
+      return;
+    }
+    if (options.some((option) => option.id === id)) {
+      findings.error('duplicate-model-option', `${at}/id`, `Node "${nodeId}" names model option "${id}" twice.`, { nodeId });
+      ok = false;
+      return;
+    }
+    const note = isRecord(entry) ? nonEmptyString(entry['note']) : null;
+    options.push({ id, model, ...(note === null ? {} : { note }) });
+  });
+  const fallback = nonEmptyString(value['default']);
+  if (fallback === null || !options.some((option) => option.id === fallback)) {
+    findings.error(
+      'select-model-bad-default',
+      `${pointer}/default`,
+      `Node "${nodeId}" selects its model, and "default" must name one of its options ` +
+        `(${options.map((option) => `"${option.id}"`).join(', ') || 'none'}): it is what a visit ` +
+        `runs with when the edge it arrived on chooses none.`,
+      { nodeId },
+    );
+    return null;
+  }
+  return ok ? { policy: 'select', options, default: fallback } : null;
 }
 
 function parseRequirements(
@@ -1065,6 +1130,16 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
     // DSP-209 S3. Absent and [] both mean the edge skips nothing, so only a non-empty list is
     // kept on the parsed edge; a graph without the field parses exactly as before.
     const skips = parseDelivers(entry['skips'], `${pointer}/skips`, edgeId, findings, 'skips');
+    // DSP-209 S19. Checked against the target's options in `checkLoopGraph`.
+    const selectsModel = entry['selectsModel'];
+    if (selectsModel !== undefined && nonEmptyString(selectsModel) === null) {
+      findings.error(
+        'bad-selects-model',
+        `${pointer}/selectsModel`,
+        `Edge "${edgeId}": "selectsModel" must be the id of one of the target step's model options.`,
+        { edgeId },
+      );
+    }
     edges.push({
       id: edgeId,
       from,
@@ -1072,6 +1147,7 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
       when,
       ...(delivers === null ? {} : { delivers }),
       ...(skips === null ? {} : { skips }),
+      ...(nonEmptyString(selectsModel) ? { selectsModel: selectsModel as string } : {}),
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['notes']) ? { notes: entry['notes'] as string } : {}),
     });
@@ -1415,6 +1491,29 @@ export function checkLoopGraph(graph: LoopGraph, options: CheckOptions = {}): re
 
   checkReachability(graph, byId, outgoing, pointerOf, findings);
   checkResultFlow(graph, byId, outgoing, pointerOf, edgePointerOf, findings);
+  // DSP-209 S19: an edge may choose only an option its target offers.
+  for (const edge of graph.edges) {
+    if (edge.selectsModel === undefined) {
+      continue;
+    }
+    const target = byId.get(edge.to);
+    if (target === undefined) {
+      continue;
+    }
+    const options = target.model?.policy === 'select' ? (target.model.options ?? []) : null;
+    if (options === null || !options.some((option) => option.id === edge.selectsModel)) {
+      findings.error(
+        'selects-a-missing-model-option',
+        `${edgePointerOf.get(edge.id) ?? '/edges'}/selectsModel`,
+        options === null
+          ? `Edge "${edge.id}" selects model option "${edge.selectsModel}", but "${target.id}" has no ` +
+              `"select" model policy to choose from. Give "${target.id}" one, or remove "selectsModel".`
+          : `Edge "${edge.id}" selects model option "${edge.selectsModel}", which "${target.id}" does not ` +
+              `offer. It offers ${quoteList(options.map((option) => option.id))}.`,
+        { edgeId: edge.id, nodeId: target.id },
+      );
+    }
+  }
   reportNotYetHonoured(graph, findings);
 
   const connected = options.connectedTargets;
@@ -2197,6 +2296,9 @@ function reportNotYetHonoured(graph: LoopGraph, findings: Findings): void {
     }
     if (edge.skips !== undefined) {
       note('skips', `edge ${edge.id}`);
+    }
+    if (edge.selectsModel !== undefined) {
+      note('selectsModel', `edge ${edge.id}`);
     }
   }
   for (const node of graph.nodes) {

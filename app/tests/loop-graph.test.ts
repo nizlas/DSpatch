@@ -151,7 +151,7 @@ test('the example graph says which attributes nothing honours yet', () => {
   }).filter((finding) => finding.code === 'not-yet-honoured');
 
   const attributes = notices.map((notice) => notice.message.split('"')[1]);
-  for (const expected of ['model', 'requirements']) {
+  for (const expected of ['requirements']) {
     assert.ok(
       attributes.includes(expected),
       `"${expected}" is set by the example graph, so its unhonoured state must be reported. ` +
@@ -171,7 +171,9 @@ test('the example graph says which attributes nothing honours yet', () => {
   // `limits` and `onRuntimeFault` left it on 13 November 2026 (DSP-208): the runner
   // enforces maxCalls, maxReworkRounds and maxMinutes and ends a run at a runtime fault,
   // so an author editing a limit was being told that nothing would act on it.
-  for (const nowHonoured of ['archive', 'report', 'limits', 'onRuntimeFault']) {
+  // `model` left it with DSP-209 S19: a run DSpatch walks opens each step with its own
+  // node's model, and "described" is still recorded and not applied, which is the caveat.
+  for (const nowHonoured of ['archive', 'report', 'limits', 'onRuntimeFault', 'model']) {
     assert.equal(
       attributes.includes(nowHonoured),
       false,

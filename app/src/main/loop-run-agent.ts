@@ -19,11 +19,13 @@
  *   `LOOP_RUN_TOOL_POLICY`. Commands DSpatch itself runs for a gate node are not the
  *   agent's tools and are not decided here.
  * - **The model** under Claude is the chat's Claude model; Cursor keeps the values the
- *   handlers used before.
+ *   handlers used before. That is the run's model, which a step naming none runs with;
+ *   since DSP-209 S19 a step's own fixed model or `select` option is opened per step by
+ *   the executor, and with the graph given, each is checked here first.
  */
 
 import type { StoredSessionProvider } from '../shared/bridge';
-import type { LoopNode, LoopTarget } from '../shared/loop-graph';
+import { modelsNamedBy, type LoopGraph, type LoopNode, type LoopTarget } from '../shared/loop-graph';
 import {
   describeLoopRunAgent,
   describeLoopRunRefused,
@@ -53,6 +55,12 @@ export interface LoopRunAgentRequest {
    * `undefined` where it does not (the editor's Run, which never has).
    */
   readonly entryNode?: Pick<LoopNode, 'id' | 'label' | 'model'>;
+  /**
+   * DSP-209 S19: the drawing the run walks. Given, every model a step may ask for - each
+   * fixed model and each `select` option - is checked against the account's list before
+   * the run starts. Absent, only the entry step's fixed model is, as before.
+   */
+  readonly graph?: Pick<LoopGraph, 'nodes'>;
   /** The model a Cursor run asks for, as the handler worked it out before DSP-138. */
   readonly cursorModel: string;
   /** DSP-149: the model chosen for Claude; `''` is the provider's own default. */
@@ -133,6 +141,20 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
         "this account. Set that step's model to inherit to use the model chosen for Claude, or run " +
         'the loop with the agent that offers it.',
     );
+  }
+  // DSP-209 S19: every step's own model, not only the first's, by the same rule. A model
+  // the account does not list is refused here rather than replaced by another.
+  if (provider === 'claude' && request.graph !== undefined && request.claudeModels != null) {
+    const listed = request.claudeModels;
+    const missing = modelsNamedBy(request.graph).find((named) => !listed.includes(named.model));
+    if (missing !== undefined) {
+      return refused(
+        `The step "${missing.label}" ${
+          missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
+        } the model ${missing.model}, which Claude does not offer this account. Change that ` +
+          "step's model, or run the loop with the agent that offers it.",
+      );
+    }
   }
   const modelRequested =
     provider === 'claude'

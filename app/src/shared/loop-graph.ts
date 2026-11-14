@@ -235,9 +235,9 @@ export const TARGET_CAPABILITIES: TargetCapabilities = {
         status: 'enforced',
         how:
           'the `model` the adapter passes to `Agent.create` for the session, not a field ' +
-          'in any file. Still enforced, and by something outside the agent \u2014 but the ' +
-          "value comes from the run: `modelForChatNode` reads the *entry* node's fixed " +
-          'model and every session of the run is opened with it.',
+          'in any file. Still enforced, and by something outside the agent. Since DSP-209 S19 ' +
+          "each step's session is opened with that step's own fixed model; a step without one " +
+          'runs the model the run asks for.',
         evidence: 'observed',
       },
     },
@@ -396,15 +396,103 @@ export const RUNTIME_FAULT_POLICIES = ['stop-and-reconcile'] as const;
  * Which model runs a step.
  *
  * `described` exists because DSP-8 has not been decided: a graph can record *how* the
- * model should be chosen without pretending the choice is already automated. No
- * runner honours any of this yet — see {@link ATTRIBUTE_SUPPORT}.
+ * model should be chosen without pretending the choice is already automated; nothing
+ * applies it. Since DSP-209 S19 a run DSpatch walks honours `fixed` for every step, not
+ * only the entry, and `select` picks one of the node's own options by the edge the run
+ * arrived on ({@link LoopEdge.selectsModel}) — see {@link stepModelChoice}.
  */
 export interface ModelPolicy {
-  readonly policy: 'inherit' | 'fixed' | 'described';
-  /** Required when `policy` is `fixed`. A provider slug, meaningful only for the graph's target. */
+  readonly policy: 'inherit' | 'fixed' | 'described' | 'select';
+  /** Required when `policy` is `fixed`. A provider slug, meaningful only for the run's provider. */
   readonly model?: string;
   /** Required when `policy` is `described`. What should decide, for a human to apply. */
   readonly description?: string;
+  /** DSP-209 S19: required when `policy` is `select`. At least one, ids unique. */
+  readonly options?: readonly ModelOption[];
+  /** DSP-209 S19: required when `policy` is `select`. The option id taken when the arrival names none. */
+  readonly default?: string;
+}
+
+/** DSP-209 S19: one model a `select` policy may run its step with. */
+export interface ModelOption {
+  /** What an edge's `selectsModel` names, such as `small`. */
+  readonly id: string;
+  /** The provider's model id, within the run's one provider (decision 8). */
+  readonly model: string;
+  /** What the option is for, for the person reading the drawing. */
+  readonly note?: string;
+}
+
+/**
+ * DSP-209 S19: which model a visit runs with, decided from the drawing alone.
+ *
+ * `model: null` means the run's own model (the person's choice for the provider), which
+ * is what `inherit`, `described` and a node without `model` have always run with.
+ */
+export interface StepModelChoice {
+  readonly model: string | null;
+  /** The node's policy, or `null` when it names none. */
+  readonly policy: ModelPolicy['policy'] | null;
+  /** The `select` option taken, or `null`. */
+  readonly option: string | null;
+  /** `edge`: the arrival's `selectsModel`; `default`: the policy's default; `null` otherwise. */
+  readonly by: 'edge' | 'default' | null;
+}
+
+/**
+ * DSP-209 S19: the one rule for a visit's model, used by the runner for the journal and by
+ * the live executor for the session, so what is recorded and what runs cannot differ.
+ *
+ * An arrival whose `selectsModel` names no option of this node falls to the default; the
+ * loader refuses such a drawing, so that only happens to a graph built in code.
+ */
+export function stepModelChoice(
+  node: Pick<LoopNode, 'model'>,
+  arrival: Pick<LoopEdge, 'selectsModel'> | null,
+): StepModelChoice {
+  const policy = node.model;
+  if (policy === undefined) {
+    return { model: null, policy: null, option: null, by: null };
+  }
+  if (policy.policy === 'fixed' && policy.model !== undefined && policy.model !== '') {
+    return { model: policy.model, policy: 'fixed', option: null, by: null };
+  }
+  if (policy.policy === 'select') {
+    const options = policy.options ?? [];
+    const named = arrival?.selectsModel;
+    const byEdge = named === undefined ? undefined : options.find((option) => option.id === named);
+    if (byEdge !== undefined) {
+      return { model: byEdge.model, policy: 'select', option: byEdge.id, by: 'edge' };
+    }
+    const fallback = options.find((option) => option.id === policy.default) ?? options[0];
+    if (fallback !== undefined) {
+      return { model: fallback.model, policy: 'select', option: fallback.id, by: 'default' };
+    }
+  }
+  return { model: null, policy: policy.policy, option: null, by: null };
+}
+
+/**
+ * DSP-209 S19: every model a drawing's agent steps may ask for — fixed models and every
+ * `select` option — once each, for the check before a run starts.
+ */
+export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>): readonly { readonly nodeId: string; readonly label: string; readonly model: string; readonly option: string | null }[] {
+  const named: { nodeId: string; label: string; model: string; option: string | null }[] = [];
+  for (const node of graph.nodes) {
+    if (node.kind !== 'agent' || node.model === undefined) {
+      continue;
+    }
+    const label = node.label ?? node.id;
+    if (node.model.policy === 'fixed' && node.model.model !== undefined && node.model.model !== '') {
+      named.push({ nodeId: node.id, label, model: node.model.model, option: null });
+    }
+    if (node.model.policy === 'select') {
+      for (const option of node.model.options ?? []) {
+        named.push({ nodeId: node.id, label, model: option.model, option: option.id });
+      }
+    }
+  }
+  return named;
 }
 
 /**
@@ -752,6 +840,12 @@ export interface LoopEdge {
    * path is visited as usual.
    */
   readonly skips?: readonly string[];
+  /**
+   * DSP-209 S19: which option of the target's `select` model policy the arriving visit runs
+   * with, by option id. The reason recorded is the deciding step's own, from its `RESULT:`
+   * line (decision 3). Validation refuses it on an edge whose target has no such option.
+   */
+  readonly selectsModel?: string;
   /** What the figure writes on the arrow. Falls back to the condition. */
   readonly label?: string;
   readonly notes?: string;
@@ -944,7 +1038,22 @@ export function describeRunToolPolicy(
  * again in the same way.
  */
 export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
-  { attribute: 'model', honoured: false, by: 'DSP-18 for the runner; DSP-8 decides task-aware selection' },
+  {
+    attribute: 'model',
+    honoured: true,
+    by:
+      'DSP-209 S19. A run DSpatch walks opens each agent step with its own node\'s model: "fixed" ' +
+      'for every step, not only the entry, and "select" takes the option the arriving edge\'s ' +
+      'selectsModel names, else its default. node-entered and branch-started record the model, ' +
+      'the option, the reason and who chose.',
+    caveat:
+      '"described" is recorded and not applied: such a step runs the run\'s model. "inherit" runs ' +
+      'the model chosen for the run\'s one provider. A run with Claude is refused before it starts ' +
+      'when a step names a model Claude does not list for the account; for Cursor and Copilot no ' +
+      'list is checked and the provider refuses an unknown model itself. A step whose model ' +
+      'changes between visits switches it on Claude\'s next turn and opens a new session on the ' +
+      'other providers. A dry run calls no provider, so it records the choice and runs nothing.',
+  },
   {
     attribute: 'limits',
     honoured: true,
@@ -1021,6 +1130,14 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     caveat:
       'It records a skip; it does not route. The edge is chosen exactly as it would be without ' +
       'the field, and a skipped step reached later by another path is visited as usual.',
+  },
+  {
+    attribute: 'selectsModel',
+    honoured: true,
+    by: 'DSP-209 S19. The visit the edge leads to runs with the named option of its "select" model policy, and node-entered records the option and the deciding step\'s reason from its RESULT: line.',
+    caveat:
+      'It chooses a model; it does not route. The edge is chosen exactly as without it. An arrival ' +
+      'by any other edge runs the policy\'s default, recorded with the reason "default".',
   },
   {
     attribute: 'fanOut',
@@ -1244,10 +1361,10 @@ export const RUN_PROVIDER_CAPABILITIES: Readonly<
       status: 'enforced',
       how:
         'the model DSpatch passes to the SDK for the session, not a field in any file. ' +
-        'Still enforced, and by something outside the agent — but every step of a run ' +
-        'with Claude runs the one model DSpatch uses for Claude, whatever model the step ' +
-        'names: only the entry step’s fixed model is checked, and a run whose entry ' +
-        'fixes a different model is refused before it starts.' +
+        'Still enforced, and by something outside the agent. Since DSP-209 S19 each step ' +
+        'runs its own fixed model, a step without one runs the model chosen for Claude, and ' +
+        'a run where any step names a model Claude does not list for the account is ' +
+        'refused before it starts.' +
         CLAUDE_EVIDENCE_NOTE,
       evidence: 'documentation',
     },
@@ -1285,7 +1402,7 @@ export const RUN_PROVIDER_CAPABILITIES: Readonly<
     },
     'fixed-model-selection': {
       status: 'enforced',
-      how: 'the model DSpatch passes to the SDK for the session. Every step runs the one model chosen for Copilot; only the entry step’s fixed model is checked.' + COPILOT_EVIDENCE_NOTE,
+      how: 'the model DSpatch passes to the SDK for the session. Since DSP-209 S19 each step runs its own fixed model and a step without one runs the model chosen for Copilot; no model list is checked before the run starts.' + COPILOT_EVIDENCE_NOTE,
       evidence: 'documentation',
     },
     'no-subagent-delegation': {

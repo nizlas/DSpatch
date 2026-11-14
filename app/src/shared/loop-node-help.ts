@@ -70,6 +70,17 @@ export const SKIPS_HELP: SettingHelp = {
   whenEmpty: 'Taking this connection skips nothing.',
 };
 
+/** DSP-209 S19: an edge's `selectsModel`, as the edge panel explains it. */
+export const SELECTS_MODEL_HELP: SettingHelp = {
+  name: 'Model option it selects',
+  detail:
+    'The step this connection leads to runs, on this visit, with the named option of its ' +
+    '“Chosen per visit from a list” model choice. The run records the model, the option and ' +
+    'the reason the deciding step gives after its outcome on its RESULT: line. It does not ' +
+    'change which connection is taken.',
+  whenEmpty: 'The step it leads to runs its own default option, or its own model.',
+};
+
 /** DSP-209 S3: a node's `required`, as the node panel explains it. */
 export const REQUIRED_HELP: SettingHelp = {
   name: 'Required — never skipped',

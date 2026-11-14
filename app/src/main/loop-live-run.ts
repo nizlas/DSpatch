@@ -396,6 +396,8 @@ async function driveLive(
             }),
           }),
       fanOutAdapterCap: FAN_OUT_ADAPTER_CAPS[options.provider],
+      // DSP-209 S19: what a step naming no model runs with, for its `node-entered` record.
+      runModel: { provider: options.provider, model: options.modelRequested },
       ...(options.takeInstructions === undefined ? {} : { takeInstructions: options.takeInstructions }),
       executor: createLiveExecutor({
         workspacePath,

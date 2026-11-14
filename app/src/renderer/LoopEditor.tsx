@@ -43,6 +43,7 @@ import type {
   LoopGraph,
   LoopNode,
   LoopTarget,
+  ModelOption,
   ModelPolicy,
   NodeKind,
   ResolvedRole,
@@ -98,7 +99,8 @@ import {
   summariseEditorRun,
 } from '../shared/loop-editor-run';
 import type { EditorRunSummary } from '../shared/loop-editor-run';
-import { formatJournalEntry, type RunJournalEntry, type RunResult } from '../shared/loop-run';
+import { formatJournalEntry, latestModelSelection, type RunJournalEntry, type RunResult } from '../shared/loop-run';
+import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
 import { controlPhase } from '../shared/loop-control';
@@ -142,6 +144,7 @@ import {
   LIMIT_KEYS,
   REQUIRED_HELP,
   SKIPS_HELP,
+  SELECTS_MODEL_HELP,
   SUGGEST_INTERACTIVE_HELP,
 } from '../shared/loop-node-help';
 import { GraphCanvas } from './GraphCanvas';
@@ -2875,6 +2878,7 @@ export function LoopEditor(): React.JSX.Element {
               // declared outside DSpatch is not this repository (DSP-82).
               resourceRoot={file?.projectRoot ?? null}
               runProvider={runAgent?.provider ?? null}
+              liveModel={watch === null ? null : latestModelSelection(watch.entries, selectedNode.id)}
               onNote={setNote}
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
               onDelete={() => {
@@ -3248,12 +3252,15 @@ function NodeInspector({
   help,
   resourceRoot,
   runProvider,
+  liveModel,
   onNote,
   onChange,
   onDelete,
 }: {
   readonly graph: LoopGraph;
   readonly node: LoopNode;
+  /** DSP-209 S19: the model the watched run's latest visit to this step runs with, or `null`. */
+  readonly liveModel: ModelSelectionRecord | null;
   readonly role: ResolvedRole | null;
   readonly findings: readonly Finding[];
   readonly help: boolean;
@@ -3660,40 +3667,126 @@ function NodeInspector({
           <legend>
             Which model runs it{' '}
             {/*
-              The one node where this box is not inert (DSP-94, from DSP-92's F7).
-
-              `main.ts` computes `modelForChatNode(entryNode, session.modelRequested)` and
-              passes that single value to every session the run opens, so a fixed model on
-              the entry step silently sets the model for the whole run. On every other node
-              `node.model` is read nowhere on the live path, which is what the table says.
-              The error direction mattered: the panel under-promised exactly where the
-              effect was largest.
+              DSP-209 S19: applied per step. A fixed model opens this step's own session, and
+              a "select" policy takes the option the arriving edge names, else its default.
+              R7: the chip's hover is a short label; the full rule is the note below.
             */}
-            {graph.entry === node.id && model.policy === 'fixed' ? (
-              <span
-                className="support support-limited"
-                data-ev="node-model-reach"
-                title="A run started from the chat reads this node's fixed model and opens every step's session with it."
-              >
-                applied — to every step
+            {model.policy === 'fixed' || model.policy === 'select' ? (
+              <span className="support support-limited" data-ev="node-model-applied" title="Applied to this step">
+                applied to this step
               </span>
-            ) : (
-              <Unhonoured attribute="model" />
-            )}
+            ) : model.policy === 'described' ? (
+              <span className="support support-inert" title="Not applied">
+                recorded, not applied
+              </span>
+            ) : null}
           </legend>
+          {liveModel !== null ? (
+            <p data-ev="node-model-live">
+              <strong>This run:</strong> {liveModel.model === '' ? 'the provider’s default' : <code>{liveModel.model}</code>}
+              {liveModel.option === null ? '' : ` (option “${liveModel.option}”)`} on {liveModel.provider} —{' '}
+              {liveModel.source === 'policy' ? 'chosen by the policy' : liveModel.source === 'fixed' ? 'fixed by the step' : 'the run’s model'}
+              , because: {liveModel.reason}
+            </p>
+          ) : null}
           <label>
             Choice
             <select
               value={model.policy}
-              onChange={(event) =>
-                onChange({ ...node, model: { ...model, policy: event.target.value as ModelPolicy['policy'] } })
-              }
+              onChange={(event) => {
+                const policy = event.target.value as ModelPolicy['policy'];
+                // A new select policy starts with one option so the drawing stays valid to read.
+                onChange({
+                  ...node,
+                  model:
+                    policy === 'select'
+                      ? {
+                          policy,
+                          options: model.options ?? [{ id: 'default', model: model.model ?? '' }],
+                          default: model.default ?? model.options?.[0]?.id ?? 'default',
+                        }
+                      : { ...model, policy, options: undefined, default: undefined },
+                });
+              }}
             >
               <option value="inherit">Whatever the run is using</option>
               <option value="fixed">One named model</option>
+              <option value="select">Chosen per visit from a list</option>
               <option value="described">Described, for a person to apply</option>
             </select>
           </label>
+          {model.policy === 'select' ? (
+            <div data-ev="node-model-select">
+              {(model.options ?? []).map((option, at) => {
+                const replaceOption = (next: ModelOption | null): void => {
+                  const options = (model.options ?? []).flatMap((entry, index) =>
+                    index !== at ? [entry] : next === null ? [] : [next],
+                  );
+                  // The default follows its option when renamed, and moves to the first when removed.
+                  const fallback = model.default !== option.id ? model.default : next === null ? options[0]?.id : next.id;
+                  onChange({ ...node, model: { ...model, options, default: fallback } });
+                };
+                return (
+                  <div key={at} className="setting" data-ev="node-model-option">
+                    <label>
+                      Option id
+                      <input value={option.id} onChange={(event) => replaceOption({ ...option, id: event.target.value })} />
+                    </label>
+                    <label>
+                      Model
+                      <input value={option.model} onChange={(event) => replaceOption({ ...option, model: event.target.value })} />
+                    </label>
+                    <label>
+                      Note
+                      <input
+                        value={option.note ?? ''}
+                        onChange={(event) => replaceOption({ ...option, note: event.target.value === '' ? undefined : event.target.value })}
+                      />
+                    </label>
+                    <button type="button" title="Remove option" onClick={() => replaceOption(null)}>
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                title="Add option"
+                onClick={() =>
+                  onChange({
+                    ...node,
+                    model: {
+                      ...model,
+                      options: [...(model.options ?? []), { id: `option-${String((model.options ?? []).length + 1)}`, model: '' }],
+                    },
+                  })
+                }
+              >
+                Add option
+              </button>
+              <label>
+                Default, when the arriving connection chooses none
+                <select
+                  value={model.default ?? ''}
+                  onChange={(event) => onChange({ ...node, model: { ...model, default: event.target.value } })}
+                >
+                  {(model.options ?? []).map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted" data-ev="node-model-select-edges">
+                {(() => {
+                  const choosing = graph.edges.filter((edge) => edge.to === node.id && edge.selectsModel !== undefined);
+                  return choosing.length === 0
+                    ? 'No connection into this step chooses an option, so every visit runs the default.'
+                    : `Chosen by: ${choosing.map((edge) => `${edge.id} → ${edge.selectsModel ?? ''}`).join('; ')}. Any other arrival runs the default.`;
+                })()}
+              </p>
+            </div>
+          ) : null}
           {model.policy === 'fixed' ? (
             <label>
               The model, as {graph.target} names it
@@ -3714,17 +3807,21 @@ function NodeInspector({
             </label>
           ) : null}
           <p className="muted" data-ev="node-model-note">
+            {model.policy === 'fixed'
+              ? 'This step’s own session is opened with this model, on every visit. '
+              : model.policy === 'select'
+                ? 'Each visit runs one option: the one the connection it arrived on names in its ' +
+                  '“Model option it selects”, with the deciding step’s reason from its RESULT: line, ' +
+                  'or the default, with the reason “default”. '
+                : model.policy === 'described'
+                  ? 'Recorded and not applied: this step runs the run’s model. '
+                  : 'This step runs the run’s model: the one chosen for the agent beside the composer. '}
+            Every model stays within the run’s one agent, and a run with Claude is refused before it
+            starts when a step names a model Claude does not list for the account.
             {graph.entry === node.id
-              ? 'This node is where a run starts, and that makes this box the exception. One named ' +
-                'model here becomes the model for every step of a run started from the chat, not ' +
-                'only for this one: the run reads the entry step’s choice once and opens every ' +
-                'session with it. Left on “Whatever the run is using”, the run uses the model ' +
-                'chosen beside the composer. A run started with Run in this window uses DSpatch’s ' +
-                'own default and reads nothing from here.'
-              : 'Recorded and not applied. Which model this step runs on comes from the run, not ' +
-                'from here, and how a per-step choice would be made has not been decided. The one ' +
-                'box that does change something is the same box on the entry step, whose named ' +
-                'model becomes the model for every step of the run.'}
+              ? ' This is where a run started from the chat begins, so a model fixed here is also ' +
+                'the run’s model, which every step on “Whatever the run is using” then runs with.'
+              : ''}
           </p>
         </fieldset>
 
@@ -4158,6 +4255,37 @@ function EdgeInspector({
           ? SKIPS_HELP.whenEmpty
           : `Skips ${edge.skips.map((id) => nodeById(graph, id)?.label ?? id).join(', ')}. ${SKIPS_HELP.detail}`}
       </p>
+
+      {(() => {
+        // DSP-209 S19: offered only where the target chooses its model from a list.
+        const target = nodeById(graph, edge.to);
+        const options = target?.model?.policy === 'select' ? (target.model.options ?? []) : null;
+        if (options === null && edge.selectsModel === undefined) {
+          return null;
+        }
+        return (
+          <>
+            <label data-ev="edge-selects-model">
+              {SELECTS_MODEL_HELP.name} <code>selectsModel</code>
+              <select
+                value={edge.selectsModel ?? ''}
+                onChange={(event) => onChange({ ...edge, selectsModel: event.target.value === '' ? undefined : event.target.value })}
+              >
+                <option value="">none — the step’s default</option>
+                {(options ?? []).map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.id} ({option.model || 'no model'})
+                  </option>
+                ))}
+                {edge.selectsModel !== undefined && !(options ?? []).some((option) => option.id === edge.selectsModel) ? (
+                  <option value={edge.selectsModel}>{edge.selectsModel} (not offered)</option>
+                ) : null}
+              </select>
+            </label>
+            <p className="muted">{edge.selectsModel === undefined ? SELECTS_MODEL_HELP.whenEmpty : SELECTS_MODEL_HELP.detail}</p>
+          </>
+        );
+      })()}
 
       <label>
         Notes
