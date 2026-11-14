@@ -24,7 +24,7 @@ import {
   nodeOutlinePath,
   nodeSize,
 } from '../shared/loop-edge-geometry';
-import { routeExtent, routeLoopEdges, type EdgeRoute } from '../shared/loop-edge-routing';
+import { routeExtent, routeLoopEdges, sidePathEdges, type EdgeRoute } from '../shared/loop-edge-routing';
 import { NODE_RUN_STATE_MARKS, endingMarkFor, nodeRunStateFor, type EndingMark, type FinishedRunMarks, type NodeRunState } from '../shared/loop-run-view';
 
 export type GraphSelection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
@@ -103,6 +103,9 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
     the graph object is the same, which is every run update.
   */
   const routes = useMemo(() => routeLoopEdges(graph, { labelOf: edgeText }), [graph]);
+  // Niclas, 14 November 2026: failures and a node's own "nothing established" route are drawn
+  // fainter, and while something is selected, connections that do not touch it step back.
+  const sidePaths = useMemo(() => sidePathEdges(graph), [graph]);
   const bounds = graphBounds(graph, routes);
   const classes = [props.mode === 'view' ? 'view' : '', props.armed === true && props.locked !== true ? 'armed' : '', props.locked === true || props.mode === 'view' ? 'locked' : '']
     .filter((entry) => entry !== '')
@@ -153,6 +156,12 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           route={routes.get(edge.id) ?? null}
           selected={selection?.kind === 'edge' && selection.id === edge.id}
           highlighted={selection?.kind === 'node' && (edge.from === selection.id || edge.to === selection.id)}
+          side={sidePaths.has(edge.id)}
+          dimmed={
+            selection !== null &&
+            !(selection.kind === 'edge' && selection.id === edge.id) &&
+            !(selection.kind === 'node' && (edge.from === selection.id || edge.to === selection.id))
+          }
           showLabel={props.showLabels}
           taken={props.edgesTaken.has(edge.id)}
           severity={props.severityOfEdge?.(edge.id) ?? null}
@@ -198,6 +207,8 @@ function EdgeShape({
   route,
   selected,
   highlighted,
+  side,
+  dimmed,
   showLabel,
   taken,
   severity,
@@ -207,6 +218,10 @@ function EdgeShape({
   readonly route: EdgeRoute | null;
   readonly selected: boolean;
   readonly highlighted: boolean;
+  /** A side path (`sidePathEdges`): fainter until it or one of its nodes is selected. */
+  readonly side: boolean;
+  /** Something else is selected: this connection steps back, still drawn. */
+  readonly dimmed: boolean;
   readonly showLabel: boolean;
   readonly taken: boolean;
   readonly severity: Finding['severity'] | null;
@@ -232,6 +247,8 @@ function EdgeShape({
     route.back ? 'edge-back' : '',
     selected ? 'edge-selected' : '',
     highlighted ? 'edge-highlighted' : '',
+    side ? 'edge-side' : '',
+    dimmed ? 'edge-dimmed' : '',
     taken ? 'edge-taken' : '',
     severity === null ? '' : `edge-${severity}`,
   ]
@@ -243,6 +260,7 @@ function EdgeShape({
       className={classes}
       data-edge-id={edge.id}
       data-edge-back={route.back ? 'true' : 'false'}
+      data-edge-side={side ? 'true' : 'false'}
       onClick={(event) => {
         event.stopPropagation();
         onSelect();

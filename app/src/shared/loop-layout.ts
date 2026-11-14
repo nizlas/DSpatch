@@ -6,7 +6,8 @@
  * 1. **Back edges are set aside** with S18a's {@link findBackEdges}, so a rework edge never
  *    pushes its target down; it stays a back edge and S18a's router draws it in a lane.
  * 2. **Layers by longest path** over the remaining edges. The entry is in the first layer.
- *    Terminals go together in the last layer, so every ending reads at the bottom.
+ *    Terminals go together in the last layer, so every ending reads at the bottom, except, when
+ *    side paths are given, an ending only they reach: it goes in a column beside the flow (5).
  * 3. **A few barycentre sweeps**, down then up, order each layer to reduce crossings. Ties
  *    keep the order of the file, so the same drawing always gives the same layout.
  * 4. **Compact coordinates** from {@link nodeSize}: rows as tall as their tallest box plus
@@ -48,15 +49,47 @@ export interface LayoutResult {
   readonly layers: ReadonlyMap<string, number>;
 }
 
-/** Lay out every node of the drawing. Nodes are identified by id; duplicates keep the first. */
-export function layeredLayout(graph: LayoutGraph): LayoutResult {
-  const nodes: LayoutNode[] = [];
+/**
+ * Lay out every node of the drawing. Nodes are identified by id; duplicates keep the first.
+ *
+ * With `sidePaths` (S18a's `sidePathEdges`), an ending reached only by side paths — a declared
+ * failure, or a node's own route for a reply that established nothing — is set beside the main
+ * flow rather than in its last row, at the height of the steps that lead to it. The main flow
+ * then reads top to bottom on its own, and those paths stay short and outside it (Niclas,
+ * 14 November 2026).
+ */
+export function layeredLayout(graph: LayoutGraph, options: { readonly sidePaths?: ReadonlySet<string> } = {}): LayoutResult {
+  const all: LayoutNode[] = [];
   const known = new Set<string>();
   for (const node of graph.nodes) {
     if (!known.has(node.id)) {
       known.add(node.id);
-      nodes.push(node);
+      all.push(node);
     }
+  }
+  const incoming = new Map<string, { readonly id: string; readonly from: string }[]>();
+  for (const edge of graph.edges) {
+    if (known.has(edge.from) && edge.from !== edge.to) {
+      incoming.set(edge.to, [...(incoming.get(edge.to) ?? []), edge]);
+    }
+  }
+  const besideIds = new Set(
+    all
+      .filter((node) => {
+        const into = incoming.get(node.id) ?? [];
+        return (
+          node.kind === 'terminal' &&
+          node.id !== graph.entry &&
+          into.length > 0 &&
+          into.every((edge) => options.sidePaths?.has(edge.id) === true)
+        );
+      })
+      .map((node) => node.id),
+  );
+  const nodes = all.filter((node) => !besideIds.has(node.id));
+  known.clear();
+  for (const node of nodes) {
+    known.add(node.id);
   }
   const order = new Map(nodes.map((node, index) => [node.id, index]));
   const back = findBackEdges({ entry: graph.entry, nodes, edges: graph.edges });
@@ -137,20 +170,48 @@ export function layeredLayout(graph: LayoutGraph): LayoutResult {
   }
 
   // 4. Coordinates.
-  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const byId = new Map(all.map((node) => [node.id, node]));
   const sizeOf = (id: string): { width: number; height: number } => nodeSize(byId.get(id) ?? { kind: kinds.get(id) ?? 'agent' });
   const rowWidth = (row: readonly string[]): number =>
     row.reduce((sum, id) => sum + sizeOf(id).width, 0) + Math.max(0, row.length - 1) * COLUMN_GAP;
   const widest = Math.max(0, ...rows.map(rowWidth));
   const positions = new Map<string, { x: number; y: number }>();
+  const rowTops: number[] = [];
   let y: number = LAYOUT_TOP_LEFT.y;
   for (const row of rows) {
+    rowTops.push(y);
     let x = LAYOUT_TOP_LEFT.x + Math.round((widest - rowWidth(row)) / 2);
     for (const id of row) {
       positions.set(id, { x, y });
       x += sizeOf(id).width + COLUMN_GAP;
     }
     y += Math.max(0, ...row.map((id) => sizeOf(id).height)) + LAYER_GAP;
+  }
+
+  // 5. The endings beside the main flow: one column to its right, each at the row of the
+  //    middle one of the steps leading to it, moved down a row while that place is taken.
+  //    Ordered by that row, then by file order.
+  const besideX = LAYOUT_TOP_LEFT.x + widest + COLUMN_GAP;
+  const wanted = all
+    .filter((node) => besideIds.has(node.id))
+    .map((node, index) => {
+      const sourceRows = (incoming.get(node.id) ?? [])
+        .map((edge) => layer.get(edge.from))
+        .filter((at): at is number => at !== undefined)
+        .sort((a, b) => a - b);
+      return { id: node.id, row: sourceRows[Math.floor((sourceRows.length - 1) / 2)] ?? 0, index };
+    })
+    .sort((a, b) => a.row - b.row || a.index - b.index);
+  const taken = new Set<number>();
+  for (const entry of wanted) {
+    let row = entry.row;
+    while (taken.has(row)) {
+      row += 1;
+    }
+    taken.add(row);
+    const top = rowTops[row] ?? y + (row - rowTops.length) * (sizeOf(entry.id).height + LAYER_GAP);
+    positions.set(entry.id, { x: besideX, y: top });
+    layer.set(entry.id, row);
   }
   return { positions, layers: layer };
 }

@@ -14,7 +14,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { nodeSize } from '../src/shared/loop-edge-geometry';
-import { findBackEdges, routeLoopEdges } from '../src/shared/loop-edge-routing';
+import { countRouteCrossings, findBackEdges, routeLoopEdges, sidePathEdges } from '../src/shared/loop-edge-routing';
 import type { LoopEdge, LoopGraph, LoopNode } from '../src/shared/loop-graph';
 import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION } from '../src/shared/loop-graph';
 import { arrangeGraph, layOutMissingViews } from '../src/shared/loop-graph-editing';
@@ -153,5 +153,38 @@ describe('the layered layout (DSP-209 S18b)', () => {
       routeLoopEdges(arrangeGraph(graph), { report: (seen) => (report = seen) });
       assert.deepEqual(report, { narrowed: false, dogLegs: [] }, `${name}: no narrowed pass and no dog-leg`);
     }
+  });
+});
+
+describe('side paths outside the main flow (Niclas, 14 November 2026)', () => {
+  it('reads side paths from the drawing’s own declarations: failures and a node’s fallback outcome', () => {
+    const chat = bundled().find((entry) => entry.name === 'dspatch-chat-loop.graph.json')?.graph;
+    assert.ok(chat !== undefined);
+    const side = sidePathEdges(chat);
+    for (const edge of chat.edges) {
+      const fallback = chat.nodes.find((node) => node.id === edge.from)?.whenUndeclared;
+      const expected = edge.when.on === 'declared-failure' || (edge.when.on === 'outcome' && edge.when.outcome === fallback);
+      assert.equal(side.has(edge.id), expected, edge.id);
+    }
+    assert.ok(side.size > 0);
+  });
+
+  it('Arrange never leaves more crossings than the old last-row layout, and no boxes overlap', () => {
+    for (const { name, graph } of cases()) {
+      const plain = layeredLayout(graph).positions;
+      const placedPlain = { ...graph, nodes: graph.nodes.map((node) => ({ ...node, view: plain.get(node.id) ?? node.view })) };
+      const arranged = arrangeGraph(graph);
+      assert.ok(
+        countRouteCrossings(routeLoopEdges(arranged)) <= countRouteCrossings(routeLoopEdges(placedPlain)),
+        `${name}: no more crossings than before`,
+      );
+      assert.deepEqual(overlaps(arranged), [], `${name}: no boxes overlap`);
+    }
+    // The chat loop's endings that only failures and "not established" reach go beside the flow,
+    // and its routes cross fewer times than with every ending in the last row.
+    const chat = bundled().find((entry) => entry.name === 'dspatch-chat-loop.graph.json')?.graph as LoopGraph;
+    const plain = layeredLayout(chat).positions;
+    const placedPlain = { ...chat, nodes: chat.nodes.map((node) => ({ ...node, view: plain.get(node.id) ?? node.view })) };
+    assert.ok(countRouteCrossings(routeLoopEdges(arrangeGraph(chat))) < countRouteCrossings(routeLoopEdges(placedPlain)));
   });
 });

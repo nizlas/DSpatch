@@ -34,6 +34,7 @@ import type {
 } from './loop-graph';
 import type { Finding } from './loop-graph-load';
 import { nodeSize } from './loop-edge-geometry';
+import { countRouteCrossings, routeLoopEdges, sidePathEdges } from './loop-edge-routing';
 import { LAYER_GAP, layeredLayout } from './loop-layout';
 
 /**
@@ -193,7 +194,7 @@ export function layOutMissingViews(graph: LoopGraph): {
   // DSP-209 S18b: by the layered layout rather than a grid. Laid out with the whole drawing,
   // so the missing nodes keep their layers and order; then moved, as one block, below every
   // node the file did place, which therefore cannot be overlapped.
-  const layout = layeredLayout(graph).positions;
+  const layout = bestLayout(graph);
   const missing = new Set(placed);
   const lowestPlaced = graph.nodes.reduce<number | null>(
     (lowest, node) => (node.view === undefined ? lowest : Math.max(lowest ?? 0, node.view.y + nodeSize(node).height)),
@@ -211,14 +212,9 @@ export function layOutMissingViews(graph: LoopGraph): {
   return { graph: { ...graph, nodes }, placed };
 }
 
-/**
- * DSP-209 S18b: every node at its place in the layered layout, for **Arrange**.
- *
- * An ordinary edit: the caller applies it like any other change, so it is unsaved until the
- * person saves and gone on Reload. Only `view` changes; the drawing means what it meant.
- */
-export function arrangeGraph(graph: LoopGraph): LoopGraph {
-  const layout = layeredLayout(graph).positions;
+type Positions = ReadonlyMap<string, { readonly x: number; readonly y: number }>;
+
+function placedAt(graph: LoopGraph, layout: Positions): LoopGraph {
   return {
     ...graph,
     nodes: graph.nodes.map((node) => {
@@ -226,6 +222,35 @@ export function arrangeGraph(graph: LoopGraph): LoopGraph {
       return at === undefined ? node : { ...node, view: { ...(node.view ?? {}), x: at.x, y: at.y } };
     }),
   };
+}
+
+/**
+ * The layered layout to use (Niclas, 14 November 2026: side paths outside the main flow where
+ * possible). Two candidates: the endings only side paths reach set beside the main flow, and
+ * every ending in the last row. The one whose routes cross fewer times wins, the first on a
+ * tie; a drawing with no side path has one candidate. Routing both costs two routings, which
+ * is why it happens on **Arrange** and on opening a drawing with unplaced nodes, never while
+ * a node is dragged.
+ */
+function bestLayout(graph: LoopGraph): Positions {
+  const plain = layeredLayout(graph).positions;
+  const side = sidePathEdges(graph);
+  if (side.size === 0) {
+    return plain;
+  }
+  const beside = layeredLayout(graph, { sidePaths: side }).positions;
+  const crossings = (layout: Positions): number => countRouteCrossings(routeLoopEdges(placedAt(graph, layout)));
+  return crossings(beside) <= crossings(plain) ? beside : plain;
+}
+
+/**
+ * DSP-209 S18b: every node at its place in the layered layout, for **Arrange**.
+ *
+ * An ordinary edit: the caller applies it like any other change, so it is unsaved until the
+ * person saves and gone on Reload. Only `view` changes; the drawing means what it meant.
+ */
+export function arrangeGraph(graph: LoopGraph): LoopGraph {
+  return placedAt(graph, bestLayout(graph));
 }
 
 /**

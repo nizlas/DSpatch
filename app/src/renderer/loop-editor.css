@@ -883,6 +883,31 @@
   stroke-width: 2.4;
 }
 
+/*
+ * Niclas, 14 November 2026. A side path — a declared failure, or a node's own route for a
+ * reply that established nothing — is drawn fainter, and full again when it or one of its
+ * nodes is selected. While anything is selected, connections that do not touch it step back
+ * without disappearing. Only opacity changes, so a taken edge keeps its run colour and the
+ * selection keeps its own: the two never stand in for each other.
+ */
+.edge-side {
+  opacity: 0.55;
+}
+
+.edge-side.edge-selected,
+.edge-side.edge-highlighted,
+.edge-side.edge-taken {
+  opacity: 1;
+}
+
+.edge.edge-dimmed {
+  opacity: 0.22;
+}
+
+.edge.edge-dimmed.edge-taken {
+  opacity: 0.45;
+}
+
 .arrow-head {
   fill: #7f96b0;
 }

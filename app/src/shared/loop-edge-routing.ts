@@ -1090,6 +1090,70 @@ function placeLabel(points: readonly Point[], text: string, boxes: readonly Box[
   return candidate.anchor;
 }
 
+/** What {@link sidePathEdges} reads: how an edge is taken, and each node's fallback outcome. */
+export interface SidePathGraph {
+  readonly nodes: readonly { readonly id: string; readonly whenUndeclared?: string }[];
+  readonly edges: readonly {
+    readonly id: string;
+    readonly from: string;
+    readonly when: { readonly on: string; readonly outcome?: string };
+  }[];
+}
+
+/**
+ * The edges off the main flow (Niclas, 14 November 2026): a declared failure, or the outcome a
+ * node itself names for a reply that established nothing (its `whenUndeclared`). Read from the
+ * drawing's own declarations, never from a label or an outcome's spelling. A rework edge is not
+ * one: it is a back edge, drawn in its own lane. The canvas draws side paths fainter until they
+ * are selected, and **Arrange** may set an ending only they reach beside the main flow.
+ */
+export function sidePathEdges(graph: SidePathGraph): ReadonlySet<string> {
+  const fallback = new Map(graph.nodes.map((node) => [node.id, node.whenUndeclared]));
+  return new Set(
+    graph.edges
+      .filter(
+        (edge) =>
+          edge.when.on === 'declared-failure' ||
+          (edge.when.on === 'outcome' && edge.when.outcome !== undefined && fallback.get(edge.from) === edge.when.outcome),
+      )
+      .map((edge) => edge.id),
+  );
+}
+
+/**
+ * How many times two different routes cross: a horizontal segment of one passing through a
+ * vertical segment of another, away from both ends. **Arrange** compares layouts by it.
+ */
+export function countRouteCrossings(routes: ReadonlyMap<string, EdgeRoute>): number {
+  const segments = [...routes.values()].flatMap((route) =>
+    route.points.slice(1).map((b, index) => ({ id: route.edgeId, a: route.points[index] as Point, b })),
+  );
+  let crossings = 0;
+  for (let i = 0; i < segments.length; i += 1) {
+    for (let j = i + 1; j < segments.length; j += 1) {
+      const s = segments[i] as (typeof segments)[number];
+      const t = segments[j] as (typeof segments)[number];
+      const sFlat = s.a.y === s.b.y;
+      if (s.id === t.id || sFlat === (t.a.y === t.b.y)) {
+        continue;
+      }
+      const flat = sFlat ? s : t;
+      const upright = sFlat ? t : s;
+      const x = upright.a.x;
+      const y = flat.a.y;
+      if (
+        x > Math.min(flat.a.x, flat.b.x) &&
+        x < Math.max(flat.a.x, flat.b.x) &&
+        y > Math.min(upright.a.y, upright.b.y) &&
+        y < Math.max(upright.a.y, upright.b.y)
+      ) {
+        crossings += 1;
+      }
+    }
+  }
+  return crossings;
+}
+
 /** The furthest any route or label reaches, so the canvas can make room for outer lanes. */
 export function routeExtent(routes: ReadonlyMap<string, EdgeRoute>): { readonly maxX: number; readonly maxY: number } {
   let maxX = 0;
