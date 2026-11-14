@@ -15,8 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 import { graphAuthoringTools, type GraphAuthoringHost } from '../src/host/graph-authoring-tools';
 import { saveGraphChecked } from '../src/host/graph-save';
+import { discoverLoopDefinitions } from '../src/main/loop-definition-files';
+import { openChosenLoop, rowForKey } from '../src/main/loop-definition-choice';
+import { openedFromDefinition } from '../src/main/loop-graph-open';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
-import { graphContentHash, isNewLoopTarget, supersedeWith, type GraphEditProposal } from '../src/shared/graph-proposal';
+import { editorOpenFor, graphContentHash, isNewLoopTarget, supersedeWith, type GraphEditProposal } from '../src/shared/graph-proposal';
+import { resolverFromEntries } from '../src/shared/loop-graph-editing';
 import { parseLoopDefinition } from '../src/shared/loop-definition';
 import { hasErrors, loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 
@@ -245,6 +249,20 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
     // Once written, the graph reads from disk without errors: the role resolves as it did when proposed.
     const loaded = loadLoopGraph(fs.readFileSync(path.join(root, '.dspatch', 'loops', 'example.graph.json'), 'utf8'), { resolveRole: createFileRoleResolver(root) });
     assert.ok(!hasErrors(loaded.findings), JSON.stringify(loaded.findings));
+
+    // The card's Open in editor, the way the editor and host take it: the definition is chosen
+    // (the host's chooseLoop: the row for that key, opened) and its graph drawn from the
+    // project, with the project's roles. Opening the graph file alone read roles from
+    // DSpatch's own copy, and every role was refused (MiniDAWLab, af8b60c).
+    const asked = editorOpenFor(proposal);
+    assert.deepEqual(asked, { path: path.join(root, '.dspatch', 'loops', 'example.loop.json'), as: 'loop' });
+    const opened = openedFromDefinition(openChosenLoop(rowForKey(discoverLoopDefinitions([root]).rows, asked.path)));
+    assert.equal(opened.kind, 'read', JSON.stringify(opened));
+    assert.ok(opened.kind === 'read');
+    assert.equal(opened.definition?.id, 'example', 'the Loop chooser names the loop');
+    assert.equal(path.resolve(opened.projectRoot), path.resolve(root), 'roles are read from the project');
+    const drawn = loadLoopGraph(opened.text, { resolveRole: resolverFromEntries(new Map(opened.roles.map((entry) => [entry.key, entry.role]))) });
+    assert.ok(drawn.ok && !hasErrors(drawn.findings), JSON.stringify(drawn.findings));
   });
 
   it('reads the graph as it is on disk, with what was changed by hand since the last applied proposal', async () => {

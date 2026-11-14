@@ -22,6 +22,7 @@
  * tests all import it.
  */
 
+import type { GraphToEdit } from './bridge';
 import { replaceNode } from './loop-graph-editing';
 import { hasErrors, loadLoopGraph, parseLoopGraph } from './loop-graph-load';
 import type { CheckOptions, Finding } from './loop-graph-load';
@@ -63,6 +64,16 @@ export function targetGraphPath(target: ProposalTarget): string {
 /** The definition file a target belongs to, whichever kind it is. */
 export function targetDefinitionPath(target: ProposalTarget): string {
   return isNewLoopTarget(target) ? target.newLoop.definitionPath : target.definitionPath;
+}
+
+/**
+ * What a proposal card's **Open in editor** asks the editor for: the loop, by its definition,
+ * never the graph file alone. A graph opened alone has no project behind it, so its roles are
+ * read from DSpatch's own copy and a project's own roles do not resolve; the Loop chooser does
+ * not name it either.
+ */
+export function editorOpenFor(proposal: Pick<GraphEditProposal, 'target'>): GraphToEdit {
+  return { path: targetDefinitionPath(proposal.target), as: 'loop' };
 }
 
 /** A role file a proposal adds. Role files are only ever created, never overwritten. */

@@ -20,6 +20,7 @@ import type { GraphProposalsUpdate, StoredMessage } from '../shared/bridge';
 import {
   AGENT_WORDS_LABEL,
   describeChangeLines,
+  editorOpenFor,
   isNewLoopTarget,
   targetGraphPath,
   type GraphEditProposal,
@@ -152,9 +153,9 @@ export function GraphProposalCard({
           className="button"
           data-ev="graph-proposal-open"
           disabled={busy || !canOpen}
-          title="Open the loop as it is on disk"
+          title="Choose this loop and open it as it is on disk"
           onClick={() => {
-            void window.dspatch.openLoopEditor(targetGraphPath(proposal.target)).then(
+            void window.dspatch.openLoopEditor(editorOpenFor(proposal)).then(
               (outcome) => setNote(outcome.kind === 'failed' ? outcome.note : null),
               (error: unknown) => setNote(error instanceof Error ? error.message : String(error)),
             );
@@ -172,7 +173,7 @@ export function GraphProposalCard({
         {open
           ? isNewLoopTarget(proposal.target)
             ? 'Open in editor works once it is applied: the new loop has no file yet. Apply never runs the loop.'
-            : 'Open in editor shows the loop as it is on disk, without this proposal. Apply never runs the loop.'
+            : 'Open in editor chooses the loop and shows it as it is on disk, without this proposal. Neither runs it.'
           : 'This proposal is no longer open, so it cannot be applied.'}
       </p>
       {note === null ? null : (

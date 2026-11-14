@@ -40,6 +40,7 @@ import type {
   LoopGraphOpenOutcome,
   LoopGraphOpenRequest,
   LoopEditorWindowOutcome,
+  GraphToEdit,
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
   GraphSavedElsewhere,
@@ -2271,7 +2272,7 @@ const menuItemsByCommand = new Map<MenuCommand, Electron.MenuItem>();
  * on mount and on the notification; taking clears it, which is what makes a double
  * delivery open the file once.
  */
-let graphToEdit: string | null = null;
+let graphToEdit: GraphToEdit | null = null;
 
 /**
  * The graph the editor has edited and not written, until a start asks about it (DSP-86).
@@ -2478,8 +2479,8 @@ async function openGraphFileForEditing(): Promise<void> {
     log(`Open Graph File… stopped at the unsaved-drawing question; ${chosen} was not opened`);
     return;
   }
-  graphToEdit = path.resolve(chosen);
-  log(`File menu asked for ${graphToEdit} to be edited; nothing was chosen or started`);
+  graphToEdit = { path: path.resolve(chosen), as: 'graph' };
+  log(`File menu asked for ${graphToEdit.path} to be edited; nothing was chosen or started`);
   // Focus or create first, so a taken path always has a window that will ask for it.
   openLoopEditorWindow();
   // Every window: only the editor listens, and the editor may be the main window on the
@@ -4991,7 +4992,7 @@ function registerLoopGraphIpc(): void {
    * menu had to create, and the editor on notification, for the window that was already
    * open — and clearing is what makes both of them together open the file exactly once.
    */
-  ipcMain.handle(TAKE_GRAPH_TO_EDIT, (): string | null => {
+  ipcMain.handle(TAKE_GRAPH_TO_EDIT, (): GraphToEdit | null => {
     const waiting = graphToEdit;
     graphToEdit = null;
     return waiting;
@@ -5089,17 +5090,22 @@ function registerLoopGraphIpc(): void {
     },
   );
 
-  // DSP-209 S23b: with a graph path (a proposal card's Open in editor), the same route as the
-  // File menu's Open Graph File: the unsaved-drawing question first, then the editor takes it.
-  ipcMain.handle(OPEN_LOOP_EDITOR, async (_event, graphPath?: unknown): Promise<LoopEditorWindowOutcome> => {
-    if (typeof graphPath !== 'string' || graphPath === '') {
+  // DSP-209 S23b: with a file (a proposal card's Open in editor), the editor takes it. A graph
+  // file goes the File menu's Open Graph File route: the unsaved-drawing question first. A loop
+  // definition goes the editor's Open loop… route, which judges it, asks that question itself,
+  // chooses it and draws it from its own project; asking here as well would ask twice.
+  ipcMain.handle(OPEN_LOOP_EDITOR, async (_event, file?: unknown): Promise<LoopEditorWindowOutcome> => {
+    const asked = file as Partial<GraphToEdit> | null | undefined;
+    if (typeof asked?.path !== 'string' || asked.path === '' || (asked.as !== 'graph' && asked.as !== 'loop')) {
       return openLoopEditorWindow();
     }
-    const settled = await settleUnsavedDrawingBeforeRedraw();
-    if (!settled.go) {
-      return { kind: 'failed', note: 'The loop editor kept its unsaved drawing, so the loop was not opened.' };
+    if (asked.as === 'graph') {
+      const settled = await settleUnsavedDrawingBeforeRedraw();
+      if (!settled.go) {
+        return { kind: 'failed', note: 'The loop editor kept its unsaved drawing, so the loop was not opened.' };
+      }
     }
-    graphToEdit = path.resolve(graphPath);
+    graphToEdit = { path: path.resolve(asked.path), as: asked.as };
     const opened = openLoopEditorWindow();
     sendToEveryWindow(GRAPH_TO_EDIT, null);
     return opened;

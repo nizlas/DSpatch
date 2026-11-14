@@ -2618,8 +2618,12 @@ export interface DspatchBridge {
    * cancels or duplicates work; a run in progress carries on either way. Asking twice
    * focuses the window that is already open rather than making a second one.
    */
-  /** DSP-209 S23b: with a graph path, the editor opens that file, as the File menu's Open Graph File does. */
-  openLoopEditor(graphPath?: string): Promise<LoopEditorWindowOutcome>;
+  /**
+   * DSP-209 S23b: with a file, the editor opens it: a graph file as the File menu's Open Graph
+   * File does, or a loop definition as **Open loop…** does — chosen, then drawn from its own
+   * project, which is how a proposal card opens the loop it applied.
+   */
+  openLoopEditor(file?: GraphToEdit): Promise<LoopEditorWindowOutcome>;
   /** DSP-209 S23b: a conversation's graph proposals, whenever one is made, applied or discarded. */
   onGraphProposals(listener: (update: GraphProposalsUpdate) => void): () => void;
   /**
@@ -2733,7 +2737,7 @@ export interface DspatchBridge {
    *
    * **Taking clears it**, which is what makes a double delivery open the file once.
    */
-  takeGraphToEdit(): Promise<string | null>;
+  takeGraphToEdit(): Promise<GraphToEdit | null>;
   /** That the File menu has a graph waiting to be edited. The path comes from taking. */
   onGraphToEdit(listener: () => void): () => void;
   /**
@@ -3222,6 +3226,17 @@ export interface EditorLoopCancelOutcome {
 export interface LoopEditorWindowOutcome {
   readonly kind: 'opened' | 'focused' | 'failed';
   readonly note: string;
+}
+
+/**
+ * A file waiting for the loop editor, and how to open it. `graph` is a `.graph.json` opened
+ * directly, its roles read from DSpatch's own copy. `loop` is a loop definition, chosen as
+ * **Open loop…** chooses one, so it is drawn from its own project with its own roles and named
+ * in the Loop chooser (DSP-209 S23b: an applied proposal is opened this way).
+ */
+export interface GraphToEdit {
+  readonly path: string;
+  readonly as: 'graph' | 'loop';
 }
 
 /** DSP-209 S20: what opening a branch's output window did. */

@@ -436,9 +436,11 @@ export function LoopEditor(): React.JSX.Element {
     };
   }, [agentQueryKey]);
 
+  // A refused file has no graph to check, and its refusal is what the counters count: the
+  // panel lists those findings, and a row of zeros beside it would say the file is fine.
   const findings = useMemo<readonly Finding[]>(
-    () => (graph === null ? [] : checkLoopGraph(graph, { resolveRole })),
-    [graph, resolveRole],
+    () => (graph === null ? (refusal ?? []) : checkLoopGraph(graph, { resolveRole })),
+    [graph, refusal, resolveRole],
   );
   const index = useMemo(() => indexFindings(findings), [findings]);
 
@@ -1461,17 +1463,25 @@ export function LoopEditor(): React.JSX.Element {
     openedOnce.current = true;
     void window.dspatch.takeGraphToEdit().then(
       (waiting) => {
-        if (waiting !== null) {
-          void open({ kind: 'path', path: waiting });
-          return;
+        if (waiting === null) {
+          void open({ kind: 'chosen-loop' });
+        } else if (waiting.as === 'loop') {
+          // Chosen, then drawn, as Open loop… does (DSP-209 S23b). A loop that is not
+          // chosen is not drawn, so the window shows the loop that is chosen instead.
+          void chooseLoop(waiting.path).then((result) => {
+            if (result === 'unchanged') {
+              void open({ kind: 'chosen-loop' });
+            }
+          });
+        } else {
+          void open({ kind: 'path', path: waiting.path });
         }
-        void open({ kind: 'chosen-loop' });
       },
       () => {
         void open({ kind: 'chosen-loop' });
       },
     );
-  }, [open]);
+  }, [open, chooseLoop]);
 
   /*
    * A graph file the File menu asked for while this window was already open (#6).
@@ -1483,8 +1493,10 @@ export function LoopEditor(): React.JSX.Element {
     return window.dspatch.onGraphToEdit(() => {
       void window.dspatch.takeGraphToEdit().then(
         (waiting) => {
-          if (waiting !== null) {
-            void open({ kind: 'path', path: waiting });
+          if (waiting?.as === 'loop') {
+            void chooseLoop(waiting.path);
+          } else if (waiting !== null) {
+            void open({ kind: 'path', path: waiting.path });
           }
         },
         () => {
@@ -1492,7 +1504,7 @@ export function LoopEditor(): React.JSX.Element {
         },
       );
     });
-  }, [open]);
+  }, [open, chooseLoop]);
 
   // A hidden hook for DSPATCH_EDITOR_AUTORUN: the main process clicks through
   // the same functions the visible buttons call, so a log of the window is not

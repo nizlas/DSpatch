@@ -33,6 +33,7 @@ import type {
   LoopGraphOpenOutcome,
   LoopGraphOpenRequest,
   LoopEditorWindowOutcome,
+  GraphToEdit,
   BranchOutputWindowOutcome,
   GraphProposalsUpdate,
   LoopGraphSaveOutcome,
@@ -316,8 +317,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(START_EDITOR_LOOP_RUN, request) as Promise<EditorLoopRunOutcome>,
   cancelEditorLoopRun: () =>
     ipcRenderer.invoke(CANCEL_EDITOR_LOOP_RUN) as Promise<EditorLoopCancelOutcome>,
-  openLoopEditor: (graphPath?: string) =>
-    ipcRenderer.invoke(OPEN_LOOP_EDITOR, graphPath) as Promise<LoopEditorWindowOutcome>,
+  openLoopEditor: (file?: GraphToEdit) =>
+    ipcRenderer.invoke(OPEN_LOOP_EDITOR, file) as Promise<LoopEditorWindowOutcome>,
   onGraphProposals: (listener: (update: GraphProposalsUpdate) => void) => {
     const handler = (_event: unknown, payload: GraphProposalsUpdate): void => {
       listener(payload);
@@ -390,7 +391,7 @@ const bridge: DspatchBridge = {
       CHOOSE_LOOP_DEFINITION,
       definitionPath,
     ) as Promise<LoopDefinitionChooseOutcome>,
-  takeGraphToEdit: () => ipcRenderer.invoke(TAKE_GRAPH_TO_EDIT) as Promise<string | null>,
+  takeGraphToEdit: () => ipcRenderer.invoke(TAKE_GRAPH_TO_EDIT) as Promise<GraphToEdit | null>,
   onGraphToEdit: (listener: () => void) => {
     const handler = (): void => {
       listener();
