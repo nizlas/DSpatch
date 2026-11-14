@@ -3321,6 +3321,8 @@ export interface ChatLoopReply {
   readonly text: string;
   /** DSP-209 S21: the fan-out branch the reply is from, or absent for a step's own reply. */
   readonly sliceId?: string;
+  /** DSP-209 S21b: the node declares `subgoal` in the drawing walked, so its `SUBGOAL:` line is shown. */
+  readonly declaresSubGoal?: true;
   /** The provider run's terminal status, or `null` if it never reported one. */
   readonly terminalStatus: string | null;
   /**

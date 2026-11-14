@@ -14,7 +14,8 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S21b (`implement`, decision 53), from call 48 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S18b, S19, S19b, S20, S21, S22, S23a, S23b, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** none. The whole assessment was asked for on call 51 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
+- **For Niclas's next engine transition:** host code changed in S19, S19b, S20, S21, S21b, S22, S23a and S23b. Rebuild `DSpatch-engine` at the commit this run ends on, then use **Restart host**. No host method was added, so the host contract is unchanged. Never do this during a run.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -158,7 +159,7 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **reviewed** (parallel with S19; see *S19 and S22, parallel*) | 1 | `4bce22c`/`a40d3b8`, `bcd8a8b` (test line), `151612c`/`0b0fb3d` |
 | S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b (both reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S23a)` after `9f5caa6` |
 | S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1, R7 | S17, S23a (both reviewed) | **reviewed** after one rework round (see its record) | 1 | `(DSP-209 S23b)` after `144624d` |
-| S21b | S21's open S-a: read a `SUBGOAL:` line only from nodes that declare `subgoal`, as the S21 brief said. The reader is `subGoalClaimFrom` in `shared/run-presentation.ts` (l.412, used at l.554 and l.571), not `step-report-cards.ts` as first written here | R4 | S21 | **in progress**: sent to `implement` on call 48 (decision 53) | 1 | — |
+| S21b | S21's open S-a: read a `SUBGOAL:` line only from nodes that declare `subgoal`, as the S21 brief said. The reader is `subGoalClaimFrom` in `shared/run-presentation.ts` (l.412, used at l.554 and l.571), not `step-report-cards.ts` as first written here | R4 | S21 | **reviewed** (see its record) | 1 | `(DSP-209 S21b)` after `976df7d` |
 
 The acceptance criteria and checks for each sub-goal are the planner's, from call 2. Each brief repeats the ones it needs. Section 3 of that result defines the R5 counters: sub-goal, agent step (node visit), branch invocation, rework round, calls, provider turns, tool calls, elapsed time and usage. S16 implements those definitions.
 
@@ -386,6 +387,24 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S21b — The sub-goal line only from declaring nodes — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1:** run `chat-loop-2026-11-14T09-54-18-366Z`. Briefed on coordinator visit 12 (call 48, decision 53). Implemented on call 49 (`done`). Review `accept` on call 50, round 1. Recorded and committed on coordinator visit 13 (call 51). `git status` showed exactly the seven files the implementer named.
+- **What was done:**
+  - `stepReportsFrom` in `run-presentation.ts` takes an optional `subGoalNodes` set and reads a claim only for those nodes. A branch reads one only when its fan-out node is in the set, and no set means no claims.
+  - The host (`project-host.ts`) sets an optional `declaresSubGoal: true` on the live chat-loop reply event when the walked drawing declares `subgoal` on that node. This touches `bridge.ts`.
+  - `App.tsx` keeps the flag, and `loop-transcript.ts` builds the set from flagged replies.
+  - Two tests were updated to the new rule.
+  - Unchanged: prompts, `SUBGOAL_ASK`, the graph format, stored records, delivery, the integrator rule and the host contract (no new method).
+- **Behaviour change and known limit:** a run read back from its record shows **no** sub-goal claims, even from a declaring node, because records do not hold `declares`. S21 showed them by reading every reply.
+  - Showing them again needs an additive `declares` data field on `node-entered`, of the same kind S19 and S20 added.
+  - That is within the mission's authority, since the ban on changing stored records came from the coordinator's S21b brief, not from Niclas. It is left open, and the whole assessment may brief it.
+- **Review verdict: accept.** All three criteria are met. Open points:
+  - It is not checked whether a branch's own prompt asks for the `SUBGOAL:` line. If it does not, branches of a declaring fan-out will usually show no claim. That is harmless.
+- **Checked by the implementer** (the reviewer reused these): `run-presentation` 7/7, `step-report-cards` 4/4, `loop-transcript` 48/48, `npm run typecheck` exit 0.
+- **Niclas tries,** within S21's trial after the transition: a step whose node does not declare `subgoal` never shows a sub-goal in its heading.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### S23b — Proposal card, Apply, and reconciling with the editor — reviewed (agent review, not Niclas's approval)
@@ -973,8 +992,25 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Verification policy for every branch [S10, S11] — met by reviewed sub-goals as role text (branch does its slice's verification; integrator targets integration)
 - UI says why a method was chosen and what each branch owns [S3, S5, S10, S12] — met by reviewed sub-goals (skip reasons, handover reasons, slices with owned paths, report; look untested)
 - Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — **in scope by Niclas's decision of 14 November 2026** (Q2 answered); now R1, pending
-- R7 (hover text short, full instructions in a persistent detail view; recorded 14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`) — **pending**; carried by every UI sub-goal [S18a, S18b, S20, S21, S22, S23b, S25]
-- R1–R6 (extension of 14 November 2026) — all **pending**; planned on visit 2 as S16–S23b. R1 [S17, S23a, S23b], R2 [S18a, S18b], R3 [S16, S20], R4 [S16, S21], R5 [S16, S22], R6 [S16, S19]
+- **R7** (hover text short, with the full instructions in a persistent detail view; recorded 14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`). Met by reviewed sub-goals for every hover text this run added or touched [S18a, S18b, S20, S21, S22, S23b, S25, S25b].
+  - The control bar's long hovers have moved into **Details** (S25b).
+  - Hover texts this run did not touch are not swept. One known example is `HandoffPrompt`'s `choice.title`.
+  - The look is untested; that is Niclas's trial.
+- **R1–R6** (extension of 14 November 2026). These are agent-reviewed sub-goals only: no live run, no window trial, and not approved by Niclas. Recorded on coordinator visit 13 (call 51), before the whole assessment.
+  - **R1, graphs through conversation** [S17, S23a, S23b]. Met by reviewed sub-goals.
+    - Proposals are validated and kept apart from applied changes.
+    - Apply checks the base it started from; editor saves and the unsaved-drawing question are checked as well.
+    - Nothing runs.
+    - The host path is untested. A1 is open: in this workspace, Apply can write the mission graph.
+  - **R2, readable layout** [S18a, S18b]. Met by reviewed sub-goals as measured: no route crosses an unrelated box, and the layout is deterministic. Visual clarity is Niclas's to judge.
+  - **R3, parallel work visible without hover** [S16, S20, S25, S25b]. Met by reviewed sub-goals. Branch activity needs the rebuilt host, and the window is untested.
+  - **R4, a readable chat during a run** [S16, S21, S21b]. Met by reviewed sub-goals.
+    - A run read back from its record shows no sub-goal claims (S21b).
+    - No window trial.
+  - **R5, the final run card** [S16, S22]. Met by reviewed sub-goals. The host path needs the rebuilt host.
+  - **R6, one implementer with a model policy** [S16, S19, S19b]. Met by reviewed sub-goals as a capability. No shipped graph was merged (decision 37).
+    - Claude, Cursor and Copilot are checked against a model list when one has been read.
+    - Otherwise the "Runs with …" line says so.
 - Reconcile the parallelism document [S8] — met by reviewed sub-goal (§10 of the parallelism document)
 
 **Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — implemented and agent-reviewed; awaits Niclas's trial; (2) small task continues in chat without resubmission [S4, S5a, S5b, S6] — implemented and agent-reviewed; awaits Niclas's trial; (3) branches exchange a finding before completion [S10a–S10c, S11] — implemented and agent-reviewed with a scripted executor only; no live provider has run concurrent branches; Niclas's trial; (4) combined result keeps scope and provenance [S10a–S10c, S12] — implemented and agent-reviewed (branches, commits, base, messages, per-branch usage in the report; scripted only); Niclas's trial.
@@ -1073,6 +1109,12 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 13 (call 51).** S21b is reviewed and committed with this file. Every sub-goal planned for R1–R7 is now reviewed: S16–S25b. R1–R7 are marked in *Requirements of the vision*. The whole is sent to assessment (`assess-whole`), the first since the extension.
+
+**Next:** record the assessment's verdict. A concrete gap it names becomes a sub-goal, for example restored runs showing no sub-goal claims (S21b) or A1 (S23b). If only Niclas's items remain, end `needs-decision` and add this run's run-log line and DSP-209's dated note. Those items are his trials, Q1, Q3, Q4, Q5, and the engine transition with **Restart host**.
+
+If this run ends first, the next run reconciles from the S21b commit.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 12 (call 48).** S23b is reviewed after one rework round, and committed with this file. S21b went to `implement` (decision 53). **Next:**
 1. Record S21b's review and commit it.

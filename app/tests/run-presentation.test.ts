@@ -165,13 +165,15 @@ describe('run presentation (DSP-209 S16)', () => {
       stepReportsFrom({ runId: RUN, journal: journal(lines) }).filter((report) => report.visit.nodeId === 'merge').map((report) => report.role);
     assert.deepEqual(roles(FAN_OUT), ['integrator']);
     assert.deepEqual(roles(withoutRole), ['step'], 'another role on the same step is an ordinary step');
-    // A reply's SUBGOAL: line fills subGoal, as the agent's claim.
-    const [merge] = stepReportsFrom({
-      runId: RUN,
-      journal: journal(FAN_OUT),
-      replies: [{ nodeId: 'merge', occurrence: 1, text: 'Merged.\nSUBGOAL: S21 — Step reports\nRESULT: done' }],
-    }).filter((report) => report.visit.nodeId === 'merge');
-    assert.deepEqual(merge?.subGoal, { id: 'S21', title: 'Step reports' });
+    // S21b: a reply's SUBGOAL: line fills subGoal only for a node that declares `subgoal`.
+    const replies = [{ nodeId: 'merge', occurrence: 1, text: 'Merged.\nSUBGOAL: S21 — Step reports\nRESULT: done' }];
+    const mergeOf = (subGoalNodes?: ReadonlySet<string>) =>
+      stepReportsFrom({ runId: RUN, journal: journal(FAN_OUT), replies, ...(subGoalNodes === undefined ? {} : { subGoalNodes }) }).find(
+        (report) => report.visit.nodeId === 'merge',
+      );
+    assert.deepEqual(mergeOf(new Set(['merge']))?.subGoal, { id: 'S21', title: 'Step reports' });
+    assert.equal(mergeOf(new Set(['plan']))?.subGoal, null, 'a node that does not declare it shows no claim');
+    assert.equal(mergeOf()?.subGoal, null, 'with no declaring nodes given, no claim is read');
   });
 
   it('names the integrator by the edge that delivers the fan-out, and reads branch tasks from slices', () => {

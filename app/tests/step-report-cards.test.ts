@@ -90,11 +90,17 @@ describe('step reports in the chat (DSP-209 S21)', () => {
   });
 
   it('puts the agent’s SUBGOAL: claim in the heading, marked as its claim, and reads a rework arrival as attempt 2', () => {
-    const reports = stepReportsForTurn(RUN, PARALLEL, [...REPLIES, { nodeId: 'plan', nodeLabel: 'Plan', occurrence: 2, text: 'Replanned.' }]);
+    // S21b: the merge node declares `subgoal` in the drawing walked, as the host's reply says.
+    const declared = REPLIES.map((reply) => (reply.nodeId === 'merge' ? { ...reply, declaresSubGoal: true as const } : reply));
+    const reports = stepReportsForTurn(RUN, PARALLEL, [...declared, { nodeId: 'plan', nodeLabel: 'Plan', occurrence: 2, text: 'Replanned.' }]);
     assert.equal(
       stepCardHeading('Integrate', reportForReply(reports, 3), { occurrence: 1 }),
       'Integrate · sub-goal S21 — Step reports in chat (the agent’s claim) · visit 1',
     );
+    // The same line from a node that does not declare `subgoal` shows no sub-goal.
+    const undeclared = stepReportsForTurn(RUN, PARALLEL, REPLIES);
+    assert.equal(reportForReply(undeclared, 3)?.subGoal, null);
+    assert.equal(stepCardHeading('Integrate', reportForReply(undeclared, 3), { occurrence: 1 }), 'Integrate · visit 1');
     assert.equal(stepCardHeading('Plan', reportForReply(reports, 5), { occurrence: 2 }), 'Plan · rework attempt 2');
     assert.equal(stepCardHeading('Plan', null, { occurrence: 3 }), 'Plan · visit 3', 'without a journal, the visit alone');
   });

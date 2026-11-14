@@ -1446,6 +1446,7 @@ function Workbench({
           occurrence: reply.occurrence,
           ...(reply.prompt === undefined ? {} : { prompt: reply.prompt }),
           ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }),
+          ...(reply.declaresSubGoal === true ? { declaresSubGoal: true as const } : {}),
         },
       });
       // The step's turn is over, so it stops being the live one. Carried separately

@@ -98,11 +98,18 @@ export interface LoopAgentReply {
    * Live, from the host's reply; read back, from the journal's `branch-started` session.
    */
   readonly sliceId?: string;
+  /**
+   * DSP-209 S21b: the drawing this run walked declares `subgoal` on the reply's node (for a
+   * branch, its fan-out node), so its `SUBGOAL:` line is read for display. Set by the host on
+   * a live reply; a reply read back from a record does not know it, and reads no claim.
+   */
+  readonly declaresSubGoal?: true;
 }
 
 /**
  * DSP-209 S21: the run's step reports for the chat's cards, from S16's `stepReportsFrom`,
  * each `replyIndex` an index into `replies`. Derived on every read and never stored.
+ * S21b: a `SUBGOAL:` claim is read only for nodes a reply says declare it.
  */
 export function stepReportsForTurn(
   runId: string,
@@ -112,6 +119,7 @@ export function stepReportsForTurn(
   return stepReportsFrom({
     runId,
     journal,
+    subGoalNodes: new Set(replies.filter((reply) => reply.declaresSubGoal === true).map((reply) => reply.nodeId)),
     replies: replies.map((reply) => ({
       nodeId: reply.nodeId,
       ...(reply.occurrence === undefined ? {} : { occurrence: reply.occurrence }),

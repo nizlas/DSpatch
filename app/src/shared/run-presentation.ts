@@ -443,9 +443,17 @@ export function stepReportsFrom(input: {
   readonly journal: readonly RunJournalEntry[];
   readonly replies?: readonly PresentationReply[];
   readonly slices?: SliceSource;
+  /**
+   * DSP-209 S21b: the nodes whose drawing declares `subgoal`. A reply's `SUBGOAL:` line is
+   * read only for these — a branch by its fan-out node — since only they are asked for it.
+   * Absent reads no claim at all, never every reply's.
+   */
+  readonly subGoalNodes?: ReadonlySet<string>;
 }): readonly StepReport[] {
   const { journal } = input;
   const replies = input.replies ?? [];
+  const claimFor = (nodeId: string, text: string | undefined): StepReport['subGoal'] =>
+    text === undefined || input.subGoalNodes?.has(nodeId) !== true ? null : subGoalClaimFrom(text);
   const { visits, of } = entriesByVisit(input.runId, journal);
   const branches = branchViewsFromJournal(input.runId, journal, input.slices === undefined ? {} : { slices: input.slices });
   const fanOutNodes = new Set(branches.map((branch) => branch.visit.nodeId));
@@ -551,7 +559,7 @@ export function stepReportsFrom(input: {
       role: integrator ? 'integrator' : 'step',
       sliceId: null,
       // DSP-209 S21: the agent's own claim, from its reply; `null` when it made none.
-      subGoal: replyText === undefined ? null : subGoalClaimFrom(replyText),
+      subGoal: claimFor(visit.visit.nodeId, replyText),
       declaredOutcome: declared.get(visit.seq) ?? null,
       replyIndex: replyAt < 0 ? null : replyAt,
       attention: attention.get(visit.seq) ?? null,
@@ -568,7 +576,7 @@ export function stepReportsFrom(input: {
         nodeLabel: visit.label,
         role: 'branch',
         sliceId: branch.sliceId,
-        subGoal: branchReply < 0 || replies[branchReply]?.text === undefined ? null : subGoalClaimFrom(replies[branchReply]?.text ?? ''),
+        subGoal: claimFor(visit.visit.nodeId, branchReply < 0 ? undefined : replies[branchReply]?.text),
         declaredOutcome: null,
         replyIndex: branchReply < 0 ? null : branchReply,
         attention: branch.state === 'failed' ? 'failure' : null,

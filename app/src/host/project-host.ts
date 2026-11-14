@@ -3438,6 +3438,10 @@ function registerLoopMethods(): void {
               prompt: reply.prompt,
               // DSP-209 S21: which branch spoke, so the chat groups it under its fan-out step.
               ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }),
+              // DSP-209 S21b: only a node whose drawing declares `subgoal` has its claim shown.
+              ...((loaded.graph.nodes.find((node) => node.id === reply.nodeId)?.declares ?? []).includes('subgoal')
+                ? { declaresSubGoal: true as const }
+                : {}),
             } satisfies ChatLoopReply);
           },
         });
