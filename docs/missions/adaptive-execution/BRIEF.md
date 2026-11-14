@@ -77,11 +77,20 @@ These were said by Niclas on 13 November 2026, in Swedish, in the conversation t
 - a decisive question the brief, the vision and the documents cannot settle, where either answer would build something different;
 - a departure from a decided design that the vision does not cover, such as the permission model or a control boundary in the content-exclusion contract, or a change in what a provider may receive.
 
+**Parallel sub-goals in the mission loop (Niclas, 14 November 2026, an explicit addition to the mission).** The mission loop now offers two ways to implement a sub-goal, and the coordinator chooses per sub-goal. This replaces *Start sequentially* above for later runs.
+- `implement` sends coherent work to the one implementer, as before.
+- `implement-parallel` sends work that splits into independent parts through the slicer, the engine's existing fan-out (one branch per slice, each in its own worktree and session) and the integrator, reusing the Parallel loop's roles. Both paths go to their own independent review and back to the coordinator.
+- The coordinator chooses by dependencies and expected benefit. Parallelism is not a goal in itself, and the slicer may still keep a sub-goal as one slice.
+- Every branch gets the coordinator's brief, the slicer's plan and its own slice: a bounded result, owned paths and its own check. Branches check the existing mailbox at natural points and acknowledge what they act on. A message is delivered only when the recipient checks; nothing is pushed into a running turn.
+- The integrator merges the branches as commits on the current branch, so rework visits start from the merged state and keep it. A failed branch or a refused integration means the sub-goal is not done.
+- No new parallel engine and no graph generated at run time: the path is drawn in the mission graph, and the engine runs it as it runs the Parallel loop.
+- Q2, building graphs through dialogue, is separate and does not block this.
+
 Record the question, your recommendation and what can continue without it, and **go on with work that does not depend on the answer**. The run ends with `needs-decision` only when everything left depends on Niclas.
 
 ## 4 What the engine does today
 
-The preparation established this by reading code on 13 November 2026, from the commit that added this brief. The mission changes this code, so verify a statement before relying on it.
+The preparation established this by reading code on 13 November 2026, from the commit that added this brief. The mission changes this code, so verify a statement before relying on it. The first run (14 November 2026) built skipped steps, context transfer, the handoff to chat, fan-out branches, the mailbox and the run report; STATE.md's sub-goal records say what each one does, and several statements below are now out of date.
 
 - **A run is one in-memory walk.**
   - A run is one `runLoopGraph` call (`app/src/shared/loop-run.ts`).
@@ -128,7 +137,7 @@ The preparation established this by reading code on 13 November 2026, from the c
 ## 5 Mandate and boundaries for every run
 
 - **What may change.** Change DSpatch's code, tests and documents as each sub-goal requires.
-- **Who commits.** The coordinator commits each sub-goal locally once review accepts it, together with STATE.md, in the repository's commit style, with a message naming DSP-209 and the sub-goal id. **Do not push, tag, publish or release.** The implementer does not commit.
+- **Who commits.** The coordinator commits each sub-goal locally once review accepts it, together with STATE.md, in the repository's commit style, with a message naming DSP-209 and the sub-goal id. **Do not push, tag, publish or release.** The implementer and the branches do not commit; DSpatch commits each branch's work to its temporary branch. On the parallel path the integrator merges the temporary branches into the current branch as local commits, and the coordinator commits STATE.md before it chooses `implement-parallel` and again when the sub-goal is accepted.
 - **Fixed instructions.** Do not edit the mission's own instructions:
   - this brief;
   - `docs/loop/roles/run/dspatch-mission-coordinator.role.md`;

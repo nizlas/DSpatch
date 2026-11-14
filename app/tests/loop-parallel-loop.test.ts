@@ -126,10 +126,10 @@ describe('the bundled parallel loop (DSP-209 S10c)', () => {
     assert.equal(judged.runnable, true, judged.runnable ? '' : judged.note);
   });
 
-  it('leaves the mission, chat and development loops exactly as they are in HEAD', () => {
+  // The mission loop is no longer in this list: on 14 November 2026 Niclas had its parallel
+  // path added, which reuses this loop's roles and the engine's fan-out (loop-mission-parallel.test.ts).
+  it('leaves the chat and development loops exactly as they are in HEAD', () => {
     for (const file of [
-      '.dspatch/loops/dspatch-mission-loop.loop.json',
-      'docs/loop/graphs/dspatch-mission-loop.graph.json',
       '.dspatch/loops/dspatch-chat-loop.loop.json',
       'docs/loop/graphs/dspatch-chat-loop.graph.json',
       '.dspatch/loops/dspatch-development-loop.loop.json',

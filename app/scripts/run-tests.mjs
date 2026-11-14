@@ -90,6 +90,7 @@ const AREAS = {
       'ordinal.test.ts',
       'run-mailbox.test.ts',
       { file: 'loop-parallel-loop.test.ts', heavy: true },
+      { file: 'loop-mission-parallel.test.ts', heavy: true },
       { file: 'loop-fan-out-run.test.ts', heavy: true },
       'loop-handoff.test.ts',
       'loop-slices.test.ts',

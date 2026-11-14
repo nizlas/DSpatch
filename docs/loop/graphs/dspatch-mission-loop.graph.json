@@ -3,17 +3,17 @@
   "formatVersion": 1,
   "id": "dspatch-mission-loop",
   "name": "DSpatch mission loop",
-  "purpose": "Carry one long assignment on DSpatch's own repository across many sub-goals and several runs. Each run is a bounded batch: the coordinator reconciles the working-state file with the working copy, chooses the step the work needs next (map and plan, research, implement a sub-goal, assess the whole), an independent reviewer judges each sub-goal and may ask for independent verification or send concrete findings back for rework, and the coordinator records every result in the working-state file before it chooses again. A run ends at a boundary with the state saved: a batch done, a decision needed, a blockage, no progress, or the whole assignment assessed and reported. The next run continues from the file.",
+  "purpose": "Carry one long assignment on DSpatch's own repository across many sub-goals and several runs. Each run is a bounded batch: the coordinator reconciles the working-state file with the working copy, chooses the step the work needs next (map and plan, research, implement a sub-goal on one path, implement it in parallel branches, assess the whole), an independent reviewer judges each sub-goal and may ask for independent verification or send concrete findings back for rework, and the coordinator records every result in the working-state file before it chooses again. A run ends at a boundary with the state saved: a batch done, a decision needed, a blockage, no progress, or the whole assignment assessed and reported. The next run continues from the file.",
   "target": "cursor",
   "entry": "coordinator",
   "onRuntimeFault": "stop-and-reconcile",
-  "notes": "DSP-208, 13 November 2026, prepared for the adaptive-execution mission (docs/missions/adaptive-execution/BRIEF.md). The mandate a run is started with names the start brief and the working-state file; every step is told to read them.\n\nWHY A HUB. The engine routes only on outcomes a step names and has no lists, counters per edge or skip state. So the coordinator is the hub: every path returns to it, and its outcome chooses the next step. A step it does not choose is simply not visited; the coordinator records why in the working-state file, which is where skipped is told apart from done until the engine can show it.\n\nWHY BATCHES. A run lives in memory and cannot be resumed after a restart or a fault (stop-and-reconcile ends it). The working-state file in the project is the checkpoint, written by the coordinator before every outcome, and a new run started with the same mandate continues from it. Accepted sub-goals are committed locally, so a resumed run finds their effects in Git rather than repeating them.\n\nWHAT STAYS FIXED IN A RUN. The graph is read once when the run starts and held for its lifetime; role files are read for the run as well. The mission's instructions forbid it to edit this graph, its definition, the mission coordinator role or the start brief, so a later run is not driven by instructions an earlier run rewrote.\n\nCONTINUING PAST ONE SUB-GOAL. A sub-goal that is blocked, stalled or waiting on Niclas does not end the run: the coordinator records it and goes on with work that does not depend on it. The needs-decision, no-progress and blocked endings mean that no feasible work is left, not that one sub-goal stopped.\n\nLIMITS. See the note on limits. A spent bound ends the run as limit-reached with the state as the coordinator last wrote it.\n\nRESULTS. Every step leaves a stored result, so the next step is handed the body itself rather than a path into the run's own storage.",
+  "notes": "DSP-208, 13 November 2026, prepared for the adaptive-execution mission (docs/missions/adaptive-execution/BRIEF.md). The mandate a run is started with names the start brief and the working-state file; every step is told to read them.\n\nWHY A HUB. The engine routes only on outcomes a step names and has no lists, counters per edge or skip state. So the coordinator is the hub: every path returns to it, and its outcome chooses the next step. A step it does not choose is simply not visited; the coordinator records why in the working-state file, which is where skipped is told apart from done until the engine can show it.\n\nWHY BATCHES. A run lives in memory and cannot be resumed after a restart or a fault (stop-and-reconcile ends it). The working-state file in the project is the checkpoint, written by the coordinator before every outcome, and a new run started with the same mandate continues from it. Accepted sub-goals are committed locally, so a resumed run finds their effects in Git rather than repeating them.\n\nWHAT STAYS FIXED IN A RUN. The graph is read once when the run starts and held for its lifetime; role files are read for the run as well. The mission's instructions forbid it to edit this graph, its definition, the mission coordinator role or the start brief, so a later run is not driven by instructions an earlier run rewrote.\n\nCONTINUING PAST ONE SUB-GOAL. A sub-goal that is blocked, stalled or waiting on Niclas does not end the run: the coordinator records it and goes on with work that does not depend on it. The needs-decision, no-progress and blocked endings mean that no feasible work is left, not that one sub-goal stopped.\n\nLIMITS. See the note on limits. A spent bound ends the run as limit-reached with the state as the coordinator last wrote it.\n\nRESULTS. Every step leaves a stored result, so the next step is handed the body itself rather than a path into the run's own storage.\n\nTWO WAYS TO IMPLEMENT (14 November 2026, Niclas's explicit addition to the mission). The coordinator chooses per sub-goal. implement sends coherent work to the one implementer. implement-parallel sends work that splits into independent parts through Split the sub-goal (the project slice role), Implement the slices (a fan-out node: the engine's existing fanOut, one branch per slice in its own worktree and session, at most three at once under Claude and Copilot and one under Cursor, caps read from code and never observed) and Combine the branches (the project integrate role, which merges the temporary branches into the working copy as commits on the current branch). Each path has its own independent review, and both return to the coordinator. Parallelism is not a goal in itself: the coordinator chooses it only when the parts are independent enough to pay for the split and the integration, and the slicer may still answer with one slice. Nothing here is a new engine feature or a graph generated at run time: the path is drawn, and the engine runs it as it runs the bundled Parallel loop (DSP-209 S10a–S11).\n\nBEFORE A FAN-OUT. The branches start from a base taken from the working copy, uncommitted tracked changes included, and a merge refuses where the working copy holds an uncommitted change the branch also carries. So the coordinator commits the working-state file before it chooses implement-parallel, leaving no uncommitted change to a tracked file; untracked files do not matter.\n\nREWORK ON THE PARALLEL PATH. The integrator merges as commits, so a rework visit to the branches starts from the merged state and keeps what was merged; the parallel review sends rework to the integrator, which fixes the combination by sending the branches back with findings. A failed branch never counts as done: the fan-out ends branch-failed and the coordinator records the sub-goal as not done.",
   "limits": {
     "maxTasks": 1,
     "maxCalls": 180,
     "maxReworkRounds": 60,
     "maxMinutes": 45,
-    "note": "Sized for a whole night's run on 13 November 2026 (Niclas: the whole mission in one run, no batch stop). A sub-goal costs about three calls (coordinator, implementer, review), two more for an independent verification and two per rework round, so 180 calls is room for some forty sub-goals with their rework and the mapping, research and whole assessment around them. It stays under the runner's own bound of 200 transitions (DEFAULT_MAX_TRANSITIONS in loop-run.ts, not set from the graph), so the run ends on this declared bound, as limit-reached, before it could end on that one as a fault. maxReworkRounds counts the rework edges of every sub-goal together, so it is set high enough that ordinary rework across many sub-goals never reaches it; repeated attempts on one problem are stopped by the review's own stalled verdict, not by this number. maxMinutes is each step's default, not a bound on the run: the implementer has 120, the whole assessment 60. Change them in the editor."
+    "note": "Sized for a whole night's run on 13 November 2026 (Niclas: the whole mission in one run, no batch stop). A sub-goal costs about three calls (coordinator, implementer, review), two more for an independent verification and two per rework round, so 180 calls is room for some forty sub-goals (a parallel sub-goal costs the slicer, one call per branch, the integrator and its review, and each rework visit to the branches one call per branch again) with their rework and the mapping, research and whole assessment around them. It stays under the runner's own bound of 200 transitions (DEFAULT_MAX_TRANSITIONS in loop-run.ts, not set from the graph), so the run ends on this declared bound, as limit-reached, before it could end on that one as a fault. maxReworkRounds counts the rework edges of every sub-goal together, so it is set high enough that ordinary rework across many sub-goals never reaches it; repeated attempts on one problem are stopped by the review's own stalled verdict, not by this number. maxMinutes is each step's default, not a bound on the run: the implementer has 120, the whole assessment 60. Change them in the editor."
   },
   "archive": {
     "path": "results/",
@@ -35,6 +35,11 @@
       "id": "blocked",
       "label": "blocked",
       "meaning": "A concrete obstacle prevents progress: missing access, a login only Niclas can renew, a blocking technology, or a decision this run cannot make."
+    },
+    {
+      "id": "branch-failed",
+      "label": "a branch failed",
+      "meaning": "A parallel branch ended without finishing its slice, the slices were invalid, or the run had too few calls left for every branch. The sub-goal is not done; the coordinator records which branch and why, and chooses again."
     }
   ],
   "nodes": [
@@ -42,14 +47,14 @@
       "id": "coordinator",
       "kind": "agent",
       "label": "Coordinator: reconcile and choose",
-      "purpose": "Read the start brief and the working-state file the mandate names, reconcile them with the working copy and with what the arriving step handed you, record what happened, and choose the step the mission needs next. When you choose implement, your result is the implementer's brief for exactly one sub-goal. When a review accepted a sub-goal, record it and commit it as the brief allows, then go straight on to the next feasible sub-goal. When a sub-goal is blocked, stalled or waits on Niclas, record why and go on with sub-goals that do not depend on it. End the run only when no feasible work remains or the whole is assessed. Write the working-state file before you name your outcome.",
+      "purpose": "Read the start brief and the working-state file the mandate names, reconcile them with the working copy and with what the arriving step handed you, record what happened, and choose the step the mission needs next. When you choose implement, your result is the implementer's brief for exactly one sub-goal. Choose implement-parallel instead only when the sub-goal splits into two or three parts that write different files and meet only at interfaces you can name, and the split is worth its integration; then your result is the same kind of brief, with the parts and the interfaces you see, and you commit the working-state file first so the working copy has no uncommitted change to a tracked file. Choose by dependencies and expected benefit: parallelism is not a goal in itself. When a review accepted a sub-goal, record it and commit it as the brief allows, then go straight on to the next feasible sub-goal. When a sub-goal is blocked, stalled or waits on Niclas, record why and go on with sub-goals that do not depend on it. End the run only when no feasible work remains or the whole is assessed. Write the working-state file before you name your outcome.",
       "role": {
         "id": "dspatch-mission-coordinator",
         "source": { "kind": "role-source", "path": "docs/loop/roles/run/dspatch-mission-coordinator.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 30 },
-      "outcomes": ["plan", "research", "implement", "assess-whole", "batch-done", "needs-decision", "no-progress", "unclear"],
+      "outcomes": ["plan", "research", "implement", "implement-parallel", "assess-whole", "batch-done", "needs-decision", "no-progress", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["blocked"],
       "report": { "writtenBy": "self" },
@@ -213,6 +218,94 @@
       "view": { "x": 1080, "y": 40 }
     },
     {
+      "id": "slicer",
+      "kind": "agent",
+      "label": "Split the sub-goal",
+      "purpose": "The coordinator chose to implement one sub-goal in parallel; its brief names the sub-goal, its acceptance criteria, the governing decisions and the parts it sees. Read the brief, the start brief and the working-state file the mandate names, and the code the sub-goal touches. Split the sub-goal into two or three slices only where each writes its own files and the slices meet only at interfaces you name in contractRefs; otherwise write one slice, which runs as a single branch. Give every slice the sub-goal context it needs in its result: what to build, which acceptance criteria it carries, and the governing decisions that bind it, because a branch is handed your slice and the coordinator's brief and nothing else of this run. Each slice's verification is its own smallest targeted check under the verification policy in AGENTS.md. Do not widen the sub-goal, and change no file.",
+      "role": {
+        "id": "project-slice",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/project/project-slice.role.md" }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 30 },
+      "declaredFailures": ["spec-error", "blocked"],
+      "report": { "writtenBy": "self" },
+      "consumes": ["coordinator"],
+      "produces": {
+        "required": true,
+        "form": "stored-result",
+        "note": "Whether and why the sub-goal was split, and exactly one dspatch-slices block."
+      },
+      "view": { "x": 120, "y": 800 }
+    },
+    {
+      "id": "branches",
+      "kind": "agent",
+      "label": "Implement the slices",
+      "purpose": "You are one branch of a sub-goal implemented in parallel. The coordinator's brief is the sub-goal; your slice, at the end of this message, is your part of it. Do your slice inside the paths it owns, in your own worktree, against the contracts it names, and run its own check; do not commit, which DSpatch does for you when your turn ends. Every rule in AGENTS.md applies. Call check_messages before you start, after a significant change and before you finish: messages are delivered only when you check, never into a turn while it runs. Acknowledge each message you acted on, send a finding when your work affects another slice's paths or a shared contract, and never wait for a reply. On a later visit you are given the integrator's findings; act on the ones for your slice, starting from the merged state your worktree now holds.",
+      "role": {
+        "id": "project-branch",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/project/project-branch.role.md" }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 120 },
+      "fanOut": { "slicesFrom": "slicer", "maxConcurrent": 3, "isolation": "worktree" },
+      "declaredFailures": ["branch-failed"],
+      "report": { "writtenBy": "self" },
+      "consumes": ["coordinator"],
+      "produces": {
+        "required": true,
+        "form": "stored-result",
+        "note": "Filed by the engine: every slice's ending, temporary branch and commit, the base, the messages and the open proposals for the integrator."
+      },
+      "notes": "The node's maxMinutes bounds the whole visit, every branch included. A branch is handed the mandate, the run's context, what the arriving edge delivers (the coordinator's brief and the slicer's plan; on rework, the integrator's findings) and its own slice.",
+      "view": { "x": 420, "y": 800 }
+    },
+    {
+      "id": "integrate",
+      "kind": "agent",
+      "label": "Combine the branches",
+      "purpose": "Combine the branches of one parallel sub-goal into the working copy, as the role says: read the commits, merge in the listed order with git's own merge so the merged state is recorded as commits on the current branch, resolve each conflict and say how, resolve or reject every open proposal by id, and run the targeted checks the combination needs under the verification policy in AGENTS.md. On rework, send the branches back with concrete findings per slice; leave nothing uncommitted of your own when you do, so the next branches start from the merged state and keep it. Your report must cover the whole sub-goal, because the coordinator and the review are handed only your latest account: every slice and visit with its branch, commit and ending, what was merged, what conflicted, every check with its result, what failed and what is still wrong. A branch that failed or was not merged means the sub-goal is not integrated. Do not push and do not touch the working-state file.",
+      "role": {
+        "id": "project-integrate",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/project/project-integrate.role.md" }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 60 },
+      "outcomes": ["integrated", "rework", "not-integrated"],
+      "whenUndeclared": "not-integrated",
+      "declaredFailures": ["spec-error", "blocked"],
+      "report": { "writtenBy": "self" },
+      "consumes": ["coordinator", "branches"],
+      "produces": {
+        "required": true,
+        "form": "stored-result",
+        "note": "The whole sub-goal's integration: per slice and visit its branch, commit and ending, what was merged and conflicted, the checks and what is still wrong."
+      },
+      "view": { "x": 760, "y": 800 }
+    },
+    {
+      "id": "parallel-review",
+      "kind": "agent",
+      "label": "Review the combined sub-goal",
+      "purpose": "Judge the integrated result of a parallel sub-goal against the acceptance criteria in the coordinator's brief, the governing decisions it names, the actual code on the current branch and how it fits the sub-goals already reviewed. Check that each branch stayed inside its slice's paths, that no failed or unmerged branch is counted as done, and that the integrator's account matches the commits. Answer accept, rework with concrete findings for the integrator, needs-decision when only Niclas can settle it, or stalled when the sub-goal is not converging: the same concrete finding survives two rework rounds, or a third would be needed. Reviewing does not mean running the integrator's checks again. When you accept after a rework round, restate the earlier rounds' findings that are still open, the non-blocking suggestions included, and what was untested, because the coordinator receives only this round's accounts. Your acceptance is an agent's review, not Niclas's approval.",
+      "role": {
+        "id": "dspatch-reviewer",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-reviewer.role.md" }
+      },
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework", "needs-decision", "stalled", "could-not-review"],
+      "whenUndeclared": "could-not-review",
+      "report": { "writtenBy": "self" },
+      "consumes": ["coordinator", "integrate"],
+      "produces": {
+        "required": true,
+        "form": "stored-result",
+        "note": "The verdict with its reasons, and for rework the findings for the integrator, each concrete enough to act on."
+      },
+      "view": { "x": 1080, "y": 800 }
+    },
+    {
       "id": "mission-complete",
       "kind": "terminal",
       "label": "Reported complete: awaits Niclas",
@@ -273,6 +366,7 @@
     { "id": "c-plan", "from": "coordinator", "to": "planner", "when": { "on": "outcome", "outcome": "plan" }, "label": "map and plan" },
     { "id": "c-research", "from": "coordinator", "to": "researcher", "when": { "on": "outcome", "outcome": "research" }, "label": "research a question" },
     { "id": "c-implement", "from": "coordinator", "to": "implementer", "when": { "on": "outcome", "outcome": "implement" }, "label": "implement a sub-goal" },
+    { "id": "c-implement-parallel", "from": "coordinator", "to": "slicer", "when": { "on": "outcome", "outcome": "implement-parallel" }, "label": "implement in parallel branches" },
     { "id": "c-assess", "from": "coordinator", "to": "mission-review", "when": { "on": "outcome", "outcome": "assess-whole" }, "label": "assess the whole" },
     { "id": "c-batch", "from": "coordinator", "to": "batch-paused", "when": { "on": "outcome", "outcome": "batch-done" }, "label": "batch done" },
     { "id": "c-decision", "from": "coordinator", "to": "needs-decision", "when": { "on": "outcome", "outcome": "needs-decision" }, "label": "needs Niclas" },
@@ -302,6 +396,25 @@
     { "id": "rv-decision", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["review"], "label": "needs a decision" },
     { "id": "rv-stalled", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "stalled" }, "delivers": ["implementer", "review"], "label": "not converging", "notes": "Repeated attempts on one problem, told apart from ordinary rework across sub-goals: the review stops the sub-goal's rework loop and hands it to the coordinator, which records it as blocked with the open findings and goes on with sub-goals that do not depend on it." },
     { "id": "rv-open", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "could-not-review" }, "delivers": ["review"], "label": "no verdict" },
+
+    { "id": "s-sliced", "from": "slicer", "to": "branches", "when": { "on": "success" }, "delivers": ["coordinator", "slicer"], "label": "slices planned" },
+    { "id": "s-spec", "from": "slicer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["slicer"], "label": "wrong premise" },
+    { "id": "s-blocked", "from": "slicer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["slicer"], "label": "blocked" },
+
+    { "id": "b-done", "from": "branches", "to": "integrate", "when": { "on": "success" }, "delivers": ["coordinator", "branches"], "label": "every branch finished" },
+    { "id": "b-failed", "from": "branches", "to": "coordinator", "when": { "on": "declared-failure", "failure": "branch-failed" }, "delivers": ["branches"], "label": "a branch failed: not done" },
+
+    { "id": "g-integrated", "from": "integrate", "to": "parallel-review", "when": { "on": "outcome", "outcome": "integrated" }, "delivers": ["coordinator", "integrate"], "label": "for review" },
+    { "id": "g-rework", "from": "integrate", "to": "branches", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["coordinator", "slicer", "integrate"], "label": "branches again, from the merged state" },
+    { "id": "g-not", "from": "integrate", "to": "coordinator", "when": { "on": "outcome", "outcome": "not-integrated" }, "delivers": ["integrate"], "label": "not integrated: not done" },
+    { "id": "g-spec", "from": "integrate", "to": "coordinator", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["integrate"], "label": "wrong premise" },
+    { "id": "g-blocked", "from": "integrate", "to": "coordinator", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["integrate"], "label": "blocked" },
+
+    { "id": "pr-accept", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["integrate", "parallel-review"], "label": "accepted: record and commit" },
+    { "id": "pr-rework", "from": "parallel-review", "to": "integrate", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["coordinator", "branches", "parallel-review"], "label": "rework with findings" },
+    { "id": "pr-decision", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["integrate", "parallel-review"], "label": "needs a decision" },
+    { "id": "pr-stalled", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "stalled" }, "delivers": ["integrate", "parallel-review"], "label": "not converging" },
+    { "id": "pr-open", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "could-not-review" }, "delivers": ["parallel-review"], "label": "no verdict" },
 
     { "id": "m-complete", "from": "mission-review", "to": "final-report", "when": { "on": "outcome", "outcome": "complete" }, "delivers": ["mission-review"], "label": "complete" },
     { "id": "m-gaps", "from": "mission-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "gaps" }, "delivers": ["mission-review"], "label": "gaps found" },
