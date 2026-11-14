@@ -14,8 +14,9 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** none. The fifth whole assessment was asked for on call 62 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16 through S28 are reviewed and committed, including S18a/b, S19b, S21b, S25 and S25b. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
-- **For Niclas's next engine transition:** host code changed in S19, S19b, S20, S21, S21b, S22, S23a and S23b. Rebuild `DSpatch-engine` at the commit this run ends on, then use **Restart host**. No host method was added, so the host contract is unchanged. Never do this during a run.
+- **Run `chat-loop-2026-11-14T09-54-18-366Z` ends `needs-decision`** (coordinator visit 18, call 64). Status: **paused — needs Niclas's decision** (Q6). The mission is not reported complete and not approved.
+- **Sub-goal in progress:** none. The fifth whole assessment (call 63) returned `needs-decision`. S16 through S28 are reviewed and committed, including S18a/b, S19b, S21b, S25 and S25b. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
+- **For Niclas's next engine transition:** host-side code changed in S19, S19b, S20, S21, S21b, S22, S23a, S23b and S27 (S27's `loop-run.ts` runs in the host). Rebuild `DSpatch-engine` at the commit this run ends on, then use **Restart host**. No host method was added, so the host contract is unchanged. Never do this during a run.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4, Q5 and Q6 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -392,6 +393,30 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
+### Fifth whole assessment (run `chat-loop-2026-11-14T09-54-18-366Z`, call 63)
+
+- **Verdict: `needs-decision`.** This is an agent's assessment, not Niclas's approval.
+- **What the assessor read.** The commits `7ba31bf`, `3c20675`, `ce156bb` and `6db31fe`, plus the code of S26 and S27. It used read-only git and reran no tests.
+- **What holds:**
+  - **Git matches the record.** No tracked file is uncommitted. `main` is 37 commits ahead of `origin/main`, 32 of them since `9fe95a9`, and nothing is pushed.
+  - **The fixed files are unchanged.** BRIEF §5's files, the content-exclusion contract and `docs/loop/roles/` are as they were. The engine is still at `9fe95a9`, and there was no release.
+  - **The fourth assessment's three gaps are closed:**
+    - S28 ran the code together;
+    - S26 gave R7 on the workflow surfaces, checked by reading the code;
+    - S27 shows restored sub-goal claims.
+  - **The parts fit together.**
+  - **No new gap was found.**
+- **Corrections to this file.** Both are made on visit 18: the reason the fourth assessment was routed as it was, and S27 added to the list for the engine transition.
+- **Open, and Niclas's:**
+  - Q6 (R7 beyond the workflow surfaces): R7 is not met for the whole app until he answers.
+  - Q1, Q3, Q4 and Q5.
+  - Decision 30, which he may correct.
+- **Left for Niclas:**
+  - every live and window trial, and the vision's speed assessment;
+  - the engine rebuild at this run's final commit, then **Restart host**;
+  - A1;
+  - the ten temporary branches.
+
 ### S28 — One integrated `loop` group run — reviewed (agent review, not Niclas's approval)
 
 - **Attempt 1:** run `chat-loop-2026-11-14T09-54-18-366Z`. Decided on coordinator visit 16 (call 59, decision 56); implemented (call 60, `done`); review `accept` (call 61, round 1); recorded and committed on coordinator visit 17 (call 62). `git status` showed exactly the three files the implementer named.
@@ -465,7 +490,7 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 
 ### Fourth whole assessment (run `chat-loop-2026-11-14T09-54-18-366Z`, call 52)
 
-- **Verdict: gaps.** The assessor wrote "RESULT: gaps", which is not a name its node declares, so the engine routed it as `m-open` (no verdict). The content is complete and specific, so the coordinator takes it as the verdict, as decision 10 did. This is an agent's assessment, not Niclas's approval.
+- **Verdict: gaps.** The engine routed it as `m-open` (no verdict). *Corrected by the fifth assessment:* `gaps` **is** a declared outcome of `mission-review` (edge `m-gaps`), so the coordinator's first reason was wrong. The likely cause is that the reply held two `RESULT:` lines, a bolded "**RESULT: gaps.**" at the top and "RESULT: gaps" at the end, which the engine read as contradictory. That is an inference; the engine's reader was not checked. The content is complete and specific, so the coordinator takes it as the verdict, as decision 10 did. This is an agent's assessment, not Niclas's approval.
 - **Holds:**
   - **Git and the account agree.** There are 28 commits after `9fe95a9`, touching 69 files, all local; `main` is 33 commits ahead of `origin/main`.
   - **No fixed instructions changed.** BRIEF §5's fixed files, the content-exclusion contract and the role sources under `docs/loop/roles/` are unchanged.
@@ -1241,6 +1266,14 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 18 (call 64).** The fifth assessment returned `needs-decision`, and the run ends `needs-decision`. Every requirement in reach is agent-reviewed. What remains is Niclas's: Q6 (and Q1, Q3, Q4, Q5), his trials, and the engine transition. Non-blocking review suggestions are listed in each sub-goal's record. They are not requirements, and none of them is briefed.
+
+**Next run:** reconcile from this file's commit after `6db31fe`.
+- If Niclas answers Q6 in scope, plan the R7 sweep of the remaining views, `WalkLoopFollow.tsx` first.
+- If he answers it out of scope, record R7 as met for the extension's scope by his decision, and send the whole to assessment for *Reported complete*.
+- Findings from his trials become sub-goals.
+- Record any answers to Q1, Q3, Q4 and Q5.
+
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 17 (call 62).** S28 is reviewed and committed with this file. All three gaps from the fourth assessment are closed: S26, S27 and S28. The whole goes to assessment again (`assess-whole`, the fifth).
 
 **Next:** record the verdict.
@@ -1387,3 +1420,12 @@ One line per run, appended at its end where the run ends at a terminal: the date
 - **14 November 2026, between runs, in the main chat (Niclas's explicit addition, not a loop run).** The mission loop gained a parallel path: coordinator outcome `implement-parallel`, nodes `slicer` (project slice role), `branches` (the engine's existing fan-out, at most three at once, worktree isolation, project branch role), `integrate` (project integrate role, merges as commits) and `parallel-review` (the reviewer), failure kind `branch-failed` back to the coordinator as not done. The coordinator role and BRIEF §3 and §5 say how to choose and record it. No engine change and no graph generated at run time. Checked by `app/tests/loop-mission-parallel.test.ts` (the graph loads with its real roles; a scripted walk on a temporary repository takes the parallel path with one rework from the merged state, then the sequential path; a failed branch returns to the coordinator past integration and review) and the type check; nothing run with a provider.
 - **14 November 2026, run `chat-loop-2026-11-14T08-41-01-671Z`** (6 calls of 180; no rework): reconciled with Git; implemented S15, Niclas's addition, sequentially (decision 32); agent-reviewed and committed locally as `9ec6902`, with DSP-209's dated note; none pushed. A third whole assessment returned `needs-decision`. Ended `needs-decision` because the only open requirement, Q2, is Niclas's to decide. Nothing has run with a real provider; agent review is not his approval.
 - **14 November 2026, run `chat-loop-2026-11-14T09-03-54-467Z`** (7 calls; no rework): reconciled, recorded Q2 in scope and R1–R6, planned S16–S23b, tried S16 ‖ S17 in parallel (both branches `no-worktree`: Windows long paths), recorded S24 and decision 38, implemented S16 sequentially (`done`, not reviewed). Paused by Niclas before S16's review and ended between runs for the engine transition, so its record has no ending. S24 was fixed in the main chat (`4c6e14f`).
+- **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`** (64 calls of 180; rework rounds in S19 (review round 1), S21 (R1) and S23b (B1)). Engine at `9fe95a9`.
+  - **Done and agent-reviewed, committed locally** in `06b3762`..`6db31fe` plus this record, none pushed:
+    - S16 (account only, then review);
+    - S17 ‖ S18a and S19 ‖ S22 in parallel. These were the first live fan-outs since S24, and their worktrees were created on Windows;
+    - S25, S25b, S20, S19b, S21, S18b, S23a, S23b, S21b;
+    - after the fourth assessment found gaps: S26 (R7 on the workflow surfaces), S27 and S28 (one `loop` group run, 928/928 after a test fix).
+  - **R7 was recorded.** Niclas restated it this run. The coordinator first recorded it more narrowly than he wrote it, the assessment caught that, and S26 corrected it.
+  - **Ended `needs-decision`.** The fifth assessment found only Niclas's items open: Q6 (R7 beyond the workflow surfaces), Q1, Q3, Q4, Q5, his trials, and the engine rebuild with **Restart host**.
+  - Nothing has run with a real provider; agent review is not his approval.
