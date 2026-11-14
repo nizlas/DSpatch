@@ -706,3 +706,40 @@ test('a handover round-trips, an older file reads without one, and a damaged one
   assert.equal(damaged.length, 2);
   assert.equal('handover' in (damaged[0] ?? {}), false);
 });
+
+// DSP-209 S7: a loop recap, sent or removed, is kept apart from the person's prompt.
+test('a loop recap round-trips sent and removed, and a damaged one is dropped', () => {
+  const { store, directory } = storeIn('loop-recap');
+  const base = {
+    dspatchRunId: 'run-1',
+    prompt: 'what did the loop change?',
+    answer: 'It changed a.ts.',
+    deltaCount: 1,
+    toolEvents: 0,
+    terminalStatus: 'finished',
+    errorMessage: null,
+    totalTokens: null,
+    startedAtUtc: '2026-11-14T03:00:00.000Z',
+    finishedAtUtc: '2026-11-14T03:00:01.000Z',
+    resentContext: null,
+  };
+  const original = conversation({
+    messages: [
+      { ...base, ordinal: 0, loopRecap: { runIds: ['chat-loop-1'], text: 'DSpatch: recap' } },
+      { ...base, ordinal: 1, dspatchRunId: 'run-2', loopRecap: { runIds: ['chat-loop-2'], text: null } },
+      { ...base, ordinal: 2, dspatchRunId: 'run-3' },
+    ],
+  });
+  store.write(original);
+  const back = store.read(original.conversationId).conversation?.messages ?? [];
+  assert.deepEqual(back[0]?.loopRecap, { runIds: ['chat-loop-1'], text: 'DSpatch: recap' });
+  assert.equal(back[0]?.prompt, 'what did the loop change?');
+  assert.deepEqual(back[1]?.loopRecap, { runIds: ['chat-loop-2'], text: null });
+  assert.equal('loopRecap' in (back[2] ?? {}), false);
+
+  const file = path.join(directory, `${original.conversationId}.json`);
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { messages: Record<string, unknown>[] };
+  saved.messages[0]!['loopRecap'] = { runIds: [], text: 'x' };
+  fs.writeFileSync(file, JSON.stringify(saved), 'utf8');
+  assert.equal('loopRecap' in (store.read(original.conversationId).conversation?.messages[0] ?? {}), false);
+});

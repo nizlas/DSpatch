@@ -107,6 +107,7 @@ import {
 } from './turn-routing';
 import { HandoffPrompt, LoopControlBar, useLoopControl } from './LoopControlBar';
 import { loopStaysTickedAfter } from './handoff-prompt';
+import { loopRecapPendingLine, loopRecapSentLine } from './loop-recap-view';
 import { handoverLabel } from '../shared/handover-turn';
 import { Markdown } from './Markdown';
 import {
@@ -455,6 +456,8 @@ function Workbench({
   const [loopDefinitionKey, setLoopDefinitionKey] = useState<string | null>(null);
   const loopDefinitionKeyRef = useRef<string | null>(null);
   const [loopLines, setLoopLines] = useState<readonly string[]>([]);
+  /** DSP-209 S7: why a handed-over run's handover turn was not sent, until the next send. */
+  const [handoverNotSent, setHandoverNotSent] = useState<string | null>(null);
   const [loopBusy, setLoopBusy] = useState(false);
   /**
    * Who decides the next work step, read from the main process rather than kept here.
@@ -1293,6 +1296,11 @@ function Workbench({
       }
       if (payload.kind === 'run-ended') {
         applyLoopInstructionEvent({ kind: 'run-ended', runId: payload.runId });
+        return;
+      }
+      // DSP-209 S7: a handover that could not be sent after the run ended, in one line.
+      if (payload.kind === 'handover-not-sent') {
+        setHandoverNotSent(payload.note);
         return;
       }
       // DSP-147: accepted, unconfirmed, waiting and not-delivered map one to one.
@@ -2294,6 +2302,7 @@ function Workbench({
       loopBusyRef.current = started.loopBusy;
       setBusy('sending');
       setActionError(null);
+      setHandoverNotSent(null);
       setWaitMs(0);
       pendingPrompt.current = text;
       try {
@@ -3461,6 +3470,36 @@ function Workbench({
                 <LoopControlBar report={loopControl} loopIntended={useLoop} />
                 {/* DSP-209 S5b: a step's recommendation to continue interactively, while it waits. */}
                 <HandoffPrompt report={loopControl} />
+                {handoverNotSent === null ? null : (
+                  <p className="app__note" data-ev="handover-not-sent">
+                    {handoverNotSent}
+                  </p>
+                )}
+                {/* DSP-209 S7: what the next message will also carry, disclosed and removable. */}
+                {runState?.pendingLoopRecap === undefined || loopBusy ? null : (
+                  <div className="app__note" data-ev="loop-recap-pending">
+                    <span>{loopRecapPendingLine(runState.pendingLoopRecap.runIds.length)}</span>{' '}
+                    <button
+                      type="button"
+                      className="button"
+                      data-ev="loop-recap-remove"
+                      title="Send your next message without it. These runs are not offered again."
+                      onClick={() => {
+                        void window.dspatch
+                          .discardPendingRecap('loop-recap')
+                          .then(() => refreshRunState(), (error: unknown) => {
+                            setActionError(describeBridgeFailure(error));
+                          });
+                      }}
+                    >
+                      Remove
+                    </button>
+                    <details>
+                      <summary>{loopRecapSentLine(runState.pendingLoopRecap.text.length)}</summary>
+                      <pre className="turn__answer">{runState.pendingLoopRecap.text}</pre>
+                    </details>
+                  </div>
+                )}
                 {/*
                   §9: model selection beside the composer, saying which work it
                   affects. Not a card and not in the header — it belongs next to
@@ -4964,6 +5003,13 @@ function RestoredMessage({
         <details className="turn__resent" data-ev={`${at}-resent`}>
           <summary>{sentWithSummaryLine(message.resentContext.length)}</summary>
           <pre className="turn__answer">{message.resentContext}</pre>
+        </details>
+      )}
+      {/* DSP-209 S7: DSpatch's recap of loop runs, sent with this message; never the person's words. */}
+      {message.loopRecap !== undefined && message.loopRecap.text !== null && (
+        <details className="turn__resent" data-ev={`${at}-loop-recap`}>
+          <summary>{loopRecapSentLine(message.loopRecap.text.length)}</summary>
+          <pre className="turn__answer">{message.loopRecap.text}</pre>
         </details>
       )}
       {/* DSP-147: steering sent into this turn whose place in the answer is not known (or
@@ -7476,6 +7522,13 @@ function Turn({
         the new-session block's vocabulary, and the same on a read-back turn
         (`sentWithSummaryLine`, DSP-121).
       */}
+      {/* DSP-209 S7: DSpatch's recap of loop runs, sent with this message; never the person's words. */}
+      {turn.loopRecap !== null && (
+        <details className="turn__resent" data-ev={`turn-${String(index)}-loop-recap`}>
+          <summary>{loopRecapSentLine(turn.loopRecap.length)}</summary>
+          <pre className="turn__answer">{turn.loopRecap}</pre>
+        </details>
+      )}
       {turn.resentContext !== null && !contextCarriedAutomatically && (
         <details className="turn__resent" data-ev={`turn-${String(index)}-resent`}>
           <summary>{sentWithSummaryLine(turn.resentContext.length)}</summary>

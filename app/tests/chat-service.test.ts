@@ -38,6 +38,7 @@ import type {
 } from '../src/adapter/types.ts';
 import { ChatService, toUiEvent, type ChatAdapter } from '../src/main/chat-service.ts';
 import { ConversationStore, storedSessionProvider } from '../src/main/conversation-store.ts';
+import { buildLoopRecap, loopRecapRuns, type LoopRecapRecord } from '../src/shared/loop-recap.ts';
 import {
   holdDirectory,
   restoreEnvironment,
@@ -2696,12 +2697,12 @@ test('SIMULATED: a handover is sent once, saved apart from the person, and never
     fromStep: 'Do what was asked',
     text: '=== DSpatch: handover from loop run chat-loop-7 ===\n| implement that',
   };
-  assert.deepEqual(await first.service.sendHandover(handover), { sent: true, reason: null });
+  assert.deepEqual(await first.service.sendHandover(handover, session.conversationId), { sent: true, reason: null });
   assert.deepEqual(first.adapter.sent, [handover.text], 'the provider is sent exactly the handover text');
   first.adapter.emit({ type: 'assistant.message', text: 'Continuing: here is the plan.' });
   first.adapter.emit({ type: 'run.finished', status: 'finished' });
 
-  const again = await first.service.sendHandover(handover);
+  const again = await first.service.sendHandover(handover, session.conversationId);
   assert.equal(again.sent, false);
   assert.match(again.reason ?? '', /already handed over/);
   assert.equal(first.adapter.sent.length, 1, 'a second ending signal sends nothing');
@@ -2715,8 +2716,8 @@ test('SIMULATED: a handover is sent once, saved apart from the person, and never
   // A restart reads the saved handover and sends nothing.
   const second = serviceOver(`${name}-2`, workspace, store);
   await second.service.resumeConversation(session.conversationId);
-  assert.match(second.service.handoverRefusal('chat-loop-7') ?? '', /already handed over/);
-  assert.equal((await second.service.sendHandover(handover)).sent, false);
+  assert.match(second.service.handoverRefusal('chat-loop-7', session.conversationId) ?? '', /already handed over/);
+  assert.equal((await second.service.sendHandover(handover, session.conversationId)).sent, false);
   assert.deepEqual(second.adapter.sent, []);
   await second.service.dispose();
 });
@@ -2724,7 +2725,7 @@ test('SIMULATED: a handover is sent once, saved apart from the person, and never
 test('SIMULATED: a handover does not interrupt a chat turn that is still running', async () => {
   const { service, adapter, logs } = await openFakeSession('handover-busy');
   await service.sendPrompt('a turn that is still going');
-  const refused = await service.sendHandover({ runId: 'chat-loop-8', fromStep: 'Work', text: 'handover' });
+  const refused = await service.sendHandover({ runId: 'chat-loop-8', fromStep: 'Work', text: 'handover' }, service.openSession()?.conversationId ?? '');
   assert.equal(refused.sent, false);
   assert.match(refused.reason ?? '', /still running/);
   assert.deepEqual(adapter.sent, ['a turn that is still going']);
@@ -2762,4 +2763,135 @@ test('SIMULATED: the recap labels a handover as DSpatch\'s, and reads every othe
   assert.match(withHandover, /DSpatch sent this, not the person: a handover from loop run chat-loop-9/);
   assert.match(withHandover, /DSPATCH-HANDOVER-TEXT/);
   assert.equal(withHandover.split('The person asked:').length - 1, 1, 'only the person\'s own message is labelled theirs');
+});
+
+/**
+ * DSP-209 S7: the chat learns what a loop run did. The next ordinary message carries DSpatch's
+ * recap once, disclosed and removable; the person's words are kept apart from it.
+ */
+async function recapHarness(name: string, store: ConversationStore, records: LoopRecapRecord[]) {
+  const workspace = path.join(makeDir(`${name}-shared`), 'project');
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'readme.txt'), 'x\n', 'utf8');
+  return (suffix: string) => {
+    const adapter = new FakeAdapter();
+    const service = new ChatService({
+      agentChoiceStore: { read: () => 'cursor', write: () => undefined },
+      repoRoot: makeDir(`${name}-${suffix}-repo-root`),
+      send: () => undefined,
+      log: () => undefined,
+      createAdapter: () => adapter,
+      conversations: () => store,
+      timings: { cancelConfirmMs: 40, cancelWatchMs: 60 },
+      loopRecapFor: (_conversationId, messages, exclude) => buildLoopRecap(loopRecapRuns(records, messages, exclude)),
+    });
+    return { service, adapter, workspace };
+  };
+}
+
+function endedRecord(runId: string, mandate: string, endedAtUtc: string): LoopRecapRecord {
+  return {
+    runId,
+    record: {
+      formatVersion: 1,
+      identity: { runId, projectPath: 'C:/p', conversationId: 'c', mandate, graphId: 'g', graphPath: 'g', graphVersionId: 'v', modelRequested: 'm', appVersion: '1', startedAtUtc: endedAtUtc },
+      journal: [],
+      replies: [],
+      commands: [],
+      ending: {
+        endedAtUtc,
+        kind: 'finished',
+        status: 'completed',
+        terminalNodeId: 'done',
+        snapshots: { beforeId: 'a', beforeFileCount: 1, afterId: 'b', afterFileCount: 1, changed: [{ relPath: 'src/a.ts' }], added: [], removed: [], truncated: null },
+      },
+    } as unknown as LoopRecapRecord['record'],
+  };
+}
+
+test('SIMULATED: the first message after a loop run carries its recap once, apart from the person\'s words', async () => {
+  const store = storeFor('loop-recap-once');
+  const records: LoopRecapRecord[] = [];
+  const open = await recapHarness('loop-recap-once', store, records);
+  const { service, adapter, workspace } = open('1');
+  const session = await service.startChatSession({ kind: 'folder', path: workspace });
+  await service.sendPrompt('before the loop');
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+  assert.equal(service.getRunState().pendingLoopRecap, undefined);
+  await sleep(5);
+  records.push(endedRecord('chat-loop-a', 'implement that', new Date().toISOString()));
+
+  const pending = service.getRunState().pendingLoopRecap;
+  assert.deepEqual(pending?.runIds, ['chat-loop-a'], 'disclosed before sending');
+  await service.sendPrompt('what did the loop change?');
+  assert.equal(adapter.sent[1], `${pending?.text ?? ''}\n\nwhat did the loop change?`);
+  assert.match(adapter.sent[1] ?? '', /Run chat-loop-a: ended as completed, at "done"[\s\S]*\| implement that[\s\S]*Files changed: src\/a\.ts\./);
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+  assert.equal(service.getRunState().pendingLoopRecap, undefined);
+
+  await service.sendPrompt('and the next thing');
+  assert.equal(adapter.sent[2], 'and the next thing', 'the second message carries no recap');
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+
+  const saved = store.read(session.conversationId).conversation?.messages ?? [];
+  assert.equal(saved[1]?.prompt, 'what did the loop change?', 'the person\'s words alone');
+  assert.deepEqual(saved[1]?.loopRecap, { runIds: ['chat-loop-a'], text: pending?.text });
+  assert.equal('loopRecap' in (saved[0] ?? {}), false);
+  assert.equal('loopRecap' in (saved[2] ?? {}), false);
+  await service.dispose();
+
+  // A restart offers nothing again.
+  const second = open('2');
+  await second.service.resumeConversation(session.conversationId);
+  assert.equal(second.service.pendingLoopRecap(), null);
+  await second.service.dispose();
+});
+
+test('SIMULATED: a removed loop recap is not sent, and is not offered again until a new run ends', async () => {
+  const store = storeFor('loop-recap-removed');
+  const records: LoopRecapRecord[] = [];
+  const open = await recapHarness('loop-recap-removed', store, records);
+  const { service, adapter, workspace } = open('1');
+  const session = await service.startChatSession({ kind: 'folder', path: workspace });
+  records.push(endedRecord('chat-loop-b', 'do it', new Date().toISOString()));
+  assert.deepEqual(service.getRunState().pendingLoopRecap?.runIds, ['chat-loop-b']);
+  service.discardPendingRecap('loop-recap');
+  assert.equal(service.getRunState().pendingLoopRecap, undefined);
+  await service.sendPrompt('just this');
+  assert.deepEqual(adapter.sent, ['just this']);
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+  const saved = store.read(session.conversationId).conversation?.messages ?? [];
+  assert.deepEqual(saved[0]?.loopRecap, { runIds: ['chat-loop-b'], text: null }, 'the removal is kept with the message');
+  await service.dispose();
+
+  const second = open('2');
+  await second.service.resumeConversation(session.conversationId);
+  assert.equal(second.service.pendingLoopRecap(), null, 'not offered again after a restart');
+  await sleep(5);
+  records.push(endedRecord('chat-loop-c', 'again', new Date().toISOString()));
+  assert.deepEqual(second.service.pendingLoopRecap()?.runIds, ['chat-loop-c'], 'a new run is offered');
+  await second.service.dispose();
+});
+
+test('SIMULATED: with no loop run to recap, a message and its saved shape are exactly as before', async () => {
+  const store = storeFor('loop-recap-none');
+  const open = await recapHarness('loop-recap-none', store, []);
+  const { service, adapter, workspace } = open('1');
+  const session = await service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal('pendingLoopRecap' in service.getRunState(), false);
+  await service.sendPrompt('plain');
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+  assert.deepEqual(adapter.sent, ['plain']);
+  const saved = store.read(session.conversationId).conversation?.messages ?? [];
+  assert.equal('loopRecap' in (saved[0] ?? {}), false);
+  await service.dispose();
+});
+
+test('SIMULATED: a handover is refused when the chat is on another conversation than the run\'s', async () => {
+  const { service, adapter } = await openFakeSession('handover-other-conversation');
+  const refused = await service.sendHandover({ runId: 'chat-loop-9', fromStep: 'Work', text: 'handover' }, 'some-other-conversation');
+  assert.equal(refused.sent, false);
+  assert.match(refused.reason ?? '', /another conversation/);
+  assert.deepEqual(adapter.sent, []);
+  await service.dispose();
 });

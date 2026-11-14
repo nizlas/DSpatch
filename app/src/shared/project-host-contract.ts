@@ -108,7 +108,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'chat.conversationSaveStatus': () => BridgeAnswer<'conversationSaveStatus'>;
   readonly 'chat.resumeConversation': (conversationId: string) => BridgeAnswer<'resumeConversation'>;
   readonly 'chat.startSession': (request: StartSessionRequest) => BridgeAnswer<'startChatSession'>;
-  readonly 'chat.discardPendingRecap': () => BridgeAnswer<'discardPendingRecap'>;
+  readonly 'chat.discardPendingRecap': (which?: unknown) => BridgeAnswer<'discardPendingRecap'>;
   readonly 'chat.sendPrompt': (
     prompt: string,
     acknowledgedAttemptIds: readonly AttemptAcknowledgement[],

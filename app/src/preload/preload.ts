@@ -243,8 +243,8 @@ const bridge: DspatchBridge = {
     }>,
   startChatSession: (request: StartSessionRequest) =>
     ipcRenderer.invoke(START_SESSION, request) as Promise<ChatSessionInfo>,
-  discardPendingRecap: () =>
-    ipcRenderer.invoke(DISCARD_PENDING_RECAP) as Promise<SessionContinuity>,
+  discardPendingRecap: (which?: 'resend' | 'loop-recap') =>
+    ipcRenderer.invoke(DISCARD_PENDING_RECAP, which) as Promise<SessionContinuity>,
   copyText: (text: string) => ipcRenderer.invoke(COPY_TEXT, text) as Promise<void>,
   sendPrompt: (text: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
     ipcRenderer.invoke(SEND_PROMPT, text, acknowledgedAttemptIds) as Promise<{

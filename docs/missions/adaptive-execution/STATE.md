@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 sent to the implementer (coordinator visit 9, call 24).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 sent to research (coordinator visit 10, call 27).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), then the S6 commit made on coordinator visit 9 (`(DSP-209 S6)` in `git log`, the commit after `7724c35`).
-- **Sub-goal in progress:** S7 (the chat knows what a loop did, plus carried clean-ups), sent to the implementer on coordinator visit 9.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), then the S7 commit made on coordinator visit 10 (`(DSP-209 S7)` in `git log`, the commit after `3fc547e`).
+- **Sub-goal in progress:** S9 (SDK support research), sent to the researcher on coordinator visit 10.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
@@ -34,10 +34,10 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | reviewed | 1 | `b07ce40` |
 | S5a | Handoff request in the engine: node capability, app tool on loop steps, hold, explicit answer, `handed-over` | — | reviewed | 1 | `7797e94` |
 | S5b | Handoff in the window: inline prompt and buttons; chat loop's work node enables it; role text; AGENT_BEHAVIOUR §4 status | S5a | reviewed | 1 | `7724c35` |
-| S6 | Continue interactively without resubmitting | S5a, S5b, S1 | reviewed | 1 | S6 commit after `7724c35` |
-| S7 | The chat knows what a loop did (one-time run recap) | S1 | in progress | 1 | |
+| S6 | Continue interactively without resubmitting | S5a, S5b, S1 | reviewed | 1 | `3fc547e` |
+| S7 | The chat knows what a loop did (one-time run recap) | S1 | reviewed | 1 | S7 commit after `3fc547e` |
 | S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | pending | 0 | |
-| S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | pending | 0 | |
+| S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | in progress | 1 | |
 | S10 | Bounded fan-out node, isolated worktrees, one integrator | S8, S9 (S3 useful) | pending | 0 | |
 | S11 | Mailbox between running branches | S10, S9 | pending | 0 | |
 | S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | pending | 0 | |
@@ -77,7 +77,7 @@ Statuses:
 
 **S12 — Run report.** Also carries S4's finding (i): when a run ends at "Done, check skipped" and DSpatch's own before-and-after snapshots show changed files, the ending says so, as corroboration only, never routing. Ending summary from journal and record: path, skipped steps with reasons, handover, per-branch ownership and changed files, integrator, usage and cost per step and branch, what was reviewed and checked, what to try, "agent review is not your approval". Nothing inferred from prose; unknown says unknown.
 
-**S13 — Documents and backlog.** Dated line in BACKLOG.md's near-term follow-up pointing at this file (no duplicate entry); AGENT_BEHAVIOUR §4 status if S5 did not; INTERACTION_MODEL only where skipped / handed-over need naming. Backlog: note for DSP-31 that S5 builds the shared explicit-choice mechanism it should reuse (as a field-change proposal; the coordinator changes no other card).
+**S13 — Documents and backlog.** Also proposes, as backlog candidates only, S7's open limitations: the recap rereads every run record on each run-state refresh and send (cache or track the last ended run); a recap removal is kept in memory until the next send, so a restart before sending offers it again. Dated line in BACKLOG.md's near-term follow-up pointing at this file (no duplicate entry); AGENT_BEHAVIOUR §4 status if S5 did not; INTERACTION_MODEL only where skipped / handed-over need naming. Backlog: note for DSP-31 that S5 builds the shared explicit-choice mechanism it should reuse (as a field-change proposal; the coordinator changes no other card).
 
 ## Sub-goal records
 
@@ -155,9 +155,20 @@ Statuses:
 - **Niclas tries:** in a run that recommends interactive work, press **Continue interactively** — run ends handed over, *Use loop* unticks, the chat continues by itself with "Continued from the loop run — handed over by …", nothing typed; restart DSpatch and reopen — still shown as DSpatch's, no second send.
 - **Steps skipped:** research (code settled it); independent verification (not asked for).
 
-### S7 — The chat knows what a loop did
+### S7 — The chat knows what a loop did — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 9 (call 24). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 9 (call 24); implemented (call 25, `done`); review `accept` (call 26); committed on coordinator visit 10 (call 27).
+- **What was done (Part A).** New `app/src/shared/loop-recap.ts`: `loopRecapRuns()` offers runs ended after the conversation's last saved message and not yet accounted for (a message carrying their recap, recording their removal, or being their handover turn); `buildLoopRecap()` quotes each mandate, the ending, skipped steps with reasons, any handover, changed file names, and says it is DSpatch's. A handed-over run whose handover turn never went out is recapped. `earlierRunFromRecord` (S1) now reads skipped steps and handovers from the journal (its "not recorded by this build" note was stale since S3/S5a); snapshot ids change for such runs, as decision 11 intends. `chat-service.ts`: `loopRecapFor` option supplied by the host from run records; computed at send; order DSP-121 recap, loop recap, person's words; a handover turn carries none; no run → unchanged text, saved shape and run state. Offered through `getRunState().pendingLoopRecap`: one line beside the composer, **Remove**, exact text behind a closed disclosure; Remove reuses DSP-121's `discardPendingRecap` with argument `'loop-recap'` (not a contract change — the contract counts method names). Stored in `StoredMessage.loopRecap { runIds, text }`, `text: null` records a removal (decision 19); `conversation-store.ts` reads only this shape. Labelled as DSpatch's in sent messages (`renderer/loop-recap-view.ts`, `App.tsx`), the snapshot and the DSP-121 recap.
+- **What was done (Part B).** (1) The three doc comments are above their functions again (`chat-service.ts`, `loop-chat.ts`, `loop-live.ts`; existing mojibake left alone). (2) `contextSnapshotOrFailure()` turns a throw into no snapshot plus a sentence; the host logs it and records it through new `RunRecordWriter.noteFailure()`. (3) `handoverRefusal`/`sendHandover` take the run's conversation id and refuse another. (4) New `handover-not-sent` kind on the existing loop-instruction channel: one line "The task was not continued in the chat: <reason> Send a message to continue it yourself.", cleared on the next send. This closes S2 findings (i)(ii), S3 (iii), S5a (i), S6 (i)(ii).
+- **Review verdict: accept.** Criteria 1–6 met by reading. Stated gap under criterion 2: a removal is kept in memory until a message is sent, so a restart between **Remove** and sending offers the recap again (still shown before sending). Non-blocking findings: (i) `pendingLoopRecap()` rereads and parses every run record on each `getRunState()` and send — may slow the window with many runs; (ii) the recap is rebuilt at send, so a run ending between display and send could be included unseen (unlikely: the working-copy lock separates loop runs and chat sends). Both, with the restart gap, **proposed as backlog candidates in S13**; open, not met.
+- **Checked, by the implementer only** (from `app/`, single files): `chat-service` whole file 76/76 (60 s), `loop-recap` 2/2, `context-snapshot` 12/12, `conversation-store` 25/25, `loop-chat` 80/80, `loop-live` 70/70, `handover-turn` 3/3, `handoff-prompt` 4/4, `loop-transcript` 48/48, `run-record-store` 10/10, `loop-handoff` 11/11; `npm run typecheck` exit 0. `JOURNAL_KINDS` unchanged. The reviewer read the code and did not rerun.
+- **Untested:** the host's recap source over the real run-record store; the snapshot failure path in the host; the `handover-not-sent` event; every window part.
+- **Niclas tries:** after a loop run, the recap line beside the composer and its exact text; ask "what did the loop change?" — the answer knows the run; a second message carries no recap; after another run, **Remove** and send — nothing sent with it and not offered again.
+- **Steps skipped:** research (code settled it); independent verification (not asked for).
+
+### S9 — SDK support research
+
+- **Attempt 1:** sent to the researcher on coordinator visit 10 (call 27). Not yet returned.
 
 ## Requirements of the vision
 
@@ -183,7 +194,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Recorded as handed over [S5a] — met by reviewed sub-goal (`handed-over` status, journal, record)
 - Safe point before the switch [S5a] — met by reviewed sub-goal (read after the turn settles; no step starts during the hold)
 - Continue once without pasting again [S6] — met by reviewed sub-goal (host path untested; Niclas's trial)
-- Chat gets the run's results, and the reverse [S7, S2] — open
+- Chat gets the run's results, and the reverse [S7, S2] — met by reviewed sub-goals (window and host source untested; Niclas's trial)
 - No extra permissions on a mode change [S5a, S6] — met by reviewed sub-goals (same `sendTurn` body, same session and policy)
 - Parallelism optional and bounded (2–3) [S10] — open
 - Branches get bounded assignments and ownership [S10] — open
@@ -223,6 +234,8 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
 13. **"Done, check skipped" ends as `not-success` with its own sentences** (S4). Reason: `success` means "Assignment met"; `not-success` draws a neutral mark. Alternatives: `report-delivered` (would claim a report); a new `TerminalEnding` value (changes the graph-format contract for no gain).
 14. **One trailing `:` after the outcome name is accepted, by one shared reader** (S4). Reason: a step writing `RESULT: done-unchecked: docs only` otherwise lost its outcome and the skip; every existing name reads the same. Alternative: fix only the comment and leave colon-writers routed to the fallback.
+19. **A loop recap and its removal share one stored field, `StoredMessage.loopRecap { runIds, text | null }`, and removal reuses DSP-121's `discardPendingRecap`** (S7). Reason: one place to keep in step, one removal mechanism, no host-contract change. Alternatives: a separate list of removed run ids; a second removal method (a second mechanism and a contract change).
+20. **S9 before S8** (coordination). Reason: S8 names the first parallel increment and its bounds; whether concurrent sessions are safe per adapter (S9) decides `maxConcurrent` and what S8 may claim. Alternative: S8 first and revise it after S9.
 17. **The handover text is stored in `StoredMessage.handover`, with the saved prompt empty** (S6). Reason: a reader that ignores a flag can never quote DSpatch's text as the person's words. Alternative: keep the text in `prompt` with a flag.
 18. **After a handover the window unticks *Use loop*** (S6). Reason: no hidden mode where the box is ticked but the next send bypasses the loop. Alternative: leave it ticked and bypass.
 16. **`StepHold` `'handoff'` removed; the wait shows through `describeControl`** (S5b). Reason: a `StepHold` names why a step's release waits (`run-held`); a handoff waits after the step ran and has its own journal kinds. Alternative: a new reducer-state field producing `'handoff'` (changes existing control tests).
@@ -240,7 +253,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 9 (call 24).** S6 reviewed and committed. S7 sent to the implementer, with the carried clean-ups from S2, S3, S5a and S6. When the review returns: if accepted, record and commit S7, then brief S8 (documents only) and S9 (research). If a run ends before S7's review is recorded, the next run reconciles S7's files (`app/src/main/chat-service.ts`, `app/src/host/project-host.ts`, `app/src/shared/loop-chat.ts`, `app/src/main/loop-live.ts`, `app/src/shared/context-snapshot.ts`, `app/src/shared/bridge.ts`, renderer continuity files, their tests) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 10 (call 27).** S7 reviewed and committed. S9 sent to research (decision 20). When it returns, the coordinator records its support table in this file under S9, then briefs S8 (documents only), then S10. If a run ends before S9's table is recorded here, the next run sends S9 to research again (it writes no files).
 
 ## Run log
 

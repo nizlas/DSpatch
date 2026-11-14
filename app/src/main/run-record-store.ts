@@ -151,6 +151,13 @@ export class RunRecordWriter {
    * Returns the path written, or `null` when it could not be (said in `failures()`), so the
    * header's reference never points at a file that was not written without saying so.
    */
+  /** DSP-209 S7: something this run could not keep or do, said with the run's other failures. */
+  noteFailure(problem: string): void {
+    if (!this.problems.includes(problem)) {
+      this.problems.push(problem);
+    }
+  }
+
   writeContext(text: string): string | null {
     const runId = path.basename(this.file, '.jsonl');
     if (this.closed || !isUsableRunId(runId) || runId === 'unusable-run-id') {

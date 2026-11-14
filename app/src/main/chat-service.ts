@@ -75,6 +75,7 @@ import type {
   StoredBaselineFile,
   StoredConversation,
   StoredHandover,
+  StoredLoopRecap,
   StoredMessage,
   StoredSession,
   StoredSessionProvider,
@@ -94,6 +95,7 @@ import { WORKING_COPY_LOCK, type WorkingCopyLock } from './working-copy-lock';
 import { UncertainWorkStore } from './uncertain-work-store';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
 import { handoverLabel } from '../shared/handover-turn';
+import type { PendingLoopRecap } from '../shared/loop-recap';
 import {
   CLAUDE_CHAT_MODEL,
   providerAvailability,
@@ -641,6 +643,13 @@ export function buildResendContext(input: {
               `after "${message.handover.fromStep}" recommended continuing interactively and the person chose to.`,
             clip(message.handover.text, limits.maxPromptChars, 'handover'),
           ]),
+      // DSP-209 S7: a loop recap sent with the message is DSpatch's, and is named as such.
+      ...(message.loopRecap === undefined || message.loopRecap.text === null
+        ? []
+        : [
+            `DSpatch also sent, in front of it, its own recap of loop runs ${message.loopRecap.runIds.join(', ')}; ` +
+              "that recap is DSpatch's, not the person's words.",
+          ]),
       'You answered:',
       message.answer.trim() === ''
         ? '[nothing was received for this turn before DSpatch stopped listening]'
@@ -839,6 +848,8 @@ interface TurnRecord {
   readonly resentContext: string | null;
   /** DSP-209 S6: DSpatch's handover from a loop run, when this turn is one; `prompt` is then empty. */
   readonly handover: StoredHandover | null;
+  /** DSP-209 S7: the loop recap sent in front of this prompt, or the runs whose recap was removed. */
+  readonly loopRecap: StoredLoopRecap | null;
   readonly startedAtUtc: string;
   deltaCount: number;
   deltaText: string;
@@ -1096,6 +1107,16 @@ export interface ChatServiceOptions {
    * discussion never get them.
    */
   readonly appTools?: () => readonly AppTool[];
+  /**
+   * DSP-209 S7: the recap of loop runs the next ordinary message in this conversation should
+   * carry, from the host's run records, leaving out `exclude`. Left out, no recap is ever sent
+   * and every message reads as it did before S7.
+   */
+  readonly loopRecapFor?: (
+    conversationId: string,
+    messages: readonly StoredMessage[],
+    exclude: readonly string[],
+  ) => PendingLoopRecap | null;
   /**
    * DSP-149: the model chosen for each provider, kept across restarts. `null` is no
    * choice: the provider's own default (Claude), or the configured default (Cursor).
@@ -1537,6 +1558,34 @@ export class ChatService {
 
   /** DSP-209 S6: run ids a handover was started for in this process, before any turn is saved. */
   private readonly handoversStarted = new Set<string>();
+
+  /**
+   * DSP-209 S7: loop runs whose recap the person removed in this conversation, not yet
+   * recorded on a sent message. The next message records them, so they stay removed.
+   */
+  private readonly removedLoopRecaps = new Map<string, readonly string[]>();
+
+  /** DSP-209 S7: the loop recap the next `run.started` belongs to, the way the DSP-121 recap is carried. */
+  private pendingLoopRecapRecord: StoredLoopRecap | null = null;
+
+  /** DSP-209 S7: the recap of loop runs the next ordinary message would carry, or `null`. */
+  pendingLoopRecap(): PendingLoopRecap | null {
+    const conversationId = this.conversationId;
+    if (conversationId === null || this.options.loopRecapFor === undefined) {
+      return null;
+    }
+    try {
+      return this.options.loopRecapFor(
+        conversationId,
+        this.mergedMessages(conversationId),
+        this.removedLoopRecaps.get(conversationId) ?? [],
+      );
+    } catch (error) {
+      // A recap that cannot be read is help that is missing, never a reason to stop a message.
+      this.options.log(`the loop recap could not be built, so none is offered: ${describeError(error)}`);
+      return null;
+    }
+  }
 
   /** How this session relates to the conversation's earlier one. */
   private continuity: SessionContinuity = FIRST_SESSION_CONTINUITY;
@@ -3126,10 +3175,22 @@ export class ChatService {
    * itself is untouched: the conversation file and the history on screen keep every
    * message; only what goes to the provider changes. Nothing is sent by this call.
    */
-  discardPendingRecap(): SessionContinuity {
+  discardPendingRecap(which: 'resend' | 'loop-recap' = 'resend'): SessionContinuity {
     const session = this.session;
     if (session === null) {
       throw new Error('No session is open. Start one first.');
+    }
+    // DSP-209 S7: the loop recap is removed by the same act. Those runs are left out of every
+    // later offer; the next message records the removal, so a restart does not offer them again.
+    if (which === 'loop-recap') {
+      const pending = this.pendingLoopRecap();
+      const conversationId = this.conversationId;
+      if (pending !== null && conversationId !== null) {
+        const before = this.removedLoopRecaps.get(conversationId) ?? [];
+        this.removedLoopRecaps.set(conversationId, [...before, ...pending.runIds]);
+        this.options.log(`loop recap of ${pending.runIds.join(', ')} removed by the user; the next message goes without it`);
+      }
+      return this.continuity;
     }
     if (this.pendingResendContext === null && this.continuity.contextToResend === null) {
       return this.continuity;
@@ -3231,7 +3292,12 @@ export class ChatService {
    * DSP-209 S6: why a handover turn for this run would not be sent now, or `null` when it
    * would. Asked before the loop run returns, so a refusal can be said on its ending.
    */
-  handoverRefusal(runId: string): string | null {
+  handoverRefusal(runId: string, conversationId: string): string | null {
+    // DSP-209 S7 (S6 review finding i): the handover belongs to the conversation the run was
+    // started from. If the chat has moved to another one since, it is not sent anywhere.
+    if (this.conversationId !== conversationId) {
+      return 'the chat is now on another conversation than the one this run was started from.';
+    }
     // First, because it is true of the conversation whatever state the session is in.
     if (
       this.handoversStarted.has(runId) ||
@@ -3260,8 +3326,9 @@ export class ChatService {
    */
   async sendHandover(
     handover: StoredHandover,
+    conversationId: string,
   ): Promise<{ readonly sent: boolean; readonly reason: string | null }> {
-    const refusal = this.handoverRefusal(handover.runId);
+    const refusal = this.handoverRefusal(handover.runId, conversationId);
     if (refusal !== null) {
       return { sent: false, reason: refusal };
     }
@@ -3349,7 +3416,22 @@ export class ChatService {
     this.pendingResentContext = resent;
     // DSP-209 S6: a handover sends DSpatch's own text, which is never the person's prompt.
     const body = handover === null ? prompt : handover.text;
-    const sentText = resent === null ? body : `${resent}\n\n${body}`;
+    // DSP-209 S7: an ordinary message carries the recap of loop runs that ended since the last
+    // one, after DSP-121's recap and before the person's words; a handover carries none, since
+    // it is itself a run's account. Runs the person removed are recorded on this message.
+    const loopRecap = handover === null ? this.pendingLoopRecap() : null;
+    const removed =
+      handover !== null || this.conversationId === null ? [] : (this.removedLoopRecaps.get(this.conversationId) ?? []);
+    // Every run the message accounts for: those it recaps, and those the person removed. The
+    // text is what was sent, and covers only the first.
+    this.pendingLoopRecapRecord =
+      loopRecap !== null
+        ? { runIds: [...new Set([...removed, ...loopRecap.runIds])], text: loopRecap.text }
+        : removed.length > 0
+          ? { runIds: removed, text: null }
+          : null;
+    const withLoopRecap = loopRecap === null ? body : `${loopRecap.text}\n\n${body}`;
+    const sentText = resent === null ? withLoopRecap : `${resent}\n\n${withLoopRecap}`;
     const attempt = ledger.open('agent-turn', promptLabel(handover === null ? prompt : handoverLabel(handover.fromStep)), {
       adapterProcess: adapter.runsLocalProcess === true,
     });
@@ -3374,6 +3456,10 @@ export class ChatService {
       // this message; it is recorded and shown as sent that way, now that it was taken.
       if (handover === null) {
         this.noteSteeringSentAsNextMessage(prompt);
+        // DSP-209 S7: the removal is on this message now, which is where it is kept.
+        if (this.conversationId !== null) {
+          this.removedLoopRecaps.delete(this.conversationId);
+        }
       }
       // Only once the provider has taken it. A send that was refused resent
       // nothing, so the next attempt must carry the recap again.
@@ -3414,6 +3500,7 @@ export class ChatService {
       // somebody else's turn.
       this.pendingResentContext = null;
       this.pendingHandover = null;
+      this.pendingLoopRecapRecord = null;
     }
   }
 
@@ -4865,12 +4952,6 @@ export class ChatService {
   }
 
   /**
-   * A conversation's messages: what its file held, then what this window did in it.
-   *
-   * The one rule for every reader — what the window is given, what is saved and what
-   * a recap is built from — so the three cannot disagree (WS-1 #10).
-   */
-  /**
    * DSP-209 S2: a conversation's saved messages, by the same rule as every other reader,
    * for the context snapshot a loop run is given. Read only; a copy.
    */
@@ -4878,6 +4959,12 @@ export class ChatService {
     return this.mergedMessages(conversationId);
   }
 
+  /**
+   * A conversation's messages: what its file held, then what this window did in it.
+   *
+   * The one rule for every reader — what the window is given, what is saved and what
+   * a recap is built from — so the three cannot disagree (WS-1 #10).
+   */
   private mergedMessages(conversationId: string): StoredMessage[] {
     return mergeConversationMessages(
       this.held.get(conversationId)?.carriedMessages ?? [],
@@ -5216,7 +5303,13 @@ export class ChatService {
       ],
       'agent-turn',
     ).acknowledgeable;
-    return { ...report, needsAcknowledgement: { ...report.needsAcknowledgement, agentWorkForRun: forRun } };
+    // DSP-209 S7: only when there is one, so every report without one reads as before.
+    const loopRecap = this.pendingLoopRecap();
+    return {
+      ...report,
+      needsAcknowledgement: { ...report.needsAcknowledgement, agentWorkForRun: forRun },
+      ...(loopRecap === null ? {} : { pendingLoopRecap: loopRecap }),
+    };
   }
 
   /** The turn running now, for a window that did not start it (DSP-161). */
@@ -6055,6 +6148,7 @@ export class ChatService {
         prompt: this.pendingPrompt,
         resentContext: this.pendingResentContext,
         handover: this.pendingHandover,
+        loopRecap: this.pendingLoopRecapRecord,
         startedAtUtc: event.at,
         deltaCount: 0,
         deltaText: '',
@@ -6274,10 +6368,14 @@ export class ChatService {
     // DSP-209 S6: a handover turn says so on its `run.started`, so the window shows it as
     // DSpatch's and never puts the last thing the person typed in front of it.
     const handover = this.pendingHandover;
-    this.options.send(
+    const recapText = this.pendingLoopRecapRecord?.text ?? null;
+    const withHandover =
       event.type === 'run.started' && handover !== null
         ? { ...shown, handover: { runId: handover.runId, fromStep: handover.fromStep } }
-        : shown,
+        : shown;
+    // DSP-209 S7: the loop recap a message carried, so the window can show what was sent.
+    this.options.send(
+      event.type === 'run.started' && recapText !== null ? { ...withHandover, loopRecap: recapText } : withHandover,
     );
   }
 }
@@ -6391,6 +6489,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     prompt: turn.prompt,
     resentContext: turn.resentContext,
     ...(turn.handover === null ? {} : { handover: turn.handover }),
+    ...(turn.loopRecap === null ? {} : { loopRecap: turn.loopRecap }),
     // The final message when there is one, because it is the provider's own complete
     // text; the assembled deltas otherwise, because a turn that was interrupted has
     // only those and they are still what was received.

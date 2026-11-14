@@ -15,6 +15,7 @@ import type {
   StoredAttempt,
   StoredConversation,
   StoredHandover,
+  StoredLoopRecap,
   StoredSession,
   StoredSessionProvider,
   StoredSteering,
@@ -787,6 +788,21 @@ function storedHandoverField(value: unknown): { readonly handover?: StoredHandov
     : {};
 }
 
+/** DSP-209 S7: the loop recap field when it has the shape this build writes, otherwise nothing. */
+function storedLoopRecapField(value: unknown): { readonly loopRecap?: StoredLoopRecap } {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const runIds = value['runIds'];
+  const text = value['text'];
+  return Array.isArray(runIds) &&
+    runIds.length > 0 &&
+    runIds.every((runId) => typeof runId === 'string' && runId !== '') &&
+    (typeof text === 'string' || text === null)
+    ? { loopRecap: { runIds: runIds as string[], text } }
+    : {};
+}
+
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
@@ -820,6 +836,8 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
       // DSP-209 S6: a handover turn DSpatch sent. Absent in files written before it, and kept
       // only in the shape this build writes, so a damaged field reads as no handover.
       ...storedHandoverField(entry['handover']),
+      // DSP-209 S7: the loop recap a message carried or the person removed, in this build's shape only.
+      ...storedLoopRecapField(entry['loopRecap']),
       answer: asString(entry['answer'], ''),
       deltaCount: asNumber(entry['deltaCount'], 0),
       toolEvents: asNumber(entry['toolEvents'], 0),

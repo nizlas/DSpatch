@@ -4532,7 +4532,9 @@ function registerIpc(): void {
   );
   // DSP-121: the user removing the recap. Sends nothing; the service answers with
   // the continuity the window shows from then on.
-  ipcMain.handle(DISCARD_PENDING_RECAP, () => hostCall('chat.discardPendingRecap', NO_SENDER));
+  ipcMain.handle(DISCARD_PENDING_RECAP, (_event, which: unknown) =>
+    hostCall('chat.discardPendingRecap', NO_SENDER, which),
+  );
   // DSP-121 flow: *Copy diagnostic info*, on the user's click. The clipboard is this
   // machine's; nothing is sent anywhere. An unattended scripted run records the text
   // instead (`scriptedClipboard`), so a test cannot overwrite the user's clipboard.

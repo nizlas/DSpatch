@@ -1279,6 +1279,11 @@ export interface RunStateReport {
     readonly agentWorkForRun?: readonly AttemptRef[];
   };
   readonly observedAtUtc: string;
+  /**
+   * DSP-209 S7: the recap of loop runs the next ordinary message will carry, exactly as it
+   * will be sent, so the window can show it and offer to remove it. Absent when there is none.
+   */
+  readonly pendingLoopRecap?: { readonly runIds: readonly string[]; readonly text: string };
 }
 
 /** What abandoning a send did, since it can mean two different things. */
@@ -1411,6 +1416,14 @@ export interface TestFreshness {
 // them. `ConnectionStatus` is not part of a conversation and never reaches one.
 
 /** One turn of a saved conversation, in the order it was sent. */
+/** DSP-209 S7: the loop recap a message carried, or that the person removed before sending it. */
+export interface StoredLoopRecap {
+  /** The runs it accounts for; none of them is recapped again. */
+  readonly runIds: readonly string[];
+  /** What was sent, or `null` when the person removed it and nothing was sent. */
+  readonly text: string | null;
+}
+
 /** DSP-209 S6: a handover turn DSpatch sent after a loop run was handed over. */
 export interface StoredHandover {
   /** The loop run that was handed over; at most one handover turn per run id. */
@@ -1465,6 +1478,13 @@ export interface StoredMessage {
    * Absent in files written before S6 and on every turn the person sent.
    */
   readonly handover?: StoredHandover;
+  /**
+   * DSP-209 S7: DSpatch's recap of loop runs that ended before this message, sent in front of
+   * it and kept apart from the person's words, as `resentContext` is. `text` `null` records that
+   * the person removed it before sending, so those runs are not offered again. Absent in files
+   * written before S7 and on every message with no run to recap.
+   */
+  readonly loopRecap?: StoredLoopRecap;
   /**
    * DSP-145, DSP-146: the commands the agent ran in this turn, as DSpatch recorded them
    * (`requestedBy` says whether DSpatch started them). Absent in files written before
@@ -1738,6 +1758,8 @@ export interface UiAgentEvent {
   readonly resentContext?: string;
   /** DSP-209 S6: on `run.started`, this run is DSpatch's handover turn, not the person's message. */
   readonly handover?: { readonly runId: string; readonly fromStep: string };
+  /** DSP-209 S7: on `run.started`, the loop recap DSpatch sent in front of this message, verbatim. */
+  readonly loopRecap?: string;
   /**
    * DSP-145: on `command.started` and `command.finished`, the command DSpatch's tool ran
    * for the agent, as the transcript's short action line needs it. The whole record stays
@@ -2424,7 +2446,7 @@ export interface DspatchBridge {
    * `null` and is what the window shows from then on. Final for this session: a
    * refused send does not bring the recap back.
    */
-  discardPendingRecap(): Promise<SessionContinuity>;
+  discardPendingRecap(which?: 'resend' | 'loop-recap'): Promise<SessionContinuity>;
   /**
    * Put text on the system clipboard (DSP-121: *Copy diagnostic info*).
    *
@@ -3299,7 +3321,12 @@ export type LoopInstructionEventPayload =
       readonly waitingFor: 'next-step' | 'end-of-turn';
     }
   /** DSP-147: these were not given to the agent, and nothing will give them now. */
-  | { readonly kind: 'not-delivered'; readonly runId: string; readonly instructionIds: readonly string[] };
+  | { readonly kind: 'not-delivered'; readonly runId: string; readonly instructionIds: readonly string[] }
+  /**
+   * DSP-209 S7 (S6 review finding ii): the run was handed over, and its handover turn could not
+   * be sent into the chat after the run had ended. One line for the chat column.
+   */
+  | { readonly kind: 'handover-not-sent'; readonly runId: string; readonly note: string };
 
 /** DSP-147: a steering message for the ordinary chat turn that is working. */
 export interface SteerTurnRequest {

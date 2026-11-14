@@ -1006,6 +1006,11 @@ export function emptyInspection(
  * Filename-safe, because {@link SessionConfig} says a provider may use it as a
  * directory name, and never starting `bc-`, which Cursor reads as a cloud run.
  */
+export function stepSessionId(runId: string, nodeId: string): DspatchSessionId {
+  const safe = (text: string): string => text.replace(/[^A-Za-z0-9._-]+/g, '-');
+  return `dsp-session-${safe(runId)}--${safe(nodeId)}`;
+}
+
 /** DSP-209 S5a: the DSpatch tool a step uses to recommend continuing interactively. */
 export const HANDOFF_TOOL_NAME = 'request_interactive_handoff';
 
@@ -1066,11 +1071,6 @@ export function createHandoffTool(state: HandoffToolState): AppTool {
       });
     },
   };
-}
-
-export function stepSessionId(runId: string, nodeId: string): DspatchSessionId {
-  const safe = (text: string): string => text.replace(/[^A-Za-z0-9._-]+/g, '-');
-  return `dsp-session-${safe(runId)}--${safe(nodeId)}`;
 }
 
 export function runNodeProjectTest(workspacePath: string): Promise<LiveCommandRecord> {

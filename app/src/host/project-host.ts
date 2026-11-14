@@ -170,8 +170,9 @@ import {
   type RunRecordWriter,
 } from '../main/run-record-store';
 import { readGitWorkingCopyState } from '../main/git-state';
-import { buildContextSnapshot, earlierRunFromRecord, type ContextSnapshot } from '../shared/context-snapshot';
+import { buildContextSnapshot, contextSnapshotOrFailure, earlierRunFromRecord, type ContextSnapshot } from '../shared/context-snapshot';
 import { buildHandoverTurn, handoverStepsFrom } from '../shared/handover-turn';
+import { buildLoopRecap, loopRecapRuns } from '../shared/loop-recap';
 import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
@@ -611,6 +612,10 @@ function createChatService(): ChatService {
     requireProjectStore().workspaceForPrimary(projectPath)?.lastConversationId ?? null,
   looseFolder: () => path.join(userDataDir(), 'conversation-without-workspace'),
   appTools: () => chatWorkspaceTools(),
+  // DSP-209 S7: what loop runs in the conversation did, for the next ordinary message, from
+  // the run records. Read only; a run still walking has no ending and is never offered.
+  loopRecapFor: (conversationId, messages, exclude) =>
+    buildLoopRecap(loopRecapRuns(requireRunRecordStore().listForConversation(conversationId), messages, exclude)),
   onTurnSettled: () => {
     openPendingWorkspace();
   },
@@ -3006,12 +3011,20 @@ function registerLoopMethods(): void {
       // DSP-209 S2: the conversation this run is started from, carried into its steps by
       // DSpatch itself. Built before the record opens, so this run is not its own earlier run.
       // It goes only to the provider and account this run already uses (mission decision 8).
-      const contextSnapshot = chatLoopContextSnapshot({
-        runId: request.runId,
-        conversationId: session.conversationId,
-        workspacePath,
-        mandate: request.mandate,
-      });
+      // DSP-209 S7: a snapshot that cannot be built starts the run without one, said in the
+      // record's failures and the log rather than stopping the run.
+      const built = contextSnapshotOrFailure(() =>
+        chatLoopContextSnapshot({
+          runId: request.runId,
+          conversationId: session.conversationId,
+          workspacePath,
+          mandate: request.mandate,
+        }),
+      );
+      const contextSnapshot = built.snapshot;
+      if (built.failure !== null) {
+        log(`[loop] ${request.runId}: ${built.failure}`);
+      }
       const record = requireRunRecordStore().open({
         runId: request.runId,
         projectPath: workspacePath,
@@ -3037,6 +3050,9 @@ function registerLoopMethods(): void {
       });
       if (contextSnapshot !== null) {
         record.writeContext(contextSnapshot.text);
+      }
+      if (built.failure !== null) {
+        record.noteFailure(built.failure);
       }
       // Labels from the graph that is actually being walked, rather than the
       // window's own copy of them, so a reply is attributed to the node the run
@@ -3364,7 +3380,7 @@ function registerLoopMethods(): void {
                 ? null
                 : [...snapshots.changed, ...snapshots.added, ...snapshots.removed].map((file) => file.relPath),
           });
-          const refusal = chatService.handoverRefusal(request.runId);
+          const refusal = chatService.handoverRefusal(request.runId, session.conversationId);
           if (refusal === null) {
             handoverToSend = { runId: request.runId, fromStep, text };
           } else {
@@ -3442,9 +3458,17 @@ function registerLoopMethods(): void {
         // Not awaited: the run's answer to the window does not wait for the chat turn.
         const handover = handoverToSend;
         if (handover !== null) {
-          void chatService.sendHandover(handover).then((sent) => {
+          void chatService.sendHandover(handover, session.conversationId).then((sent) => {
             if (!sent.sent) {
               log(`[loop] ${request.runId}: the handover turn was not sent: ${sent.reason ?? 'no reason given'}`);
+              // DSP-209 S7: said in the chat as well, in one line, through the run's own channel.
+              sendToSender(LOOP_INSTRUCTION_EVENT, {
+                kind: 'handover-not-sent',
+                runId: request.runId,
+                note:
+                  `The task was not continued in the chat: ${sent.reason ?? 'the handover could not be sent'} ` +
+                  'Send a message to continue it yourself.',
+              } satisfies LoopInstructionEventPayload);
             }
           });
         }
@@ -4502,7 +4526,10 @@ function registerCoreMethods(): void {
   });
   // DSP-121: the user removing the recap. Sends nothing; the service answers with
   // the continuity the window shows from then on.
-  handle('chat.discardPendingRecap', () => chatService.discardPendingRecap());
+  // DSP-209 S7: the same removal for the loop recap; anything else is DSP-121's recap.
+  handle('chat.discardPendingRecap', (_event, which: unknown) =>
+    chatService.discardPendingRecap(which === 'loop-recap' ? 'loop-recap' : 'resend'),
+  );
   // DSP-147: steering of the turn that is working; it never starts a turn.
   handle('chat.steerTurn', (_event, request: SteerTurnRequest) => chatService.steerTurn(request.text, request.anchor));
   handle(

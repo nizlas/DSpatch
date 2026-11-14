@@ -31,7 +31,10 @@ import type { StoredMessage } from './bridge';
 import type { ParsedRunRecord } from './loop-record';
 
 /** What the builder reads of a saved message. A `StoredMessage` is one. */
-export type SnapshotMessage = Pick<StoredMessage, 'ordinal' | 'prompt' | 'answer' | 'resentContext' | 'handover'>;
+export type SnapshotMessage = Pick<
+  StoredMessage,
+  'ordinal' | 'prompt' | 'answer' | 'resentContext' | 'handover' | 'loopRecap'
+>;
 
 /** An earlier loop run started from the same conversation, as S2 maps it from the run record. */
 export interface EarlierRunSummary {
@@ -54,7 +57,9 @@ export interface EarlierRunSummary {
  *
  * The ending is the runner's status word where the record has one, else how the call came
  * back; a record with no ending line is `interrupted`, the same word the record view uses.
- * Skipped and handed-over steps are not recorded by this build, so they are absent.
+ * Skipped steps come from the journal's `node-skipped` lines (S3) and a handover from its
+ * `handoff-answered` line choosing interactive work (S5a); a record with neither has no such
+ * field, so a summary of it is exactly what it was before those existed.
  */
 export function earlierRunFromRecord(runId: string, record: ParsedRunRecord | null): EarlierRunSummary | null {
   const identity = record?.identity ?? null;
@@ -62,12 +67,46 @@ export function earlierRunFromRecord(runId: string, record: ParsedRunRecord | nu
     return null;
   }
   const ending = record.ending;
+  const skippedSteps = record.journal
+    .filter((entry) => entry.kind === 'node-skipped' && entry.nodeId !== undefined)
+    .map((entry) => ({
+      step: entry.nodeId ?? '',
+      reason: typeof entry.data?.['reason'] === 'string' ? entry.data['reason'] : 'no reason given',
+    }));
+  const handedOver = record.journal.find(
+    (entry) => entry.kind === 'handoff-answered' && entry.data?.['choice'] === 'interactive',
+  );
   return {
     runId,
     mandate: identity.mandate,
     ending: ending === null ? 'interrupted' : (ending.status ?? ending.kind),
     terminal: ending?.terminalNodeId ?? null,
+    ...(skippedSteps.length === 0 ? {} : { skippedSteps }),
+    ...(handedOver?.nodeId === undefined ? {} : { handedOverFrom: handedOver.nodeId }),
   };
+}
+
+/**
+ * DSP-209 S7 (S2 review finding): build the snapshot, or start the run without one.
+ *
+ * The snapshot is help for the entry step, never a condition of the run: a failure to
+ * read the conversation, the run records or git must not stop a run the person started.
+ * The failure comes back in words, for the run record and the host log.
+ */
+export function contextSnapshotOrFailure(build: () => ContextSnapshot | null): {
+  readonly snapshot: ContextSnapshot | null;
+  readonly failure: string | null;
+} {
+  try {
+    return { snapshot: build(), failure: null };
+  } catch (error) {
+    return {
+      snapshot: null,
+      failure:
+        'the context snapshot of the conversation could not be built, so the run started ' +
+        `without one: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /** The repository as it stood when the run started. Names only, never contents. */
@@ -348,6 +387,13 @@ export function buildContextSnapshot(given: ContextSnapshotInput): ContextSnapsh
       runId: oneLine(message.handover?.runId ?? ''),
       fromStep: oneLine(message.handover?.fromStep ?? ''),
     }));
+  // DSP-209 S7: a loop recap DSpatch sent in front of a message, named under the same heading.
+  const loopRecaps = ordered
+    .filter((message) => message.loopRecap !== undefined && message.loopRecap.text !== null)
+    .map((message) => ({
+      messageNumber: message.ordinal + 1,
+      runIds: (message.loopRecap?.runIds ?? []).map(oneLine),
+    }));
   const messageNumbers = [
     ...new Set([...personWords, ...agentExcerpts].map((quote) => quote.messageNumber)),
   ].sort((left, right) => left - right);
@@ -356,6 +402,7 @@ export function buildContextSnapshot(given: ContextSnapshotInput): ContextSnapsh
     where,
     mandate: mandate.text,
     handovers,
+    loopRecaps,
     personWords,
     agentExcerpts,
     earlierRuns,
@@ -429,6 +476,7 @@ function renderBody(parts: {
   readonly where: string;
   readonly mandate: string;
   readonly handovers: readonly { readonly messageNumber: number; readonly runId: string; readonly fromStep: string }[];
+  readonly loopRecaps: readonly { readonly messageNumber: number; readonly runIds: readonly string[] }[];
   readonly personWords: readonly SnapshotQuote[];
   readonly agentExcerpts: readonly SnapshotQuote[];
   readonly earlierRuns: readonly EarlierRunSummary[];
@@ -526,7 +574,7 @@ function renderBody(parts: {
 
   // DSP-209 S6: only when there is one, so every other snapshot reads exactly as before.
   const sentByDspatch =
-    parts.handovers.length === 0
+    parts.handovers.length === 0 && parts.loopRecaps.length === 0
       ? []
       : [
           "--- Turns DSpatch sent itself: not the person's words ---",
@@ -535,6 +583,12 @@ function renderBody(parts: {
               `Message ${String(handover.messageNumber)}: DSpatch's handover from loop run ` +
               `${handover.runId}, after "${handover.fromStep}" recommended continuing interactively ` +
               'and the person chose to. Its text is in that message, not repeated here.',
+          ),
+          ...parts.loopRecaps.map(
+            (recap) =>
+              `Message ${String(recap.messageNumber)}: DSpatch sent its recap of loop runs ` +
+              `${recap.runIds.join(', ')} in front of the person's message. The recap is DSpatch's; ` +
+              "the person's own words are quoted above.",
           ),
           '',
         ];
@@ -586,6 +640,7 @@ function inputFingerprint(input: ContextSnapshotInput, limits: ContextSnapshotLi
         message.resentContext,
         // DSP-209 S6: only where there is one, so every id made before it stays the same.
         ...(message.handover === undefined ? [] : [message.handover.runId, message.handover.text]),
+        ...(message.loopRecap === undefined ? [] : [message.loopRecap.runIds.join(','), message.loopRecap.text]),
       ]),
       input.earlierRuns.map((run) => [
         run.runId,

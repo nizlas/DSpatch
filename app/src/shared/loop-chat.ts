@@ -831,25 +831,6 @@ function rolePreamble(role: ChatRoleText | null | undefined): readonly string[] 
   ];
 }
 
-/**
- * The names this step may answer with: its verdicts, and the failures it may declare.
- *
- * DSP-91 D3's other half. `declaredFailures` used to appear nowhere in the prompt except
- * as the two opening words below, so a graph declaring a third — the runnable loop's
- * `research-needed`, which has a whole edge drawn for it — was asking for a name it never
- * told anybody. Listing both here means every branch the drawing can take has a form the
- * agent was actually taught, and {@link declaredFailureLineFrom} reads the failure half
- * back. A failure that is also an outcome name is listed once, as the outcome.
- *
- * **The two lists are introduced separately, and that is not a stylistic choice.** The
- * first version of this put them under one "use one of these names" sentence, and walk 1
- * of DSP-91's verification showed what that does to a node with failures and no verdicts:
- * the implementer, which declares three failures and no outcome, was told that finishing
- * meant writing `RESULT: spec-error`, `research-needed` or `blocked`. It had succeeded, so
- * it invented `RESULT: change` — harmless only because a node with no outcomes branches on
- * its success edge regardless. A prompt that leaves an agent no true answer gets an
- * invented one, which is the failure mode the whole card is about.
- */
 /** DSP-209 S3: an outcome of a node whose edge skips steps, as the prompt names it. */
 export interface SkippingRoute {
   readonly outcome: string;
@@ -875,6 +856,25 @@ export function skippingRoutesOf(graph: Pick<LoopGraph, 'edges' | 'nodes'>, node
     }));
 }
 
+/**
+ * The names this step may answer with: its verdicts, and the failures it may declare.
+ *
+ * DSP-91 D3's other half. `declaredFailures` used to appear nowhere in the prompt except
+ * as the two opening words below, so a graph declaring a third — the runnable loop's
+ * `research-needed`, which has a whole edge drawn for it — was asking for a name it never
+ * told anybody. Listing both here means every branch the drawing can take has a form the
+ * agent was actually taught, and {@link declaredFailureLineFrom} reads the failure half
+ * back. A failure that is also an outcome name is listed once, as the outcome.
+ *
+ * **The two lists are introduced separately, and that is not a stylistic choice.** The
+ * first version of this put them under one "use one of these names" sentence, and walk 1
+ * of DSP-91's verification showed what that does to a node with failures and no verdicts:
+ * the implementer, which declares three failures and no outcome, was told that finishing
+ * meant writing `RESULT: spec-error`, `research-needed` or `blocked`. It had succeeded, so
+ * it invented `RESULT: change` — harmless only because a node with no outcomes branches on
+ * its success edge regardless. A prompt that leaves an agent no true answer gets an
+ * invented one, which is the failure mode the whole card is about.
+ */
 function outcomeInstructions(
   node: Pick<LoopNode, 'outcomes' | 'whenUndeclared' | 'declaredFailures'>,
   skipping: readonly SkippingRoute[] = [],

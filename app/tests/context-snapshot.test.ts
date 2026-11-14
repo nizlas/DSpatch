@@ -12,6 +12,8 @@ import {
   buildContextSnapshot,
   type ContextSnapshotInput,
   type SnapshotMessage,
+  contextSnapshotOrFailure,
+  earlierRunFromRecord,
 } from '../src/shared/context-snapshot';
 
 function message(ordinal: number, prompt: string, answer: string, resentContext: string | null = null): SnapshotMessage {
@@ -256,5 +258,54 @@ describe('context snapshot (DSP-209 S1)', () => {
     const without = buildContextSnapshot(input());
     assert.ok(without !== null);
     assert.doesNotMatch(without.text, /Turns DSpatch sent itself/);
+  });
+
+  // DSP-209 S7: a loop recap sent with a message is DSpatch's; the person's words stay theirs.
+  it('names a loop recap sent with a message as DSpatch\'s, and quotes only the person\'s own words', () => {
+    const snapshot = buildContextSnapshot(
+      input({
+        messages: [
+          { ...message(0, 'what did the loop change?', 'It changed a.ts.'), loopRecap: { runIds: ['chat-loop-4'], text: 'LOOP-RECAP-TEXT' } },
+        ],
+      }),
+    );
+    assert.ok(snapshot !== null);
+    assert.doesNotMatch(snapshot.text, /LOOP-RECAP-TEXT/);
+    assert.deepEqual(snapshot.parts.personWords.map((quote) => quote.text), ['what did the loop change?']);
+    assert.equal(
+      headingAbove(snapshot.text, 'DSpatch sent its recap of loop runs chat-loop-4'),
+      "--- Turns DSpatch sent itself: not the person's words ---",
+    );
+  });
+
+  // DSP-209 S7 (S2 review finding): a snapshot that cannot be built starts the run without one.
+  it('turns a failure to build the snapshot into no snapshot and a sentence', () => {
+    const failed = contextSnapshotOrFailure(() => {
+      throw new Error('git is not on the path');
+    });
+    assert.equal(failed.snapshot, null);
+    assert.match(failed.failure ?? '', /started without one: git is not on the path/);
+    const built = contextSnapshotOrFailure(() => buildContextSnapshot(input()));
+    assert.equal(built.failure, null);
+    assert.ok(built.snapshot !== null);
+  });
+
+  // S7: skips and a handover are now read from an earlier run's journal (S3, S5a).
+  it('reads an earlier run\'s skips and handover from its journal, and nothing for a record without them', () => {
+    const journal = [
+      { seq: 1, atIso: '', sinceStartMs: 0, kind: 'node-skipped' as const, nodeId: 'check', detail: '', data: { reason: 'docs only' } },
+      { seq: 2, atIso: '', sinceStartMs: 0, kind: 'handoff-answered' as const, nodeId: 'work', detail: '', data: { choice: 'interactive' } },
+    ];
+    const record = (lines: typeof journal) =>
+      ({ identity: { mandate: 'm' }, ending: null, journal: lines }) as unknown as Parameters<typeof earlierRunFromRecord>[1];
+    assert.deepEqual(earlierRunFromRecord('r', record(journal)), {
+      runId: 'r',
+      mandate: 'm',
+      ending: 'interrupted',
+      terminal: null,
+      skippedSteps: [{ step: 'check', reason: 'docs only' }],
+      handedOverFrom: 'work',
+    });
+    assert.deepEqual(earlierRunFromRecord('r', record([])), { runId: 'r', mandate: 'm', ending: 'interrupted', terminal: null });
   });
 });
