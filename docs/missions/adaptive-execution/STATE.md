@@ -4,13 +4,13 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c reviewed after one rework round and committed (calls 39–43); S11 reviewed and committed (calls 44–46); S12 reviewed after one rework round and committed (calls 47–51); S13 reviewed and committed (calls 52–54); every planned sub-goal is reviewed; whole assessment (call 55) found two gaps; S14 reviewed and committed (calls 57–59); the whole is sent to assessment again (coordinator visit 20, call 59).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c reviewed after one rework round and committed (calls 39–43); S11 reviewed and committed (calls 44–46); S12 reviewed after one rework round and committed (calls 47–51); S13 reviewed and committed (calls 52–54); every planned sub-goal is reviewed; whole assessment (call 55) found two gaps; S14 reviewed and committed (calls 57–59); second whole assessment (call 60) returned `needs-decision`: everything required is reviewed except Q2, which only Niclas can settle; the run ends `needs-decision` (coordinator visit 21, call 61). Status: **paused — needs Niclas's decision** (Q2); not reported complete, not approved.
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`(DSP-209 S14)` in `git log`, the commit after `bb7dba1`).
-- **Sub-goal in progress:** none. Second whole assessment sent out on coordinator visit 20.
+- **Sub-goal in progress:** none.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
-- **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
+- **Waiting on Niclas:** **Q2 stops "Reported complete"** (dialogue-based graph construction: confirm out of scope, or ask for it as a new sub-goal). Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
 ## Mapping (planner, run `chat-loop-2026-11-14T01-36-57-404Z`, call 2)
 
@@ -44,7 +44,7 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S11 | Mailbox between running branches | S10b, S9 | reviewed | 1 | `6de7fd6` |
 | S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | reviewed | 1 (one rework round) | `0b50fd3` |
 | S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | reviewed | 1 | `bb7dba1` |
-| S14 | Run report completion: steps not reached (from the drawing the run used) and a "left for Niclas to examine" section built from recorded facts; one integrated run of the `loop` test group | S12 | reviewed | 1 | S14 commit after `bb7dba1` |
+| S14 | Run report completion: steps not reached (from the drawing the run used) and a "left for Niclas to examine" section built from recorded facts; one integrated run of the `loop` test group | S12 | reviewed | 1 | `9ba0d86` |
 
 Statuses:
 - **pending**;
@@ -260,7 +260,9 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Untested:** how the two new sections look in the window; the host writing `drawnSteps` during a real run.
 - **Niclas tries:** after a loop run, open the report and check "Steps not reached" and "Left for you to examine" against what happened.
 - **Steps skipped:** independent verification (not asked for).
-- DSP-209's dated note for this run was appended on coordinator visit 18 (`backlog task edit DSP-209 --append-notes`); the card file change is uncommitted and goes in with the next mission commit.
+- DSP-209's dated note for this run was appended on coordinator visit 18 (`backlog task edit DSP-209 --append-notes`) and committed in `9ba0d86`.
+- **Second assessment** (mission-review visit 2, call 60): `needs-decision`. Both first-assessment gaps fixed in `9ba0d86` (report sections read in the code; the `loop` group run rests on the implementer's account only, not rerun). Git agrees with the coordinator's account. Only Q2 stops *Reported complete*. Not blocking: decision 30 (Niclas may correct); Q1, Q3, Q4; the vision's speed assessment (delivery time, integration rework, human effort) is **not made** — nothing has run with a real provider; cost is visible in the run report; all live trials are Niclas's. An agent's assessment, not Niclas's approval.
+- **Feasible work deliberately not sent out:** two wording nits — "a agent step" at `app/src/shared/loop-run-report.ts:660` and the "(then)" word on the 13 November BACKLOG.md line. Neither is a requirement; they are left open for the next run or for Niclas rather than spending an implement-and-review pair at the end of this one.
 
 ### S9 — SDK support research
 
@@ -380,8 +382,10 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 20 (call 59).** S14 reviewed and committed with the DSP-209 card note. Both gaps of the first whole assessment are addressed. The whole is sent to assessment again. Expected outcome: only Q2 (dialogue-based graph construction, proposed skipped) stands between the mission and *Reported complete*; if the assessment confirms that, the run ends `needs-decision`. If a run ends before the second assessment is recorded, the next run sends the whole to assessment again (it changes no files).
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 21 (call 61).** The run ends `needs-decision`. **Next run:** reconcile STATE.md with Git (last mission commit is the STATE commit after `9ba0d86`). If Niclas answered Q2: if out of scope, record dialogue-based graph construction as out of scope by his decision and send the whole to assessment for *Reported complete*; if in scope, plan it as S15 and continue. Fold in the two wording nits with the next sub-goal that touches those files, or brief them alone if nothing else remains. Record any answers to Q1, Q3, Q4 and any correction to decision 30. Niclas's live trials and their findings, once he reports them, become sub-goals.
 
 ## Run log
 
 One line per run, appended at its end where the run ends at a terminal: the date, what it did, the ending and why. A run that ended on a fault or a limit has no line; the next run adds one for it when it reconciles.
+
+- **14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`** (61 calls of 180; two rework rounds, S10c and S12): mapped and planned the vision, then implemented and agent-reviewed S1–S14 (S5 and S10 split; S9 research), committed locally `610fa1a`..`9ba0d86` plus this record, none pushed. Two whole assessments: the first found two gaps (fixed in S14), the second `needs-decision`. Ended `needs-decision` because the only open requirement, Q2 (dialogue-based graph construction), is a scope decision that only Niclas can make. Nothing has run with a real provider; agent review is not his approval.
