@@ -3219,6 +3219,8 @@ function registerLoopMethods(): void {
           graphText,
           startedAtUtc: new Date().toISOString(),
           phase: 'running',
+          // So a step's output window can read this run's saved record once the step is done.
+          ...(session.conversationId === null ? {} : { conversationId: session.conversationId }),
           // The provider actually used, from the preparation this run walks with.
           agent: describeLoopRunAgent({
             provider: agent.provider,
@@ -3439,6 +3441,8 @@ function registerLoopMethods(): void {
               // DSP-79 #1. Two consecutive agent nodes now run in two sessions, and
               // this is the line in the record where a reader sees that they did.
               sessionId: reply.sessionId,
+              // So a branch's saved output can be found by its slice after the run.
+              ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }),
             });
             sendToSender(CHAT_LOOP_REPLY, {
               runId: request.runId,

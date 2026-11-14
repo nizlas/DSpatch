@@ -73,6 +73,7 @@ import type {
 } from '../shared/bridge';
 import type { StepActivity } from '../shared/loop-activity';
 import type { LiveOutputAddress } from '../shared/run-presentation';
+import type { StepOutputAddress } from '../shared/step-output';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
@@ -329,6 +330,8 @@ const bridge: DspatchBridge = {
     };
   },
   openBranchOutput: (address: LiveOutputAddress) =>
+    ipcRenderer.invoke(OPEN_BRANCH_OUTPUT, address) as Promise<BranchOutputWindowOutcome>,
+  openStepOutput: (address: StepOutputAddress) =>
     ipcRenderer.invoke(OPEN_BRANCH_OUTPUT, address) as Promise<BranchOutputWindowOutcome>,
   openReview: () => ipcRenderer.invoke(OPEN_REVIEW) as Promise<LoopEditorWindowOutcome>,
   openExampleReview: () => ipcRenderer.invoke(OPEN_EXAMPLE_REVIEW) as Promise<LoopEditorWindowOutcome>,

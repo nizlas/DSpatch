@@ -25,11 +25,14 @@ export function BranchList({
   rows,
   activity,
   heading,
+  conversationId,
 }: {
   readonly rows: readonly BranchRow[];
   readonly activity: readonly BranchActivityState[] | undefined;
   /** What the list is of, e.g. the node's label. */
   readonly heading: string;
+  /** The run's conversation, so a branch's window can read its saved output once it is done. */
+  readonly conversationId?: string | undefined;
 }): JSX.Element | null {
   const [shown, setShown] = useState<ReadonlySet<string>>(new Set());
   const [note, setNote] = useState<string | null>(null);
@@ -78,13 +81,13 @@ export function BranchList({
                 className="button"
                 data-ev="branch-output-window"
                 onClick={() => {
-                  void window.dspatch.openBranchOutput(row.address).then(
+                  void window.dspatch.openStepOutput({ ...row.address, ...(conversationId === undefined ? {} : { conversationId }) }).then(
                     (outcome) => setNote(outcome.opened ? null : outcome.note),
                     (error: unknown) => setNote(`The window could not be opened: ${error instanceof Error ? error.message : String(error)}`),
                   );
                 }}
               >
-                Open in window
+                {row.state === 'working' || row.state === 'queued' ? 'Open live output' : 'Show branch output'}
               </button>
             </p>
             {shown.has(row.key) && (

@@ -21,6 +21,7 @@ import type {
 } from '../adapter/types';
 import type { StepActivity } from './loop-activity';
 import type { LiveOutputAddress } from './run-presentation';
+import type { StepOutputAddress } from './step-output';
 import type { GraphEditProposal, ProposalStatus } from './graph-proposal';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
@@ -2631,6 +2632,12 @@ export interface DspatchBridge {
    * opens it; the host is asked nothing new. Opening starts and changes nothing in the run.
    */
   openBranchOutput(address: LiveOutputAddress): Promise<BranchOutputWindowOutcome>;
+  /**
+   * Open one step visit's output, or one branch's, in a window of its own: live while it
+   * works, saved once it is done (Niclas, 15 November 2026). The same window as
+   * {@link openBranchOutput}; opening or closing it starts, stops and repeats nothing.
+   */
+  openStepOutput(address: StepOutputAddress): Promise<BranchOutputWindowOutcome>;
   /**
    * Open review for the project this chat is working in, in a window of its own (DSP-126).
    *

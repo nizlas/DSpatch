@@ -69,7 +69,7 @@ import type {
   TestRunRequest,
   BranchOutputWindowOutcome,
 } from '../shared/bridge';
-import { branchAddressFromQuery, branchAddressQuery } from '../shared/branch-presentation';
+import { stepOutputFromQuery, stepOutputQuery } from '../shared/step-output';
 import { drawingSaveRequest } from '../shared/graph-proposal';
 import {
   HOST_CONFIG_ENV,
@@ -2824,36 +2824,40 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-/** DSP-209 S20: the open branch-output windows, one per branch address. */
+/** DSP-209 S20: the open step- and branch-output windows, one per step visit or branch. */
 const branchOutputWindows = new Map<string, BrowserWindow>();
 
 /**
- * DSP-209 S20: a window that follows one fan-out branch's live output.
+ * DSP-209 S20: a window that follows one step visit's output, or one fan-out branch's.
  *
  * Like the loop editor, a sibling with no parent, on the main preload, added to the run
- * audience so it hears the run's events; it reads the run view once on opening. Opening it
- * starts nothing and asks the host nothing new. A second request for the same branch
- * brings that window forward.
+ * audience so it hears the run's events; it reads the run view once on opening, and the
+ * saved run record once the step is done (Niclas, 15 November 2026: every agent step, not
+ * only a branch). Opening or closing it starts, stops and repeats nothing, and asks the
+ * host nothing new. A second request for the same step or branch brings that window forward.
  */
 function openBranchOutputWindow(request: unknown): BranchOutputWindowOutcome {
-  const address = branchAddressFromQuery(
-    typeof request === 'object' && request !== null
-      ? branchAddressQuery({
-          runId: String((request as Record<string, unknown>)['runId'] ?? ''),
-          nodeId: String((request as Record<string, unknown>)['nodeId'] ?? ''),
-          occurrence: Number((request as Record<string, unknown>)['occurrence']),
-          sliceId: String((request as Record<string, unknown>)['sliceId'] ?? ''),
-        })
-      : '',
+  const field = (name: string): string =>
+    typeof request === 'object' && request !== null ? String((request as Record<string, unknown>)[name] ?? '') : '';
+  const address = stepOutputFromQuery(
+    new URLSearchParams({
+      runId: field('runId'),
+      nodeId: field('nodeId'),
+      occurrence: field('occurrence'),
+      sliceId: field('sliceId'),
+      conversationId: field('conversationId'),
+    }).toString(),
   );
   if (address === null) {
-    return { opened: false, note: 'That is not a branch DSpatch can follow: it needs a run, a node, a visit and a slice.' };
+    return { opened: false, note: 'That is not a step DSpatch can show: it needs a run, a node and a visit.' };
   }
-  const key = branchAddressQuery(address);
+  const { conversationId: _conversation, ...step } = address;
+  const key = stepOutputQuery(step);
+  const what = address.sliceId === undefined ? 'step' : 'branch';
   const existing = branchOutputWindows.get(key);
   if (existing !== undefined && !existing.isDestroyed()) {
     existing.focus();
-    return { opened: true, note: 'That branch’s output is already open; it has been brought to the front.' };
+    return { opened: true, note: `That ${what}’s output is already open; it has been brought to the front.` };
   }
   try {
     const window = new BrowserWindow({
@@ -2864,7 +2868,7 @@ function openBranchOutputWindow(request: unknown): BranchOutputWindowOutcome {
       show: false,
       backgroundColor: '#101317',
       ...windowIcon(),
-      title: `DSpatch — branch ${address.sliceId ?? ''}`,
+      title: address.sliceId === undefined ? `DSpatch — step ${address.nodeId}` : `DSpatch — branch ${address.sliceId}`,
       webPreferences: {
         preload: path.join(__dirname, '..', 'preload', 'preload.js'),
         contextIsolation: true,
@@ -2885,18 +2889,18 @@ function openBranchOutputWindow(request: unknown): BranchOutputWindowOutcome {
         branchOutputWindows.delete(key);
       }
     });
-    const search = `window=branch&${key}`;
+    const search = `window=branch&${stepOutputQuery(address)}`;
     if (rendererUrl === undefined) {
       void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { search });
     } else {
       const base = rendererUrl.split('#')[0] ?? rendererUrl;
       void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}${search}`);
     }
-    log(`branch output window opened for ${key}`);
-    return { opened: true, note: 'The branch’s output is open in its own window. Closing it leaves the run as it is.' };
+    log(`${what} output window opened for ${key}`);
+    return { opened: true, note: `The ${what}’s output is open in its own window. Closing it leaves the run as it is.` };
   } catch (error) {
     branchOutputWindows.delete(key);
-    return { opened: false, note: `The branch window could not be opened: ${error instanceof Error ? error.message : String(error)}` };
+    return { opened: false, note: `The ${what} window could not be opened: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 

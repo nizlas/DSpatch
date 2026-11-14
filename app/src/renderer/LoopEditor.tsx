@@ -107,6 +107,7 @@ import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
 import { BranchList } from './BranchList';
+import { StepOutputActions } from './StepOutputActions';
 import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
 import { branchViewsFromJournal } from '../shared/run-presentation';
 import { controlPhase } from '../shared/loop-control';
@@ -278,6 +279,12 @@ export function LoopEditor(): React.JSX.Element {
    * the record, which is the defect DSP-26 #1 exists to prevent.
    */
   const [watch, setWatch] = useState<RunView | null>(null);
+  /**
+   * The run that ended last, kept when the Ready offer takes its place (Niclas, 15 November
+   * 2026), so its steps' saved output can still be opened from the node panel. A new run
+   * beginning clears it, as it clears the ending marks.
+   */
+  const [lastEndedRun, setLastEndedRun] = useState<RunView | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
   /**
    * Where the last run got to, kept after the run itself has gone (DSP-36).
@@ -366,6 +373,9 @@ export function LoopEditor(): React.JSX.Element {
     if (event.kind === 'started') {
       if ((event.run.phase ?? 'running') !== 'ready') {
         setFinishedMarks(null);
+        setLastEndedRun(null);
+      } else if (runFoldRef.current !== null && runFoldRef.current.ended && !viewIsReady(runFoldRef.current)) {
+        setLastEndedRun(runFoldRef.current);
       }
       const adopted = runViewFor(event.run);
       runFoldRef.current = adopted;
@@ -2337,6 +2347,13 @@ export function LoopEditor(): React.JSX.Element {
     () => (watch === null || pinCheck === 'different' ? [] : branchViewsFromJournal(watch.run.runId, watch.entries)),
     [watch, pinCheck],
   );
+  // The run whose steps the node panel opens: the one walking or just ended, else the last
+  // one that ended before the Ready offer replaced it (Niclas, 15 November 2026).
+  const outputRun = watch !== null && !viewIsReady(watch) ? watch : lastEndedRun;
+  const outputBranchViews = useMemo(
+    () => (outputRun === null ? [] : outputRun === watch ? branchViews : branchViewsFromJournal(outputRun.run.runId, outputRun.entries)),
+    [outputRun, watch, branchViews],
+  );
   // Each fan-out node's line, e.g. "3 branches · 1 working · 2 finished", drawn on the node.
   const branchSummaries = useMemo(() => {
     const summaries = new Map<string, string>();
@@ -3113,7 +3130,12 @@ export function LoopEditor(): React.JSX.Element {
             branch is not editing the drawing. The button is the node panel's control; the
             line on the node opens the same list. It stays open until closed.
           */}
-          {selectedNode !== null && branchSummaries.has(selectedNode.id) ? (
+          {/*
+            Niclas, 15 November 2026: the selected agent step's output, live or saved, one
+            visible button away, outside the lock like the Branches below.
+          */}
+          {selectedNode !== null ? <StepOutputActions node={selectedNode} watch={outputRun} /> : null}
+          {selectedNode !== null && branchSummaryLine(outputBranchViews, selectedNode.id) !== null ? (
             <div className="editor-branches" data-ev="editor-branches">
               <button
                 type="button"
@@ -3122,13 +3144,14 @@ export function LoopEditor(): React.JSX.Element {
                 aria-expanded={branchesOpenFor === selectedNode.id}
                 onClick={() => setBranchesOpenFor((open) => (open === selectedNode.id ? null : selectedNode.id))}
               >
-                {branchesOpenFor === selectedNode.id ? 'Hide branches' : 'Branches'} — {branchSummaries.get(selectedNode.id)}
+                {branchesOpenFor === selectedNode.id ? 'Hide branches' : 'Branches'} — {branchSummaryLine(outputBranchViews, selectedNode.id)}
               </button>
               {branchesOpenFor === selectedNode.id ? (
                 <BranchList
-                  rows={branchRows(branchViews, selectedNode.id)}
-                  activity={watch?.branchSteps}
+                  rows={branchRows(outputBranchViews, selectedNode.id)}
+                  activity={outputRun?.branchSteps}
                   heading={selectedNode.label ?? selectedNode.id}
+                  conversationId={outputRun?.run.conversationId}
                 />
               ) : null}
             </div>

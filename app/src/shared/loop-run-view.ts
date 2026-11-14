@@ -155,6 +155,12 @@ export interface LiveRunAnnouncement extends LoopRunIdentity {
   readonly graphText: string;
   readonly startedAtUtc: string;
   /**
+   * The conversation a chat-loop run belongs to, whose run records hold its saved output
+   * (Niclas, 15 November 2026). Absent for other runs and from a host written before it;
+   * a step output window then says it cannot find the saved output rather than guess.
+   */
+  readonly conversationId?: string;
+  /**
    * What this run's role references resolved to, resolved by the side that has a disk.
    *
    * **This field is the fix for a refusal panel Niclas met.** The editor loaded the

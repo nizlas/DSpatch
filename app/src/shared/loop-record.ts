@@ -550,6 +550,12 @@ export interface RecordedAgentReply {
    * old build genuinely shared one, and its records say nothing either way.
    */
   readonly sessionId?: string;
+  /**
+   * The fan-out branch this reply is from, when it is one (Niclas, 15 November 2026), so a
+   * branch's saved output can be found by its slice. Absent in a record written before this
+   * field: there a branch reply is known only by the " · <slice>" its `nodeLabel` was given.
+   */
+  readonly sliceId?: string;
 }
 
 /**

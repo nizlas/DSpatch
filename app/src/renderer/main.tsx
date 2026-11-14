@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { HostBrowser, HostLinkLine, SshQuestions } from './HostLink';
 import { LoopEditor } from './LoopEditor';
-import { BranchOutputWindow } from './BranchOutputWindow';
+import { StepOutputWindow } from './StepOutputWindow';
 import { PairReview } from './PairReview';
 import { ReviewView } from './ReviewView';
 import { WalkLoopFollow } from './WalkLoopFollow';
@@ -46,7 +46,7 @@ const isBrowseWindow = new URLSearchParams(window.location.search).get('window')
 
 const isReviewWindow = new URLSearchParams(window.location.search).get('window') === 'review';
 
-/** DSP-209 S20: the window that follows one fan-out branch's live output. */
+/** DSP-209 S20: the window that shows one step visit's output, or one fan-out branch's. */
 const isBranchWindow = new URLSearchParams(window.location.search).get('window') === 'branch';
 
 /** A review window over a chosen revision pair (DSP-150): the diff review, not a walk. */
@@ -116,5 +116,5 @@ if (new URLSearchParams(window.location.search).get('view') === 'panel') {
 }
 
 createRoot(host).render(
-  <StrictMode>{isBrowseWindow ? <HostBrowser /> : isBranchWindow ? <BranchOutputWindow /> : <><HostLinkLine /><SshQuestions />{isFollowView ? <WalkLoopFollow /> : isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
+  <StrictMode>{isBrowseWindow ? <HostBrowser /> : isBranchWindow ? <StepOutputWindow /> : <><HostLinkLine /><SshQuestions />{isFollowView ? <WalkLoopFollow /> : isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
 );
