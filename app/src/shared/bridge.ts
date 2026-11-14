@@ -1583,6 +1583,15 @@ export interface StoredConversation {
    * text that was on screen, with the two snapshot identities it named.
    */
   readonly reviewedDiff: WorkspaceReport | null;
+  /**
+   * DSP-209 S15: loop runs whose recap the person removed and no sent message records yet.
+   *
+   * Written when **Remove** is pressed, so a restart before the next send does not offer
+   * that recap again; the next sent message then records the removal on its own
+   * `loopRecap`, as it always did, and this empties. Absent in files written before it
+   * and whenever nothing is waiting, which reads as an empty list.
+   */
+  readonly removedLoopRecaps?: readonly string[];
 }
 
 /** The project of a restored conversation, plus whether it is still there. */

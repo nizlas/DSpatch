@@ -772,7 +772,20 @@ function parseConversation(raw: Record<string, unknown>, filePath: string): Stor
     reviewedDiff: isRecord(raw['reviewedDiff'])
       ? (raw['reviewedDiff'] as unknown as StoredConversation['reviewedDiff'])
       : null,
+    ...storedRemovedLoopRecapsField(raw['removedLoopRecaps']),
   };
+}
+
+/**
+ * DSP-209 S15: the removed loop recaps when the field has the shape this build writes,
+ * otherwise nothing, so a damaged field offers the recap again rather than failing the file.
+ */
+function storedRemovedLoopRecapsField(value: unknown): { readonly removedLoopRecaps?: readonly string[] } {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((runId) => typeof runId === 'string' && runId !== '')
+    ? { removedLoopRecaps: value as string[] }
+    : {};
 }
 
 /** DSP-209 S6: the handover field when it has the shape this build writes, otherwise nothing. */

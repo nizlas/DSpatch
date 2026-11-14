@@ -743,3 +743,26 @@ test('a loop recap round-trips sent and removed, and a damaged one is dropped', 
   fs.writeFileSync(file, JSON.stringify(saved), 'utf8');
   assert.equal('loopRecap' in (store.read(original.conversationId).conversation?.messages[0] ?? {}), false);
 });
+
+// DSP-209 S15: a removal no sent message records yet survives a restart in the file itself.
+test('removed loop recaps round-trip, an older file reads without them, and a damaged field is dropped', () => {
+  const { store, directory } = storeIn('removed-loop-recaps');
+  const older = conversation();
+  store.write(older);
+  const plain = store.read(older.conversationId).conversation;
+  assert.equal(plain !== null && plain !== undefined && 'removedLoopRecaps' in plain, false, 'an older file reads as before');
+
+  const withRemoval = conversation({ conversationId: 'dsp-conv-20261114000000-bbbbbb', removedLoopRecaps: ['chat-loop-1', 'chat-loop-2'] });
+  store.write(withRemoval);
+  assert.deepEqual(store.read(withRemoval.conversationId).conversation?.removedLoopRecaps, ['chat-loop-1', 'chat-loop-2']);
+
+  const file = path.join(directory, `${withRemoval.conversationId}.json`);
+  for (const damaged of [[], ['chat-loop-1', ''], ['chat-loop-1', 7], 'chat-loop-1', { runIds: ['x'] }]) {
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    saved['removedLoopRecaps'] = damaged;
+    fs.writeFileSync(file, JSON.stringify(saved), 'utf8');
+    const back = store.read(withRemoval.conversationId).conversation;
+    assert.ok(back, 'the file is still read');
+    assert.equal('removedLoopRecaps' in back, false, `a damaged field (${JSON.stringify(damaged)}) is ignored`);
+  }
+});

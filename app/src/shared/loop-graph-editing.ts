@@ -211,30 +211,51 @@ export function layOutMissingViews(graph: LoopGraph): {
 /**
  * Replace one node, keeping its position in the file.
  *
- * A renamed node is still the same node, so everything that names it follows: its
- * edges, the graph's `entry`, and any other node whose report it writes. Three places,
- * because the format ties all three to the id — leaving any of them behind would turn
- * a rename into a broken reference the author did not make.
+ * A renamed node is still the same node, so everything that names it follows, which is
+ * every place the format holds a node id: the graph's `entry`; each edge's `from`, `to`,
+ * `delivers` and `skips`; and each node's `report.writtenBy`, `consumes` and
+ * `fanOut.slicesFrom` (DSP-209 S15 added the last four of these). Leaving any of them
+ * behind would turn a rename into a broken reference the author did not make. Only
+ * exact ids are replaced, and a field that is absent stays absent.
  */
 export function replaceNode(graph: LoopGraph, id: string, next: LoopNode): LoopGraph {
   const renamed = next.id !== id;
+  const follow = (ids: readonly string[] | undefined): readonly string[] | undefined =>
+    ids === undefined || !ids.includes(id) ? ids : ids.map((each) => (each === id ? next.id : each));
   return {
     ...graph,
     nodes: graph.nodes.map((node) => {
-      if (node.id === id) {
-        return next;
+      const own = node.id === id ? next : node;
+      if (!renamed) {
+        return own;
       }
-      if (renamed && node.report?.writtenBy === id) {
-        return { ...node, report: { ...node.report, writtenBy: next.id } };
+      let result = own;
+      if (result.report?.writtenBy === id) {
+        result = { ...result, report: { ...result.report, writtenBy: next.id } };
       }
-      return node;
+      if (result.consumes?.includes(id)) {
+        result = { ...result, consumes: follow(result.consumes) };
+      }
+      if (result.fanOut?.slicesFrom === id) {
+        result = { ...result, fanOut: { ...result.fanOut, slicesFrom: next.id } };
+      }
+      return result;
     }),
     edges: renamed
-      ? graph.edges.map((edge) => ({
-          ...edge,
-          from: edge.from === id ? next.id : edge.from,
-          to: edge.to === id ? next.id : edge.to,
-        }))
+      ? graph.edges.map((edge) => {
+          let result: LoopEdge = {
+            ...edge,
+            from: edge.from === id ? next.id : edge.from,
+            to: edge.to === id ? next.id : edge.to,
+          };
+          if (edge.delivers?.includes(id)) {
+            result = { ...result, delivers: follow(edge.delivers) };
+          }
+          if (edge.skips?.includes(id)) {
+            result = { ...result, skips: follow(edge.skips) };
+          }
+          return result;
+        })
       : graph.edges,
     entry: graph.entry === id ? next.id : graph.entry,
   };

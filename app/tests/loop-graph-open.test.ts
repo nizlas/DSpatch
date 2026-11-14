@@ -32,7 +32,7 @@ import {
 } from '../src/main/loop-graph-open';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { describeOpenedGraph } from '../src/shared/loop-editor-open';
-import { layOutMissingViews } from '../src/shared/loop-graph-editing';
+import { layOutMissingViews, replaceNode } from '../src/shared/loop-graph-editing';
 import { loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 import type { LoopGraph } from '../src/shared/loop-graph';
 import { detectNewline, serialiseLoopGraph } from '../src/shared/loop-graph-write';
@@ -109,6 +109,77 @@ describe('layOutMissingViews', () => {
     assert.deepEqual(laidOut.placed, ['implementer']);
     const placed = laidOut.graph.nodes.find((node) => node.id === 'implementer');
     assert.ok((placed?.view?.y ?? 0) > lowest, 'the grid does not pile on top of a hand-made arrangement');
+  });
+});
+
+describe('renaming a node in the editor (DSP-209 S15)', () => {
+  function bundled(name: string): LoopGraph {
+    const loaded = loadLoopGraph(
+      fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', name), 'utf8'),
+      { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] },
+    );
+    assert.ok(loaded.ok, `${name} must load before a rename in it means much`);
+    return loaded.graph;
+  }
+
+  function rename(graph: LoopGraph, from: string, to: string): LoopGraph {
+    const node = graph.nodes.find((each) => each.id === from);
+    assert.ok(node, `the drawing has a node "${from}"`);
+    return replaceNode(graph, from, { ...node, id: to });
+  }
+
+  /** The renamed drawing, written and read back the way the editor saves and reopens it. */
+  function stillLoads(graph: LoopGraph): void {
+    const reloaded = loadLoopGraph(serialiseLoopGraph(graph), {
+      resolveRole: createFileRoleResolver(repoRoot),
+      connectedTargets: ['cursor'],
+    });
+    const errors = reloaded.findings.filter((finding) => finding.severity === 'error');
+    assert.deepEqual(errors, [], 'a rename leaves no broken reference behind');
+    assert.ok(reloaded.ok);
+  }
+
+  it('follows a rename into skips, delivers and consumes, and leaves look-alike ids alone', () => {
+    const graph = bundled('dspatch-chat-loop.graph.json');
+    const renamed = rename(graph, 'check', 'verify');
+
+    const edge = (id: string) => renamed.edges.find((each) => each.id === id);
+    assert.deepEqual(edge('e-unchecked')?.skips, ['verify']);
+    assert.equal(edge('e-unchecked')?.to, 'check-skipped', '"check-skipped" only resembles the old id');
+    assert.deepEqual(edge('e-rework')?.delivers, ['verify']);
+    assert.equal(edge('e-rework')?.from, 'verify');
+    assert.deepEqual(renamed.nodes.find((each) => each.id === 'verify')?.consumes, ['work']);
+    assert.ok(renamed.nodes.some((each) => each.id === 'check-skipped'));
+    assert.equal(edge('e-met')?.delivers, undefined, 'an absent field stays absent');
+    assert.equal(edge('e-met')?.skips, undefined);
+    stillLoads(renamed);
+
+    const work = rename(graph, 'work', 'do');
+    assert.deepEqual(work.nodes.find((each) => each.id === 'verify' || each.id === 'check')?.consumes, ['do']);
+    assert.equal(work.entry, 'do');
+    stillLoads(work);
+  });
+
+  it('follows a rename into fanOut.slicesFrom, consumes and delivers in the parallel loop', () => {
+    const graph = bundled('dspatch-parallel-loop.graph.json');
+    const sliced = rename(graph, 'slice', 'cut');
+    assert.equal(sliced.entry, 'cut');
+    assert.equal(sliced.nodes.find((each) => each.id === 'work')?.fanOut?.slicesFrom, 'cut');
+    stillLoads(sliced);
+
+    const merged = rename(graph, 'integrate', 'merge');
+    assert.deepEqual(merged.nodes.find((each) => each.id === 'review')?.consumes, ['merge']);
+    assert.deepEqual(merged.edges.find((each) => each.id === 'p-integrate-rework')?.delivers, ['merge']);
+    stillLoads(merged);
+  });
+
+  it('changes nothing it does not have to when the id stays the same', () => {
+    const graph = bundled('dspatch-chat-loop.graph.json');
+    const check = graph.nodes.find((each) => each.id === 'check');
+    assert.ok(check);
+    const relabelled = replaceNode(graph, 'check', { ...check, label: 'Look it over' });
+    assert.equal(relabelled.edges, graph.edges, 'the same edges, not a copy');
+    assert.equal(relabelled.nodes.find((each) => each.id === 'work'), graph.nodes.find((each) => each.id === 'work'));
   });
 });
 

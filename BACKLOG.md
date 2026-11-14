@@ -36,9 +36,9 @@ All of it is agent-reviewed, not approved by Niclas; his trials are listed in ST
 
 Follow-up candidates. Each is a proposal, not a plan:
 - *Proposal (S7):* the recap rereads every run record on each run-state refresh and send; cache it or track the last ended run.
-- *Proposal (S7):* a recap removal is kept in memory until the next send, so a restart before sending offers it again.
+- *Proposal (S7):* a recap removal is kept in memory until the next send, so a restart before sending offers it again. Done by DSP-209 S15 (14 November 2026): the removal is saved with the conversation.
 - *Proposal (S7):* the recap is rebuilt at send time, so a run ending between display and send could be included unseen.
-- *Proposal (S3):* renaming a node does not rename its id in edges' `skips` lists; validation then reports `skips-a-missing-node`.
+- *Proposal (S3):* renaming a node does not rename its id in edges' `skips` lists; validation then reports `skips-a-missing-node`. Done by DSP-209 S15 (14 November 2026): a rename now also follows `skips`, `delivers`, `consumes` and `fanOut.slicesFrom`.
 - *Proposal (S10a, S10b):* cancel and deadlines per branch; a before-and-after snapshot per branch; Windows long paths, paths with spaces, worktrees on another drive, hooks and signing.
 - *Proposal (S12):* the run report does not list steps that were never reached, because the run record does not hold the graph's steps.
 - *Proposal (S5a, for DSP-31):* S5a built a shared mechanism for waiting on an explicit choice bound to the run and the visit; DSP-31 should reuse it instead of building its own.

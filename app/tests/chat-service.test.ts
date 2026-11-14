@@ -2873,6 +2873,44 @@ test('SIMULATED: a removed loop recap is not sent, and is not offered again unti
   await second.service.dispose();
 });
 
+test('SIMULATED: a loop recap removed before sending stays removed after a restart (DSP-209 S15)', async () => {
+  const store = storeFor('loop-recap-removed-restart');
+  const records: LoopRecapRecord[] = [];
+  const open = await recapHarness('loop-recap-removed-restart', store, records);
+  const { service, workspace } = open('1');
+  const session = await service.startChatSession({ kind: 'folder', path: workspace });
+  records.push(endedRecord('chat-loop-d', 'do it', new Date().toISOString()));
+  assert.deepEqual(service.getRunState().pendingLoopRecap?.runIds, ['chat-loop-d']);
+  service.discardPendingRecap('loop-recap');
+  assert.deepEqual(
+    store.read(session.conversationId).conversation?.removedLoopRecaps,
+    ['chat-loop-d'],
+    'the removal reaches the file when Remove is pressed, before any send',
+  );
+  await service.dispose();
+
+  // DSpatch restarts before the next message is sent.
+  const second = open('2');
+  await second.service.resumeConversation(session.conversationId);
+  assert.equal(second.service.pendingLoopRecap(), null, 'the removed recap is not offered again');
+  await sleep(5);
+  records.push(endedRecord('chat-loop-e', 'again', new Date().toISOString()));
+  const pending = second.service.pendingLoopRecap();
+  assert.deepEqual(pending?.runIds, ['chat-loop-e'], 'a run that ended later is still offered');
+
+  // The next send records the removal on its message as before, and the waiting copy goes.
+  const reopened = await second.service.startChatSession({ kind: 'folder', path: workspace });
+  assert.equal(reopened.conversationId, session.conversationId);
+  assert.deepEqual(second.service.pendingLoopRecap()?.runIds, ['chat-loop-e'], 'opening the session changes nothing offered');
+  await second.service.sendPrompt('carry on');
+  assert.deepEqual(second.adapter.sent, [`${pending?.text ?? ''}\n\ncarry on`], 'only the newer run goes to the provider');
+  second.adapter.emit({ type: 'run.finished', status: 'finished' });
+  const saved = store.read(session.conversationId).conversation;
+  assert.deepEqual(saved?.messages[0]?.loopRecap, { runIds: ['chat-loop-d', 'chat-loop-e'], text: pending?.text });
+  assert.equal(saved !== null && saved !== undefined && 'removedLoopRecaps' in saved, false, 'nothing is left waiting once a message records it');
+  await second.service.dispose();
+});
+
 test('SIMULATED: with no loop run to recap, a message and its saved shape are exactly as before', async () => {
   const store = storeFor('loop-recap-none');
   const open = await recapHarness('loop-recap-none', store, []);

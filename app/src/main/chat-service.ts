@@ -1562,6 +1562,8 @@ export class ChatService {
   /**
    * DSP-209 S7: loop runs whose recap the person removed in this conversation, not yet
    * recorded on a sent message. The next message records them, so they stay removed.
+   * S15: also written to the conversation file (`removedLoopRecaps`) and read back when the
+   * file is adopted, so a restart before that message does not offer them again.
    */
   private readonly removedLoopRecaps = new Map<string, readonly string[]>();
 
@@ -3181,14 +3183,16 @@ export class ChatService {
       throw new Error('No session is open. Start one first.');
     }
     // DSP-209 S7: the loop recap is removed by the same act. Those runs are left out of every
-    // later offer; the next message records the removal, so a restart does not offer them again.
+    // later offer; the next message records the removal. S15: the removal is saved now as
+    // well, so a restart before that message does not offer them again.
     if (which === 'loop-recap') {
       const pending = this.pendingLoopRecap();
       const conversationId = this.conversationId;
       if (pending !== null && conversationId !== null) {
         const before = this.removedLoopRecaps.get(conversationId) ?? [];
-        this.removedLoopRecaps.set(conversationId, [...before, ...pending.runIds]);
+        this.removedLoopRecaps.set(conversationId, [...new Set([...before, ...pending.runIds])]);
         this.options.log(`loop recap of ${pending.runIds.join(', ')} removed by the user; the next message goes without it`);
+        this.saveConversation(conversationId);
       }
       return this.continuity;
     }
@@ -3456,7 +3460,8 @@ export class ChatService {
       // this message; it is recorded and shown as sent that way, now that it was taken.
       if (handover === null) {
         this.noteSteeringSentAsNextMessage(prompt);
-        // DSP-209 S7: the removal is on this message now, which is where it is kept.
+        // DSP-209 S7: the removal is on this message now, which is where it is kept. S15: the
+        // file's own copy of it is dropped by the next save.
         if (this.conversationId !== null) {
           this.removedLoopRecaps.delete(this.conversationId);
         }
@@ -4631,6 +4636,10 @@ export class ChatService {
       lastSavedDigest: null,
     };
     this.held.set(held.conversationId, held);
+    // DSP-209 S15: a removal no sent message records yet is held again, exactly as Remove left it.
+    if (conversation.removedLoopRecaps !== undefined && conversation.removedLoopRecaps.length > 0) {
+      this.removedLoopRecaps.set(conversation.conversationId, [...conversation.removedLoopRecaps]);
+    }
     return {
       held,
       reconciliations: outcome.reconciliations,
@@ -5108,6 +5117,7 @@ export class ChatService {
       session === null
         ? (held.project ?? this.savedProjectFor(conversationId))
         : { path: session.workspacePath, git: session.git };
+    const removedLoopRecaps = this.removedLoopRecaps.get(conversationId) ?? [];
     if (storedSession === null || project === null) {
       // Nothing worth saving yet. A conversation with no project is not a
       // conversation, and writing a blank one would put a row in the chooser that
@@ -5138,6 +5148,8 @@ export class ChatService {
       // never another conversation's.
       baseline: held.storedBaseline ?? held.carriedBaseline,
       reviewedDiff: held.reviewedDiff,
+      // DSP-209 S15: only while a removal waits for its message, so other files keep their shape.
+      ...(removedLoopRecaps.length === 0 ? {} : { removedLoopRecaps }),
     };
   }
 
