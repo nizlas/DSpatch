@@ -23,6 +23,8 @@ import {
   type ControlNote,
   initialControlState,
   LOOP_MODE_CHOICES,
+  LOOP_MODE_EXPLANATION,
+  LOOP_MODE_HINT,
   type LoopControlReport,
   type LoopMode,
 } from '../shared/loop-control';
@@ -143,8 +145,9 @@ export function LoopControlBar({
    * whether a run is walking or not — because a run that made the strip taller would
    * take height off the drawing at the moment a person most wants it left alone, and
    * the trial measured that at 110 pixels before this existed. So the two paragraphs
-   * fold away: the detail becomes the headline's hover, and the note becomes the
-   * mode chooser's, which loses the prose to a hover rather than losing it.
+   * fold away into **Details**, which the person opens and closes and which overlays
+   * the canvas below the strip rather than growing it (DSP-209 S25b: they used to be
+   * hovers, and R7 says a hover is never the only place a status appears).
    *
    * It is a shape, not a second vocabulary. Every word is still `describeControl`'s
    * and every enabled button is still `controlActionsFor`'s, which is what keeps the
@@ -155,6 +158,9 @@ export function LoopControlBar({
   // DSP-209 S25: kept with the phase it was said in, and shown only while that phase holds.
   const [pressed, setPressed] = useState<ControlNote | null>(null);
   const note = currentControlNote(pressed, report);
+  // DSP-209 S25b: opened and closed by the person only, never by a change of phase.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsTop, setDetailsTop] = useState(56);
   const runActive = report.runId !== null;
   const described = describeControl(report.state, {
     runActive,
@@ -188,29 +194,15 @@ export function LoopControlBar({
             something the chooser cannot: running, pause requested, paused,
             waiting for you. */}
         {runActive && (
-          <span
-            className="loop-control__phase"
-            data-ev="loop-control-phase"
-            title={compact ? described.detail : undefined}
-          >
+          <span className="loop-control__phase" data-ev="loop-control-phase">
             {described.headline}
           </span>
         )}
         {/* Named after what it holds, which is the only way a person can tell it from
             `Use loop`: not steps in general, and not the loop as a whole, but the
-            steps that start an agent, run a command or hand work outside. */}
-        <label
-          className="loop-control__mode"
-          title={
-            'Applies to a step that starts an agent, runs a command or hands work to ' +
-            'someone DSpatch does not run. The loop is not held between steps: routing ' +
-            'from one to the next never waits, and a human step waits for an answer ' +
-            'either way. Letting one step through is spent on that step, so the next ' +
-            'one asks again.' +
-            // The last thing pressing one of these said, which compact has no line for.
-            (compact && note !== null ? `\n\n${note}` : '')
-          }
-        >
+            steps that start an agent, run a command or hand work outside.
+            DSP-209 S25b (R7): the hover is a few words; the full text is in Details. */}
+        <label className="loop-control__mode" title={LOOP_MODE_HINT}>
           <span className="loop-control__mode-label">Agent and command steps</span>
           <select
             data-ev="loop-mode"
@@ -223,7 +215,7 @@ export function LoopControlBar({
             }}
           >
             {LOOP_MODE_CHOICES.map((choice) => (
-              <option key={choice.mode} value={choice.mode} title={choice.title}>
+              <option key={choice.mode} value={choice.mode}>
                 {choice.label}
               </option>
             ))}
@@ -243,7 +235,7 @@ export function LoopControlBar({
             type="button"
             className="button"
             data-ev={`loop-${action.id}`}
-            title={action.title}
+            title={action.hint}
             disabled={!action.enabled}
             onClick={() => {
               void press(action.id);
@@ -252,6 +244,22 @@ export function LoopControlBar({
             {action.label}
           </button>
         ))}
+        {/* DSP-209 S25b (R7): every full sentence the hovers shorten, in a view that stays
+            open until closed. Compact adds the phase and the note it has no line for, and
+            says on the button that a note is waiting there. */}
+        <button
+          type="button"
+          className="button loop-control__details-toggle"
+          data-ev="loop-control-details-toggle"
+          aria-expanded={detailsOpen}
+          onClick={(event) => {
+            // Compact Details is fixed below the toggle (the strip clips what overflows it).
+            setDetailsTop(event.currentTarget.getBoundingClientRect().bottom + 4);
+            setDetailsOpen((open) => !open);
+          }}
+        >
+          {detailsOpen ? 'Hide details' : compact && note !== null ? 'Details · note' : 'Details'}
+        </button>
       </div>
       {runActive && !compact && (
         <p className="loop-control__detail" data-ev="loop-control-detail">
@@ -262,6 +270,39 @@ export function LoopControlBar({
         <p className="loop-control__note" data-ev="loop-control-note">
           {note}
         </p>
+      )}
+      {detailsOpen && (
+        <div
+          className="loop-control__details"
+          data-ev="loop-control-details"
+          style={compact ? { top: `${String(detailsTop)}px` } : undefined}
+        >
+          {compact && runActive && (
+            <p className="loop-control__detail" data-ev="loop-control-detail">
+              <strong>{described.headline}.</strong> {described.detail}
+            </p>
+          )}
+          {compact && note !== null && (
+            <p className="loop-control__note" data-ev="loop-control-note">
+              {note}
+            </p>
+          )}
+          <p className="loop-control__detail">
+            <strong>Agent and command steps.</strong> {LOOP_MODE_EXPLANATION}
+          </p>
+          <ul className="loop-control__detail">
+            {LOOP_MODE_CHOICES.map((choice) => (
+              <li key={choice.mode}>
+                <strong>{choice.label}:</strong> {choice.title}
+              </li>
+            ))}
+            {(runActive ? actions : []).map((action) => (
+              <li key={action.id}>
+                <strong>{action.label}:</strong> {action.title}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

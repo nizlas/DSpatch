@@ -100,6 +100,7 @@ import {
 import type { EditorRunSummary } from '../shared/loop-editor-run';
 import { formatJournalEntry, type RunJournalEntry, type RunResult } from '../shared/loop-run';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
+import { announceLoopStopRequested } from './loop-stop-signal';
 import { controlPhase } from '../shared/loop-control';
 import {
   UNVERSIONED_CANVAS,
@@ -1109,11 +1110,15 @@ export function LoopEditor(): React.JSX.Element {
       try {
         const outcome = await window.dspatch.cancelChatLoopRun();
         setNote(outcome.note);
+        // DSP-209 S25b: the chat marks its entry "stop requested", as its own Stop does.
+        if (outcome.cancelled && watch !== null) {
+          announceLoopStopRequested(watch.run.runId);
+        }
       } catch (error) {
         setNote(`The cancel did not reach the run, which is still going: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-  }, [runBusy, runKind, watchedChatRun]);
+  }, [runBusy, runKind, watchedChatRun, watch]);
 
   /**
    * The roles a watched run announced, over this window's own.

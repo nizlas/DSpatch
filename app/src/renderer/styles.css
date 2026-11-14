@@ -1722,6 +1722,18 @@ body {
   color: var(--text);
 }
 
+/* DSP-209 S25b: the full texts the control's hovers shorten, readable and selectable. */
+.loop-control__details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  user-select: text;
+}
+
+.loop-control__details ul {
+  padding-left: 1.1rem;
+}
+
 /* DSP-209 S5b: a loop step recommends continuing interactively. The same frame as the control. */
 .loop-handoff {
   display: flex;

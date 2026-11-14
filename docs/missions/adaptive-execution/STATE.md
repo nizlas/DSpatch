@@ -14,7 +14,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S25b (`implement`, decision 43), from call 12 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a and S25 are reviewed and committed.
+- **Sub-goal in progress:** S19 and S22 on the parallel path (decision 44), from call 15 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S25 and S25b are reviewed and committed.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -148,13 +148,13 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S17 | Graph-edit proposal model, pure, in `shared/graph-proposal.ts`: `GraphEditProposal`, `describeGraphChange`, `reconcileDisk`, `manualEditsSince` | R1 | — | **reviewed** (parallel, decision 41; see *S17 and S18a, parallel*) | 2 | `9d48c02`, merged `fdd2156`, test line `d6b2a3b` |
 | S24 | Fan-out worktrees on Windows: each slice's worktree in a short folder (`w` + ten hex digits of a SHA-256 over run, node, visit and slice) under `%LOCALAPPDATA%\DSpatch\wt`, an owner file `<folder>.json` beside it, and `core.longpaths=true` on DSpatch's own git commands for that command only (`app/src/main/run-worktrees.ts`, `app/src/main/loop-live-run.ts`). A defect in S10a/S10b found by the S16/S17 attempt | — | — | **done between runs**, in the main chat at Niclas's request, commit `4c6e14f`; in the engine from the transition recorded under *Where the mission stands*. Checked by `app/tests/run-worktrees.test.ts` (a tracked path over 260 characters checks out, commits and is removed; the folder and owner file) and on DSpatch's own twelve failing files in a throwaway clone (all check out, longest full path 235; Node, Git Bash and PowerShell read them; `git status` clean without `core.longpaths`). Not yet run by a live fan-out | 1 | — |
 | S25 | The loop control bar keeps the old *Pause requested* note after the run is paused: `LoopControlBar.tsx` holds the note `requestPause` returned (`main/loop-control-runtime.ts`) in its own state and clears it only on another action, so "Pause requested … still running" stays beside "Paused · No work step is running". Replace the note when the phase changes, or mark it as what was said when the pause was asked for. Found by Niclas on 14 November 2026. Two more observations of his from the same pause, for the same sub-goal: (b) **Cancel run** was greyed out in the loop editor while the run was paused, while **Stop** in the chat could end it; every control that shows a run should offer the same way to end it. (c) The graph should show where the run is paused and which step comes next: a finished step keeps its done state, the next step shows as waiting, not active, and when the next step is not yet decided the graph says so. Not to be built during an engine transition | R3, R7 | — | **reviewed** (see its record; (b) for chat runs only, the rest in S25b) | 1 | `(DSP-209 S25)` after `9a0205c` |
-| S25b | S25's follow-up from its review. (N1, R7) the editor's compact control bar shows its phase explanation and its last note only in hover text, so they get a visible place and the mode hover is shortened. (N3) **Cancel run** for a `walk-loop` run the editor only watches. (N2) the chat marks a cancel from the editor as "stop requested" | R3, R7 | S25 | **in progress**: sent to `implement` on call 12 (decision 43) | 1 | — |
+| S25b | S25's follow-up from its review. (N1, R7) the editor's compact control bar shows its phase explanation and its last note only in hover text, so they get a visible place and the mode hover is shortened. (N3) **Cancel run** for a `walk-loop` run the editor only watches. (N2) the chat marks a cancel from the editor as "stop requested" | R3, R7 | S25 | **reviewed** (see its record) | 1 | `(DSP-209 S25b)` after `3726249` |
 | S18a | Edge routing around nodes; back and rework edges styled; node size by kind (`shared/loop-edge-routing.ts`, `GraphCanvas.tsx`) | R2, R7 | — | **reviewed** (parallel, decision 41; see *S17 and S18a, parallel*) | 1 | `52bc9c4`, merged `88a49dc`, test line `d6b2a3b` |
 | S18b | Layered layout and an explicit **Arrange** action; places nodes that have no position (`shared/loop-layout.ts`) | R2 | S18a | pending | 0 | — |
-| S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | pending | 0 | — |
+| S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | **in progress**: sent with S22 through `implement-parallel` on call 15 (decision 44) | 1 | — |
 | S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3 | S16, S18a (S19 for the model) | pending | 0 | — |
 | S21 | Step-report cards in chat, branches grouped, integrator's combined report, opt-in `SUBGOAL:` line | R4 | S16, S20 | pending | 0 | — |
-| S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5 | S16 | pending | 0 | — |
+| S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **in progress**: sent with S19 through `implement-parallel` on call 15 (decision 44) | 1 | — |
 | S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b | pending | 0 | — |
 | S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1 | S17, S23a | pending | 0 | — |
 
@@ -384,6 +384,41 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S25b — S25's follow-up — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1:** run `chat-loop-2026-11-14T09-54-18-366Z`. Briefed on coordinator visit 4 (call 12, decision 43); implemented (call 13, `done`); review `accept` (call 14, round 1); recorded and committed on coordinator visit 5 (call 15).
+- **Reconciliation:** `git status` showed the seven modified files and the new `loop-stop-signal.ts`, exactly as the implementer named them. DSpatch's comparison lists 18 files; the other ten are in commits up to `3726249`.
+- **What was done:**
+  - **N1 (R7):**
+    - `loop-control.ts` gains `LOOP_MODE_EXPLANATION`, a short `LOOP_MODE_HINT`, and a short `hint` for each button. The full sentences are kept.
+    - `LoopControlBar.tsx` gets a **Details** / **Hide details** toggle in both forms. Only the person opens or closes it, and its text is selectable. It holds the phase headline and explanation, the current note in the compact form, the full mode explanation, each mode's meaning and each button's meaning.
+    - In the compact form the toggle reads **Details · note** while a note waits.
+    - Removed: the headline's hover, the long mode hover with the note appended, and the `<option>` hovers.
+    - Styles: in `loop-editor.css` the compact panel is `position: fixed`, because the palette row clips overflow, and the strip's height is unchanged. `styles.css` styles the panel.
+  - **N2:**
+    - The new `renderer/loop-stop-signal.ts` uses `localStorage` and the `storage` event, the same pattern as `presentation-choice.ts`.
+    - `LoopEditor.tsx` sends the signal after a confirmed **Cancel run** of a watched chat run.
+    - `App.tsx` applies its existing `stop-requested` event for that run id.
+  - **N3, settled as a finding, with no code.** The loop editor never shows a walk-loop run, so there is no greyed-out **Cancel run** to fix.
+    - The host announces only editor and chat runs to the editor (`project-host.ts` l.2687, l.3147).
+    - Walk-loop runs go to their own follow window, `WalkLoopFollow.tsx`. Its **Stop** uses `reviewPair.cancelJob`.
+    - The reviewer confirmed this in `review-agent-jobs.ts` l.193.
+    - My S25 brief assumed otherwise. S25 (b), "every control that shows a run offers the same way to end it", is met: each control that shows a run can end it.
+    - Letting the editor show and cancel walk runs would need a host change. That is recorded as an open possibility, not a requirement.
+  - **Test:** one in `loop-control.test.ts`. The mode hover is at most 60 characters, each button hint at most 40, and each keeps its full sentence.
+- **Review verdict: accept.** All four criteria are met: criterion 3 by the reported finding, criterion 4 in code but untested across windows. Nothing changed in the host contract, journal, formats, prompts, routes or node sizes. Open, not blocking:
+  - The editor marks the chat entry only after a confirmed cancel, whereas the chat's own Stop marks it first.
+  - The compact Details panel is placed once when it opens and is pinned to the window's right edge.
+  - The panel's shadow is a raw `rgb()` rather than a palette variable.
+  - `stopSignalRunId` has no test.
+  - `HandoffPrompt` still uses `choice.title` as a hover. S25b did not touch it; it is for the sub-goal that next touches it.
+- **Checked, by the implementer:** `loop-control` 28/28; `loop-run-view` 33/33 (rerun because it reads `loop-editor.css`); `npm run typecheck` exit 0. The reviewer reused these.
+- **Untested:** the storage signal between real windows; the Details layout and the strip's height.
+- **Niclas tries:**
+  1. With a run paused in the loop editor, press **Details**. The phase and note should be readable and selectable, the strip should not grow, and the mode hover should be short.
+  2. Cancel a chat run from the editor. The chat should say "stop requested" until the run's ending shows.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### S25 — A paused run reads correctly in every control — reviewed (agent review, not Niclas's approval)
@@ -685,6 +720,15 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
     - **Alternatives.** Sequential S17 then S18a (slower, same calls). Pairing S18a with S19 or S22, as the planner suggested (S19 and S22 depend on S16, which is now reviewed, but S19 holds a host change and S22 depends on the S16 label question S1). Including S25 (it is small, but it touches the editor window, close to S18a's files).
 42. **S25 goes to the one implementer (`implement`)** (run `chat-loop-2026-11-14T09-54-18-366Z`, visit 3). It is small. Its three parts all concern how a paused run reads in the window: the control bar note, the editor's cancel control, and the graph's pause marks. They share one fact, how the window learns the run's phase, so splitting them would put that one choice in three branches. Alternatives: `implement-parallel` with three slices (more calls than the work; a shared undecided choice); pairing S25 with S19 or S22 in parallel (they are unrelated sub-goals, and S22 waits on S16 suggestion S1's label question, which S25 does not settle).
 43. **S25's review findings N1–N3 become a sub-goal of their own, S25b, sent to `implement` now** (visit 4). Reason: N1 is an R7 gap that S25 touched; the coordinator's S25 brief said "add or change" where R7 says "touch". N3 leaves Niclas's S25 (b) only partly met. Both are small and in the same window files S25 just changed, so the context is fresh. Alternatives: fold them into S20/S23b (it leaves an approved requirement open across several sub-goals); S19 ‖ S22 first (feasible, and next).
+44. **S19 and S22 go together through `implement-parallel`** (visit 5). Both depend only on S16, which is reviewed, and neither depends on the other. Both are substantial. They meet in two places:
+    - **The run record type `loop-record.ts`.** S22 owns it, adding fields to `RecordedRunEnding`. S19 writes its model data only as data on `node-entered` and `branch-started` in `loop-run.ts`/`loop-live*.ts`. Both are additions, so neither changes the other's fields.
+    - **`host/project-host.ts`.** S22 owns the run-start HEAD capture and the ending write (about l.3984). S19 may touch only its `prepareLoopRun` call (l.146 import, the chat-loop start path) to pass the graph for the pre-run model check. Those are different hunks, so the integrator merges them.
+
+    S16's `ModelSelectionRecord` is the shared type: S19 fills it, and S22 shows it if it is present.
+
+    S16 review suggestion S1 is still open: any step that receives a fan-out's result is labelled integrator. S22 must not show that label as fact. It shows counters only.
+
+    Alternatives: run the two in sequence (slower, about the same number of calls); keep S19 alone and do S22 with S20 (S20 also needs S18a and S19 for the model).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -703,6 +747,20 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 5 (call 15).** S25b is reviewed and committed together with this file. Then S19 and S22 were sent through `implement-parallel` (decision 44), from that commit, with no tracked change left uncommitted.
+
+**Next:** when the parallel path returns, record:
+- the slices and their owned paths;
+- each branch's `dspatch/run/chat-loop-2026-11-14T09-54-18-366Z/branches/v<n>/<slice>` branch, with its commit and ending;
+- the integrator's merges, how it handled `project-host.ts` and `run-tests.mjs`, and any proposals;
+- the review's verdict.
+
+Then commit this file. If a branch failed, record what was merged and what was not, and send the missing sub-goal through `implement` as a new attempt. After that: S20 (needs S16, S18a and S19), S21, S18b, S23a and S23b.
+
+Host code changes in S19 and S22. Both need an engine rebuild and a **Restart host** at Niclas's next transition, never during this run.
+
+If this run ends first, the next run reconciles from `git log` after the S25b commit and from `git branch --list 'dspatch/*'`.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 4 (call 12).** S25 is reviewed and committed with this file. S25b went to `implement` (decision 43). **Next:** record S25b's review and commit it. Then S19 ‖ S22: check their files for overlap and use `implement-parallel` if there is none, committing this file first. After that: S20, S21, S18b, S23a and S23b. Every UI brief says R7 covers hover texts it **touches**, not only those it adds. If this run ends first, the next run reconciles S25b from the uncommitted working copy.
 

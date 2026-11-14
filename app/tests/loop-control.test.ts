@@ -24,6 +24,8 @@ import {
   DEFAULT_LOOP_MODE,
   LOOP_MODES,
   LOOP_MODE_CHOICES,
+  LOOP_MODE_EXPLANATION,
+  LOOP_MODE_HINT,
   applyControlAction,
   controlActionsFor,
   controlForNewRun,
@@ -500,5 +502,17 @@ describe('the note from pressing Pause follows the phase (DSP-209 S25)', () => {
     assert.equal(currentControlNote(note, { runId: 'run-1', state: paused }), null);
     // Another run's report never shows this run's note.
     assert.equal(currentControlNote(note, { runId: 'run-2', state: requested }), null);
+  });
+});
+
+describe('the control bar hovers are short, and their full text is kept (DSP-209 S25b, R7)', () => {
+  it('gives each button and the mode chooser a short hover beside a full sentence', () => {
+    assert.ok(LOOP_MODE_HINT.length <= 60, 'the mode hover is a label, not the explanation');
+    assert.ok(LOOP_MODE_EXPLANATION.length > LOOP_MODE_HINT.length * 2);
+    const requested = drive(initialControlState(), [{ kind: 'step-started', step: agentStep }]);
+    for (const offer of controlActionsFor(requested, { runActive: true })) {
+      assert.ok(offer.hint.length <= 40, `${offer.id}'s hover is a few words`);
+      assert.ok(offer.title.length > offer.hint.length, `${offer.id} keeps its full sentence for Details`);
+    }
   });
 });

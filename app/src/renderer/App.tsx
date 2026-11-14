@@ -108,6 +108,7 @@ import {
 import { HandoffPrompt, LoopControlBar, useLoopControl } from './LoopControlBar';
 import { loopStaysTickedAfter } from './handoff-prompt';
 import { loopRecapPendingLine, loopRecapSentLine } from './loop-recap-view';
+import { onLoopStopRequestedElsewhere } from './loop-stop-signal';
 import { handoverLabel } from '../shared/handover-turn';
 import { Markdown } from './Markdown';
 import {
@@ -1192,6 +1193,16 @@ function Workbench({
   const applyLoopTurnEvent = useCallback((event: LoopTurnEvent): void => {
     setLoopTurns((previous) => loopTurnsAfter(previous, event));
   }, []);
+
+  // DSP-209 S25b: a stop asked for in the loop editor reads on the entry as this window's own
+  // Stop does. The reducer ignores a run with no entry here and an entry that has ended.
+  useEffect(
+    () =>
+      onLoopStopRequestedElsewhere((runId) => {
+        applyLoopTurnEvent({ kind: 'stop-requested', runId, abandonsWait: false });
+      }),
+    [applyLoopTurnEvent],
+  );
 
   /**
    * DSP-147: what the host said about a message before the window had it. The host's

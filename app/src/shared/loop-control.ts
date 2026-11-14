@@ -560,8 +560,24 @@ export interface ControlActionOffer {
   readonly id: 'pause' | 'continue';
   readonly label: string;
   readonly enabled: boolean;
+  /** The full sentence, shown in the control's Details (DSP-209 S25b, R7). */
   readonly title: string;
+  /** DSP-209 S25b, R7: the button's hover, a few words; {@link title} is the full text. */
+  readonly hint: string;
 }
+
+/**
+ * DSP-209 S25b, R7: what the mode chooser decides, in full. Shown in the control's Details,
+ * which stays open until closed; the chooser's hover is {@link LOOP_MODE_HINT}.
+ */
+export const LOOP_MODE_EXPLANATION =
+  'Applies to a step that starts an agent, runs a command or hands work to someone DSpatch does ' +
+  'not run. The loop is not held between steps: routing from one to the next never waits, and a ' +
+  'human step waits for an answer either way. Letting one step through is spent on that step, so ' +
+  'the next one asks again.';
+
+/** The mode chooser's hover: short, and its full text is {@link LOOP_MODE_EXPLANATION}. */
+export const LOOP_MODE_HINT = 'Start on their own, or wait for you. Details explains.';
 
 /**
  * Which of the two buttons can do anything, and what the other one would need.
@@ -582,6 +598,7 @@ export function controlActionsFor(
       title: options.runActive
         ? 'Let the step that is running finish, then stop before starting another. Cancel is the separate action for abandoning work in progress.'
         : 'There is no run to pause.',
+      hint: 'Stop after the running step',
     },
     {
       id: 'continue',
@@ -590,6 +607,7 @@ export function controlActionsFor(
       title: options.runActive
         ? 'Let the run start its next work step. Completed steps are not repeated.'
         : 'There is no run to continue.',
+      hint: 'Start the next step',
     },
   ];
 }

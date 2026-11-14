@@ -277,6 +277,25 @@
   flex-wrap: nowrap;
 }
 
+/*
+ * DSP-209 S25b: compact Details opens over the canvas below the strip, so opening it does
+ * not change the strip's height (DSP-86). Fixed, not absolute, because `.editor-palette`
+ * clips what overflows it; `top` is set from the toggle when it opens. Open until closed.
+ */
+.loop-control--compact .loop-control__details {
+  position: fixed;
+  right: 16px;
+  z-index: 20;
+  width: min(32rem, 80vw);
+  max-height: 60vh;
+  overflow: auto;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--panel);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+}
+
 /* The one thing the compact form keeps from the phase colours: which phase it is. */
 .loop-control--compact.loop-control--pause-requested .loop-control__phase,
 .loop-control--compact.loop-control--waiting-for-you .loop-control__phase {
