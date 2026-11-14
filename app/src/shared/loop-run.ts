@@ -1662,7 +1662,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         );
       }
       continueAfterHandoff = { reason };
-      arrival = null;
+      // The same visit's arrival, kept (S5a review finding ii): the step sent on in the loop is
+      // given exactly what the edge it arrived on delivered, not its node's fallback.
       continue;
     }
 

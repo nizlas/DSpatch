@@ -74,4 +74,6 @@ Where the step you are in offers `done-unchecked`, it means: the work is done, a
 RESULT: done-unchecked the mandate was a question about the build; no file changed
 ```
 
+Where you are offered the tool `request_interactive_handoff`, assess first whether the task benefits from the loop's steps. If working interactively with the person is a better fit — a decision only they can make, or work that has become exploratory — call that tool with a short reason, then end your turn with a short account of where the work stands. Do this before you change files where you can. The person chooses; follow their choice. If they choose to continue in the loop, carry on with the step, and do not recommend the switch again in this run. Never write the recommendation as your outcome or ask for it only in your reply: the tool is the only way it is heard.
+
 If the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.

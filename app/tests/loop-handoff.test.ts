@@ -7,16 +7,21 @@
  */
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { LoopRunController } from '../src/main/loop-control-runtime';
+import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { createHandoffTool, offersHandoff } from '../src/main/loop-live';
 import { CHAT_LOOP_WINDOW_LOOKUP, formatChatLiveLogLine } from '../src/shared/loop-chat';
-import { handoffAnswerFrom } from '../src/shared/loop-control';
+import { controlActionsFor, describeControl, handoffAnswerFrom, initialControlState } from '../src/shared/loop-control';
 import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION, type LoopGraph } from '../src/shared/loop-graph';
-import { checkLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
+import { checkLoopGraph, loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 import { serialiseLoopGraph } from '../src/shared/loop-graph-write';
 import { parseRunRecord, runOutcomeFrom, serialiseRecordLine } from '../src/shared/loop-record';
+import { createMemoryResultStore } from '../src/shared/loop-results';
 import { runLoopGraph, type RunJournalEntry, type StepExecutor } from '../src/shared/loop-run';
 import { describeLoopEnding } from '../src/shared/loop-transcript';
 
@@ -198,5 +203,77 @@ describe('the run holding on a recommendation (DSP-209 S5a)', () => {
     for (const bad of [null, 'loop', { runId: 'r', visit: 0, choice: 'loop' }, { runId: 'r', visit: 1.5, choice: 'loop' }, { runId: '', visit: 1, choice: 'loop' }, { runId: 'r', visit: 1, choice: 'maybe' }]) {
       assert.equal(handoffAnswerFrom(bad), null);
     }
+  });
+});
+
+describe('the handoff in the chat loop and the control bar (DSP-209 S5b)', () => {
+  // S5a review finding (ii): the visit sent on in the loop keeps its own arrival.
+  it('gives the visit sent on in the loop exactly what its arriving edge delivered', async () => {
+    const delivering: LoopGraph = {
+      ...graph(),
+      nodes: [
+        { id: 'first', kind: 'agent', label: 'First', produces: { required: true, form: 'stored-result' } },
+        { id: 'other', kind: 'agent', label: 'Other', produces: { required: true, form: 'stored-result' } },
+        { id: 'work', kind: 'agent', label: 'Work', consumes: ['other'], capabilities: ['suggest-interactive'] },
+        { id: 'end', kind: 'terminal', label: 'End' },
+      ],
+      entry: 'first',
+      edges: [
+        { id: 'e0', from: 'first', to: 'other', when: { on: 'success' } },
+        // The arrival decides: it delivers `first`, not the node's own `consumes`.
+        { id: 'e-in', from: 'other', to: 'work', when: { on: 'success' }, delivers: ['first'] },
+        { id: 'e1', from: 'work', to: 'end', when: { on: 'success' } },
+      ],
+    };
+    const received: string[][] = [];
+    const executor: StepExecutor = async (context) => {
+      if (context.node.id === 'work') {
+        received.push(context.received.map((result) => result.nodeId));
+      }
+      return {
+        product: { kind: 'success' },
+        summary: `scripted ${context.node.id}`,
+        providerTurns: 1,
+        resultBody: `what ${context.node.id} left`,
+        ...(context.node.id === 'work' && context.occurrence === 1 ? { handoff: { reason: 'yours to decide' } } : {}),
+      };
+    };
+    const result = await runLoopGraph(delivering, {
+      runId: 'revisit-delivers',
+      dryRun: true,
+      resultStore: createMemoryResultStore((body) => `digest-${String(body.length)}`),
+      executor,
+    });
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.deepEqual(result.path, ['first', 'other', 'work', 'work', 'end']);
+    assert.deepEqual(received, [['first'], ['first']], 'the revisit is given what e-in delivered, not consumes');
+  });
+
+  it('enables the recommendation on the chat loop\'s work step, and on no other step', () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const text = fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-chat-loop.graph.json'), 'utf8');
+    const loaded = loadLoopGraph(text, { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] });
+    assert.ok(loaded.ok, 'the chat loop must load');
+    assert.deepEqual(
+      loaded.graph.nodes.filter((node) => offersHandoff(node)).map((node) => node.id),
+      ['work'],
+    );
+  });
+
+  it('has the control bar say the run waits on the person\'s choice while a recommendation is pending', () => {
+    const handoff = {
+      runId: 'r',
+      nodeId: 'work',
+      nodeLabel: 'Do what was asked',
+      visit: 1,
+      reason: 'yours to decide',
+      heldSinceUtc: '2026-11-14T03:00:00.000Z',
+    };
+    const waiting = describeControl(initialControlState(), { runActive: true, handoff });
+    assert.equal(waiting.phase, 'waiting-for-you');
+    assert.match(waiting.detail, /"Do what was asked" recommends continuing interactively/);
+    assert.equal(describeControl(initialControlState(), { runActive: true }).phase, 'ready');
+    // Continue is not a way to answer it: only the two choices are.
+    assert.equal(controlActionsFor(initialControlState(), { runActive: true }).find((action) => action.id === 'continue')?.enabled, false);
   });
 });

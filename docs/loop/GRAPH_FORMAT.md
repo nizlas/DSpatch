@@ -55,7 +55,7 @@ Six kinds, and each one is drawn by [the reference figure](../assets/agentloop_g
 
 **The figure's three gates are not evidence for the gate rule, and this table used to imply they were.** Transcribing the figure on 16 September 2026 showed that *Plangrind*, *Jobbgrind* and *Skeptic* each draw exactly one arrow out, so all three fail the two-verdict rule above and had to be given an invented reject verdict and an invented edge before the graph would validate. The rule is right and the drawing is loose: a checkpoint drawn with one way out is a step, and the arrow that means *rejected* is the one a whiteboard leaves off. Our own loop's plan and implementation gates are the examples that satisfy it, each declaring accept, rework and needs-decision.
 
-Node attributes belong to the format, not to the editor: `id`, `kind`, `label`, `purpose`, `ending`, `role`, `model`, `limits`, `requirements`, `outcomes`, `whenUndeclared`, `declaredFailures`, `report`, `produces`, `consumes`, `required`, `notes`, `view`. Edges have `id`, `from`, `to`, `when`, `delivers`, `skips`, `label` and `notes`.
+Node attributes belong to the format, not to the editor: `id`, `kind`, `label`, `purpose`, `ending`, `role`, `model`, `limits`, `requirements`, `outcomes`, `whenUndeclared`, `declaredFailures`, `capabilities`, `report`, `produces`, `consumes`, `required`, `notes`, `view`. Edges have `id`, `from`, `to`, `when`, `delivers`, `skips`, `label` and `notes`.
 
 - **`model`** is a policy rather than a slug: `{"policy":"inherit"}`, `{"policy":"fixed","model":"…"}` or `{"policy":"described","description":"…"}`. `described` exists because [DSP-8](../../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) has not been decided: a graph can record how the model *should* be chosen without pretending the choice is automated.
 - **`limits`** bound a step, and the same shape on the graph bounds the run: `maxCalls`, `maxReworkRounds`, `maxMinutes`, `maxTasks`, `note`.
@@ -125,6 +125,18 @@ An edge may carry **`skips`**, a list of node ids: taking that edge passes those
 - **The run view** marks a skipped node *skipped*, distinct from not reached, done, failed and stopped. The conversation says *“<step>” skipped: <reason>.*, never that it finished or passed.
 
 Validation refuses, each with its own finding: an id that is not a node (`skips-a-missing-node`), a `required` node (`skips-a-required-node`), a terminal (`skips-a-terminal`), the edge's own target (`skips-its-own-target`) and its own source (`skips-its-own-source`). `required` other than `true` is `bad-required`. An empty `skips` list means the same as none. Graphs and records without either field load, validate, save and behave exactly as before, and a record without `node-skipped` reads as it always did.
+
+<a id="capabilities"></a>
+
+### What a step may do beyond its role
+
+An agent node may carry **`capabilities`**, a list of names for what DSpatch lets that step do beyond its role. There is one: **`suggest-interactive`**. [DSP-209](../../backlog/tasks/dsp-209%20-%20Adaptive-execution-and-shared-context-the-main-assignment-run-through-the-mission-loop.md) S5a and S5b, from the vision's *returning to chat* and [AGENT_BEHAVIOUR_AND_ORCHESTRATION.md §4](../AGENT_BEHAVIOUR_AND_ORCHESTRATION.md).
+
+- **What it grants.** The live step is offered DSpatch's tool `request_interactive_handoff(reason)` and nothing else: no permission changes, and no other step gets the tool. A call does not route: after the step's turn has settled, the runner journals `handoff-requested`, takes no edge and records no work result for that visit, and holds until the person answers. *Continue in the loop* journals `handoff-answered` and sends the same node on in its own session, as one more call counted against `maxCalls` and not as a rework round, with the inputs its arriving edge delivered; the tool then refuses for the rest of the run. *Continue interactively* ends the run with status `handed-over`. Silence never switches, and Cancel still ends the run.
+- **The answer is bound.** It names the run and the visit it answers; an answer for another run or an older visit is refused.
+- **Where it is not offered.** Copilot gives DSpatch tools on the chat surface only, so a Copilot loop step is not offered the tool. A dry run calls no provider, so no step there can call it; a run with no control a person could answer through continues in the loop and says so.
+
+Validation refuses a value that is not a list (`bad-capabilities`), an unknown name (`unknown-capability`) and the field on a node that is not an agent (`capabilities-on-a-non-agent`). An empty list means the same as none, and a drawing without the field loads, saves and behaves exactly as before.
 
 <a id="det-som-gör-det-till-en-loop"></a>
 

@@ -105,7 +105,7 @@ import {
   type ChatState,
   type TurnState,
 } from './turn-routing';
-import { LoopControlBar, useLoopControl } from './LoopControlBar';
+import { HandoffPrompt, LoopControlBar, useLoopControl } from './LoopControlBar';
 import { Markdown } from './Markdown';
 import {
   decideScroll,
@@ -3451,6 +3451,8 @@ function Workbench({
                   in flight, which is a different act from letting a step finish first.
                 */}
                 <LoopControlBar report={loopControl} loopIntended={useLoop} />
+                {/* DSP-209 S5b: a step's recommendation to continue interactively, while it waits. */}
+                <HandoffPrompt report={loopControl} />
                 {/*
                   §9: model selection beside the composer, saying which work it
                   affects. Not a card and not in the header — it belongs next to

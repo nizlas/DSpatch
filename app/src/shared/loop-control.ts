@@ -213,8 +213,12 @@ export function controlPhase(state: LoopControlState): ControlPhase {
 
 /** Why a step is not starting. */
 /** `resources`: the resource governor holds a new step while the machine is under pressure (DSP-173). */
-/** `handoff`: a step recommended continuing interactively and the run waits for the answer (DSP-209 S5a). */
-export type StepHold = 'pause' | 'interactive-mode' | 'human-node' | 'resources' | 'handoff';
+/**
+ * DSP-209 S5b: there is no `handoff` hold here. A hold is why a step's release waits, and a
+ * handoff is not that: the step has run, and the run waits on the person's choice, which has
+ * journal kinds of its own and is shown from the report's `handoff` (see {@link describeControl}).
+ */
+export type StepHold = 'pause' | 'interactive-mode' | 'human-node' | 'resources';
 
 /**
  * DSP-209 S5a: the recommendation a run is holding on, as the windows are shown it.
@@ -383,9 +387,24 @@ export interface ControlReport {
  */
 export function describeControl(
   state: LoopControlState,
-  options: { readonly runActive: boolean } = { runActive: true },
+  options: {
+    readonly runActive: boolean;
+    /** DSP-209 S5b: the recommendation the run holds on, from the report, when there is one. */
+    readonly handoff?: PendingHandoff;
+  } = { runActive: true },
 ): ControlReport {
   const phase = controlPhase(state);
+  // DSP-209 S5b: first, because it is the one thing the run is waiting on and only the person
+  // can answer it. Nothing is in flight; the step has finished its turn.
+  if (options.runActive && options.handoff !== undefined) {
+    return {
+      phase: 'waiting-for-you',
+      headline: 'Waiting for you',
+      detail:
+        `"${options.handoff.nodeLabel}" recommends continuing interactively, and the run waits for ` +
+        'your choice. Nothing switches until you answer, and Cancel still ends the run.',
+    };
+  }
   if (!options.runActive) {
     return {
       phase,

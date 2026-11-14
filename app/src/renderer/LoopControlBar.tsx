@@ -23,6 +23,7 @@ import {
   type LoopControlReport,
   type LoopMode,
 } from '../shared/loop-control';
+import { handoffPromptView, sendHandoffAnswer } from './handoff-prompt';
 
 /**
  * Subscribe to the control, and read it once for a window that opened halfway through.
@@ -45,6 +46,70 @@ export function useLoopControl(): LoopControlReport {
   }, []);
 
   return report;
+}
+
+/**
+ * DSP-209 S5b: a loop step's recommendation to continue interactively, and the two answers.
+ *
+ * Shown only while the control report carries one, and gone when it does not. Nothing
+ * opens on its own and nothing switches on silence: the run waits until one button is
+ * pressed, and Cancel in the composer still ends it. Every word and both answers come from
+ * {@link handoffPromptView}.
+ */
+export function HandoffPrompt({ report }: { readonly report: LoopControlReport }): JSX.Element | null {
+  const view = handoffPromptView(report);
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const key = view === null ? null : `${report.handoff?.runId ?? ''}:${String(report.handoff?.visit ?? 0)}`;
+
+  // A new recommendation starts with no leftover note and both buttons enabled.
+  useEffect(() => {
+    setSending(false);
+    setNote(null);
+  }, [key]);
+
+  if (view === null) {
+    return null;
+  }
+  return (
+    <div className="loop-handoff" data-ev="loop-handoff" role="group" aria-label="Continue interactively?">
+      <p className="loop-handoff__headline" data-ev="loop-handoff-headline">
+        {view.headline}
+      </p>
+      <blockquote className="loop-handoff__reason" data-ev="loop-handoff-reason">
+        {view.reason}
+      </blockquote>
+      <div className="loop-handoff__choices">
+        {view.choices.map((choice) => (
+          <button
+            key={choice.choice}
+            type="button"
+            className="button"
+            data-ev={`loop-handoff-${choice.choice}`}
+            title={choice.title}
+            disabled={sending}
+            onClick={() => {
+              setSending(true);
+              void sendHandoffAnswer((answer) => window.dspatch.answerLoopHandoff(answer), choice).then((refused) => {
+                setNote(refused);
+                // A refused answer leaves the question standing, so it can be answered again.
+                if (refused !== null) {
+                  setSending(false);
+                }
+              });
+            }}
+          >
+            {choice.label}
+          </button>
+        ))}
+      </div>
+      {note === null ? null : (
+        <p className="loop-handoff__note" data-ev="loop-handoff-note">
+          {note}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -86,7 +151,11 @@ export function LoopControlBar({
 }): JSX.Element | null {
   const [note, setNote] = useState<string | null>(null);
   const runActive = report.runId !== null;
-  const described = describeControl(report.state, { runActive });
+  const described = describeControl(report.state, {
+    runActive,
+    // DSP-209 S5b: the bar says the run waits on the person's choice, not that it is going.
+    ...(report.handoff === undefined ? {} : { handoff: report.handoff }),
+  });
   const actions = controlActionsFor(report.state, { runActive });
 
   const press = useCallback(async (which: 'pause' | 'continue'): Promise<void> => {

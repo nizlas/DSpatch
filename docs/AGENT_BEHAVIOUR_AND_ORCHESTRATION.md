@@ -87,6 +87,8 @@ Enabling a capability allows the agent to use it. The role instructions determin
 
 ## 4 Proposal for switching to interactive work
 
+**Status (14 November 2026): decided and partly built.** This section was a proposal. Niclas's authorisation of 13 November 2026 for DSP-209 ([BRIEF §3](missions/adaptive-execution/BRIEF.md)) made the vision's *returning to chat* a decided requirement, and this section is the design it decided; mission decision 4 records the choice of a DSpatch tool enabled per node. Built in DSP-209 S5a and S5b: the tool `request_interactive_handoff(reason)`, offered only to an agent step whose node has the capability `suggest-interactive`; the run holding for the person's choice after the step's turn has settled; the two buttons in the chat; *Continue in the loop* returning to the same step and not offering the recommendation again in the run; *Continue interactively* ending the run as handed over. Not yet built: steps 3 and 4 below — the interactive agent continuing the task once, with the run's material, without the user sending it again — which is DSP-209 S6. The rest of this section is unchanged.
+
 ### The agent recommends and the user chooses
 
 The recommendation is a documented, structured request to Maestro. A possible working name is `request_interactive_handoff`. The exact name and technical format need to be established during implementation. The adapter can convey it as a tool call or another explicit control event. The runtime must not try to detect the request by searching ordinary reply text for particular words.
