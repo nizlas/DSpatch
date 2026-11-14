@@ -3157,6 +3157,12 @@ export type LoopGraphSaveOutcome =
 export interface GraphProposalsUpdate {
   readonly conversationId: string;
   readonly proposals: readonly GraphEditProposal[];
+  /**
+   * The turn that made each proposal: proposal id to the `dspatchRunId` of the message it is
+   * kept on. Optional, so an update from a host written before it still reads; a proposal
+   * with no turn here is drawn where its turn cannot be named (Niclas, 15 November 2026).
+   */
+  readonly turns?: Readonly<Record<string, string>>;
 }
 
 /**

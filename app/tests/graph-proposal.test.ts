@@ -23,12 +23,14 @@ import {
   discardProposal,
   graphContentHash,
   manualEditsSince,
+  placeProposals,
   reconcileDisk,
   supersedeWith,
   summariseProposal,
   firstSentence,
 } from '../src/shared/graph-proposal';
-import type { GraphEditProposal, ReferenceFollowed } from '../src/shared/graph-proposal';
+import type { GraphEditProposal, ProposalPlacement, ReferenceFollowed } from '../src/shared/graph-proposal';
+import type { StoredMessage } from '../src/shared/bridge';
 import { replaceNode } from '../src/shared/loop-graph-editing';
 import { loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 import { serialiseLoopGraph } from '../src/shared/loop-graph-write';
@@ -358,5 +360,58 @@ describe('the card opens with a readable summary (DSP-209 S23b, Niclas 14 Novemb
     assert.equal(firstSentence('No sentence end here'), 'No sentence end here');
     assert.equal(firstSentence('One. Two.'), 'One.');
     assert.equal(firstSentence('Version 1.5 is out. Next.'), 'Version 1.5 is out.');
+  });
+});
+
+describe('a proposal is drawn at the turn that made it (Niclas, 15 November 2026)', () => {
+  const { text } = read('dspatch-chat-loop.graph.json');
+  const message = (ordinal: number, dspatchRunId: string, graphProposals?: readonly GraphEditProposal[]): StoredMessage => ({
+    ordinal,
+    dspatchRunId,
+    prompt: `prompt ${String(ordinal)}`,
+    answer: `answer ${String(ordinal)}`,
+    deltaCount: 0,
+    toolEvents: 0,
+    terminalStatus: 'finished',
+    errorMessage: null,
+    totalTokens: null,
+    startedAtUtc: `2026-11-14T1${String(ordinal)}:00:00.000Z`,
+    finishedAtUtc: null,
+    resentContext: null,
+    ...(graphProposals === undefined ? {} : { graphProposals }),
+  });
+  const first = { ...proposalFor(text, text, 'p1'), status: 'superseded' as const };
+  const second = { ...proposalFor(text, text, 'p2'), status: 'superseded' as const };
+  const third = { ...proposalFor(text, text, 'p3'), status: 'applied' as const };
+  // As read back after a restart: three proposals on two turns, a turn with none between.
+  const restored = [message(1, 'run-a', [first, second]), message(2, 'run-b'), message(3, 'run-c', [third])];
+  const where = (placement: ProposalPlacement): Record<string, string[]> =>
+    Object.fromEntries([...placement.byTurn].map(([turn, entries]) => [turn, entries.map((entry) => `${entry.proposal.id}:${String(entry.ordinal)}:${entry.shown ? 'shown' : 'folded'}`)]));
+
+  it('places proposals read from disk at their own turns, numbered in order, earlier versions folded', () => {
+    const placement = placeProposals(restored, null);
+    assert.deepEqual(where(placement), { 'run-a': ['p1:1:folded', 'p2:2:folded'], 'run-c': ['p3:3:shown'] });
+    assert.deepEqual(placement.unplaced, []);
+  });
+
+  it('keeps a proposal at its turn when a later status arrives, and places a new one at the turn that made it', () => {
+    // Apply's answer for p3, then a newer proposal from a later turn that supersedes it.
+    const applied = placeProposals(restored, { conversationId: 'conv-1', proposals: [first, second, third], turns: { p1: 'run-a', p2: 'run-a', p3: 'run-c' } });
+    assert.deepEqual(where(applied), { 'run-a': ['p1:1:folded', 'p2:2:folded'], 'run-c': ['p3:3:shown'] });
+    const fourth = proposalFor(text, text, 'p4');
+    const later = placeProposals(restored, {
+      conversationId: 'conv-1',
+      proposals: [first, second, { ...third, status: 'superseded' }, fourth],
+      turns: { p1: 'run-a', p2: 'run-a', p3: 'run-c', p4: 'run-d' },
+    });
+    assert.deepEqual(where(later), { 'run-a': ['p1:1:folded', 'p2:2:folded'], 'run-c': ['p3:3:folded'], 'run-d': ['p4:4:shown'] });
+  });
+
+  it('does not guess a turn it is not told', () => {
+    // An update from a host that names no turns: what the disk names keeps its place, the rest is unplaced.
+    const unnamed = proposalFor(text, text, 'p5');
+    const placement = placeProposals(restored, { conversationId: 'conv-1', proposals: [first, second, third, unnamed] });
+    assert.deepEqual(where(placement), { 'run-a': ['p1:1:folded', 'p2:2:folded'], 'run-c': ['p3:3:folded'] });
+    assert.deepEqual(placement.unplaced.map((entry) => entry.proposal.id), ['p5']);
   });
 });

@@ -143,7 +143,7 @@ import { branchViewsFromJournal, type BranchView } from '../shared/run-presentat
 import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
 import { BranchList } from './BranchList';
 import { StepReportCard } from './StepReportCard';
-import { GraphProposalCards } from './GraphProposalCard';
+import { GraphProposalGroup, useGraphProposals } from './GraphProposalCard';
 import {
   branchGroupKey,
   branchReplyGroups,
@@ -636,6 +636,7 @@ function Workbench({
     return placed;
   }, [chat.turns, loopTurns, loopInstructions]);
   const restoredMessages = session?.restoredHistory.messages ?? NO_RESTORED_MESSAGES;
+  const proposalPlacement = useGraphProposals(restoredMessages);
   const transcript = useMemo(
     () =>
       mergeTranscript(chat.turns, loopTurns, loopInstructions, restoredMessages).filter(
@@ -3271,23 +3272,35 @@ function Workbench({
                 because an ordinary message sent after a loop run would otherwise be
                 drawn above it and misstate the order of the user's own work.
               */}
+              {/*
+                DSP-209 S23b: a loop the chat proposed is drawn right after the turn that
+                proposed it, in the conversation's order, with its paths, changes and Apply;
+                Apply, Discard or a newer proposal change its status there and never move it
+                (Niclas, 15 November 2026).
+              */}
               {transcript.map((item) =>
                 item.kind === 'history' ? (
-                  <RestoredMessage
-                    key={`history-${String(item.message.ordinal)}-${item.message.dspatchRunId}`}
-                    message={item.message}
-                    prefix="history-turn"
-                    quiet
-                  />
+                  <Fragment key={`history-${String(item.message.ordinal)}-${item.message.dspatchRunId}`}>
+                    <RestoredMessage message={item.message} prefix="history-turn" quiet />
+                    <GraphProposalGroup
+                      entries={proposalPlacement.byTurn.get(item.message.dspatchRunId)}
+                      onApplied={() => void refreshLoopDefinitions()}
+                    />
+                  </Fragment>
                 ) : item.kind === 'chat' ? (
-                  <Turn
-                    key={item.turn.dspatchRunId}
-                    turn={item.turn}
-                    index={item.index}
-                    active={item.turn.dspatchRunId === activeTurn?.dspatchRunId}
-                    contextCarriedAutomatically={session.continuity.contextTransfer === 'automatic'}
-                    steering={placedMessages.get(item.turn.dspatchRunId) ?? NO_PLACED_MESSAGES}
-                  />
+                  <Fragment key={item.turn.dspatchRunId}>
+                    <Turn
+                      turn={item.turn}
+                      index={item.index}
+                      active={item.turn.dspatchRunId === activeTurn?.dspatchRunId}
+                      contextCarriedAutomatically={session.continuity.contextTransfer === 'automatic'}
+                      steering={placedMessages.get(item.turn.dspatchRunId) ?? NO_PLACED_MESSAGES}
+                    />
+                    <GraphProposalGroup
+                      entries={proposalPlacement.byTurn.get(item.turn.dspatchRunId)}
+                      onApplied={() => void refreshLoopDefinitions()}
+                    />
+                  </Fragment>
                 ) : item.kind === 'loop' ? (
                   <LoopTurnEntry
                     key={item.turn.runId}
@@ -3317,8 +3330,8 @@ function Workbench({
                   />
                 ),
               )}
-              {/* DSP-209 S23b: the loops the chat proposed, each with its paths, changes and Apply. */}
-              <GraphProposalCards restored={restoredMessages} onApplied={() => void refreshLoopDefinitions()} />
+              {/* A proposal whose turn cannot be named, which a current host never sends: not guessed into a turn. */}
+              <GraphProposalGroup entries={proposalPlacement.unplaced} onApplied={() => void refreshLoopDefinitions()} />
               {/*
                 One subdued line saying what is happening, and the live log behind
                 it for whoever wants it.

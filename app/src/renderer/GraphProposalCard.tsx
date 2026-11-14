@@ -13,8 +13,10 @@
  * **Discard** writes nothing. A proposal that is no longer open says what it is and offers no
  * Apply.
  *
- * Open proposals and the newest one are shown; earlier ones are folded into a history that can
- * be opened and read, numbered in the order they were made rather than by their ids.
+ * Each proposal is drawn at the turn that made it, in the conversation's order (Niclas,
+ * 15 November 2026). Open proposals and the newest one are shown; earlier ones are folded at
+ * their own turn, where they can be opened and read, numbered in the order they were made
+ * rather than by their ids.
  *
  * Every status, path, finding and refusal is visible text; hovers are short labels (R7).
  */
@@ -28,7 +30,10 @@ import {
   describeChangeLines,
   editorOpenFor,
   isNewLoopTarget,
+  placeProposals,
   summariseProposal,
+  type NumberedProposal,
+  type ProposalPlacement,
   targetGraphPath,
   type GraphEditProposal,
   type ProposalStatus,
@@ -51,31 +56,30 @@ export function proposalPaths(proposal: GraphEditProposal): readonly { readonly 
   ];
 }
 
-/** Whether a proposal stays in view: an open one, or the newest of all. The rest are history. */
-function inView(proposal: GraphEditProposal, index: number, all: readonly GraphEditProposal[]): boolean {
-  return proposal.status === 'proposed' || proposal.status === 'conflict' || index === all.length - 1;
+/** The conversation's proposals, restored from disk, then kept current by the host. */
+export function useGraphProposals(restored: readonly StoredMessage[]): ProposalPlacement {
+  const [live, setLive] = useState<GraphProposalsUpdate | null>(null);
+  useEffect(() => window.dspatch.onGraphProposals(setLive), []);
+  return placeProposals(restored, live);
 }
 
-/** Every proposal in the conversation; restored from disk, then kept current by the host. */
-export function GraphProposalCards({
-  restored,
+/**
+ * The proposals one turn made, drawn at that turn: those in view as cards, in the order they
+ * were made, and the earlier versions folded below them, each still readable whole.
+ */
+export function GraphProposalGroup({
+  entries,
   onApplied,
 }: {
-  readonly restored: readonly StoredMessage[];
+  readonly entries: readonly NumberedProposal[] | undefined;
   /** After an Apply, so the loop list can show a new loop. */
   readonly onApplied?: () => void;
 }): JSX.Element | null {
-  const [live, setLive] = useState<GraphProposalsUpdate | null>(null);
-  useEffect(() => window.dspatch.onGraphProposals(setLive), []);
-  const fromDisk = restored.flatMap((message) => message.graphProposals ?? []);
-  const proposals =
-    live !== null && (fromDisk.length === 0 || fromDisk.some((each) => each.conversationId === live.conversationId)) ? live.proposals : fromDisk;
-  if (proposals.length === 0) {
+  if (entries === undefined || entries.length === 0) {
     return null;
   }
-  const numbered = proposals.map((proposal, index) => ({ proposal, ordinal: index + 1, shown: inView(proposal, index, proposals) }));
-  const current = numbered.filter((entry) => entry.shown).reverse();
-  const earlier = numbered.filter((entry) => !entry.shown).reverse();
+  const current = entries.filter((entry) => entry.shown);
+  const earlier = entries.filter((entry) => !entry.shown);
   const applied = onApplied === undefined ? {} : { onApplied };
   return (
     <div className="graph-proposals" data-ev="graph-proposals">
@@ -85,7 +89,9 @@ export function GraphProposalCards({
       {earlier.length === 0 ? null : (
         <details className="graph-proposals__history" data-ev="graph-proposals-history">
           <summary>
-            Earlier proposals in this conversation ({String(earlier.length)}), none of them applied now
+            {earlier.length === 1
+              ? `Earlier version: Proposal ${String(earlier[0]?.ordinal ?? '')} · ${earlier[0]?.proposal.status ?? ''}`
+              : `Earlier versions (${String(earlier.length)}): ${earlier.map((entry) => `Proposal ${String(entry.ordinal)} · ${entry.proposal.status}`).join(', ')}`}
           </summary>
           {earlier.map((entry) => (
             <GraphProposalCard key={entry.proposal.id} proposal={entry.proposal} ordinal={entry.ordinal} {...applied} />

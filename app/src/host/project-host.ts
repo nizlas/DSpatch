@@ -254,7 +254,11 @@ const GRAPH_PROPOSALS_EVENT: BridgeChannel = 'dspatch:graph-proposals';
 
 /** DSP-209 S23b: tell the window what a conversation's proposals are now. */
 function announceGraphProposals(conversationId: string): void {
-  sendToMainWindow(GRAPH_PROPOSALS_EVENT, { conversationId, proposals: chatService.graphProposals(conversationId) });
+  sendToMainWindow(GRAPH_PROPOSALS_EVENT, {
+    conversationId,
+    proposals: chatService.graphProposals(conversationId),
+    turns: chatService.graphProposalTurns(conversationId),
+  });
 }
 
 /**

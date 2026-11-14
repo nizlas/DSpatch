@@ -4980,6 +4980,21 @@ export class ChatService {
   }
 
   /**
+   * Which turn made each proposal, by proposal id: the `dspatchRunId` of the message it is kept
+   * on, which is the turn whose agent proposed it. The window draws a proposal there, in the
+   * conversation's order, rather than after everything (Niclas, 15 November 2026).
+   */
+  graphProposalTurns(conversationId: string): Readonly<Record<string, string>> {
+    const turns: Record<string, string> = {};
+    for (const message of this.mergedMessages(conversationId)) {
+      for (const proposal of message.graphProposals ?? []) {
+        turns[proposal.id] = message.dspatchRunId;
+      }
+    }
+    return turns;
+  }
+
+  /**
    * DSP-209 S23a: keep a proposal the working turn's agent made, and mark every earlier open
    * proposal for the same graph file in this conversation `superseded`. Saved at once, as a
    * steering message is. Writes nothing but the conversation file: the proposal's graph, its

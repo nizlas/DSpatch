@@ -22,7 +22,7 @@
  * tests all import it.
  */
 
-import type { GraphToEdit } from './bridge';
+import type { GraphProposalsUpdate, GraphToEdit, StoredMessage } from './bridge';
 import { replaceNode } from './loop-graph-editing';
 import { hasErrors, loadLoopGraph, parseLoopGraph } from './loop-graph-load';
 import type { CheckOptions, Finding } from './loop-graph-load';
@@ -809,4 +809,58 @@ export function graphContentHash(text: string): string {
     b = (b ^ (b >>> 15)) >>> 0;
   }
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
+}
+
+/** Whether a proposal stays in view: an open one, or the newest of all. The rest are history. */
+export function proposalInView(proposal: GraphEditProposal, index: number, all: readonly GraphEditProposal[]): boolean {
+  return proposal.status === 'proposed' || proposal.status === 'conflict' || index === all.length - 1;
+}
+
+/** A proposal with its number in the conversation and whether it stays in view. */
+export interface NumberedProposal {
+  readonly proposal: GraphEditProposal;
+  readonly ordinal: number;
+  readonly shown: boolean;
+}
+
+/**
+ * Where the conversation's proposals are drawn (Niclas, 15 November 2026): each at the turn
+ * that made it, by that turn's `dspatchRunId`, so it keeps its place in the conversation's
+ * order whatever happens to its status later. A message read from disk carries its own
+ * proposals, which names their turn; a live update names it in `turns`. A proposal whose turn
+ * neither names is `unplaced`, and its place is not guessed.
+ */
+export interface ProposalPlacement {
+  readonly byTurn: ReadonlyMap<string, readonly NumberedProposal[]>;
+  readonly unplaced: readonly NumberedProposal[];
+}
+
+/** Pure, for the window and the tests: the proposals in force and where each is drawn. */
+export function placeProposals(restored: readonly StoredMessage[], live: GraphProposalsUpdate | null): ProposalPlacement {
+  const fromDisk = restored.flatMap((message) => message.graphProposals ?? []);
+  const useLive = live !== null && (fromDisk.length === 0 || fromDisk.some((each) => each.conversationId === live.conversationId));
+  const proposals = useLive ? live.proposals : fromDisk;
+  const turnOf = new Map<string, string>();
+  for (const message of restored) {
+    for (const proposal of message.graphProposals ?? []) {
+      turnOf.set(proposal.id, message.dspatchRunId);
+    }
+  }
+  if (useLive) {
+    for (const [id, turn] of Object.entries(live.turns ?? {})) {
+      turnOf.set(id, turn);
+    }
+  }
+  const byTurn = new Map<string, NumberedProposal[]>();
+  const unplaced: NumberedProposal[] = [];
+  proposals.forEach((proposal, index) => {
+    const entry = { proposal, ordinal: index + 1, shown: proposalInView(proposal, index, proposals) };
+    const turn = turnOf.get(proposal.id);
+    if (turn === undefined) {
+      unplaced.push(entry);
+    } else {
+      byTurn.set(turn, [...(byTurn.get(turn) ?? []), entry]);
+    }
+  });
+  return { byTurn, unplaced };
 }
