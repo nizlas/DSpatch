@@ -2701,6 +2701,8 @@ function registerLoopMethods(): void {
           outDir: null,
           resultsDir: runResultsDir(request.runId),
           modelRequested: agent.modelRequested,
+          // DSP-209 S19: a step naming no model runs with the person's model, not the entry's.
+          personModel: agent.personModel,
           keepWorkspace: true,
           // DSP-147: the editor's run works in a new folder of its own, which a workspace
           // containing it (the temp folder, a whole drive) still overlaps; so it takes the
@@ -3169,6 +3171,8 @@ function registerLoopMethods(): void {
           outDir: null,
           resultsDir: runResultsDir(request.runId),
           modelRequested,
+          // DSP-209 S19: a step naming no model runs with the person's model, not the entry's.
+          personModel: agent.personModel,
           workspacePath,
           workingRoots,
           keepWorkspace: true,
