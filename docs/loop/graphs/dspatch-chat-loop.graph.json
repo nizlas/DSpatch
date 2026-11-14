@@ -3,11 +3,11 @@
   "formatVersion": 1,
   "id": "dspatch-chat-loop",
   "name": "Chat loop",
-  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. The work step does the work and, where its tools can run commands, builds and tests it itself, fixing and re-running inside its own step until it judges the work done. A successful work step always goes to an independent checking agent, which runs the project's checks itself and either finds the assignment met, sends the work back with concrete findings, or finds that it cannot be met. DSpatch does not ask the user for a command and does not start the project's build itself; with Claude the agents run commands with Claude Code's own shell tools, which DSpatch records through the SDK's hooks. This is not the external DSpatch development loop and not the isolated duration increment.",
+  "purpose": "One bounded loop started from ordinary chat: the composer's text is the mandate. The work step does the work and, where its tools can run commands, builds and tests it itself, fixing and re-running inside its own step until it judges the work done. A work step that declares succeeded always goes to an independent checking agent, which runs the project's checks itself and either finds the assignment met, sends the work back with concrete findings, or finds that it cannot be met. Where a check would add nothing — a question answered or a reading mandate, with no file changed — the work step may instead declare done-unchecked with its reason: the check is then skipped, recorded as skipped with that reason, and the run ends at \"Done, check skipped\", which is neither a pass nor the assignment met. DSpatch does not ask the user for a command and does not start the project's build itself; with Claude the agents run commands with Claude Code's own shell tools, which DSpatch records through the SDK's hooks. This is not the external DSpatch development loop and not the isolated duration increment.",
   "target": "cursor",
   "entry": "work",
   "onRuntimeFault": "stop-and-reconcile",
-  "notes": "Rewritten for the interaction-model correction (increment 1). Work and check are both agent nodes. There is no choose-check step, no shell gate, and no branch chosen by comparing file trees. A successful work step always reaches check; the checking agent decides whether the assignment needed a build. Snapshots and path lists remain as corroboration in the record, not as routing. Since DSP-79 the two agent nodes have two provider sessions, so the check no longer inherits the work's conversation: it is given the work's own account as a declared result (produces/consumes) and nothing else. That makes it independent of the work's reasoning; it is still the same model on the same machine, so read it as a second look rather than as an outside auditor. Removing the confirmation leaves no DSpatch-specific permission gate on ordinary work (sandbox off, autoReview off, no hooks); real OS and provider permissions still apply. Do not point this graph at the DSpatch working copy. The duration fixture (dspatch-live-duration) is a separate drawing and is not this loop.",
+  "notes": "Rewritten for the interaction-model correction (increment 1). Work and check are both agent nodes. There is no choose-check step, no shell gate, and no branch chosen by comparing file trees. A work step that declares succeeded always reaches check; the checking agent decides whether the assignment needed a build. Since DSP-209 S4 the check is also skippable, by the work step's own declared outcome done-unchecked with a reason on its RESULT: line: edge e-unchecked skips check and goes around it to its own terminal, so the run records check as skipped (node-skipped, with the reason) rather than not reached, and never as met. This replaces this note's earlier rule that every finished work step reaches check; it records the vision's adaptive loops (ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md) and BACKLOG's near-term follow-up, as mission decision 12 of DSP-209. check is deliberately not required here; a drawing that needs an independent check on every path marks it required. Snapshots and path lists remain as corroboration in the record, not as routing. Since DSP-79 the two agent nodes have two provider sessions, so the check no longer inherits the work's conversation: it is given the work's own account as a declared result (produces/consumes) and nothing else. That makes it independent of the work's reasoning; it is still the same model on the same machine, so read it as a second look rather than as an outside auditor. Removing the confirmation leaves no DSpatch-specific permission gate on ordinary work (sandbox off, autoReview off, no hooks); real OS and provider permissions still apply. Do not point this graph at the DSpatch working copy. The duration fixture (dspatch-live-duration) is a separate drawing and is not this loop.",
   "limits": {
     "maxTasks": 1,
     "maxCalls": 7,
@@ -56,10 +56,10 @@
       "limits": {
         "maxMinutes": 15
       },
-      "outcomes": ["succeeded", "unclear"],
+      "outcomes": ["succeeded", "done-unchecked", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["spec-error", "blocked"],
-      "notes": "The branch is the named verdict the reply declares (RESULT: succeeded or RESULT: unclear, or a first-line SPEC_ERROR / BLOCKED). A missing or contradictory name routes as unclear — that is cheaper than a false success. whenUndeclared is where that last sentence is now written down, and it is DSP-103: until 30 September 2026 this node got that route because the word unclear was one of two spellings the engine recognised, which was a routing decision taken by a spelling and stated nowhere in the drawing. Nothing is inferred from an outcome's name any more; this line is the whole of it, and renaming the outcome would now mean renaming it here too rather than silently changing where a non-answer goes. DSpatch's before-and-after snapshot is corroboration in the record, not this branch. `produces.required` is false on purpose, and it is the one place this small loop had to choose: this step's account is required by `check`, and `consumes` enforces it there, on the one path that needs it. Requiring it here would enforce it on every path — including `unclear`, `spec-error` and `blocked`, where the drawing already ends honestly at `not-established` or `stopped`, and where a required-result fault would replace a precise ending with \"establish what happened\" about a step that has already said.",
+      "notes": "The branch is the named verdict the reply declares (RESULT: succeeded, RESULT: done-unchecked with its reason after the name, or RESULT: unclear, or a first-line SPEC_ERROR / BLOCKED). A missing or contradictory name routes as unclear — that is cheaper than a false success. whenUndeclared is where that last sentence is now written down, and it is DSP-103: until 30 September 2026 this node got that route because the word unclear was one of two spellings the engine recognised, which was a routing decision taken by a spelling and stated nowhere in the drawing. Nothing is inferred from an outcome's name any more; this line is the whole of it, and renaming the outcome would now mean renaming it here too rather than silently changing where a non-answer goes. DSpatch's before-and-after snapshot is corroboration in the record, not this branch. `produces.required` is false on purpose, and it is the one place this small loop had to choose: this step's account is required by `check`, and `consumes` enforces it there, on the one path that needs it. Requiring it here would enforce it on every path — including `unclear`, `spec-error` and `blocked`, where the drawing already ends honestly at `not-established` or `stopped`, and where a required-result fault would replace a precise ending with \"establish what happened\" about a step that has already said.",
       "report": { "writtenBy": "self" },
       "produces": { "required": false, "form": "stored-result", "note": "Your account of what you established and what you did not. The checking step is a different agent with none of this conversation, and what you write here is the only thing it is given about your work." },
       "view": { "x": 360, "y": 60 }
@@ -122,6 +122,14 @@
       "purpose": "The work step reported that the premise was wrong or that it was blocked, so the work was not done and nothing was checked. Its own sentence is in the conversation.",
       "ending": "not-success",
       "view": { "x": 100, "y": 200 }
+    },
+    {
+      "id": "check-skipped",
+      "kind": "terminal",
+      "label": "Done, check skipped",
+      "purpose": "The work step declared the work done and skipped the independent check, giving its reason on its RESULT: line; the run records the check as skipped with that reason. Nothing checked the work: this is not a pass and not the assignment met. The work step's reply is its own account.",
+      "ending": "not-success",
+      "view": { "x": 620, "y": 60 }
     }
   ],
   "edges": [
@@ -131,7 +139,16 @@
       "to": "check",
       "when": { "on": "outcome", "outcome": "succeeded" },
       "label": "work succeeded",
-      "notes": "Always hand a successful work step to check. The checking agent decides what the assignment required."
+      "notes": "Always hand a work step that declares succeeded to check. The checking agent decides what the assignment required."
+    },
+    {
+      "id": "e-unchecked",
+      "from": "work",
+      "to": "check-skipped",
+      "when": { "on": "outcome", "outcome": "done-unchecked" },
+      "skips": ["check"],
+      "label": "done, check skipped",
+      "notes": "DSP-209 S4. The work step's declared choice, with its reason after the name on its RESULT: line; the run journals check as skipped with that reason. Goes around check to its own terminal, so check cannot be reached on this route and the step's prompt is right that it is not run."
     },
     {
       "id": "e-unclear",

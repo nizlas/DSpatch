@@ -68,4 +68,10 @@ RESULT: unclear
 
 `succeeded` means you did the work the mandate asked for, as far as you can tell. `unclear` means you cannot honestly say that — you did not finish, or you cannot tell. Use `unclear` rather than guessing. A later step will check the project; do not treat your own `succeeded` as that check.
 
+Where the step you are in offers `done-unchecked`, it means: the work is done, and the independent check would add nothing, so skip it. It is right only when **you changed no file** and the mandate was a question, a reading or an explanation — the answer is the whole of the work. It is wrong for any change to code, build files, configuration or tests, however small, and wrong whenever you are unsure: then declare `succeeded` and let the check run. Skipping is recorded as skipped, never as checked or met, and the person sees your reason, so the reason is required. Give it on the same line, after the name:
+
+```
+RESULT: done-unchecked the mandate was a question about the build; no file changed
+```
+
 If the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.

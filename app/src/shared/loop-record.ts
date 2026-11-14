@@ -727,6 +727,12 @@ export const STOPPED_TERMINAL = 'stopped';
 export const NOT_CHECKED_TERMINAL = 'not-checked';
 export const NOT_ESTABLISHED_TERMINAL = 'not-established';
 export const NOT_MET_TERMINAL = 'not-met';
+/**
+ * DSP-209 S4: the chat loop's ending where the work step skipped the check. Its own
+ * sentence, because the general one ("checked nothing itself") says nothing about the
+ * skip, and the ending must never read as checked, met or passed.
+ */
+export const CHECK_SKIPPED_TERMINAL = 'check-skipped';
 
 /**
  * What the walk itself ended at, for the sentence and never for the value.
@@ -988,6 +994,13 @@ function describeGateOutcome(
             `changed is still in the working copy.` +
             andMoved
           );
+        case CHECK_SKIPPED_TERMINAL:
+          return (
+            `The work step declared the work done and skipped the independent check, with ` +
+            `the reason shown in the run. Nothing reviewed the work: this ending is the work ` +
+            `step's own account, and no verdict on it was reached. ${noCommand}` +
+            andMoved
+          );
         case NOTHING_CHANGED_TERMINAL:
           // **This sentence used to say "there was nothing to test".** It did not
           // know that, and it could not: what DSpatch measured is that no file
@@ -1106,6 +1119,8 @@ export function briefRunOutcome(
         case NOT_CHECKED_TERMINAL:
         case NOT_ESTABLISHED_TERMINAL:
           return 'Whether the assignment was met could not be established.';
+        case CHECK_SKIPPED_TERMINAL:
+          return 'The work step skipped the check and said why. Nothing reviewed the work.';
         case STOPPED_TERMINAL:
           return 'The agent stopped instead of doing the work, and said why in its reply.';
         default:

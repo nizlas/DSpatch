@@ -116,7 +116,7 @@ describe('dspatch-chat-loop graph', () => {
     assert.equal(graph.entry, 'work');
     assert.deepEqual(
       graph.nodes.map((node) => node.id),
-      ['work', 'check', 'done', 'not-met', 'not-established', 'stopped'],
+      ['work', 'check', 'done', 'not-met', 'not-established', 'stopped', 'check-skipped'],
     );
     const work = graph.nodes.find((node) => node.id === 'work');
     assert.equal(work?.model?.policy, 'inherit');
@@ -163,7 +163,7 @@ describe('dspatch-chat-loop graph', () => {
 
     const work = graph.nodes.find((node) => node.id === 'work');
     const check = graph.nodes.find((node) => node.id === 'check');
-    assert.deepEqual(work?.outcomes, ['succeeded', 'unclear']);
+    assert.deepEqual(work?.outcomes, ['succeeded', 'done-unchecked', 'unclear']);
     assert.deepEqual(check?.kind, 'agent');
     assert.deepEqual(check?.outcomes, ['met', 'rework', 'not-met', 'could-not-check']);
 
@@ -171,8 +171,16 @@ describe('dspatch-chat-loop graph', () => {
     assert.deepEqual(
       intoCheck.map((edge) => ({ from: edge.from, when: edge.when })),
       [{ from: 'work', when: { on: 'outcome', outcome: 'succeeded' } }],
-      'a successful work step always goes to check; files do not choose this branch',
+      'a work step that declares succeeded always goes to check; files do not choose this branch',
     );
+    // DSP-209 S4: the one other way past check is the work step's own declared skip, which
+    // goes around check to a terminal of its own and is journalled as skipped.
+    const skipping = graph.edges.filter((edge) => (edge.skips ?? []).length > 0);
+    assert.deepEqual(
+      skipping.map((edge) => ({ from: edge.from, to: edge.to, when: edge.when, skips: edge.skips })),
+      [{ from: 'work', to: 'check-skipped', when: { on: 'outcome', outcome: 'done-unchecked' }, skips: ['check'] }],
+    );
+    assert.equal(graph.nodes.find((node) => node.id === 'check-skipped')?.ending, 'not-success');
     assert.equal(
       graph.edges.some(
         (edge) =>
@@ -594,7 +602,7 @@ describe('describeSnapshotChange — corroboration, not a branch', () => {
   it('is not a branch the chat graph draws', () => {
     const graph = loadGraph('docs/loop/graphs/dspatch-chat-loop.graph.json');
     const work = graph.nodes.find((node) => node.id === graph.entry);
-    assert.deepEqual(work?.outcomes, ['succeeded', 'unclear']);
+    assert.deepEqual(work?.outcomes, ['succeeded', 'done-unchecked', 'unclear']);
     assert.equal(measuredWorkOutcome(work?.outcomes ?? [], nothing), null);
     assert.equal(
       graph.edges.some(
@@ -609,7 +617,7 @@ describe('describeSnapshotChange — corroboration, not a branch', () => {
 });
 
 describe('declaredOutcomeFrom — a named verdict, or nothing readable', () => {
-  const work = ['succeeded', 'unclear'];
+  const work = ['succeeded', 'done-unchecked', 'unclear'];
   const check = ['met', 'rework', 'not-met', 'could-not-check'];
 
   it('reads a whole-line RESULT the node declared', () => {

@@ -579,7 +579,7 @@ export function declaredOutcomeFrom(
     if (name === '') {
       continue;
     }
-    const token = (name.split(/\s+/)[0] ?? '').replace(/[*_]+$/, '');
+    const token = resultToken(name);
     if (token !== '') {
       found.push(token);
     }
@@ -604,14 +604,26 @@ export function declaredOutcomeFrom(
 }
 
 /**
+ * The name on a `RESULT:` line: its first word, without trailing emphasis or one trailing
+ * colon. DSP-209 S4 (S3 review finding ii): `RESULT: done-unchecked: docs only` names
+ * `done-unchecked`, where it used to name `done-unchecked:`, which no node declares, so a
+ * step that gave its reason after a colon lost its declared outcome. Shared by both readers
+ * so the outcome and its reason can never be read from different words.
+ */
+function resultToken(afterToken: string): string {
+  return (afterToken.split(/\s+/)[0] ?? '').replace(/[*_]+$/, '').replace(/:$/, '').replace(/[*_]+$/, '');
+}
+
+/**
  * DSP-209 S3: the step's reason for an outcome, from its own `RESULT:` line.
  *
  * The companion of {@link declaredOutcomeFrom} and never a replacement: it is asked only
  * after that has settled the outcome, and it reads the text after the outcome word on the
  * first `RESULT:` line naming that outcome — `RESULT: done-unchecked documentation only`
- * gives "documentation only". A separator the agent put between the two (`:`, `-`, `—`,
- * `–`, `(`) is dropped, as is a closing bracket or Markdown emphasis around the line.
- * `null` when there is no such line or nothing after the word.
+ * gives "documentation only", and so does `RESULT: done-unchecked: documentation only`. A
+ * separator the agent put between the two (`:`, `-`, `—`, `–`, `(`) is dropped, as is a
+ * closing bracket or Markdown emphasis around the line. `null` when there is no such line
+ * or nothing after the word.
  */
 export function declaredReasonFrom(text: string, outcome: string): string | null {
   for (const raw of text.split(/\r?\n/)) {
@@ -620,7 +632,7 @@ export function declaredReasonFrom(text: string, outcome: string): string | null
       continue;
     }
     const rest = opening.slice(RESULT_TOKEN.length).trim();
-    const token = (rest.split(/\s+/)[0] ?? '').replace(/[*_]+$/, '');
+    const token = resultToken(rest);
     if (token !== outcome) {
       continue;
     }
@@ -2055,12 +2067,14 @@ export const CHAT_LOOP_WINDOW_LOOKUP: ChatLiveLookup = {
       'not-met': { kind: 'terminal', label: 'Assignment not met' },
       'not-established': { kind: 'terminal', label: 'Could not establish' },
       stopped: { kind: 'terminal', label: 'Stopped without doing the work' },
+      'check-skipped': { kind: 'terminal', label: 'Done, check skipped' },
     };
     return known[id] ?? null;
   },
   edge(id) {
     const known: Record<string, { readonly label: string; readonly to: string }> = {
       'e-succeeded': { label: 'work succeeded', to: 'check' },
+      'e-unchecked': { label: 'done, check skipped', to: 'check-skipped' },
       'e-unclear': { label: 'work unclear', to: 'not-established' },
       'e-spec': { label: 'spec-error', to: 'stopped' },
       'e-blocked': { label: 'blocked', to: 'stopped' },

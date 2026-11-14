@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 sent to the implementer (coordinator visit 5, call 12).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5 sent to the implementer (coordinator visit 6, call 15).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), then the S3 commit made on coordinator visit 5 (`(DSP-209 S3)` in `git log`, the commit after `5c3c1ae`).
-- **Sub-goal in progress:** S4 (adaptive route in the bundled chat loop), sent to the implementer on coordinator visit 5.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), then the S4 commit made on coordinator visit 6 (`(DSP-209 S4)` in `git log`, the commit after `3fb6574`).
+- **Sub-goal in progress:** S5 (agent can recommend interactive work), sent to the implementer on coordinator visit 6.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
 ## Mapping (planner, run `chat-loop-2026-11-14T01-36-57-404Z`, call 2)
@@ -29,9 +29,9 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | --- | --- | --- | --- | --- | --- |
 | S1 | Context snapshot builder (pure shared code) | — | reviewed | 1 | `610fa1a` |
 | S2 | Carry the snapshot into the chat loop run | S1 | reviewed | 1 | `5c3c1ae` |
-| S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | reviewed | 1 | S3 commit after `5c3c1ae` |
-| S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | in progress | 1 | |
-| S5 | Agent can recommend interactive work (handoff tool, `handed-over`) | — (S2 useful) | pending | 0 | |
+| S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | reviewed | 1 | `3fb6574` |
+| S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | reviewed | 1 | S4 commit after `3fb6574` |
+| S5 | Agent can recommend interactive work (handoff tool, `handed-over`) | — (S2 useful) | in progress | 1 | |
 | S6 | Continue interactively without resubmitting | S5, S1 | pending | 0 | |
 | S7 | The chat knows what a loop did (one-time run recap) | S1 | pending | 0 | |
 | S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | pending | 0 | |
@@ -73,7 +73,7 @@ Statuses:
 
 **S11 — Mailbox.** `send_message`, `check_messages`, `acknowledge_message` for fan-out instances; one mailbox per run, additive kinds for sent/delivered/acknowledged; delivery at the next safe boundary (into a running turn where S9 shows it works, otherwise at `check_messages`), with non-immediate delivery stated; no blocking wait; messages to ended branches recorded undelivered; `contract-change` is a non-binding proposal for the integrator; person's instructions reach every instance. *Acceptance:* scripted two-instance run where A's message reaches B before B ends; delivery and acknowledgement separate; nothing waits without bound.
 
-**S12 — Run report.** Ending summary from journal and record: path, skipped steps with reasons, handover, per-branch ownership and changed files, integrator, usage and cost per step and branch, what was reviewed and checked, what to try, "agent review is not your approval". Nothing inferred from prose; unknown says unknown.
+**S12 — Run report.** Also carries S4's finding (i): when a run ends at "Done, check skipped" and DSpatch's own before-and-after snapshots show changed files, the ending says so, as corroboration only, never routing. Ending summary from journal and record: path, skipped steps with reasons, handover, per-branch ownership and changed files, integrator, usage and cost per step and branch, what was reviewed and checked, what to try, "agent review is not your approval". Nothing inferred from prose; unknown says unknown.
 
 **S13 — Documents and backlog.** Dated line in BACKLOG.md's near-term follow-up pointing at this file (no duplicate entry); AGENT_BEHAVIOUR §4 status if S5 did not; INTERACTION_MODEL only where skipped / handed-over need naming. Backlog: note for DSP-31 that S5 builds the shared explicit-choice mechanism it should reuse (as a field-change proposal; the coordinator changes no other card).
 
@@ -111,9 +111,19 @@ Statuses:
 - **Niclas tries:** in the loop editor, set an edge's "Steps this connection skips" to its own target and see the refusal; tick "Required — never skipped" on a node another edge skips and see that refusal; after S4, a one-line documentation question through **Use loop** showing check as **skipped** with the reason.
 - **Steps skipped:** research (code settled it); independent verification (not asked for).
 
-### S4 — Adaptive route in the bundled chat loop
+### S4 — Adaptive route in the bundled chat loop — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 5 (call 12). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 5 (call 12); implemented (call 13, `done`); review `accept` (call 14); committed on coordinator visit 6 (call 15).
+- **What was done.** `docs/loop/graphs/dspatch-chat-loop.graph.json`: `work` gains outcome `done-unchecked`; edge `e-unchecked` `work` → new terminal `check-skipped` ("Done, check skipped", `ending: "not-success"`) with `skips: ["check"]`, going around check; purpose and notes say `succeeded` always reaches check and name decision 12; `check` not required; limits unchanged. `project-work.role.md`: skip only when no file changed and the mandate was a question, reading or explanation; never after a change to code, build files, configuration or tests, or when unsure; reason required on the `RESULT:` line; wording conditional on the step offering `done-unchecked`. `loop-record.ts`: `CHECK_SKIPPED_TERMINAL` with its own ending sentences ("Nothing reviewed the work"). `loop-chat.ts`: window lookup has the new terminal and edge; shared `resultToken()` for both readers, removing one trailing `:` (decision 14). `loop-graph-load.ts`: warning `skipped-node-still-reachable` (settles S3 finding i). Tests: `loop-skips.test.ts` +5; four `loop-chat` tests that pinned the old node and outcome lists updated on purpose, plus an assertion that the only skipping edge goes around check.
+- **Review verdict: accept.** Six criteria met by reading. Caveat: the ending-sentence test feeds outcome kind `verification-not-performed`; the reviewer did not confirm that a real host run at this terminal hands that kind — Niclas's trial. Non-blocking findings: (i) the rule against skipping after a change lives only in the role text; an agent that edits code and declares `done-unchecked` ends at "Done, check skipped" with nothing flagging it — **carried into S12** (an ending line when DSpatch's snapshots show changed files, as corroboration only, never routing); (ii) the packaged app's copies under `app/build/bundled/` and `app/release/` are git-ignored build output and hold the old graph until a rebuild — stated limitation.
+- **Checked, by the implementer only** (from `app/`, single files): `loop-skips` 14/14, `loop-chat` 80/80, `loop-record` 40/40, `loop-transcript` 48/48, `loop-graph` 41/41, `loop-node-help` 28/28; `npm run typecheck` exit 0; before the last wording edits also `loop-activity`, `loop-agent-commands`, `loop-choice`, `loop-definition`, `loop-gate-check`, `loop-graph-open`, `loop-live`, `loop-provider`, `loop-run-audience`, `run-record-store`. The reviewer read the code and did not rerun.
+- **Untested:** whether a real model picks `done-unchecked` as intended; the joined-up host path; the new terminal's position in the editor.
+- **Niclas tries:** a one-line documentation question through **Use loop** — should end at "Done, check skipped" with check marked skipped and the reason shown; a small code change — should still go through "Check the work".
+- **Steps skipped:** research (code settled it); independent verification (not asked for).
+
+### S5 — Agent can recommend interactive work
+
+- **Attempt 1:** briefed on coordinator visit 6 (call 15). Not yet reviewed.
 
 ## Requirements of the vision
 
@@ -129,7 +139,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Exclusions apply to every recipient [S1, S2, S11] — open
 - Later user messages are changes to the task [sequential: works today; branches: S11] — open for branches
 - Works across a provider or model change [S1] — met by construction (DSpatch's own record); not exercised across providers
-- Steps may be skipped with a recorded reason [S3, S4] — engine and format met by reviewed S3; no bundled loop uses it until S4 — open
+- Steps may be skipped with a recorded reason [S3, S4] — met by reviewed sub-goals (chat loop's check; live model behaviour is Niclas's trial)
 - Required steps stay required [S3] — met by reviewed sub-goal (validation refuses)
 - Skipped shown as its own state; available and taken paths shown [S3] — met by reviewed sub-goal (look untested; Niclas's trial)
 - Explicit routing decisions, not inferred from prose [S3, S5] — open
@@ -177,6 +187,9 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 8. **One provider per run** (S2, S11). Reason: snapshot and messages never cross a provider/account boundary, so the content-exclusion contract is not crossed. Alternative: per-node provider (changes what a provider receives; would stop for Niclas).
 9. **No blocking wait tool for messages** (S11). Reason: mutual waiting impossible by construction. Alternative: wait with timeout (bounded, adds a failure mode).
 11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
+13. **"Done, check skipped" ends as `not-success` with its own sentences** (S4). Reason: `success` means "Assignment met"; `not-success` draws a neutral mark. Alternatives: `report-delivered` (would claim a report); a new `TerminalEnding` value (changes the graph-format contract for no gain).
+14. **One trailing `:` after the outcome name is accepted, by one shared reader** (S4). Reason: a step writing `RESULT: done-unchecked: docs only` otherwise lost its outcome and the skip; every existing name reads the same. Alternative: fix only the comment and leave colon-writers routed to the fallback.
+12. **The bundled chat loop's check becomes skippable** (S4). The chat loop's notes record the interaction-model correction's "a successful work step always reaches check"; the vision (adaptive loops) and BACKLOG's near-term follow-up ("mandatory checking in the small chat loop is not evidence") supersede that for this graph, under Niclas's 13 November authorisation (BRIEF §3). The graph's notes are updated to say which decision they now record. A skipped check ends at a terminal that never reads as "met". Alternatives: keep check mandatory and demonstrate skips only in a new graph (leaves the vision's main case unbuilt); make check skippable in the development loop too (not asked for; that loop guards code changes).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -189,7 +202,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 5 (call 12).** S3 reviewed and committed. S4 sent to the implementer, carrying S3's review findings (i) and (ii). When the review returns: if accepted, record and commit S4, then brief S5 (no hard dependency). If a run ends before S4's review is recorded, the next run reconciles S4's files (`docs/loop/graphs/dspatch-chat-loop.graph.json`, `docs/loop/roles/project/project-work.role.md`, `app/src/shared/loop-transcript.ts`, `loop-graph-load.ts`, `loop-chat.ts`, their tests) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 6 (call 15).** S4 reviewed and committed. S5 sent to the implementer (the largest sequential sub-goal so far). When the review returns: if accepted, record and commit S5, then brief S6 (depends on S5, S1). If S5 stalls or blocks, S6 depends on it; go on with S7, then S8 and S9. If a run ends before S5's review is recorded, the next run reconciles S5's files (`app/src/shared/loop-run.ts`, `loop-control.ts`, `loop-graph.ts`, `loop-graph-load.ts`, `loop-record.ts`, `loop-transcript.ts`, `loop-chat.ts`, `bridge.ts`, `app/src/main/loop-live.ts`, `loop-control-runtime.ts`, `app/src/host/project-host.ts`, renderer files, the chat loop graph and work role, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md`, their tests) before briefing again.
 
 ## Run log
 

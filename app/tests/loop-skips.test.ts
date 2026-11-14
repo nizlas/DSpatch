@@ -8,16 +8,22 @@
  */
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 
 import {
   LOOP_GRAPH_FORMAT,
   LOOP_GRAPH_FORMAT_VERSION,
   type LoopGraph,
 } from '../src/shared/loop-graph';
-import { checkLoopGraph, hasErrors, parseLoopGraph } from '../src/shared/loop-graph-load';
+import { checkLoopGraph, hasErrors, loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 import { serialiseLoopGraph } from '../src/shared/loop-graph-write';
 import {
+  CHAT_LOOP_WINDOW_LOOKUP,
   chatPromptFor,
   declaredOutcomeFrom,
   declaredReasonFrom,
@@ -25,7 +31,13 @@ import {
   lookupFromGraph,
   skippingRoutesOf,
 } from '../src/shared/loop-chat';
-import { parseRunRecord, serialiseRecordLine } from '../src/shared/loop-record';
+import {
+  briefRunOutcome,
+  CHECK_SKIPPED_TERMINAL,
+  describeRunOutcome,
+  parseRunRecord,
+  serialiseRecordLine,
+} from '../src/shared/loop-record';
 import { NO_SKIP_REASON, runLoopGraph, type StepExecutor, type StepProduct } from '../src/shared/loop-run';
 import { nodeRunStateFor, nodeRunStates, runViewFor, type RunView } from '../src/shared/loop-run-view';
 
@@ -235,5 +247,111 @@ describe('skipping a step on purpose (DSP-209 S3)', () => {
       chatPromptFor(check, { entryId: 'decide', mandate: 'Fix the README.', skipping: skippingRoutesOf(g, 'check') }),
       chatPromptFor(check, { entryId: 'decide', mandate: 'Fix the README.' }),
     );
+  });
+
+  // S4, S3 review finding (i): a skipped step the walk can still reach is said, not refused.
+  it('warns when a skipped step can still be reached from where the skipping edge leads', () => {
+    const roundabout = graph({
+      edges: graph().edges.map((edge) => (edge.id === 'e-quick' ? { ...edge, to: 'other' } : edge)).concat([
+        { id: 'e-back', from: 'other', to: 'check', when: { on: 'outcome', outcome: 'again' } },
+      ]),
+      nodes: graph().nodes.map((node) => (node.id === 'other' ? { ...node, outcomes: ['again', 'onward'] } : node)),
+    });
+    const fixed = {
+      ...roundabout,
+      edges: roundabout.edges.map((edge) =>
+        edge.id === 'e-other' ? { ...edge, when: { on: 'outcome' as const, outcome: 'onward' } } : edge,
+      ),
+    };
+    const findings = checkLoopGraph(fixed);
+    assert.equal(hasErrors(findings), false, 'a warning, not a refusal');
+    assert.deepEqual(
+      findings.filter((finding) => finding.code === 'skipped-node-still-reachable').map((finding) => finding.severity),
+      ['warning'],
+    );
+    assert.equal(checkLoopGraph(graph()).some((finding) => finding.code === 'skipped-node-still-reachable'), false);
+  });
+
+  // S4, S3 review finding (ii): a colon after the name is read the same by both readers.
+  it('reads a name followed by a colon, and every name without one exactly as before', () => {
+    const outcomes = ['succeeded', 'done-unchecked', 'unclear', 'met', 'rework', 'not-met', 'could-not-check'];
+    const reply = 'Answered the question.\nRESULT: done-unchecked: the mandate was a question; no file changed';
+    assert.equal(declaredOutcomeFrom(reply, outcomes)?.outcome, 'done-unchecked');
+    assert.equal(declaredReasonFrom(reply, 'done-unchecked'), 'the mandate was a question; no file changed');
+    assert.equal(declaredOutcomeFrom('**RESULT: met:** all green', outcomes)?.outcome, 'met');
+    for (const name of outcomes) {
+      assert.equal(declaredOutcomeFrom(`RESULT: ${name}`, outcomes)?.outcome, name);
+      assert.equal(declaredOutcomeFrom(`**RESULT: ${name}**`, outcomes)?.outcome, name);
+      assert.equal(declaredOutcomeFrom(`RESULT: ${name} because`, outcomes)?.outcome, name);
+    }
+    // Still one name: "met:" and "met" on two lines agree, a different name still contradicts.
+    assert.equal(declaredOutcomeFrom('RESULT: met:\nRESULT: met', outcomes)?.outcome, 'met');
+    assert.equal(declaredOutcomeFrom('RESULT: met:\nRESULT: rework', outcomes), null);
+    assert.equal(declaredOutcomeFrom('RESULT: met::', outcomes), null, 'only one trailing colon is taken off');
+  });
+});
+
+describe('the chat loop can skip its check (DSP-209 S4)', () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const text = fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-chat-loop.graph.json'), 'utf8');
+  const loaded = loadLoopGraph(text, { resolveRole: createFileRoleResolver(repoRoot), connectedTargets: ['cursor'] });
+
+  it('validates, with no warning that the skipped check could still run', () => {
+    assert.ok(loaded.ok, 'the chat loop must load');
+    assert.equal(loaded.findings.some((finding) => finding.code === 'skipped-node-still-reachable'), false);
+    assert.equal(loaded.graph.nodes.find((node) => node.id === 'check')?.required, undefined);
+  });
+
+  it('ends at "Done, check skipped" with check skipped and the work step\'s reason, and never says checked or met', async () => {
+    assert.ok(loaded.ok);
+    const executor: StepExecutor = async (context) => ({
+      product:
+        context.node.id === 'work'
+          ? { kind: 'outcome', outcome: 'done-unchecked', source: 'step-declared' }
+          : { kind: 'success' },
+      summary: `scripted ${context.node.id}`,
+      providerTurns: 0,
+      ...(context.node.id === 'work' ? { reason: 'the mandate was a question; no file changed' } : {}),
+    });
+    const result = await runLoopGraph(loaded.graph, { runId: 'chat-skip', dryRun: true, executor });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.terminalNodeId, CHECK_SKIPPED_TERMINAL);
+    assert.deepEqual(result.path, ['work', 'check-skipped']);
+    assert.deepEqual(result.skipped, [
+      { nodeId: 'check', edgeId: 'e-unchecked', decidedBy: 'work', reason: 'the mandate was a question; no file changed' },
+    ]);
+    assert.equal(nodeRunStateFor(nodeRunStates(endedView(result.journal)), 'check'), 'skipped');
+
+    const conversation = result.journal
+      .map((entry) => formatChatLiveLogLine(entry, CHAT_LOOP_WINDOW_LOOKUP))
+      .filter((line): line is string => line !== null);
+    assert.ok(conversation.includes('“Check the work” skipped: the mandate was a question; no file changed.'), conversation.join('\n'));
+    const ending = [
+      describeRunOutcome('verification-not-performed', {
+        commands: [],
+        walk: { terminalNodeId: CHECK_SKIPPED_TERMINAL, terminalEnding: 'not-success', movedPaths: [], movedPathsNotListed: 0 },
+      }),
+      briefRunOutcome('verification-not-performed', CHECK_SKIPPED_TERMINAL, 'not-success') ?? '',
+    ];
+    assert.match(ending[0] ?? '', /skipped the independent check/);
+    assert.match(ending[1] ?? '', /skipped the check and said why/);
+    for (const line of [...conversation, ...ending]) {
+      assert.doesNotMatch(line, /\bchecked\b|\bmet\b|\bpass(ed)?\b/i, `says too much: ${line}`);
+    }
+  });
+
+  it('still hands a work step that declares succeeded to check, and skips nothing', async () => {
+    assert.ok(loaded.ok);
+    const executor: StepExecutor = async (context) => ({
+      product:
+        context.node.id === 'work'
+          ? { kind: 'outcome', outcome: 'succeeded', source: 'step-declared' }
+          : { kind: 'outcome', outcome: 'met', source: 'step-declared' },
+      summary: `scripted ${context.node.id}`,
+      providerTurns: 0,
+    });
+    const result = await runLoopGraph(loaded.graph, { runId: 'chat-full', dryRun: true, executor });
+    assert.deepEqual(result.path, ['work', 'check', 'done']);
+    assert.deepEqual(result.skipped, []);
   });
 });

@@ -1955,6 +1955,22 @@ function checkResultFlow(
             `skipping it is right.`,
           ids,
         );
+        continue;
+      }
+      // S3 review finding (i): the step is told the skipped step "is not run". That holds
+      // only if no route onward from where this edge lands leads back to it. Allowed — a
+      // later visit by another route is the format's rule — but said, because the drawing
+      // then makes the step's prompt promise something the walk may break.
+      if (canReach(edge.to, skippedId)) {
+        findings.warning(
+          'skipped-node-still-reachable',
+          pointer,
+          `Edge "${edge.id}" skips "${skippedId}", and "${skippedId}" can still be reached from ` +
+            `"${edge.to}", where this edge leads. The run may then visit it after all, while the ` +
+            `step that chose this edge was told it would not run. Draw the edge so it goes around ` +
+            `"${skippedId}" if skipping it should mean it does not run.`,
+          ids,
+        );
       }
     }
   }
