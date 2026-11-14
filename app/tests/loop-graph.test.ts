@@ -309,6 +309,7 @@ test('every attribute a graph can set has a row saying who honours it', () => {
     'declaredFailures',
     'required',
     'capabilities',
+    'fanOut',
     'view',
   ];
   const settableOnAGraph = ['limits', 'archive', 'onRuntimeFault', 'failureKinds', 'notes'];

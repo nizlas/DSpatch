@@ -27,6 +27,9 @@ import {
   LOOP_GRAPH_FORMAT,
   LOOP_GRAPH_FORMAT_VERSION,
   LOOP_TARGETS,
+  BRANCH_FAILED,
+  FAN_OUT_ISOLATIONS,
+  FAN_OUT_MAX_CONCURRENT,
   NODE_CAPABILITIES,
   NODE_KINDS,
   REPORT_WRITTEN_BY_SELF,
@@ -44,6 +47,8 @@ import {
 import type {
   ArchivePolicy,
   EdgeCondition,
+  FanOutIsolation,
+  FanOutPolicy,
   NodeCapability,
   FailureKind,
   LoopEdge,
@@ -579,6 +584,8 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
     }
     // DSP-209 S5a. A list of known capability names, on an agent node only.
     const capabilities = parseCapabilities(entry['capabilities'], `${pointer}/capabilities`, nodeId, kind as NodeKind, findings);
+    // DSP-209 S10a. The shape here; what it points at is checked with the whole graph.
+    const fanOut = parseFanOut(entry['fanOut'], `${pointer}/fanOut`, nodeId, kind as NodeKind, findings);
 
     nodes.push({
       id: nodeId,
@@ -587,6 +594,7 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       ...(nonEmptyString(entry['purpose']) ? { purpose: entry['purpose'] as string } : {}),
       ...(required === true ? { required: true as const } : {}),
       ...(capabilities === null ? {} : { capabilities }),
+      ...(fanOut === null ? {} : { fanOut }),
       ...(ending ? { ending } : {}),
       ...(role ? { role } : {}),
       ...(model ? { model } : {}),
@@ -1075,6 +1083,56 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
  * DSP-209 S5a: a node's capabilities. `null` for none written, or an empty list, so a
  * node without them parses exactly as before. Each refusal has its own finding.
  */
+/**
+ * DSP-209 S10a: a node's `fanOut`, or `null` for none or one this build refuses. The shape
+ * and the node kind are checked here; `slicesFrom`, the handoff capability and the
+ * `branch-failed` route are checked against the whole graph in {@link checkLoopGraph}.
+ */
+function parseFanOut(
+  value: unknown,
+  pointer: string,
+  nodeId: string,
+  kind: NodeKind,
+  findings: Findings,
+): FanOutPolicy | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (kind !== 'agent') {
+    findings.error(
+      'fan-out-on-a-non-agent',
+      pointer,
+      `Node "${nodeId}" is a ${kind} node and gives "fanOut", which only an agent step can use: ` +
+        `its branches are agent sessions. Remove "fanOut" from this node.`,
+      { nodeId },
+    );
+    return null;
+  }
+  const record = isRecord(value) ? value : null;
+  const slicesFrom = record === null ? null : nonEmptyString(record['slicesFrom']);
+  const maxConcurrent = record?.['maxConcurrent'];
+  const isolation = record?.['isolation'];
+  if (
+    record === null ||
+    slicesFrom === null ||
+    typeof maxConcurrent !== 'number' ||
+    !Number.isInteger(maxConcurrent) ||
+    maxConcurrent < 1 ||
+    maxConcurrent > FAN_OUT_MAX_CONCURRENT ||
+    !(FAN_OUT_ISOLATIONS as readonly unknown[]).includes(isolation)
+  ) {
+    findings.error(
+      'bad-fan-out',
+      pointer,
+      `Node "${nodeId}": "fanOut" must be { "slicesFrom": <node id>, "maxConcurrent": 1 to ` +
+        `${String(FAN_OUT_MAX_CONCURRENT)}, "isolation": ${FAN_OUT_ISOLATIONS.map((name) => `"${name}"`).join(' or ')} }.`,
+      { nodeId },
+    );
+    return null;
+  }
+  return { slicesFrom, maxConcurrent, isolation: isolation as FanOutIsolation };
+}
+
 function parseCapabilities(
   value: unknown,
   pointer: string,
@@ -1953,6 +2011,65 @@ function checkResultFlow(
     }
   }
 
+  // DSP-209 S10a: what a fan-out needs from the rest of the drawing. Each refusal is its own
+  // finding, named as GRAPH_FORMAT.md's *Fan-out* names it.
+  for (const node of graph.nodes) {
+    const fanOut = node.fanOut;
+    if (fanOut === undefined) {
+      continue;
+    }
+    const pointer = `${pointerOf.get(node.id) ?? '/nodes'}/fanOut`;
+    const ids: Ids = { nodeId: node.id };
+    const source = byId.get(fanOut.slicesFrom);
+    if (
+      source === undefined ||
+      source.kind !== 'agent' ||
+      (source.produces?.form !== 'stored-result' && source.produces?.form !== 'markdown-file') ||
+      source.id === node.id ||
+      !canReach(source.id, node.id)
+    ) {
+      findings.error(
+        'fan-out-slices-from-unusable',
+        pointer,
+        `Node "${node.id}" takes its slices from "${fanOut.slicesFrom}", which ` +
+          (source === undefined
+            ? 'is not a node in this graph.'
+            : source.id === node.id
+              ? 'is this node itself.'
+              : source.kind !== 'agent'
+                ? `is a ${source.kind} node, not an agent step.`
+                : source.produces?.form !== 'stored-result' && source.produces?.form !== 'markdown-file'
+                  ? 'declares no stored result or Markdown file for the slice block to be in.'
+                  : 'no path through this graph runs before it.'),
+        ids,
+      );
+    }
+    if ((node.capabilities ?? []).includes('suggest-interactive')) {
+      findings.error(
+        'fan-out-with-handoff',
+        pointer,
+        `Node "${node.id}" both fans out and may recommend continuing interactively. One branch ` +
+          `could then hold the whole run on its own recommendation, so the two are not combined: ` +
+          `remove "suggest-interactive" from this node.`,
+        ids,
+      );
+    }
+    const declaresBranchFailed = graph.failureKinds.some((kind) => kind.id === BRANCH_FAILED);
+    const routesBranchFailed = (outgoing.get(node.id) ?? []).some(
+      (edge) => edge.when.on === 'declared-failure' && edge.when.failure === BRANCH_FAILED,
+    );
+    if (!declaresBranchFailed || !routesBranchFailed || !(node.declaredFailures ?? []).includes(BRANCH_FAILED)) {
+      findings.error(
+        'fan-out-without-branch-failed',
+        pointer,
+        `Node "${node.id}" fans out, so it needs a way out for a branch that fails: declare ` +
+          `"${BRANCH_FAILED}" in the graph's failureKinds and in this node's declaredFailures, and ` +
+          `draw an edge for it from this node.`,
+        ids,
+      );
+    }
+  }
+
   // DSP-209 S3: what an edge may skip. Each refusal has its own finding, because each says
   // something different about the drawing and has a different fix.
   for (const edge of graph.edges) {
@@ -2080,6 +2197,11 @@ function reportNotYetHonoured(graph: LoopGraph, findings: Findings): void {
     }
     if (edge.skips !== undefined) {
       note('skips', `edge ${edge.id}`);
+    }
+  }
+  for (const node of graph.nodes) {
+    if (node.fanOut !== undefined) {
+      note('fanOut', node.id);
     }
   }
 

@@ -89,6 +89,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'declaredFailures',
     // DSP-209 S5a: what the step may do beyond its role, after the names it may answer with.
     'capabilities',
+    // DSP-209 S10a: how the step's work is split, beside what else it may do.
+    'fanOut',
     'report',
     'produces',
     'consumes',
@@ -102,6 +104,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/nodes/*/report': ['writtenBy', 'path'],
   '/nodes/*/produces': ['required', 'form', 'note'],
   '/nodes/*/view': ['x', 'y'],
+  '/nodes/*/fanOut': ['slicesFrom', 'maxConcurrent', 'isolation'],
   // `delivers` sits next to `when`, because the two together are what an arrival is:
   // when it is taken, and what travels along it.
   // `skips` follows them: what taking the edge passes by (DSP-209 S3).
@@ -123,6 +126,7 @@ const INLINE_PATHS: ReadonlySet<string> = new Set([
   '/nodes/*/report',
   '/nodes/*/produces',
   '/nodes/*/view',
+  '/nodes/*/fanOut',
   '/nodes/*/requirements',
   '/nodes/*/outcomes',
   '/nodes/*/declaredFailures',

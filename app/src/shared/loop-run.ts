@@ -1356,6 +1356,18 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       );
     }
 
+    // DSP-209 S10a: a fan-out node is drawn and validated in this build but not run by it.
+    // Refused before anything starts, so no ordinary single step stands in for its branches.
+    if (current.fanOut !== undefined) {
+      return fail(
+        neverStarted(
+          current.id,
+          `"${current.id}" fans its work out over parallel branches, and this build does not run ` +
+            'fan-out yet (DSP-209 S10b).',
+        ),
+      );
+    }
+
     callId += 1;
     const limits = effectiveLimits(graph, current);
     const step: StepRef = {

@@ -91,6 +91,20 @@ export const SUGGEST_INTERACTIVE_HELP: SettingHelp = {
   whenEmpty: 'The step is not offered the tool, and the run never stops to ask about working interactively.',
 };
 
+/** DSP-209 S10a: a node's `fanOut`, as the node panel explains it. */
+export const FAN_OUT_HELP: SettingHelp = {
+  name: 'Split this step over parallel branches',
+  detail:
+    'The step named in "slicesFrom" writes a dspatch-slices block: up to six slices, each with its ' +
+    'result, the paths it owns, its allowed actions, contracts and check. This step then runs as ' +
+    'one branch per slice, at most "maxConcurrent" at a time (1 to 3, and Cursor runs one at a ' +
+    'time), each in its own session and, with "worktree" isolation, its own worktree from one ' +
+    'recorded base commit. It ends in success, or in "branch-failed" when a branch or the slice ' +
+    'block fails. The next step integrates: the engine does not merge. This build validates the ' +
+    'field and refuses a run that reaches the node; running the branches comes with DSP-209 S10b.',
+  whenEmpty: 'The step runs once, as one agent, like any other step.',
+};
+
 /** The four bounds a graph or a node may set. */
 export type LimitKey = 'maxCalls' | 'maxReworkRounds' | 'maxMinutes' | 'maxTasks';
 

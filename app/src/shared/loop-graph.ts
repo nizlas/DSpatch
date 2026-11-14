@@ -548,6 +548,25 @@ export interface ResultPolicy {
   readonly note?: string;
 }
 
+/** DSP-209 S10a: how a fan-out's branches share the project. */
+export const FAN_OUT_ISOLATIONS = ['worktree', 'shared-read-only'] as const;
+export type FanOutIsolation = (typeof FAN_OUT_ISOLATIONS)[number];
+
+/** DSP-209 S10a: the most branches one fan-out may run at the same time, whatever the adapter. */
+export const FAN_OUT_MAX_CONCURRENT = 3;
+
+/** The failure a fan-out node declares when a branch, or its slice block, fails. */
+export const BRANCH_FAILED = 'branch-failed';
+
+/** DSP-209 S10a: a node's fan-out, as GRAPH_FORMAT.md specifies it. */
+export interface FanOutPolicy {
+  /** The node whose result holds the `dspatch-slices` block. */
+  readonly slicesFrom: string;
+  /** 1 to {@link FAN_OUT_MAX_CONCURRENT}; the adapter's own cap may lower it. */
+  readonly maxConcurrent: number;
+  readonly isolation: FanOutIsolation;
+}
+
 /** DSP-209 S5a: the capabilities a drawing may give an agent node. */
 export const NODE_CAPABILITIES = ['suggest-interactive'] as const;
 export type NodeCapability = (typeof NODE_CAPABILITIES)[number];
@@ -571,6 +590,13 @@ export interface LoopNode {
    * Absent offers nothing, which is every drawing written before this field.
    */
   readonly capabilities?: readonly NodeCapability[];
+  /**
+   * DSP-209 S10a: this agent step's work is split over parallel branch instances, one per
+   * slice in the slice block `slicesFrom`'s result holds. Format and validation only in this
+   * build: a run that reaches such a node refuses it, and S10b runs it. See GRAPH_FORMAT.md,
+   * *Fan-out*.
+   */
+  readonly fanOut?: FanOutPolicy;
   /**
    * What arriving here means for the assignment. Terminals only. See {@link TerminalEnding}.
    */
@@ -995,6 +1021,11 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     caveat:
       'It records a skip; it does not route. The edge is chosen exactly as it would be without ' +
       'the field, and a skipped step reached later by another path is visited as usual.',
+  },
+  {
+    attribute: 'fanOut',
+    honoured: false,
+    by: 'DSP-209 S10b. This build validates it and refuses a run that reaches the node; running its branches comes with S10b.',
   },
   {
     attribute: 'capabilities',
