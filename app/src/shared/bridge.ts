@@ -21,7 +21,7 @@ import type {
 } from '../adapter/types';
 import type { StepActivity } from './loop-activity';
 import type { LiveOutputAddress } from './run-presentation';
-import type { GraphEditProposal } from './graph-proposal';
+import type { GraphEditProposal, ProposalStatus } from './graph-proposal';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
@@ -2618,7 +2618,10 @@ export interface DspatchBridge {
    * cancels or duplicates work; a run in progress carries on either way. Asking twice
    * focuses the window that is already open rather than making a second one.
    */
-  openLoopEditor(): Promise<LoopEditorWindowOutcome>;
+  /** DSP-209 S23b: with a graph path, the editor opens that file, as the File menu's Open Graph File does. */
+  openLoopEditor(graphPath?: string): Promise<LoopEditorWindowOutcome>;
+  /** DSP-209 S23b: a conversation's graph proposals, whenever one is made, applied or discarded. */
+  onGraphProposals(listener: (update: GraphProposalsUpdate) => void): () => void;
   /**
    * DSP-209 S20: follow one fan-out branch's live output in a window of its own. The client
    * opens it; the host is asked nothing new. Opening starts and changes nothing in the run.
@@ -3089,12 +3092,52 @@ export type LoopGraphOpenOutcome =
 export interface LoopGraphSaveRequest {
   readonly path: string;
   readonly text: string;
+  /**
+   * DSP-209 S23b: the content hash of the file this editor loaded or last wrote. Given, the host
+   * writes only while the disk still holds that, so a stale editor never overwrites a change
+   * applied from the chat. Absent, the save writes exactly as before.
+   */
+  readonly expectedContentHash?: string;
+  /**
+   * DSP-209 S23b: apply or discard a graph proposal kept on the conversation. The host takes the
+   * files from the stored proposal, not from `path` and `text`, and writes only inside the open
+   * project folders, never while a run of that graph is active, and never over a changed base.
+   * Applying starts no run.
+   */
+  readonly proposal?: {
+    readonly conversationId: string;
+    readonly proposalId: string;
+    readonly action: 'apply' | 'discard';
+  };
 }
 
 export type LoopGraphSaveOutcome =
-  | { readonly kind: 'written'; readonly path: string; readonly bytes: number; readonly atUtc: string }
+  | {
+      readonly kind: 'written';
+      readonly path: string;
+      readonly bytes: number;
+      readonly atUtc: string;
+      /** DSP-209 S23b: a proposal's status after Apply. */
+      readonly status?: ProposalStatus;
+    }
   | { readonly kind: 'cancelled' }
-  | { readonly kind: 'failed'; readonly note: string };
+  | { readonly kind: 'failed'; readonly note: string }
+  /**
+   * DSP-209 S23b: nothing was written, and `note` says why in words for the person. Only a
+   * request carrying `expectedContentHash` or `proposal` can be refused.
+   */
+  | {
+      readonly kind: 'refused';
+      readonly reason: 'stale-base' | 'conflict' | 'outside-project' | 'run-active' | 'not-open' | 'discarded';
+      readonly note: string;
+      readonly status?: ProposalStatus;
+    };
+
+/** DSP-209 S23b: a conversation's graph proposals, pushed to the window whenever one changes. */
+export interface GraphProposalsUpdate {
+  readonly conversationId: string;
+  readonly proposals: readonly GraphEditProposal[];
+}
 
 /**
  * A graph the editor has edited and not written yet (DSP-86).
@@ -3108,6 +3151,12 @@ export interface UnsavedDrawing {
   readonly text: string;
   /** For the question the person is asked. A path alone does not say which loop. */
   readonly graphName: string;
+  /**
+   * DSP-209 S23b: the content hash of the file as the editor loaded or last wrote it. Sent as
+   * `expectedContentHash` when the question saves, so a stale editor's drawing never quietly
+   * replaces a proposal applied from the chat. Absent from an older window: saved as before.
+   */
+  readonly baseContentHash?: string;
 }
 
 /**
@@ -3492,6 +3541,7 @@ export type BridgeChannel =
   | 'dspatch:reveal-role-source'
   | 'dspatch:open-loop-editor'
   | 'dspatch:open-branch-output'
+  | 'dspatch:graph-proposals'
   | 'dspatch:open-review'
   | 'dspatch:open-example-review'
   | 'dspatch:check-review-windows'

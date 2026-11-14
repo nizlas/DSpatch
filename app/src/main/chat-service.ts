@@ -5009,6 +5009,38 @@ export class ChatService {
   }
 
   /**
+   * DSP-209 S23b: keep a proposal's new status (applied, discarded, conflict) where it lives,
+   * in a turn of this run or a message read from disk, and save the conversation. Only the
+   * status a caller decided is kept; the proposal's text and target are the agent's and stay.
+   */
+  updateGraphProposal(proposal: GraphEditProposal): boolean {
+    let found = false;
+    const replace = (list: readonly GraphEditProposal[]): GraphEditProposal[] =>
+      list.map((each) => {
+        if (each.id !== proposal.id) {
+          return each;
+        }
+        found = true;
+        return { ...each, status: proposal.status };
+      });
+    for (const turn of this.turns) {
+      if (turn.conversationId === proposal.conversationId && turn.graphProposals.length > 0) {
+        turn.graphProposals = replace(turn.graphProposals);
+      }
+    }
+    const held = this.held.get(proposal.conversationId);
+    if (held !== undefined) {
+      held.carriedMessages = held.carriedMessages.map((message) =>
+        message.graphProposals === undefined ? message : { ...message, graphProposals: replace(message.graphProposals) },
+      );
+    }
+    if (found) {
+      this.saveConversation(proposal.conversationId);
+    }
+    return found;
+  }
+
+  /**
    * DSP-209 S2: a conversation's saved messages, by the same rule as every other reader,
    * for the context snapshot a loop run is given. Read only; a copy.
    */

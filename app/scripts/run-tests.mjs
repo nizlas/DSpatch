@@ -92,6 +92,7 @@ const AREAS = {
       'step-report-cards.test.ts',
       'loop-layout.test.ts',
       'graph-authoring-tools.test.ts',
+      'graph-save.test.ts',
       'graph-proposal.test.ts',
       'loop-edge-routing.test.ts',
       'loop-model-select.test.ts',

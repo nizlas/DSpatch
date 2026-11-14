@@ -286,6 +286,22 @@ function normalisePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
 }
 
+/**
+ * DSP-209 S23b: the `loop.saveGraph` request for an editor drawing the unsaved-drawing question
+ * saves, with the editor's base hash when it gave one, so that save is checked as a direct Save is.
+ */
+export function drawingSaveRequest(drawing: {
+  readonly path: string;
+  readonly text: string;
+  readonly baseContentHash?: string;
+}): { readonly path: string; readonly text: string; readonly expectedContentHash?: string } {
+  return {
+    path: drawing.path,
+    text: drawing.text,
+    ...(drawing.baseContentHash === undefined ? {} : { expectedContentHash: drawing.baseContentHash }),
+  };
+}
+
 // ---------------------------------------------------------------------------------------
 // Disk reconciliation
 

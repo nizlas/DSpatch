@@ -119,6 +119,7 @@ import { ConversationStore } from '../main/conversation-store';
 import { inRecent, ProjectStore, type WorkspaceRecord } from '../main/project-store';
 import { workspaceTools } from './workspace-tools';
 import { graphAuthoringTools } from './graph-authoring-tools';
+import { saveGraphChecked } from './graph-save';
 import { locateExampleReview } from '../main/example-review';
 import { InstructionQueue } from '../main/instruction-queue';
 import { chatRunHold, chatRunMode, chatRunScenario, presentationMode } from '../main/launch-mode';
@@ -247,6 +248,13 @@ const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
 const CHAT_LOOP_REPLY: BridgeChannel = 'dspatch:chat-loop-reply';
 const CHAT_LOOP_ACTIVITY: BridgeChannel = 'dspatch:chat-loop-activity';
 const LOOP_INSTRUCTION_EVENT: BridgeChannel = 'dspatch:loop-instruction-event';
+/** DSP-209 S23b: a conversation's graph proposals, after one is made, applied or discarded. */
+const GRAPH_PROPOSALS_EVENT: BridgeChannel = 'dspatch:graph-proposals';
+
+/** DSP-209 S23b: tell the window what a conversation's proposals are now. */
+function announceGraphProposals(conversationId: string): void {
+  sendToMainWindow(GRAPH_PROPOSALS_EVENT, { conversationId, proposals: chatService.graphProposals(conversationId) });
+}
 
 /**
  * A project to offer at startup, for an automated run or a shortcut.
@@ -1158,6 +1166,7 @@ function chatGraphTools(): readonly AppTool[] {
       const kept = chatService.recordGraphProposal(proposal);
       if (kept.ok) {
         log(`[graph] the chat proposed ${proposal.id} for ${proposal.conversationId}; nothing was written`);
+        announceGraphProposals(proposal.conversationId);
       }
       return kept;
     },
@@ -2208,21 +2217,24 @@ function registerLoopMethods(): void {
 
   handle(
     'loop.saveGraph',
+    // DSP-209 S23b: an editor's base hash and the chat's proposal actions are checked in
+    // `graph-save.ts`; a save with neither writes exactly as before. Nothing here starts a run.
     (_event, request: LoopGraphSaveRequest): LoopGraphSaveOutcome => {
-      try {
-        const resolved = path.resolve(request.path);
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        fs.writeFileSync(resolved, request.text, 'utf8');
-        log(`loop graph written: ${resolved} (${String(Buffer.byteLength(request.text))} bytes)`);
-        return {
-          kind: 'written',
-          path: resolved,
-          bytes: Buffer.byteLength(request.text),
-          atUtc: new Date().toISOString(),
-        };
-      } catch (error) {
-        return { kind: 'failed', note: `${request.path} could not be written: ${String(error)}` };
+      const running = (chatLoopAbort !== null || editorLoopAbort !== null) && runAudience.working();
+      const outcome = saveGraphChecked(request, {
+        projectFolders: openWorkspaceFolders(),
+        activeRunGraphId: running ? (runAudience.current()?.graphId ?? null) : null,
+        proposal: (conversationId, proposalId) =>
+          chatService.graphProposals(conversationId).find((each) => each.id === proposalId) ?? null,
+        keep: (proposal) => {
+          chatService.updateGraphProposal(proposal);
+        },
+        log,
+      });
+      if (request.proposal !== undefined) {
+        announceGraphProposals(request.proposal.conversationId);
       }
+      return outcome;
     },
   );
 

@@ -143,6 +143,7 @@ import { branchViewsFromJournal, type BranchView } from '../shared/run-presentat
 import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
 import { BranchList } from './BranchList';
 import { StepReportCard } from './StepReportCard';
+import { GraphProposalCards } from './GraphProposalCard';
 import {
   branchGroupKey,
   branchReplyGroups,
@@ -3315,6 +3316,8 @@ function Workbench({
                   />
                 ),
               )}
+              {/* DSP-209 S23b: the loops the chat proposed, each with its paths, changes and Apply. */}
+              <GraphProposalCards restored={restoredMessages} onApplied={() => void refreshLoopDefinitions()} />
               {/*
                 One subdued line saying what is happening, and the live log behind
                 it for whoever wants it.

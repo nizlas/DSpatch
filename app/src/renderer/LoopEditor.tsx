@@ -75,6 +75,7 @@ import {
 } from '../shared/loop-graph-editing';
 import type { ConnectionKind } from '../shared/loop-graph-editing';
 import { serialiseLoopGraph } from '../shared/loop-graph-write';
+import { graphContentHash, reconcileDisk } from '../shared/graph-proposal';
 import { describeOpenedGraph } from '../shared/loop-editor-open';
 import {
   describeChoiceMade,
@@ -448,6 +449,10 @@ export function LoopEditor(): React.JSX.Element {
   const dirty = currentText !== null && savedText !== null && currentText !== savedText;
   // DSP-209 S18b: Arrange was pressed and not yet saved or reloaded, so Reload is offered.
   const [arrangePending, setArrangePending] = useState(false);
+  // DSP-209 S23b: the file on disk as this editor loaded or last wrote it, and whether a save
+  // was refused because the disk moved on since (Reload is then offered).
+  const diskBaseRef = useRef<string | null>(null);
+  const [saveRefused, setSaveRefused] = useState(false);
   useEffect(() => {
     if (!dirty) {
       setArrangePending(false);
@@ -594,6 +599,10 @@ export function LoopEditor(): React.JSX.Element {
     // before anything had been touched. The graph is identical to the file as data; it
     // was the text comparison that was wrong, so nothing is suppressed here.
     setSavedText(serialiseLoopGraph(laidOut.graph, { newline: outcome.newline }));
+    // DSP-209 S23b: the bytes on disk, whose hash a save sends, so a change applied from the
+    // chat since is never overwritten quietly.
+    diskBaseRef.current = outcome.text;
+    setSaveRefused(false);
     setNote(
       `${preamble}${described.opened} ${String(laidOut.graph.nodes.length)} nodes, ${String(laidOut.graph.edges.length)} edges.` +
         (laidOut.placed.length === 0
@@ -711,14 +720,70 @@ export function LoopEditor(): React.JSX.Element {
       );
       return;
     }
-    const outcome = await window.dspatch.saveLoopGraph({ path: file.path, text: currentText });
+    // DSP-209 S23b: with the hash of the file as this editor loaded or last wrote it.
+    const base = diskBaseRef.current;
+    const outcome = await window.dspatch.saveLoopGraph({
+      path: file.path,
+      text: currentText,
+      ...(base === null ? {} : { expectedContentHash: graphContentHash(base) }),
+    });
     if (outcome.kind === 'written') {
       setSavedText(currentText);
+      diskBaseRef.current = currentText;
+      setSaveRefused(false);
       setNote(`Saved ${file.displayPath} — ${String(outcome.bytes)} bytes.`);
     } else if (outcome.kind === 'failed') {
       setNote(outcome.note);
+    } else if (outcome.kind === 'refused') {
+      setSaveRefused(true);
+      setNote(outcome.note);
     }
   }, [graph, file, currentText, index.errors]);
+
+  /*
+   * DSP-209 S23b: back at the front, the editor squares itself with the file on disk.
+   *
+   * The chat may have applied a proposal to this very file while another window was in
+   * front. `reconcileDisk` decides: the same file, nothing to do; a changed file and no
+   * unsaved edits here, it reloads; a changed file and unsaved edits, it says so and offers
+   * Reload — never silently either way, and Save would now be refused for the stale base.
+   * The read is a read of the graph file only. The loop list is re-read too, so a new loop
+   * appears in the chooser.
+   */
+  useEffect(() => {
+    const onFocus = (): void => {
+      void readLoopChoices();
+      const current = file;
+      const base = diskBaseRef.current;
+      if (current === null || base === null || runBusy) {
+        return;
+      }
+      void window.dspatch.openLoopGraph({ kind: 'path', path: current.path }).then(
+        (outcome) => {
+          if (outcome.kind !== 'read') {
+            return;
+          }
+          const answer = reconcileDisk({ base, disk: outcome.text, editor: dirty ? currentText : base });
+          if (answer === 'reload') {
+            void open(
+              current.definition === null ? { kind: 'path', path: current.path } : { kind: 'definition', path: current.definition.path },
+              'The file changed on disk, so the editor reloaded it.',
+            );
+          } else if (answer === 'ask') {
+            setSaveRefused(true);
+            setNote(
+              'The file changed on disk while this editor has unsaved changes. Save would be refused; Reload takes the file as it is now and drops your changes.',
+            );
+          }
+        },
+        () => {
+          /* A file that cannot be read now is left as the editor has it. */
+        },
+      );
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [file, dirty, currentText, runBusy, open, readLoopChoices]);
 
   /*
    * Tell the main process what is unsaved, so a run can ask before it walks the file.
@@ -737,7 +802,13 @@ export function LoopEditor(): React.JSX.Element {
   useEffect(() => {
     const offer =
       dirty && file !== null && currentText !== null && graph !== null && index.errors === 0
-        ? { path: file.path, text: currentText, graphName: graph.name }
+        ? {
+            path: file.path,
+            text: currentText,
+            graphName: graph.name,
+            // DSP-209 S23b: so the question's Save is refused over a file changed since.
+            ...(diskBaseRef.current === null ? {} : { baseContentHash: graphContentHash(diskBaseRef.current) }),
+          }
         : null;
     void window.dspatch.noteUnsavedDrawing(offer).catch(() => {
       /* A main process that cannot be told will read the file as saved, which is what
@@ -758,6 +829,8 @@ export function LoopEditor(): React.JSX.Element {
         return;
       }
       setSavedText(saved.text);
+      // DSP-209 S23b: the file now holds what the main process wrote for this window.
+      diskBaseRef.current = saved.text;
       setNote(
         saved.occasion === 'run'
           ? `Saved ${file.displayPath} before the run started, because you chose Save and run. ` +
@@ -2507,7 +2580,7 @@ export function LoopEditor(): React.JSX.Element {
           >
             Arrange
           </button>
-          {arrangePending && dirty && file !== null ? (
+          {(arrangePending && dirty) || (saveRefused && file !== null) ? file === null ? null : (
             <button
               type="button"
               data-ev="editor-reload"

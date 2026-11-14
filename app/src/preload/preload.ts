@@ -34,6 +34,7 @@ import type {
   LoopGraphOpenRequest,
   LoopEditorWindowOutcome,
   BranchOutputWindowOutcome,
+  GraphProposalsUpdate,
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
   GraphSavedElsewhere,
@@ -142,6 +143,7 @@ const SAVE_LOOP_GRAPH: BridgeChannel = 'dspatch:save-loop-graph';
 const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
+const GRAPH_PROPOSALS: BridgeChannel = 'dspatch:graph-proposals';
 const OPEN_BRANCH_OUTPUT: BridgeChannel = 'dspatch:open-branch-output';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
@@ -314,8 +316,17 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(START_EDITOR_LOOP_RUN, request) as Promise<EditorLoopRunOutcome>,
   cancelEditorLoopRun: () =>
     ipcRenderer.invoke(CANCEL_EDITOR_LOOP_RUN) as Promise<EditorLoopCancelOutcome>,
-  openLoopEditor: () =>
-    ipcRenderer.invoke(OPEN_LOOP_EDITOR) as Promise<LoopEditorWindowOutcome>,
+  openLoopEditor: (graphPath?: string) =>
+    ipcRenderer.invoke(OPEN_LOOP_EDITOR, graphPath) as Promise<LoopEditorWindowOutcome>,
+  onGraphProposals: (listener: (update: GraphProposalsUpdate) => void) => {
+    const handler = (_event: unknown, payload: GraphProposalsUpdate): void => {
+      listener(payload);
+    };
+    ipcRenderer.on(GRAPH_PROPOSALS, handler);
+    return () => {
+      ipcRenderer.removeListener(GRAPH_PROPOSALS, handler);
+    };
+  },
   openBranchOutput: (address: LiveOutputAddress) =>
     ipcRenderer.invoke(OPEN_BRANCH_OUTPUT, address) as Promise<BranchOutputWindowOutcome>,
   openReview: () => ipcRenderer.invoke(OPEN_REVIEW) as Promise<LoopEditorWindowOutcome>,

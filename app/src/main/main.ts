@@ -69,6 +69,7 @@ import type {
   BranchOutputWindowOutcome,
 } from '../shared/bridge';
 import { branchAddressFromQuery, branchAddressQuery } from '../shared/branch-presentation';
+import { drawingSaveRequest } from '../shared/graph-proposal';
 import {
   HOST_CONFIG_ENV,
   isHostCallFailure,
@@ -2358,12 +2359,17 @@ async function writeUnsavedDrawing(
   // registration and the broadcast stay with the windows.
   let written: LoopGraphSaveOutcome;
   try {
-    written = await hostCall('loop.saveGraph', NO_SENDER, { path: drawing.path, text: drawing.text });
+    // DSP-209 S23b: with the editor's base hash, so a stale drawing is refused here too.
+    written = await hostCall('loop.saveGraph', NO_SENDER, drawingSaveRequest(drawing));
   } catch (error) {
     return `DSpatch could not write ${drawing.path}: ${error instanceof Error ? error.message : String(error)}`;
   }
   if (written.kind === 'failed') {
     return `DSpatch could not write ${drawing.path}: ${written.note}`;
+  }
+  if (written.kind === 'refused') {
+    // Not written: the file changed since the editor loaded it. The drawing stays registered.
+    return written.note;
   }
   if (written.kind !== 'written') {
     return `DSpatch did not write ${drawing.path}.`;
@@ -5080,7 +5086,21 @@ function registerLoopGraphIpc(): void {
     },
   );
 
-  ipcMain.handle(OPEN_LOOP_EDITOR, (): LoopEditorWindowOutcome => openLoopEditorWindow());
+  // DSP-209 S23b: with a graph path (a proposal card's Open in editor), the same route as the
+  // File menu's Open Graph File: the unsaved-drawing question first, then the editor takes it.
+  ipcMain.handle(OPEN_LOOP_EDITOR, async (_event, graphPath?: unknown): Promise<LoopEditorWindowOutcome> => {
+    if (typeof graphPath !== 'string' || graphPath === '') {
+      return openLoopEditorWindow();
+    }
+    const settled = await settleUnsavedDrawingBeforeRedraw();
+    if (!settled.go) {
+      return { kind: 'failed', note: 'The loop editor kept its unsaved drawing, so the loop was not opened.' };
+    }
+    graphToEdit = path.resolve(graphPath);
+    const opened = openLoopEditorWindow();
+    sendToEveryWindow(GRAPH_TO_EDIT, null);
+    return opened;
+  });
   // DSP-209 S20: one branch's live output in its own window. The client's own window; the
   // host is not asked anything new (the window reads the run view and its events).
   ipcMain.handle(OPEN_BRANCH_OUTPUT, (_event, request: unknown): BranchOutputWindowOutcome => openBranchOutputWindow(request));

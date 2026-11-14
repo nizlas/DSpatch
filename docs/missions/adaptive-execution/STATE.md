@@ -14,7 +14,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S23b (`implement`, decision 52), from call 43 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S18b, S19, S19b, S20, S21, S22, S23a, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** S21b (`implement`, decision 53), from call 48 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S18b, S19, S19b, S20, S21, S22, S23a, S23b, S25 and S25b are reviewed and committed.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -157,8 +157,8 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S21 | Step-report cards in chat, branches grouped, integrator's combined report, opt-in `SUBGOAL:` line | R4, R7 | S16, S20 (both reviewed) | **reviewed** after one rework round (see its record) | 1 | `(DSP-209 S21)` after `2fb244d` |
 | S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **reviewed** (parallel with S19; see *S19 and S22, parallel*) | 1 | `4bce22c`/`a40d3b8`, `bcd8a8b` (test line), `151612c`/`0b0fb3d` |
 | S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b (both reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S23a)` after `9f5caa6` |
-| S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1, R7 | S17, S23a (both reviewed) | **in progress**: sent to `implement` on call 43 (decision 52) | 1 | — |
-| S21b | S21's open S-a: read a `SUBGOAL:` line only from nodes that declare `subgoal` (`shared/step-report-cards.ts`), as the S21 brief said | R4 | S21 | pending | 0 | — |
+| S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1, R7 | S17, S23a (both reviewed) | **reviewed** after one rework round (see its record) | 1 | `(DSP-209 S23b)` after `144624d` |
+| S21b | S21's open S-a: read a `SUBGOAL:` line only from nodes that declare `subgoal`, as the S21 brief said. The reader is `subGoalClaimFrom` in `shared/run-presentation.ts` (l.412, used at l.554 and l.571), not `step-report-cards.ts` as first written here | R4 | S21 | **in progress**: sent to `implement` on call 48 (decision 53) | 1 | — |
 
 The acceptance criteria and checks for each sub-goal are the planner's, from call 2. Each brief repeats the ones it needs. Section 3 of that result defines the R5 counters: sub-goal, agent step (node visit), branch invocation, rework round, calls, provider turns, tool calls, elapsed time and usage. S16 implements those definitions.
 
@@ -386,6 +386,63 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S23b — Proposal card, Apply, and reconciling with the editor — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1.** Run `chat-loop-2026-11-14T09-54-18-366Z`. Briefed on coordinator visit 11 (call 43, decision 52) and implemented on call 44 (`done`). The round-1 review (call 45) asked for rework on one blocking finding, B1. The implementer reworked it on call 46 (`done`), and the round-2 review accepted it on call 47. Recorded and committed on coordinator visit 12 (call 48). `git status` showed 11 modified and 3 new files, as the implementer listed.
+- **What was done:**
+  - **Proposal card.** The new `renderer/GraphProposalCard.tsx`, in the chat, reads **Proposal — not applied** until applied. It shows as visible text:
+    - the full paths it writes;
+    - the change summary;
+    - the findings;
+    - the agent's words, labelled as such;
+    - the status.
+    
+    Its actions are **Apply**, **Open in editor** and **Discard**. A superseded or discarded proposal offers no Apply. Hover labels are short (R7).
+  - **Apply.** The new `host/graph-save.ts` and the `loop.saveGraph` handler in `project-host.ts` take an optional `expectedContentHash`. Apply refuses, writing nothing, when:
+    - the disk content is stale, in which case the status becomes `conflict` (S17's `applyProposal`);
+    - any target is outside the open project folders, checked with `path.relative` for the graph, the definition and each role file;
+    - a chat or editor run of that graph is active in this host.
+    
+    A new-loop Apply writes only absent files. Apply never starts a run. `chat-service.ts` saves the proposal's status.
+  - **The editor.**
+    - Its saves send their base hash, so a stale save is refused as `stale-base` and the editor offers **Reload**.
+    - On focus it uses `reconcileDisk`. A clean editor reloads; a dirty one gets the existing question.
+    - New loops appear in the list.
+  - **Departures from the brief, accepted by review and recorded here:**
+    - an extra optional `proposal` field on the save request;
+    - a `refused` save outcome;
+    - a `dspatch:graph-proposals` push event;
+    - `openLoopEditor(graphPath?)`;
+    - from the rework, `UnsavedDrawing.baseContentHash`.
+    
+    All are optional, and none is a host method. **Restart host** is enough.
+  - **Parallelism document.** A dated addendum to §10 of `docs/CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md` records Niclas's 14 November decision and what S17, S23a and S23b built. §5 and §6 are unchanged.
+  - **Tests.** New `tests/graph-save.test.ts` (7 tests), in the `loop` group.
+- **Round-1 finding B1, fixed.** The unsaved-drawing question's Save sent only `{ path, text }`, so a stale editor could replace an applied proposal unchecked.
+  - The editor now registers its drawing with its base hash.
+  - `drawingSaveRequest` (in `graph-proposal.ts`) turns that hash into `expectedContentHash`.
+  - `writeUnsavedDrawing` in `main.ts` returns the host's refusal note and keeps the drawing registered.
+  - Tested.
+- **Review verdict: accept** (round 2). All six criteria are met and tested.
+  - The reviewer took two things on the implementer's word: that the question's four callers stop on a note, and that main passes the registration on unchanged.
+  - **Open, and important (A1):** in this workspace DSpatch is the open project, so Apply can write the mission graph and definition, which are BRIEF §5's fixed files. This host's active-run check cannot see the run in `DSpatch-engine`. The running engine reads its own checkout, so the running mission is not affected, but a careless Apply would change the mission's own drawing in the working copy. Decision 52 leaves protection of BRIEF §5's files to the mission's rules, not to the product. **Niclas: never apply a proposal against the mission loop in this workspace while the mission is in use.**
+  - **Other open points:**
+    - a failed write can leave a new loop half written, with the status still `proposed`;
+    - a change between the check and the write is not caught;
+    - Discard comes back as `refused`, reason `discarded`;
+    - cards are drawn together after the transcript, not beside their message;
+    - the card, the focus reconcile and the question path have no tests of their own.
+- **Checked:**
+  - rerun in round 2: `graph-save` 7/7, `graph-proposal` 51/51, `npm run typecheck` exit 0;
+  - from round 1: `graph-authoring-tools` 6/6, `conversation-store` 27/27, `chat-service` 77/77, plus `window-zoom` 18/18, `project-host-boundary` 2/2, `review-model` 36/36 and `review-discussion` 18/18.
+- **Untested:** the whole flow in a real window. Host code needs the engine transition and **Restart host**.
+- **Niclas tries,** after the transition, preferably in a throwaway project rather than this repository (A1):
+  1. Discuss a workflow in chat and get a proposal card. Read its paths and changes, and **Apply**. No run should start.
+  2. Change it in the editor and save, then ask the chat to revise. An older proposal's Apply should show the conflict.
+  3. **Discard** a proposal: nothing should change.
+  4. With the editor dirty on an older version, apply from the chat, then trigger the unsaved-drawing question and choose Save. It should say it did not save.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### S23a — Graph tools on the chat session — reviewed (agent review, not Niclas's approval)
@@ -997,6 +1054,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
     - a stale base.
     
     The card shows the full path it will write. This repository's mission files are inside the project, so the active-run refusal is what keeps the running mission's graph safe. The product cannot know about BRIEF §5's fixed files; they stay fixed by the mission's rules. Alternatives: a protected-file list in the product (mission bookkeeping turned into product rules); allowing bundled targets (writes into DSpatch's install).
+53. **S21b goes to the one implementer (`implement`) before the whole assessment** (visit 12). Reason: it is the last open departure from a brief that this run made. It is small, in one pure function and its two callers. The assessment should judge R4 with it settled. Alternative: leave it for the assessment to list (it would stay a known gap the run could have closed for one implement and review pair).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -1015,6 +1073,13 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 12 (call 48).** S23b is reviewed after one rework round, and committed with this file. S21b went to `implement` (decision 53). **Next:**
+1. Record S21b's review and commit it.
+2. Mark R1–R7 in *Requirements of the vision* from the records.
+3. Send the whole to assessment (`assess-whole`), which has not been done since the extension.
+
+Host code changed in S19, S19b, S20, S21, S22, S23a and S23b. The engine therefore needs a rebuild and **Restart host** at the next transition. No new host method was added in this run. If this run ends first, the next run reconciles S21b from the uncommitted working copy.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 11 (call 43).** S23a is reviewed and committed with this file. S23b went to `implement` (decision 52). **Next:** record S23b's review and commit it, then S21b (small), then the whole assessment of R1–R7 (`assess-whole`). Host code changes in S19, S19b, S20, S21, S22, S23a and S23b, so the engine needs a rebuild and **Restart host** at the next transition. If this run ends first, the next run reconciles S23b from the uncommitted working copy.
 
