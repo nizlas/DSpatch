@@ -2616,9 +2616,11 @@ function registerLoopMethods(): void {
 
       // DSP-138: which agent, decided before the control is claimed. A refusal starts
       // nothing, claims nothing and constructs nothing.
-      const agent = prepareLoopRun(
-        editorLoopRunRequest(loaded.graph.nodes.find((node) => node.id === loaded.graph.entry)),
-      );
+      // DSP-209 S19: with the graph, every step's model is checked before the run starts.
+      const agent = prepareLoopRun({
+        ...editorLoopRunRequest(loaded.graph.nodes.find((node) => node.id === loaded.graph.entry)),
+        graph: loaded.graph,
+      });
       if (!agent.ok) {
         return { kind: 'refused', reason: agent.reason };
       }
@@ -2979,9 +2981,11 @@ function registerLoopMethods(): void {
       // DSP-138: which agent and model, decided before the record is opened and the
       // control is claimed. A refusal opens no record, claims nothing and constructs
       // nothing. The session's provider first, as the shown line resolves it.
-      const agent = prepareLoopRun(
-        chatLoopRunRequest(workingRoots.length, entryNode, session.modelRequested),
-      );
+      // DSP-209 S19: with the graph, every step's model is checked before the run starts.
+      const agent = prepareLoopRun({
+        ...chatLoopRunRequest(workingRoots.length, entryNode, session.modelRequested),
+        graph: loaded.graph,
+      });
       if (!agent.ok) {
         return { kind: 'refused', reason: agent.reason };
       }

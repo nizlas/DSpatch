@@ -90,6 +90,8 @@ const AREAS = {
       'run-presentation.test.ts',
       'graph-proposal.test.ts',
       'loop-edge-routing.test.ts',
+      'loop-model-select.test.ts',
+      'loop-final-card.test.ts',
       'ordinal.test.ts',
       'run-mailbox.test.ts',
       { file: 'loop-parallel-loop.test.ts', heavy: true },
