@@ -316,6 +316,14 @@
   margin-right: 2px;
 }
 
+/* DSP-209 S23b: a proposal previewed before Apply says so where the palette would be. */
+.editor-palette-title.editor-preview-note {
+  color: #e0b25c;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .editor-palette button {
   display: inline-flex;
   align-items: center;

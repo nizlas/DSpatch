@@ -89,6 +89,7 @@ import type {
   LoopDefinitionListing,
   LoopGraphOpenRequest,
   OpenedLoopDefinition,
+  ProposalPreview,
 } from '../shared/bridge';
 import {
   describeGateRunner,
@@ -179,6 +180,8 @@ interface OpenFile {
   readonly projectRoot: string;
   /** The loop this graph was reached through, or `null` for a graph opened directly. */
   readonly definition: OpenedLoopDefinition | null;
+  /** DSP-209 S23b: the proposal this drawing previews, or `null` for a file on disk. */
+  readonly preview: ProposalPreview | null;
 }
 
 type Selection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
@@ -569,6 +572,7 @@ export function LoopEditor(): React.JSX.Element {
       newline: outcome.newline,
       projectRoot: outcome.projectRoot,
       definition: outcome.definition ?? null,
+      preview: outcome.preview ?? null,
     });
     setSelection(null);
     setTool(null);
@@ -603,7 +607,8 @@ export function LoopEditor(): React.JSX.Element {
     setSavedText(serialiseLoopGraph(laidOut.graph, { newline: outcome.newline }));
     // DSP-209 S23b: the bytes on disk, whose hash a save sends, so a change applied from the
     // chat since is never overwritten quietly.
-    diskBaseRef.current = outcome.text;
+    // A preview is not on disk, so there is no base for a save or a reconcile to compare with.
+    diskBaseRef.current = outcome.preview === undefined ? outcome.text : null;
     setSaveRefused(false);
     setNote(
       `${preamble}${described.opened} ${String(laidOut.graph.nodes.length)} nodes, ${String(laidOut.graph.edges.length)} edges.` +
@@ -757,7 +762,7 @@ export function LoopEditor(): React.JSX.Element {
       void readLoopChoices();
       const current = file;
       const base = diskBaseRef.current;
-      if (current === null || base === null || runBusy) {
+      if (current === null || base === null || runBusy || current.preview !== null) {
         return;
       }
       void window.dspatch.openLoopGraph({ kind: 'path', path: current.path }).then(
@@ -866,15 +871,25 @@ export function LoopEditor(): React.JSX.Element {
     [roles],
   );
 
+  /*
+   * DSP-209 S23b: a proposal's preview is read, not edited. Its fields stay enabled so the
+   * text can be selected and copied, and nothing changes the drawing: this is where every
+   * edit arrives. Apply in the chat is what writes a proposal.
+   */
+  const previewing = file !== null && file.preview !== null;
   const apply = useCallback(
     (next: LoopGraph, message?: string) => {
+      if (previewing) {
+        setNote('This is a preview of a proposal and is not edited here. Apply it in the chat, then change it in the editor.');
+        return;
+      }
       setGraph(next);
       if (message !== undefined) {
         setNote(message);
       }
       void refreshRoles(next);
     },
-    [refreshRoles],
+    [refreshRoles, previewing],
   );
 
   /*
@@ -903,6 +918,9 @@ export function LoopEditor(): React.JSX.Element {
    * Declared this high up because `runBlocked` below reads it, which it has to.
    */
   const locked = viewIsLocked(watch);
+  // What a preview holds as a run does: editing, saving, arranging and running. Selecting a
+  // node to read it is not held.
+  const held = locked || previewing;
 
   const liveBinding = graph === null ? null : describeLiveBinding(graph);
   /*
@@ -915,7 +933,7 @@ export function LoopEditor(): React.JSX.Element {
    * refuses **Run** by the active run's id; this is the same refusal for the other button,
    * and like every other lock in this view it lifts by itself when the run ends.
    */
-  const runBlocked = graph === null || index.errors > 0 || runBusy || locked;
+  const runBlocked = graph === null || index.errors > 0 || runBusy || locked || previewing;
   // A dry run walks the canvas and touches no control, so it keeps the local answer.
   // A live run is the one that must not overlap, and `runBusy` is this window's own.
   const liveRun = liveRunOffer({
@@ -1389,10 +1407,13 @@ export function LoopEditor(): React.JSX.Element {
         return;
       }
       setSelection({ kind: 'node', id: node.id });
+      if (previewing) {
+        return;
+      }
       const point = pointIn(event);
       setDrag({ id: node.id, dx: point.x - (node.view?.x ?? 0), dy: point.y - (node.view?.y ?? 0) });
     },
-    [graph, locked, tool, connectFrom, pointIn, apply],
+    [graph, locked, previewing, tool, connectFrom, pointIn, apply],
   );
 
   const onCanvasMouseMove = useCallback(
@@ -1465,6 +1486,8 @@ export function LoopEditor(): React.JSX.Element {
       (waiting) => {
         if (waiting === null) {
           void open({ kind: 'chosen-loop' });
+        } else if (waiting.as === 'proposal') {
+          void open({ kind: 'proposal', conversationId: waiting.conversationId, proposalId: waiting.proposalId });
         } else if (waiting.as === 'loop') {
           // Chosen, then drawn, as Open loop… does (DSP-209 S23b). A loop that is not
           // chosen is not drawn, so the window shows the loop that is chosen instead.
@@ -1493,7 +1516,9 @@ export function LoopEditor(): React.JSX.Element {
     return window.dspatch.onGraphToEdit(() => {
       void window.dspatch.takeGraphToEdit().then(
         (waiting) => {
-          if (waiting?.as === 'loop') {
+          if (waiting?.as === 'proposal') {
+            void open({ kind: 'proposal', conversationId: waiting.conversationId, proposalId: waiting.proposalId });
+          } else if (waiting?.as === 'loop') {
             void chooseLoop(waiting.path);
           } else if (waiting !== null) {
             void open({ kind: 'path', path: waiting.path });
@@ -2411,7 +2436,9 @@ export function LoopEditor(): React.JSX.Element {
               // this is (DSP-82 #3).
               file === null
                 ? ''
-                : ` — ${describeOpenedGraph({ displayPath: file.displayPath, definition: file.definition }).title}`
+                : file.preview !== null
+                  ? ` — proposal preview, not applied · ${file.displayPath}`
+                  : ` — ${describeOpenedGraph({ displayPath: file.displayPath, definition: file.definition }).title}`
             }${dirty ? ' · unsaved changes' : ''}${
               watch === null
                 ? ''
@@ -2549,8 +2576,8 @@ export function LoopEditor(): React.JSX.Element {
           </button>
           <button
             type="button"
-            disabled={graph === null || !dirty || locked}
-            title={locked ? 'Held while a run walks' : undefined}
+            disabled={graph === null || !dirty || held}
+            title={locked ? 'Held while a run walks' : previewing ? 'A preview is not saved: Apply writes it, from the chat' : undefined}
             onClick={() => void save()}
           >
             Save
@@ -2563,7 +2590,7 @@ export function LoopEditor(): React.JSX.Element {
           <button
             type="button"
             data-ev="editor-arrange"
-            disabled={graph === null || locked}
+            disabled={graph === null || held}
             title="Lay out the boxes in layers"
             onClick={() => {
               if (graph === null) {
@@ -2598,7 +2625,7 @@ export function LoopEditor(): React.JSX.Element {
             type="button"
             className="editor-run"
             disabled={runBlocked}
-            title={graph === null ? 'Open a graph first' : locked ? 'Held while a run walks' : index.errors > 0 ? 'Fix the errors first' : 'Walk the canvas; no provider is used'}
+            title={graph === null ? 'Open a graph first' : locked ? 'Held while a run walks' : previewing ? 'A preview is not run; apply it first' : index.errors > 0 ? 'Fix the errors first' : 'Walk the canvas; no provider is used'}
             onClick={() => void dryRunCanvas()}
           >
             Dry-run
@@ -2619,7 +2646,7 @@ export function LoopEditor(): React.JSX.Element {
             Target framework
             <select
               value={graph?.target ?? 'cursor'}
-              disabled={graph === null || locked}
+              disabled={graph === null || held}
               onChange={(event) => changeTarget(event.target.value as LoopTarget)}
             >
               {LOOP_TARGETS.map((target) => (
@@ -2844,8 +2871,12 @@ export function LoopEditor(): React.JSX.Element {
           height-fixed now, so the choice is between showing the run's controls and
           showing dead buttons with the controls scrolled off the end.
         */}
-        {locked ? (
-          <span className="editor-palette-title">Editing is held while this run walks</span>
+        {held ? (
+          <span className={`editor-palette-title${previewing && !locked ? ' editor-preview-note' : ''}`} data-ev="editor-held">
+            {locked
+              ? 'Editing is held while this run walks'
+              : 'Proposal preview, not applied: nothing here is saved or run. Apply it in the chat to write it.'}
+          </span>
         ) : (
           <>
         <span className="editor-palette-title">Place</span>
@@ -2857,7 +2888,7 @@ export function LoopEditor(): React.JSX.Element {
             title={
               KIND_HINTS[kind]
             }
-            disabled={graph === null || locked}
+            disabled={graph === null || held}
             onClick={() => {
               setTool({ kind: 'place', nodeKind: kind });
               setConnectFrom(null);
@@ -2872,7 +2903,7 @@ export function LoopEditor(): React.JSX.Element {
         <button
           type="button"
           className={tool?.kind === 'connect' && tool.connection === 'plain' ? 'chosen' : ''}
-          disabled={graph === null || locked}
+          disabled={graph === null || held}
           onClick={() => {
             setTool({ kind: 'connect', connection: 'plain' });
             setConnectFrom(null);
@@ -2887,7 +2918,7 @@ export function LoopEditor(): React.JSX.Element {
         <button
           type="button"
           className={tool?.kind === 'connect' && tool.connection === 'declared-failure' ? 'chosen' : ''}
-          disabled={graph === null || locked}
+          disabled={graph === null || held}
           onClick={() => {
             setTool({ kind: 'connect', connection: 'declared-failure' });
             setConnectFrom(null);
@@ -2974,8 +3005,8 @@ export function LoopEditor(): React.JSX.Element {
               roles={roles}
               zoom={zoom}
               mode="edit"
-              armed={tool !== null && !locked}
-              locked={locked}
+              armed={tool !== null && !held}
+              locked={held}
               svgRef={svgRef}
               onCanvasClick={onCanvasClick}
               onCanvasMouseMove={onCanvasMouseMove}

@@ -148,6 +148,27 @@ export function GraphProposalCard({
             Apply
           </button>
         ) : null}
+        {/*
+          DSP-209 S23b: the proposal itself in the editor, its new roles read from their own
+          text, before anything is written. It chooses no loop and runs nothing.
+        */}
+        <button
+          type="button"
+          className="button"
+          data-ev="graph-proposal-preview"
+          disabled={busy}
+          title="Look at this proposal in the editor; nothing is written or chosen"
+          onClick={() => {
+            void window.dspatch
+              .openLoopEditor({ as: 'proposal', conversationId: proposal.conversationId, proposalId: proposal.id })
+              .then(
+                (outcome) => setNote(outcome.kind === 'failed' ? outcome.note : null),
+                (error: unknown) => setNote(error instanceof Error ? error.message : String(error)),
+              );
+          }}
+        >
+          Preview
+        </button>
         <button
           type="button"
           className="button"
@@ -172,7 +193,7 @@ export function GraphProposalCard({
       <p className="graph-proposal__hint">
         {open
           ? isNewLoopTarget(proposal.target)
-            ? 'Open in editor works once it is applied: the new loop has no file yet. Apply never runs the loop.'
+            ? 'Preview shows it in the editor now; Open in editor works once it is applied. Apply never runs the loop.'
             : 'Open in editor chooses the loop and shows it as it is on disk, without this proposal. Neither runs it.'
           : 'This proposal is no longer open, so it cannot be applied.'}
       </p>

@@ -3039,7 +3039,21 @@ export type LoopGraphOpenRequest =
   /** A `.loop.json`, opened as the loop it declares. */
   | { readonly kind: 'definition'; readonly path: string }
   /** Whatever loop this workspace has chosen, with no dialog. */
-  | { readonly kind: 'chosen-loop' };
+  | { readonly kind: 'chosen-loop' }
+  /** DSP-209 S23b: a graph proposal kept on a conversation, drawn as a preview; nothing is chosen. */
+  | { readonly kind: 'proposal'; readonly conversationId: string; readonly proposalId: string };
+
+/**
+ * DSP-209 S23b: the proposal a drawing is a preview of. Its graph and new role files are not on
+ * disk until Apply in the chat writes them, so the editor neither saves nor runs a preview.
+ */
+export interface ProposalPreview {
+  readonly conversationId: string;
+  readonly proposalId: string;
+  readonly status: ProposalStatus;
+  /** How many new role files the proposal brings, read from its own text in the preview. */
+  readonly roleFiles: number;
+}
 
 /**
  * The declaration a graph was reached through, when it was reached through one.
@@ -3085,6 +3099,8 @@ export type LoopGraphOpenOutcome =
       readonly roles: readonly ResolvedRoleEntry[];
       /** Present when a `.loop.json` was the way in. */
       readonly definition?: OpenedLoopDefinition;
+      /** Present when this is a proposal's preview, not a file on disk. */
+      readonly preview?: ProposalPreview;
     }
   | { readonly kind: 'cancelled' }
   | {
@@ -3234,10 +3250,10 @@ export interface LoopEditorWindowOutcome {
  * **Open loop…** chooses one, so it is drawn from its own project with its own roles and named
  * in the Loop chooser (DSP-209 S23b: an applied proposal is opened this way).
  */
-export interface GraphToEdit {
-  readonly path: string;
-  readonly as: 'graph' | 'loop';
-}
+export type GraphToEdit =
+  | { readonly path: string; readonly as: 'graph' | 'loop' }
+  /** A proposal kept on a conversation, previewed before Apply: drawn, never saved, chosen or run. */
+  | { readonly as: 'proposal'; readonly conversationId: string; readonly proposalId: string };
 
 /** DSP-209 S20: what opening a branch's output window did. */
 export interface BranchOutputWindowOutcome {

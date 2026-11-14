@@ -32,8 +32,8 @@ import path from 'node:path';
 
 import type { AppTool, AppToolResult } from '../adapter/types';
 import { discoverLoopDefinitions, type LoopDefinitionRow } from '../main/loop-definition-files';
-import { createFileRoleResolver, resolveRoleText } from '../main/loop-graph-roles';
 import { parseRoleSource, ROLE_SECTIONS } from '../main/role-source';
+import { proposedRoleResolver } from './graph-proposal-preview';
 import { NODE_HELP_LABEL_MAX } from '../shared/loop-chat';
 import {
   createProposal,
@@ -50,7 +50,6 @@ import {
   NODE_KINDS,
   REQUIREMENTS,
   RUN_PROVIDER_CAPABILITIES,
-  type RoleReference,
   type RoleResolver,
   type RunProvider,
 } from '../shared/loop-graph';
@@ -417,14 +416,9 @@ function propose(
     }
   }
 
-  // The loader's own check, with the proposed role files read as they will be once written.
-  const onDisk = createFileRoleResolver(resourceRoot);
-  const pending = new Map(roleFiles.map((file) => [path.resolve(file.path).toLowerCase(), file]));
-  const resolveRole: RoleResolver = (reference: RoleReference) => {
-    const requested = path.resolve(resourceRoot, reference.source.path);
-    const proposedFile = pending.get(requested.toLowerCase());
-    return proposedFile === undefined ? onDisk(reference) : resolveRoleText(proposedFile.text, reference, requested);
-  };
+  // The loader's own check, with the proposed role files read as they will be once written,
+  // by the same resolver the editor's preview of this proposal uses.
+  const resolveRole: RoleResolver = proposedRoleResolver(resourceRoot, roleFiles);
   const proposal = createProposal(
     {
       id: host.newId?.() ?? `proposal-${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}`,

@@ -140,6 +140,7 @@ import {
   resolvedRolesWith,
 } from '../main/loop-graph-open';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
+import { openedFromProposal } from './graph-proposal-preview';
 import { type LiveInspection, type SteerableStep } from '../main/loop-live';
 import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock';
 import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
@@ -2171,6 +2172,13 @@ function registerLoopMethods(): void {
       }
       if (request.kind === 'definition') {
         return openedFromDefinition(chooseLoop(path.resolve(request.path)));
+      }
+      // DSP-209 S23b: a proposal's preview. Read from the conversation, with its new roles
+      // from their own text; no loop is chosen and nothing is written.
+      if (request.kind === 'proposal') {
+        return openedFromProposal(
+          chatService.graphProposals(request.conversationId).find((each) => each.id === request.proposalId) ?? null,
+        );
       }
 
       let target: string;

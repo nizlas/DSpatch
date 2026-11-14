@@ -14,6 +14,7 @@ import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { graphAuthoringTools, type GraphAuthoringHost } from '../src/host/graph-authoring-tools';
+import { openedFromProposal } from '../src/host/graph-proposal-preview';
 import { saveGraphChecked } from '../src/host/graph-save';
 import { discoverLoopDefinitions } from '../src/main/loop-definition-files';
 import { openChosenLoop, rowForKey } from '../src/main/loop-definition-choice';
@@ -231,6 +232,17 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
       'the proposal holds the graph, the definition and the role, which the card lists',
     );
     assert.deepEqual(files(), before, 'proposing wrote nothing');
+
+    // Preview before Apply: the editor's read of the stored proposal draws it from the project,
+    // its new role read from the proposal's own text, says it is a preview, and writes nothing.
+    const preview = openedFromProposal(proposal);
+    assert.ok(preview.kind === 'read', JSON.stringify(preview));
+    assert.deepEqual(preview.preview, { conversationId: 'conv-1', proposalId: proposal.id, status: 'proposed', roleFiles: 1 });
+    assert.equal(path.resolve(preview.projectRoot), path.resolve(root));
+    const previewed = loadLoopGraph(preview.text, { resolveRole: resolverFromEntries(new Map(preview.roles.map((entry) => [entry.key, entry.role]))) });
+    assert.ok(previewed.ok && !hasErrors(previewed.findings), JSON.stringify(previewed.findings));
+    assert.deepEqual(files(), before, 'previewing wrote nothing');
+    assert.equal(openedFromProposal(null).kind, 'unavailable');
 
     const context = (activeRunGraphId: string | null) => ({
       projectFolders: [root],

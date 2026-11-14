@@ -5093,19 +5093,26 @@ function registerLoopGraphIpc(): void {
   // DSP-209 S23b: with a file (a proposal card's Open in editor), the editor takes it. A graph
   // file goes the File menu's Open Graph File route: the unsaved-drawing question first. A loop
   // definition goes the editor's Open loop… route, which judges it, asks that question itself,
-  // chooses it and draws it from its own project; asking here as well would ask twice.
+  // chooses it and draws it from its own project; asking here as well would ask twice. A
+  // proposal's preview replaces the drawing as a graph file does, so it asks first too; it
+  // chooses nothing.
   ipcMain.handle(OPEN_LOOP_EDITOR, async (_event, file?: unknown): Promise<LoopEditorWindowOutcome> => {
-    const asked = file as Partial<GraphToEdit> | null | undefined;
-    if (typeof asked?.path !== 'string' || asked.path === '' || (asked.as !== 'graph' && asked.as !== 'loop')) {
+    const asked = file as Record<string, unknown> | null | undefined;
+    let waiting: GraphToEdit;
+    if (asked?.['as'] === 'proposal' && typeof asked['conversationId'] === 'string' && typeof asked['proposalId'] === 'string') {
+      waiting = { as: 'proposal', conversationId: asked['conversationId'], proposalId: asked['proposalId'] };
+    } else if ((asked?.['as'] === 'graph' || asked?.['as'] === 'loop') && typeof asked['path'] === 'string' && asked['path'] !== '') {
+      waiting = { path: path.resolve(asked['path']), as: asked['as'] };
+    } else {
       return openLoopEditorWindow();
     }
-    if (asked.as === 'graph') {
+    if (waiting.as !== 'loop') {
       const settled = await settleUnsavedDrawingBeforeRedraw();
       if (!settled.go) {
         return { kind: 'failed', note: 'The loop editor kept its unsaved drawing, so the loop was not opened.' };
       }
     }
-    graphToEdit = { path: path.resolve(asked.path), as: asked.as };
+    graphToEdit = waiting;
     const opened = openLoopEditorWindow();
     sendToEveryWindow(GRAPH_TO_EDIT, null);
     return opened;
