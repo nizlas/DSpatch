@@ -81,8 +81,10 @@ export interface GraphCanvasProps {
   readonly showLabels: boolean;
   readonly edgesTaken: ReadonlySet<string>;
   readonly runStates: ReadonlyMap<string, NodeRunState>;
-  /** DSP-209 S10b: a fan-out node's branches in a few words, by node id. */
+  /** DSP-209 S10b: a fan-out node's branches in a few words, by node id. S20: drawn on the node. */
   readonly branchSummaries?: ReadonlyMap<string, string>;
+  /** DSP-209 S20: the node's branch line was pressed; open its Branches list. */
+  readonly onOpenBranches?: (nodeId: string) => void;
   readonly workingNodes: ReadonlySet<string>;
   readonly endingMarks: FinishedRunMarks | null;
   readonly severityOfNode?: (nodeId: string) => Finding['severity'] | null;
@@ -173,6 +175,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           severity={props.severityOfNode?.(node.id) ?? null}
           helpTitle={props.helpTitleOf?.(node)}
           branches={props.branchSummaries?.get(node.id) ?? null}
+          {...(props.onOpenBranches === undefined ? {} : { onOpenBranches: () => props.onOpenBranches?.(node.id) })}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}
         />
       ))}
@@ -269,6 +272,7 @@ function NodeShape({
   severity,
   helpTitle,
   branches,
+  onOpenBranches,
   onMouseDown,
 }: {
   readonly node: LoopNode;
@@ -290,6 +294,8 @@ function NodeShape({
   readonly severity: Finding['severity'] | null;
   readonly helpTitle?: string;
   readonly branches: string | null;
+  /** DSP-209 S20: opens the node's Branches list; the branch line is its control. */
+  readonly onOpenBranches?: () => void;
   readonly onMouseDown: (event: ReactMouseEvent) => void;
 }): React.JSX.Element {
   const x = node.view?.x ?? 0;
@@ -444,6 +450,40 @@ function NodeShape({
         {node.kind}
         {node.role === undefined ? '' : broken ? ' · role broken' : ` · ${node.role.id}`}
       </text>
+      {/*
+        DSP-209 S20 (R3, R7): the fan-out's branches on the node itself, in the room S18a
+        made for them, so the count is read without hovering. Pressing it opens the node's
+        Branches list, where every branch's task, state, model and messages are written out.
+        A long line is fitted to the node rather than cut off.
+      */}
+      {branches === null || node.fanOut === undefined ? null : (
+        <text
+          x={NODE_WIDTH / 2}
+          y={53}
+          className={`node-branches${onOpenBranches === undefined ? '' : ' node-branches--control'}`}
+          data-ev="node-branches"
+          {...(branches.length > 30 ? { textLength: NODE_WIDTH - 12, lengthAdjust: 'spacingAndGlyphs' } : {})}
+          {...(onOpenBranches === undefined
+            ? {}
+            : {
+                role: 'button',
+                tabIndex: 0,
+                onMouseDown: (event: ReactMouseEvent) => event.stopPropagation(),
+                onClick: (event: ReactMouseEvent) => {
+                  event.stopPropagation();
+                  onOpenBranches();
+                },
+                onKeyDown: (event: React.KeyboardEvent) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onOpenBranches();
+                  }
+                },
+              })}
+        >
+          {branches}
+        </text>
+      )}
       {isEntry ? (
         <text x={6} y={height - 5} className="node-entry">
           entry

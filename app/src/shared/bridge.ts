@@ -20,6 +20,7 @@ import type {
   UsageReading,
 } from '../adapter/types';
 import type { StepActivity } from './loop-activity';
+import type { LiveOutputAddress } from './run-presentation';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
@@ -2608,6 +2609,11 @@ export interface DspatchBridge {
    */
   openLoopEditor(): Promise<LoopEditorWindowOutcome>;
   /**
+   * DSP-209 S20: follow one fan-out branch's live output in a window of its own. The client
+   * opens it; the host is asked nothing new. Opening starts and changes nothing in the run.
+   */
+  openBranchOutput(address: LiveOutputAddress): Promise<BranchOutputWindowOutcome>;
+  /**
    * Open review for the project this chat is working in, in a window of its own (DSP-126).
    *
    * The main process hands review the open session's folder and nothing else; review
@@ -3158,6 +3164,12 @@ export interface LoopEditorWindowOutcome {
   readonly note: string;
 }
 
+/** DSP-209 S20: what opening a branch's output window did. */
+export interface BranchOutputWindowOutcome {
+  readonly opened: boolean;
+  readonly note: string;
+}
+
 /** Mandate from the composer; workspace is the open chat project. */
 export interface ChatLoopRunRequest {
   readonly runId: string;
@@ -3466,6 +3478,7 @@ export type BridgeChannel =
   | 'dspatch:resolve-loop-roles'
   | 'dspatch:reveal-role-source'
   | 'dspatch:open-loop-editor'
+  | 'dspatch:open-branch-output'
   | 'dspatch:open-review'
   | 'dspatch:open-example-review'
   | 'dspatch:check-review-windows'

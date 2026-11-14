@@ -21,8 +21,11 @@
  */
 
 import {
+  finishBranch,
   finishStepsForNode,
+  foldBranchActivity,
   foldStepActivity,
+  type BranchActivityState,
   type StepActivity,
   type StepActivityState,
 } from './loop-activity';
@@ -287,6 +290,11 @@ export interface RunView {
    */
   readonly steps: readonly StepActivityState[];
   /**
+   * DSP-209 S20: each fan-out branch's live output, folded per branch from the same activity
+   * events. Optional, so a view from a host written before it reads as one with none.
+   */
+  readonly branchSteps?: readonly BranchActivityState[];
+  /**
    * The terminal this run reached, as the runner reported it when it ended.
    *
    * `null` until the run ends, and `null` afterwards for every ending that reached no
@@ -369,6 +377,11 @@ export function applyRunEvent(view: RunView | null, event: LoopRunEvent): RunVie
     };
   }
   if (event.kind === 'activity') {
+    if (event.activity.sliceId !== undefined) {
+      const before = current.branchSteps ?? [];
+      const branchSteps = foldBranchActivity(before, event.activity);
+      return branchSteps === before ? current : { ...current, branchSteps };
+    }
     const steps = foldStepActivity(current.steps, event.activity);
     // Same array back when the fold changed nothing, so an event for a step this view
     // never saw open does not even cause a re-render.
@@ -383,7 +396,32 @@ export function applyRunEvent(view: RunView | null, event: LoopRunEvent): RunVie
     (event.entry.kind !== 'node-produced' && event.entry.kind !== 'runtime-fault')
       ? current.steps
       : finishStepsForNode(current.steps, current.run.runId, event.entry.nodeId);
-  return { ...current, entries: [...current.entries, event.entry], steps: closed };
+  // DSP-209 S20: a branch's `branch-ended` line closes that branch's live view.
+  const branchSteps =
+    event.entry.kind === 'branch-ended' && current.branchSteps !== undefined
+      ? closeBranchFromEntry(current.branchSteps, current.run.runId, event.entry)
+      : current.branchSteps;
+  return {
+    ...current,
+    entries: [...current.entries, event.entry],
+    steps: closed,
+    ...(branchSteps === undefined ? {} : { branchSteps }),
+  };
+}
+
+/** DSP-209 S20: the branch a `branch-ended` line names (`instanceId` is `node#visit/slice`). */
+function closeBranchFromEntry(
+  branches: readonly BranchActivityState[],
+  runId: string,
+  entry: RunJournalEntry,
+): readonly BranchActivityState[] {
+  const sliceId = entry.data?.['sliceId'];
+  const instanceId = entry.data?.['instanceId'];
+  const visit = typeof instanceId === 'string' ? Number(/#(\d+)\//.exec(instanceId)?.[1]) : Number.NaN;
+  if (typeof sliceId !== 'string' || entry.nodeId === undefined || !Number.isInteger(visit)) {
+    return branches;
+  }
+  return finishBranch(branches, { runId, nodeId: entry.nodeId, occurrence: visit, sliceId });
 }
 
 /**

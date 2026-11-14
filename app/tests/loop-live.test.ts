@@ -47,6 +47,7 @@ import {
 import { createFileResultStore } from '../src/main/loop-result-store';
 import { LoopRunController } from '../src/main/loop-control-runtime';
 import { describeLoopEnding } from '../src/shared/loop-transcript';
+import type { StepActivity } from '../src/shared/loop-activity';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import type { LoopGraph, LoopNode } from '../src/shared/loop-graph';
@@ -3354,6 +3355,7 @@ describe('createLiveExecutor — fan-out branches (DSP-209 S10b)', () => {
     const adapter = new FakeAdapter({ assistantText: `The slices.\n\n${block}` });
     const replies: { nodeId: string; sliceId?: string; sessionId: string }[] = [];
     const steerable: unknown[] = [];
+    const activity: StepActivity[] = [];
     const graph: LoopGraph = {
       format: 'dspatch-loop-graph',
       formatVersion: 1,
@@ -3388,10 +3390,22 @@ describe('createLiveExecutor — fan-out branches (DSP-209 S10b)', () => {
         promptFor: (node) => `Do the ${node.id} step.`,
         onAgentReply: (reply) => replies.push({ nodeId: reply.nodeId, ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }), sessionId: reply.sessionId }),
         onSteerableStep: (step) => steerable.push(step),
+        onStepActivity: (event) => activity.push(event),
       }),
     });
     assert.equal(result.status, 'completed', result.fault?.detail ?? '');
     assert.equal(result.terminalNodeId, 'end');
+    // DSP-209 S20: each branch's live output starts on the run's activity path, with its slice.
+    assert.deepEqual(
+      activity
+        .filter((event) => event.kind === 'step-started' && event.nodeId === 'read')
+        .map((event) => [event.occurrence, event.sliceId])
+        .sort(),
+      [
+        [1, 'a'],
+        [1, 'b'],
+      ],
+    );
     const ids = adapter.configs.map((config) => config.dspatchSessionId);
     assert.equal(ids.length, 3, 'the slicer, and one session per branch');
     assert.equal(new Set(ids).size, 3);

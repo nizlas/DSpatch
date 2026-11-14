@@ -443,6 +443,24 @@
  *
  * The palette is the one already in this file: no new colours were introduced.
  */
+/* DSP-209 S20: a fan-out's branches, on the node, and the control that opens their list. */
+.node-branches {
+  fill: #c6d2df;
+  font-size: 9.5px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.node-branches--control {
+  pointer-events: auto;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.node-branches--control:focus-visible {
+  outline: 1px solid #7fa8c4;
+}
+
 .node-run-mark {
   font-size: 9px;
   font-weight: 600;

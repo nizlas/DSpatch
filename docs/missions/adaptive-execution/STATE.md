@@ -14,7 +14,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S20 (`implement`, decision 45), from call 26 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S19, S22, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** S19b (`implement`, decision 46), from call 29 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S19, S20, S22, S25 and S25b are reviewed and committed.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -152,8 +152,8 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S18a | Edge routing around nodes; back and rework edges styled; node size by kind (`shared/loop-edge-routing.ts`, `GraphCanvas.tsx`) | R2, R7 | — | **reviewed** (parallel, decision 41; see *S17 and S18a, parallel*) | 1 | `52bc9c4`, merged `88a49dc`, test line `d6b2a3b` |
 | S18b | Layered layout and an explicit **Arrange** action; places nodes that have no position (`shared/loop-layout.ts`) | R2 | S18a | pending | 0 | — |
 | S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | **reviewed** (parallel with S22, round 2; see *S19 and S22, parallel*) | 1 | `a9ea3dc`/`2798903`, `bcd8a8b`, `8323a90`, `fac761a`/`87b09ba`, `dbb2025` |
-| S19b | S19's open review points: (1) Cursor and Copilot are not checked against a model list before a run, so the "never fall back silently" rule is unverified for them: add the check where the adapter offers a list, or record that it cannot be checked and say so in the refusal or node help; (2) `entryFromQuery` in `project-host.ts` leaves a `select` entry step out of the "Runs with …" line | R6 | S19 | pending | 0 | — |
-| S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3, R7 | S16, S18a, S19 (all reviewed) | **in progress**: sent to `implement` on call 26 (decision 45) | 1 | — |
+| S19b | S19's open review points: (1) Cursor and Copilot are not checked against a model list before a run, so the "never fall back silently" rule is unverified for them: add the check where the adapter offers a list, or record that it cannot be checked and say so in the refusal or node help; (2) `entryFromQuery` in `project-host.ts` leaves a `select` entry step out of the "Runs with …" line; (3) **a red test from S19**, found by S20's implementer and confirmed by its reviewer by reading: `modelOfStep` (`main/loop-live.ts`, l.1721 at `a3c7813`) reads `context.graph.edges` whenever `arrivedBy !== null`, so `tests/loop-activity.test.ts` "reports what happens while the turn runs…" throws (18 pass, 1 fail). Real runs set `arrivedBy`. S19's check list did not include that file | R6 | S19 | **in progress**: sent to `implement` on call 29 (decision 46) | 1 | — |
+| S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3, R7 | S16, S18a, S19 (all reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S20)` after `a3c7813` |
 | S21 | Step-report cards in chat, branches grouped, integrator's combined report, opt-in `SUBGOAL:` line | R4 | S16, S20 | pending | 0 | — |
 | S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **reviewed** (parallel with S19; see *S19 and S22, parallel*) | 1 | `4bce22c`/`a40d3b8`, `bcd8a8b` (test line), `151612c`/`0b0fb3d` |
 | S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b | pending | 0 | — |
@@ -385,6 +385,56 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S20 — Branches visible without hover — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1.** Run `chat-loop-2026-11-14T09-54-18-366Z`. Briefed on coordinator visit 6 (call 26, decision 45). Implemented on call 27 (`done`). Review on call 28 returned `accept`, round 1. Recorded and committed on coordinator visit 7 (call 29). `git status` showed 16 modified and 4 new files, exactly as the implementer listed them. DSpatch's 50 files count from the run's start, and the rest are in commits up to `a3c7813`.
+- **What was done:**
+  - **New `shared/branch-presentation.ts`.** It builds every visible text from S16's `branchViewsFromJournal`:
+    - the node line ("3 branches · 1 working · 2 finished", plus queued, failed or cancelled);
+    - each branch's row: its task or "not recorded", its state with the ending word ("failed: no-worktree", which settles S16 suggestion S4), its model or "the run's model", its message counts and its live-output address;
+    - the note on when a message counts as delivered.
+  - **`run-presentation.ts`.** `BranchView.model` is now filled from S19's `branch-started` data.
+  - **`loop-run.ts`.** The runner journals the slice's `result` as **`task` on `branch-started`** (review F2). It is an additive data field like S12's `ownedPaths`; no journal kind changed.
+  - **Node line on the canvas.** `GraphCanvas.tsx` draws it on the fan-out node at y=53, inside S18a's 72 px height, and squeezes it to fit when it is long. The line is also a control: click, Enter or Space opens the list. Before a new visit has a branch, the line reads "earlier visit: …".
+  - **New `renderer/BranchList.tsx`**, used both in the editor and in the chat.
+    - In `LoopEditor.tsx`, a **Branches — …** button sits outside the locked fieldset, so it works during a run. The old hover-only summary is gone.
+    - The list stays open until closed. Each row has **Show output** and **Open in window**.
+  - **Live output from branches.** `runInstance` in `main/loop-live.ts` emits activity with the branch's `sliceId` through the existing `onStepActivity`. One shared `activityFromEvent` maps events for both steps and branches.
+    - `loop-activity.ts` gains `foldBranchActivity`, and `foldStepActivity` ignores branch events.
+    - `RunView` gains `branchSteps`.
+    - The host forwards events unchanged; no host code changed.
+    - No prompt, stored result or shared inspection is touched.
+  - **Chat (`App.tsx`).** It keeps the watched run's branch lines and activity in window memory and draws the same list under the run's entry.
+  - **Branch window.** A client-side IPC call, `openBranchOutput(address)` on `dspatch:open-branch-output`, is wired through `main.ts`, `preload.ts` and `bridge.ts`. The new `renderer/BranchOutputWindow.tsx` is routed from `main.tsx`. It is sandboxed, refuses further windows, and adds no host method.
+  - **Styles** go in `styles.css`, using palette variables.
+  - **Tests.**
+    - New `tests/branch-presentation.test.ts` (5 tests), in the `loop` group.
+    - `loop-live.test.ts` now checks that both branches send `step-started` with their `sliceId`.
+- **Review verdict: accept.** All four criteria are met by reading. The clicks are untested, and the boundaries hold.
+  - **F1 is a fault in committed S19 code, not in S20:** `loop-activity.test.ts` has 1 failing test. It is now **S19b (3)**. Until it is fixed, nothing tests the step-activity mapping S20 refactored; the reviewer compared the old and new mapping by reading.
+  - **F2** is the `task` field, recorded above.
+  - **Suggestions:**
+    - `App.tsx`'s `BRANCH_JOURNAL_KINDS` sits between import blocks, and the new state sits under `applyLoopTurnEvent`'s doc comment.
+    - The branch window's heading uses the node id rather than its label.
+- **Checked, by the implementer.** The reviewer reused these results.
+  - `branch-presentation` 5/5, `run-presentation` 6/6, `loop-live` 71/71, `loop-fan-out-run` 7/7, `loop-mailbox-run` 4/4, `loop-run-view` 33/33.
+  - Also `loop-fan-out` 4/4, `loop-run-report` 9/9, `loop-final-card` 15/15, `window-zoom` 18/18, `review-model` 36/36, `project-host-boundary` 2/2.
+  - `npm run typecheck` exit 0.
+  - **`loop-activity` 18/19 (F1).**
+- **Untested:**
+  - the clicks and the layout of the node line;
+  - the branch window opening, and its catch-up when it opens mid-run, when it can miss events;
+  - the chat's list (for the watched run only, never for a run read back from its record);
+  - anything that needs the rebuilt host. Until then, rows read "not recorded" and there is no branch output.
+- **Not in the engine.** Host-side code changed (`loop-live.ts`), so it needs an engine rebuild and **Restart host** at the next transition.
+- **Niclas tries**, after the transition: run the parallel loop on a throwaway repository.
+  1. Read the fan-out node's line without hovering.
+  2. Click it, or use **Branches** in the node panel.
+  3. Check each branch's task, state, model and messages, and the delivered note.
+  4. Use **Show output**, then **Open in window**.
+  5. Check that the chat shows the same list under the run's entry.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### S19 and S22, parallel — reviewed (agent review, not Niclas's approval)
@@ -790,6 +840,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
     Alternatives: run the two in sequence (slower, about the same number of calls); keep S19 alone and do S22 with S20 (S20 also needs S18a and S19 for the model).
 45. **S20 goes to the one implementer (`implement`)** (visit 6). Its parts are branch activity in the engine (`runInstance` emits step activity with `sliceId`), host forwarding, the node summary, the **Branches** panel, the chat detail and a separate client window. They all hinge on one undecided shape: how branch activity is carried and folded per S16's `LiveOutputAddress`. Each UI part depends on that shape, so slicing would leave every branch guessing it. The previous parallel pair also needed four branch visits and five integrator visits. Alternatives: `implement-parallel` with an engine slice and a window slice (the interface is not yet fixed); S19b first (small, and not on the R3 path).
+46. **S19b goes next, before S21, through `implement`** (visit 7). Its new part (3) is a failing test in the `loop` group, in committed S19 code, and it leaves S20's step-activity mapping untested. A red test should not sit under further sub-goals. Parts (1) and (2) are small and touch the same model-selection code. One implementer covers all three. Alternatives: S21 first (it would build on a red group); folding the guard into S21 (unrelated files).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -808,6 +859,13 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 7 (call 29).** S20 is reviewed and committed with this file. S19b went to `implement` (decision 46). **Next:**
+1. Record S19b's review and commit it.
+2. Then S21, which needs S16 and S20 and settles S16 suggestion S1 (the integrator label).
+3. Then S18b, S23a and S23b.
+
+Every UI brief carries R7. Host-side code changed in S19, S20 and S22, so the engine needs a rebuild and **Restart host** at the next transition. If this run ends first, the next run reconciles S19b from the uncommitted working copy.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 6 (call 26).** S19 and S22 are reviewed and recorded, and their code is in `2798903`..`dbb2025`. This file is committed after them. S20 went to `implement` (decision 45). **Next:**
 1. Record S20's review and commit it.

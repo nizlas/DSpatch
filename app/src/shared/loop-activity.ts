@@ -49,6 +49,12 @@ export interface StepAddress {
 
 export type StepActivity = StepAddress & {
   readonly atUtc: string;
+  /**
+   * DSP-209 S20: the fan-out branch this happened in, or absent for the step itself. A
+   * branch's activity is display only: it reaches no prompt and no stored result (R4).
+   * {@link foldStepActivity} leaves it out; {@link foldBranchActivity} keeps it per branch.
+   */
+  readonly sliceId?: string;
 } & (
     | {
         /** The step has been handed its prompt and the provider turn has begun. */
@@ -147,6 +153,10 @@ export function foldStepActivity(
   steps: readonly StepActivityState[],
   activity: StepActivity,
 ): readonly StepActivityState[] {
+  // DSP-209 S20: a branch's activity is not its node's step speaking; it has its own fold.
+  if (activity.sliceId !== undefined) {
+    return steps;
+  }
   const index = steps.findIndex(
     (step) =>
       step.runId === activity.runId &&
@@ -228,6 +238,62 @@ export function foldStepActivity(
     case 'awaiting-approval':
       return replace({ ...heard, awaitingApproval: activity.summary });
   }
+}
+
+/** DSP-209 S20: one fan-out branch's live activity, addressed by its visit and slice. */
+export type BranchActivityState = StepActivityState & { readonly sliceId: string };
+
+/**
+ * DSP-209 S20: fold one activity event into the branches observed so far, per branch.
+ *
+ * The same fold as a step's, on each branch alone: an event for one slice never lands on
+ * another, and a stale one returns the same array. An event without a `sliceId` is a step's.
+ */
+export function foldBranchActivity(
+  branches: readonly BranchActivityState[],
+  activity: StepActivity,
+): readonly BranchActivityState[] {
+  const sliceId = activity.sliceId;
+  if (sliceId === undefined) {
+    return branches;
+  }
+  const { sliceId: _slice, ...asStep } = activity;
+  const at = branches.findIndex(
+    (branch) =>
+      branch.sliceId === sliceId &&
+      branch.runId === activity.runId &&
+      branch.nodeId === activity.nodeId &&
+      branch.occurrence === activity.occurrence,
+  );
+  const folded = foldStepActivity(at === -1 ? [] : [branches[at] as StepActivityState], asStep as StepActivity);
+  const next = folded[0];
+  if (next === undefined || (at !== -1 && next === branches[at])) {
+    return branches;
+  }
+  const state: BranchActivityState = { ...next, sliceId };
+  return at === -1 ? [...branches, state] : branches.map((branch, position) => (position === at ? state : branch));
+}
+
+/** DSP-209 S20: a branch's live view ends with its `branch-ended` line. */
+export function finishBranch(
+  branches: readonly BranchActivityState[],
+  address: StepAddress & { readonly sliceId: string },
+): readonly BranchActivityState[] {
+  let changed = false;
+  const next = branches.map((branch) => {
+    if (
+      branch.finished ||
+      branch.sliceId !== address.sliceId ||
+      branch.runId !== address.runId ||
+      branch.nodeId !== address.nodeId ||
+      branch.occurrence !== address.occurrence
+    ) {
+      return branch;
+    }
+    changed = true;
+    return { ...branch, finished: true };
+  });
+  return changed ? next : branches;
 }
 
 /** Mark the step of this node occurrence finished, once its reply has landed. */

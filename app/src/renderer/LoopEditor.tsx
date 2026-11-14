@@ -103,15 +103,14 @@ import { formatJournalEntry, latestModelSelection, type RunJournalEntry, type Ru
 import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
+import { BranchList } from './BranchList';
+import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
+import { branchViewsFromJournal } from '../shared/run-presentation';
 import { controlPhase } from '../shared/loop-control';
 import {
   UNVERSIONED_CANVAS,
   applyRunEvent,
   describePinnedDrawing,
-  branchInstanceStates,
-  describeBranchInstances,
-  describeMessageCounts,
-  messageCountsIn,
   edgesTakenIn,
   finishedMarksBelongTo,
   finishedRunMarksFrom,
@@ -2214,23 +2213,24 @@ export function LoopEditor(): React.JSX.Element {
     () => (pinCheck === 'different' ? new Set<string>() : edgesTakenIn(watch)),
     [watch, pinCheck],
   );
-  // DSP-209 S10b: each fan-out node's branches, in a few words, with their slices listed.
+  // DSP-209 S20: the run's branches, from S16's model, for the node line and the Branches list.
+  const branchViews = useMemo(
+    () => (watch === null || pinCheck === 'different' ? [] : branchViewsFromJournal(watch.run.runId, watch.entries)),
+    [watch, pinCheck],
+  );
+  // Each fan-out node's line, e.g. "3 branches · 1 working · 2 finished", drawn on the node.
   const branchSummaries = useMemo(() => {
     const summaries = new Map<string, string>();
-    if (pinCheck === 'different') {
-      return summaries;
-    }
-    const counts = messageCountsIn(watch);
-    for (const [nodeId, instances] of branchInstanceStates(watch)) {
-      const summary = describeBranchInstances(instances);
-      // DSP-209 S11: the visit's mailbox, counted, beside its branches.
-      const messages = describeMessageCounts(counts.get(nodeId));
-      if (summary !== null) {
-        summaries.set(nodeId, `${summary} (${instances.map((item) => `${item.sliceId}: ${item.ending ?? item.state}`).join('; ')})${messages === null ? '' : `; ${messages}`}`);
+    for (const nodeId of fanOutNodesIn(branchViews)) {
+      const line = branchSummaryLine(branchViews, nodeId);
+      if (line !== null) {
+        summaries.set(nodeId, line);
       }
     }
     return summaries;
-  }, [watch, pinCheck]);
+  }, [branchViews]);
+  // Which node's Branches list is open; it stays open until closed or another node is chosen.
+  const [branchesOpenFor, setBranchesOpenFor] = useState<string | null>(null);
 
   /**
    * Which node is working, which is not the same question as which node is active.
@@ -2819,6 +2819,10 @@ export function LoopEditor(): React.JSX.Element {
               edgesTaken={edgeSet}
               runStates={runStates}
               branchSummaries={branchSummaries}
+              onOpenBranches={(nodeId) => {
+                setSelection({ kind: 'node', id: nodeId });
+                setBranchesOpenFor(nodeId);
+              }}
               workingNodes={workingNodes}
               endingMarks={endingMarks}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}
@@ -2907,6 +2911,31 @@ export function LoopEditor(): React.JSX.Element {
             />
           )}
           </fieldset>
+          {/*
+            DSP-209 S20: the selected fan-out node's Branches, outside the lock: reading a
+            branch is not editing the drawing. The button is the node panel's control; the
+            line on the node opens the same list. It stays open until closed.
+          */}
+          {selectedNode !== null && branchSummaries.has(selectedNode.id) ? (
+            <div className="editor-branches" data-ev="editor-branches">
+              <button
+                type="button"
+                className="button"
+                data-ev="editor-branches-toggle"
+                aria-expanded={branchesOpenFor === selectedNode.id}
+                onClick={() => setBranchesOpenFor((open) => (open === selectedNode.id ? null : selectedNode.id))}
+              >
+                {branchesOpenFor === selectedNode.id ? 'Hide branches' : 'Branches'} — {branchSummaries.get(selectedNode.id)}
+              </button>
+              {branchesOpenFor === selectedNode.id ? (
+                <BranchList
+                  rows={branchRows(branchViews, selectedNode.id)}
+                  activity={watch?.branchSteps}
+                  heading={selectedNode.label ?? selectedNode.id}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </aside>
       </main>
 

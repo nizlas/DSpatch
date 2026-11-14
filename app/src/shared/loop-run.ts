@@ -1707,6 +1707,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             concurrency: effective,
             // DSP-209 S12: what the slice owned, as the runner read it, for the run report.
             ownedPaths: slice.ownedPaths.join(', '),
+            // DSP-209 S20: the slice's task as the planner wrote it, for the Branches view.
+            task: slice.result,
             ...visit.modelData,
           },
         },

@@ -14,7 +14,7 @@
  */
 
 import type { StepAddress } from './loop-activity';
-import type { RunJournalEntry } from './loop-run';
+import { modelSelectionFromData, type RunJournalEntry } from './loop-run';
 import type { FanOutIsolation } from './loop-graph';
 import { readSlices } from './loop-slices';
 
@@ -94,7 +94,7 @@ export interface BranchView {
   readonly state: BranchState;
   /** How it ended, in the journal's word (`finished`, `no-worktree`, a declared failure…), once it has. */
   readonly ending: string | null;
-  /** DSP-209 S19 fills this; until then always `null`. */
+  /** DSP-209 S19's model fields on `branch-started`, or `null` where it recorded none. */
   readonly model: ModelSelectionRecord | null;
   readonly sessionId: string | null;
   readonly messages: BranchMessages;
@@ -278,13 +278,25 @@ export function branchViewsFromJournal(
     started: boolean;
     ending: string | null;
     sessionId: string | null;
+    /** DSP-209 S20: from `branch-started` (`task`, and S19's model fields). */
+    journalTask: string | null;
+    model: ModelSelectionRecord | null;
     messages: { sent: number; delivered: number; acknowledged: number; undelivered: number };
   }
   const branches: Building[] = [];
   const find = (visit: VisitIdentity, sliceId: string): Building => {
     let branch = branches.find((known) => sameVisit(known.visit, visit) && known.sliceId === sliceId);
     if (branch === undefined) {
-      branch = { visit, sliceId, started: false, ending: null, sessionId: null, messages: { sent: 0, delivered: 0, acknowledged: 0, undelivered: 0 } };
+      branch = {
+        visit,
+        sliceId,
+        started: false,
+        ending: null,
+        sessionId: null,
+        journalTask: null,
+        model: null,
+        messages: { sent: 0, delivered: 0, acknowledged: 0, undelivered: 0 },
+      };
       branches.push(branch);
     }
     return branch;
@@ -308,6 +320,8 @@ export function branchViewsFromJournal(
       branch.sessionId = text(entry.data, 'sessionId') ?? branch.sessionId;
       if (entry.kind === 'branch-started') {
         branch.started = true;
+        branch.journalTask = text(entry.data, 'task') ?? branch.journalTask;
+        branch.model = modelSelectionFromData(entry.data) ?? branch.model;
       } else {
         branch.ending = text(entry.data, 'ending') ?? 'not recorded';
       }
@@ -370,10 +384,10 @@ export function branchViewsFromJournal(
   return branches.map((branch) => ({
     visit: branch.visit,
     sliceId: branch.sliceId,
-    task: slicesOf(branch.visit)?.get(branch.sliceId) ?? null,
+    task: slicesOf(branch.visit)?.get(branch.sliceId) ?? branch.journalTask,
     state: stateOf(branch.ending, branch.started),
     ending: branch.ending,
-    model: null,
+    model: branch.model,
     sessionId: branch.sessionId,
     messages: { ...branch.messages },
     current: latestOccurrence.get(branch.visit.nodeId) === branch.visit.occurrence,

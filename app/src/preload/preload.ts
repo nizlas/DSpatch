@@ -33,6 +33,7 @@ import type {
   LoopGraphOpenOutcome,
   LoopGraphOpenRequest,
   LoopEditorWindowOutcome,
+  BranchOutputWindowOutcome,
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
   GraphSavedElsewhere,
@@ -69,6 +70,7 @@ import type {
   ProviderLoginStep,
 } from '../shared/bridge';
 import type { StepActivity } from '../shared/loop-activity';
+import type { LiveOutputAddress } from '../shared/run-presentation';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
@@ -140,6 +142,7 @@ const SAVE_LOOP_GRAPH: BridgeChannel = 'dspatch:save-loop-graph';
 const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
+const OPEN_BRANCH_OUTPUT: BridgeChannel = 'dspatch:open-branch-output';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
@@ -313,6 +316,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(CANCEL_EDITOR_LOOP_RUN) as Promise<EditorLoopCancelOutcome>,
   openLoopEditor: () =>
     ipcRenderer.invoke(OPEN_LOOP_EDITOR) as Promise<LoopEditorWindowOutcome>,
+  openBranchOutput: (address: LiveOutputAddress) =>
+    ipcRenderer.invoke(OPEN_BRANCH_OUTPUT, address) as Promise<BranchOutputWindowOutcome>,
   openReview: () => ipcRenderer.invoke(OPEN_REVIEW) as Promise<LoopEditorWindowOutcome>,
   openExampleReview: () => ipcRenderer.invoke(OPEN_EXAMPLE_REVIEW) as Promise<LoopEditorWindowOutcome>,
   reviewWindowCheck: (request: ReviewWindowCheckRequest) =>

@@ -1369,6 +1369,47 @@ interface TurnWait {
 }
 
 /**
+ * DSP-209 S20: one provider event as step activity, or `null` for an event that is not shown.
+ * Shared by an ordinary step and a fan-out branch; a branch passes its `sliceId` in the address.
+ * Reasoning is never carried (see `loop-activity.ts`).
+ */
+function activityFromEvent(
+  event: AgentEvent,
+  address: { readonly runId: string; readonly nodeId: string; readonly occurrence: number; readonly sliceId?: string },
+): StepActivity | null {
+  if (event.type === 'assistant.delta') {
+    return event.text === '' ? null : { ...address, atUtc: event.at, kind: 'reply-text', text: event.text };
+  }
+  if (event.type === 'tool.started') {
+    return {
+      ...address,
+      atUtc: event.at,
+      kind: 'tool-started',
+      callId: event.toolCallId,
+      name: event.name,
+      summary: describeToolActivity(event.name, 'started', event.rawProviderEvent).summary,
+    };
+  }
+  if (event.type === 'tool.finished') {
+    const described = describeToolActivity(event.name, event.status, event.rawProviderEvent);
+    return {
+      ...address,
+      atUtc: event.at,
+      kind: 'tool-finished',
+      callId: event.toolCallId,
+      name: event.name,
+      status: event.status,
+      summary: described.summary,
+      detail: described.detail,
+    };
+  }
+  if (event.type === 'approval.requested') {
+    return { ...address, atUtc: event.at, kind: 'awaiting-approval', summary: event.request.summary };
+  }
+  return null;
+}
+
+/**
  * Follow one provider turn.
  *
  * **It used to handle three event types.** `assistant.message`, `usage` and
@@ -1897,7 +1938,30 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       }) +
       receivedText +
       describeBranchAssignment(instance);
-    const turn = waitForTurn(options.adapter, session.dspatchSessionId);
+    // DSP-209 S20: the branch's live output, addressed to its visit and slice, on the run's
+    // ordinary activity path. Display only: nothing here reaches a prompt, a stored result or
+    // the shared inspection (decision 27, R4).
+    const branchAddress = { runId: context.runId, nodeId: node.id, occurrence: context.occurrence, sliceId: instance.sliceId };
+    const emitBranch = options.onStepActivity;
+    const turn = waitForTurn(
+      options.adapter,
+      session.dspatchSessionId,
+      emitBranch === undefined
+        ? undefined
+        : (event) => {
+            const activity = activityFromEvent(event, branchAddress);
+            if (activity !== null) {
+              emitBranch(activity);
+            }
+          },
+    );
+    emitBranch?.({
+      ...branchAddress,
+      atUtc: new Date(now()).toISOString(),
+      kind: 'step-started',
+      roleId: node.role?.id ?? null,
+      roleSourcePath: node.role?.source.path ?? null,
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const cancel = (): void => {
@@ -2549,44 +2613,10 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       if (emit === undefined) {
         return;
       }
-      if (event.type === 'assistant.delta') {
-        if (event.text !== '') {
-          emit({ ...address, atUtc: event.at, kind: 'reply-text', text: event.text });
-        }
-        return;
-      }
-      if (event.type === 'tool.started') {
-        emit({
-          ...address,
-          atUtc: event.at,
-          kind: 'tool-started',
-          callId: event.toolCallId,
-          name: event.name,
-          summary: describeToolActivity(event.name, 'started', event.rawProviderEvent).summary,
-        });
-        return;
-      }
-      if (event.type === 'tool.finished') {
-        const described = describeToolActivity(event.name, event.status, event.rawProviderEvent);
-        emit({
-          ...address,
-          atUtc: event.at,
-          kind: 'tool-finished',
-          callId: event.toolCallId,
-          name: event.name,
-          status: event.status,
-          summary: described.summary,
-          detail: described.detail,
-        });
-        return;
-      }
-      if (event.type === 'approval.requested') {
-        emit({
-          ...address,
-          atUtc: event.at,
-          kind: 'awaiting-approval',
-          summary: event.request.summary,
-        });
+      // DSP-209 S20: the same mapping as a fan-out branch uses, so the two cannot drift apart.
+      const activity = activityFromEvent(event, address);
+      if (activity !== null) {
+        emit(activity);
       }
     });
     // What the graph says this step receives, and what it must leave (DSP-74, DSP-75).

@@ -130,12 +130,34 @@ import {
   planChatCancel,
 } from '../shared/loop-chat';
 import {
+  foldBranchActivity,
   runningStep,
   stepStanding,
+  type BranchActivityState,
   type StepActivityState,
   type StepStandingReport,
   type StepToolCall,
 } from '../shared/loop-activity';
+import type { RunJournalEntry } from '../shared/loop-run';
+import { branchViewsFromJournal, type BranchView } from '../shared/run-presentation';
+import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
+import { BranchList } from './BranchList';
+
+/** DSP-209 S20: the journal kinds a run's Branches list is folded from. */
+const BRANCH_JOURNAL_KINDS: ReadonlySet<string> = new Set([
+  'run-started',
+  'node-entered',
+  'node-produced',
+  'edge-taken',
+  'branch-started',
+  'branch-ended',
+  'message-sent',
+  'message-delivered',
+  'message-acknowledged',
+  'message-undelivered',
+  'run-ended',
+  'refused',
+]);
 import {
   activityLine,
   chatHeaderView,
@@ -1191,6 +1213,28 @@ function Workbench({
   }, [useLoop]);
 
   /** One place that moves the loop transcript, so its rules stay in one module. */
+  // DSP-209 S20: the watched run's branch lines and branch output, in this window only. A live
+  // view, not a second history: it is not stored, and a run read back from disk has none.
+  const [loopBranchJournal, setLoopBranchJournal] = useState<{
+    readonly runId: string;
+    readonly entries: readonly RunJournalEntry[];
+  } | null>(null);
+  const [loopBranchSteps, setLoopBranchSteps] = useState<readonly BranchActivityState[]>([]);
+  const loopBranchViews = useMemo(
+    () => (loopBranchJournal === null ? [] : branchViewsFromJournal(loopBranchJournal.runId, loopBranchJournal.entries)),
+    [loopBranchJournal],
+  );
+  const loopNodeLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const entry of loopBranchJournal?.entries ?? []) {
+      const label = entry.data?.['label'];
+      if (entry.kind === 'node-entered' && entry.nodeId !== undefined && typeof label === 'string') {
+        labels.set(entry.nodeId, label);
+      }
+    }
+    return labels;
+  }, [loopBranchJournal]);
+
   const applyLoopTurnEvent = useCallback((event: LoopTurnEvent): void => {
     setLoopTurns((previous) => loopTurnsAfter(previous, event));
   }, []);
@@ -1238,6 +1282,15 @@ function Workbench({
 
   useEffect(() => {
     return window.dspatch.onChatLoopJournal((journalEntry) => {
+      // DSP-209 S20: the lines the Branches list is folded from, for the run being watched.
+      const watchedRun = loopRunId.current;
+      if (watchedRun !== null && BRANCH_JOURNAL_KINDS.has(journalEntry.kind)) {
+        setLoopBranchJournal((previous) =>
+          previous?.runId === watchedRun
+            ? { runId: watchedRun, entries: [...previous.entries, journalEntry] }
+            : { runId: watchedRun, entries: [journalEntry] },
+        );
+      }
       // DSP-147: the run has started, so its mandate leaves the box: only what was sent,
       // never what has been typed since.
       const started = pendingLoopStart.current;
@@ -1397,6 +1450,13 @@ function Workbench({
    */
   useEffect(() => {
     return window.dspatch.onChatLoopActivity((activity) => {
+      // DSP-209 S20: a branch's output is kept per branch, for the Branches list only.
+      if (activity.sliceId !== undefined) {
+        setLoopBranchSteps((previous) =>
+          foldBranchActivity(previous[0] === undefined || previous[0].runId === activity.runId ? previous : [], activity),
+        );
+        return;
+      }
       applyLoopTurnEvent({ kind: 'step-activity', runId: activity.runId, activity });
     });
   }, [applyLoopTurnEvent]);
@@ -3220,6 +3280,11 @@ function Workbench({
                       item.turn.runId === newestLoopTurn?.runId ? liveStanding : null
                     }
                     liveMessages={placedMessages.get(item.turn.runId) ?? NO_PLACED_MESSAGES}
+                    branches={
+                      item.turn.runId === loopBranchJournal?.runId && loopBranchViews.length > 0
+                        ? { views: loopBranchViews, activity: loopBranchSteps, labels: loopNodeLabels }
+                        : null
+                    }
                   />
                 ) : (
                   <InstructionEntry
@@ -6710,9 +6775,19 @@ function LoopTurnEntry({
   standing,
   liveStanding,
   liveMessages,
+  branches,
 }: {
   readonly turn: LoopTurn;
   readonly index: number;
+  /**
+   * DSP-209 S20: this run's fan-out branches, as the window watched them, or `null`. The
+   * same list and the same way to open a branch's output as the loop editor.
+   */
+  readonly branches: {
+    readonly views: readonly BranchView[];
+    readonly activity: readonly BranchActivityState[];
+    readonly labels: ReadonlyMap<string, string>;
+  } | null;
   /**
    * DSP-147: the messages this window holds for the run, each with where it was sent.
    * With the ones read back from the run's record, by id, the window's own first.
@@ -6893,6 +6968,17 @@ function LoopTurnEntry({
           </p>
         </details>
       )}
+      {/* DSP-209 S20: each fan-out step's branches, listed in the entry rather than in a hover. */}
+      {branches === null
+        ? null
+        : fanOutNodesIn(branches.views).map((nodeId) => (
+            <BranchList
+              key={nodeId}
+              rows={branchRows(branches.views, nodeId)}
+              activity={branches.activity}
+              heading={`${branches.labels.get(nodeId) ?? nodeId} — ${branchSummaryLine(branches.views, nodeId) ?? ''}`}
+            />
+          ))}
       {/* DSP-209 S12: the run report, from what DSpatch recorded. Folded; nothing opens by itself. */}
       {/* DSP-209 S22: with a final card, the report sits behind the card's expansion instead. */}
       {turn.report === undefined || turn.finalCard !== undefined ? null : (

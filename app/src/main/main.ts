@@ -66,7 +66,9 @@ import type {
   StartSessionRequest,
   StoredSessionProvider,
   TestRunRequest,
+  BranchOutputWindowOutcome,
 } from '../shared/bridge';
+import { branchAddressFromQuery, branchAddressQuery } from '../shared/branch-presentation';
 import {
   HOST_CONFIG_ENV,
   isHostCallFailure,
@@ -149,6 +151,7 @@ const SAVE_LOOP_GRAPH: BridgeChannel = 'dspatch:save-loop-graph';
 const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
+const OPEN_BRANCH_OUTPUT: BridgeChannel = 'dspatch:open-branch-output';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
 const CHECK_REVIEW_WINDOWS: BridgeChannel = 'dspatch:check-review-windows';
@@ -2814,6 +2817,82 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+/** DSP-209 S20: the open branch-output windows, one per branch address. */
+const branchOutputWindows = new Map<string, BrowserWindow>();
+
+/**
+ * DSP-209 S20: a window that follows one fan-out branch's live output.
+ *
+ * Like the loop editor, a sibling with no parent, on the main preload, added to the run
+ * audience so it hears the run's events; it reads the run view once on opening. Opening it
+ * starts nothing and asks the host nothing new. A second request for the same branch
+ * brings that window forward.
+ */
+function openBranchOutputWindow(request: unknown): BranchOutputWindowOutcome {
+  const address = branchAddressFromQuery(
+    typeof request === 'object' && request !== null
+      ? branchAddressQuery({
+          runId: String((request as Record<string, unknown>)['runId'] ?? ''),
+          nodeId: String((request as Record<string, unknown>)['nodeId'] ?? ''),
+          occurrence: Number((request as Record<string, unknown>)['occurrence']),
+          sliceId: String((request as Record<string, unknown>)['sliceId'] ?? ''),
+        })
+      : '',
+  );
+  if (address === null) {
+    return { opened: false, note: 'That is not a branch DSpatch can follow: it needs a run, a node, a visit and a slice.' };
+  }
+  const key = branchAddressQuery(address);
+  const existing = branchOutputWindows.get(key);
+  if (existing !== undefined && !existing.isDestroyed()) {
+    existing.focus();
+    return { opened: true, note: 'That branch’s output is already open; it has been brought to the front.' };
+  }
+  try {
+    const window = new BrowserWindow({
+      width: 760,
+      height: 640,
+      minWidth: 420,
+      minHeight: 320,
+      show: false,
+      backgroundColor: '#101317',
+      ...windowIcon(),
+      title: `DSpatch — branch ${address.sliceId ?? ''}`,
+      webPreferences: {
+        preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    branchOutputWindows.set(key, window);
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const contents = window.webContents;
+    runAudience.add(contents);
+    window.once('ready-to-show', () => {
+      window.show();
+    });
+    window.on('closed', () => {
+      runAudience.delete(contents);
+      if (branchOutputWindows.get(key) === window) {
+        branchOutputWindows.delete(key);
+      }
+    });
+    const search = `window=branch&${key}`;
+    if (rendererUrl === undefined) {
+      void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { search });
+    } else {
+      const base = rendererUrl.split('#')[0] ?? rendererUrl;
+      void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}${search}`);
+    }
+    log(`branch output window opened for ${key}`);
+    return { opened: true, note: 'The branch’s output is open in its own window. Closing it leaves the run as it is.' };
+  } catch (error) {
+    branchOutputWindows.delete(key);
+    return { opened: false, note: `The branch window could not be opened: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
 /**
  * Open the loop editor beside the chat, or bring it to the front.
  *
@@ -5002,6 +5081,9 @@ function registerLoopGraphIpc(): void {
   );
 
   ipcMain.handle(OPEN_LOOP_EDITOR, (): LoopEditorWindowOutcome => openLoopEditorWindow());
+  // DSP-209 S20: one branch's live output in its own window. The client's own window; the
+  // host is not asked anything new (the window reads the run view and its events).
+  ipcMain.handle(OPEN_BRANCH_OUTPUT, (_event, request: unknown): BranchOutputWindowOutcome => openBranchOutputWindow(request));
   /*
    * Open review (DSP-126). The input is read by the host from the session the chat
    * service has open - not sent by the renderer - and it is only the folder: review
