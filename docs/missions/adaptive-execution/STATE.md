@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 sent to the implementer (coordinator visit 11, call 29).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c, S10a sent to the implementer (coordinator visit 12, call 32).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), then the S7 commit made on coordinator visit 10 (`(DSP-209 S7)` in `git log`, the commit after `3fc547e`).
-- **Sub-goal in progress:** S8 (reconcile the parallelism document; specify the first parallel increment), sent to the implementer on coordinator visit 11.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), then the S8 commit made on coordinator visit 12 (`(DSP-209 S8)` in `git log`, the commit after `3ec3639`).
+- **Sub-goal in progress:** S10a (fan-out format, slice-block validation and worktree manager), sent to the implementer on coordinator visit 12.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
@@ -36,10 +36,12 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S5b | Handoff in the window: inline prompt and buttons; chat loop's work node enables it; role text; AGENT_BEHAVIOUR §4 status | S5a | reviewed | 1 | `7724c35` |
 | S6 | Continue interactively without resubmitting | S5a, S5b, S1 | reviewed | 1 | `3fc547e` |
 | S7 | The chat knows what a loop did (one-time run recap) | S1 | reviewed | 1 | `0cc65a5` |
-| S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | in progress | 1 | |
+| S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | reviewed | 1 | S8 commit after `3ec3639` |
 | S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | done (research, recorded) | 1 | — (no files) |
-| S10 | Bounded fan-out node, isolated worktrees, one integrator | S8, S9 (S3 useful) | pending | 0 | |
-| S11 | Mailbox between running branches | S10, S9 | pending | 0 | |
+| S10a | Fan-out format: `fanOut` field, `dspatch-slices` block parsing and validation, worktree and temporary-branch manager (pure and unit-tested; not yet run by the engine) | S8, S9 | in progress | 1 | |
+| S10b | Fan-out in the engine: concurrent instances within one visit, session per instance, per-instance folder, journal kinds, cancel all, usage per branch, run view | S10a | pending | 0 | |
+| S10c | Bundled parallel graph: slicer → fan-out implementer → integrator → review, with slicer and integrator roles | S10b | pending | 0 | |
+| S11 | Mailbox between running branches | S10b, S9 | pending | 0 | |
 | S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | pending | 0 | |
 | S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | pending | 0 | |
 
@@ -166,6 +168,24 @@ Statuses:
 - **Niclas tries:** after a loop run, the recap line beside the composer and its exact text; ask "what did the loop change?" — the answer knows the run; a second message carries no recap; after another run, **Remove** and send — nothing sent with it and not offered again.
 - **Steps skipped:** research (code settled it); independent verification (not asked for).
 
+### S8 — Reconcile parallelism — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1:** briefed on coordinator visit 11 (call 29); implemented (call 30, `done`); review `accept` (call 31); committed on coordinator visit 12 (call 32).
+- **What was done.** `docs/CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md`: new §10 "Reconciliation with adaptive execution, 14 November 2026" (§1–§9 unchanged) — settled by the vision, each quoting it: optional and bounded (2–3), worktrees for writers from a known base, bounded assignments with refused write overlap, one integrator (a role; it merges), a mailbox with delivery apart from acknowledgement and non-binding contract changes, no blocking wait, slicer only a role, no provider team feature, verification targets integration risk, cancel stops dispatch. Open: subgraph representation beyond one node, authoring versioning, contract changes with active instances, nested budgets, ownership enforcement beyond the worktree, branch recovery and per-branch cancel, Q3, Q2. First increment: fan-out of one agent node within one visit, one integration point, caps 3/3/1 (read from code), delivery at `check_messages`, cancel all. `docs/loop/GRAPH_FORMAT.md`: new section *Fan-out*, "Specified, not yet implemented (DSP-209 S10)" — field, `dspatch-slices` block and validation, per-adapter cap, base commit and worktree rule, what each branch receives, result (success / `branch-failed`), journal kinds `branch-started`/`branch-ended` and S11's message kinds, cancel, integrator role, five refusals with finding names. Copilot caveat corrected in `loop-graph.ts` and GRAPH_FORMAT (decision 21).
+- **Content exclusion:** no filtering needed and no contract change — branches are sessions of the run's one provider and account with the same tool policy and file-read hooks; messages are agent-written text, the kind the contract's §6 already lists as unfiltered. Question raised for Niclas: Q4.
+- **Review verdict: accept.** Four criteria met; every quoted vision passage found. Findings: (i) the implementer's own specification choices recorded as decision 24 (coordinator, this visit); (ii) branch session ids `stepSessionId(runId, nodeId + '#' + sliceId)` pass through `safe()`, which turns `#` into `-`, so node `work` slice `a` could collide with a node `work-a` — **carried into S10b**.
+- **Checked, by the implementer only:** `loop-graph` 41/41, `loop-node-help` 28/28, `loop-handoff` 11/11, `npm run typecheck` exit 0. The reviewer checked the quotes and links by reading.
+- **Niclas tries:** read §10 of the parallelism document and GRAPH_FORMAT's *Fan-out*.
+- **Steps skipped:** independent verification (documents).
+
+### S10 — split (coordinator visit 12)
+
+S10 split into S10a (format, slice validation, worktree manager — pure and unit-tested), S10b (engine concurrency) and S10c (bundled graph and roles), decision 25. S11 depends on S10b; S12's branch parts on S10b.
+
+### S10a — Fan-out format and worktree manager
+
+- **Attempt 1:** briefed on coordinator visit 12 (call 32). Not yet reviewed.
+
 ### S9 — SDK support research
 
 - **Attempt 1:** sent to the researcher on coordinator visit 10 (call 27); answered (call 28); recorded on coordinator visit 11 (call 29). **Status: done as research** (code reading; nothing observed live; not reviewed — research is evidence, not a deliverable). No files written by the researcher.
@@ -232,7 +252,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Verification policy for every branch [S10, S11] — open
 - UI says why a method was chosen and what each branch owns [S3, S5, S10, S12] — open
 - Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — proposed **skipped** (Q2), not met
-- Reconcile the parallelism document [S8] — open
+- Reconcile the parallelism document [S8] — met by reviewed sub-goal (§10 of the parallelism document)
 
 **Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — implemented and agent-reviewed; awaits Niclas's trial; (2) small task continues in chat without resubmission [S4, S5a, S5b, S6] — implemented and agent-reviewed; awaits Niclas's trial; (3) branches exchange a finding before completion [S10, S11; scripted adapter only, live trial is Niclas's] — open; (4) combined result keeps scope and provenance [S10, S12] — open.
 
@@ -250,6 +270,8 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
 13. **"Done, check skipped" ends as `not-success` with its own sentences** (S4). Reason: `success` means "Assignment met"; `not-success` draws a neutral mark. Alternatives: `report-delivered` (would claim a report); a new `TerminalEnding` value (changes the graph-format contract for no gain).
 14. **One trailing `:` after the outcome name is accepted, by one shared reader** (S4). Reason: a step writing `RESULT: done-unchecked: docs only` otherwise lost its outcome and the skip; every existing name reads the same. Alternative: fix only the comment and leave colon-writers routed to the fallback.
+24. **Fan-out specification choices made in S8** (S8, recorded after review): at most 6 slices per fan-out, with slices beyond the concurrency cap waiting for a free branch rather than refused; worktrees under `<userData>/loop-runs/<runId>/worktrees/` (outside the working copy); DSpatch commits each branch's leftover work to its temporary branch `dspatch/run/<runId>/<slice>` (a commit on a DSpatch-made branch, not a merge — decision 7 stands: the integrator merges); temporary branches kept and listed in the report for Niclas to keep or delete, never deleted by DSpatch; a malformed slice block ends the node as `branch-failed`, not as its own ending. Reason: each keeps the working copy untouched until integration and leaves deletion of anything in the repository to Niclas. Alternatives: refuse more than the cap; worktrees inside the repository; leave uncommitted work in the worktree (lost when it is removed); delete temporary branches at the run's end (deletes work).
+25. **S10 split into S10a, S10b, S10c** (coordination). Reason: S10 is the largest change of the mission; format and worktree code can be proven by unit tests before the engine runs instances concurrently, and the bundled graph comes last. Alternative: one sub-goal (the S10 stall risk the plan names).
 21. **Correct the Copilot caveat rather than keep Copilot loop steps off app tools** (S9 → S8). Reason: the code already offers tools on Copilot loop steps under the chat policy, which the person chose for loop steps (`copilotPolicyFor('loop')`, pinned by a test); the caveat was wrong, not the policy. Alternative: change the policy to withhold tools from Copilot loop steps (a change to a decided permission/tool policy, which would stop for Niclas).
 22. **Fan-out bounds per adapter: Claude 3, Copilot 3, Cursor 1** (S10, from S9). Reason: per-session isolation by reading for Claude and Copilot; Cursor runs in-process and concurrent turns were never observed. All recorded as read from code, not observed. Alternative: 1 everywhere until a live probe (honest but builds no parallelism the vision asks for).
 23. **Branch messages are delivered only at `check_messages` in the first increment; no use of steering for agent-to-agent text** (S11, from S9). Reason: works for every provider, is recorded, and does not change what steering means (today it carries only the person's input). Alternative: push into running turns via `steer` where supported (Q3, Niclas's).
@@ -266,6 +288,8 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 **Q1 — Should loop steps load project instructions (AGENTS.md) natively** (Claude `settingSources`, Copilot without `skipCustomInstructions`)? Affects S1/S2 and what the provider receives (a content-exclusion matter, so it is Niclas's). Recommendation: no; S1 lists instruction files as references and roles keep pointing at them. Continues without it: everything.
 
+**Q4 — Should the content-exclusion contract's §6 list of unfiltered agent-written material name branch messages once S11 builds them?** (from S8, 14 November 2026) It is an edit to a decided contract, so it is Niclas's. Recommendation: yes, as a one-line addition after S11, since branch messages are of the same kind as loop handovers and results passed to the next step. Continues without it: everything.
+
 **Q3 — May a branch's message be pushed into another branch's running turn through steering (Claude `streamInput`, Cursor `Run.steer`)?** (from S9, 14 November 2026) Steering today carries only the person's input; using it for agent-to-agent text changes what that channel means. Affects S11's "immediate" delivery. Recommendation: not in this mission; deliver at `check_messages` (decision 23) and, if wanted later, push only with the text labelled as from that branch. Continues without it: all of S10 and S11.
 
 **Q2 — Dialogue-based graph construction: skipped in this mission?** The vision frames it as future; this mission makes the concepts reusable and explained, but builds no conversational graph assembly. Recommendation: record as skipped with that reason, not as met. Continues without it: everything; if wanted in scope, it becomes a sub-goal after S12.
@@ -274,7 +298,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 11 (call 29).** S9's table recorded (with the Copilot correction, decisions 21–23, Q3). S8 sent to the implementer (documents and two caveat corrections). When the review returns: if accepted, record and commit S8, then brief S10. If a run ends before S8's review is recorded, the next run reconciles S8's files (`docs/CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md`, `docs/loop/GRAPH_FORMAT.md`, `app/src/shared/loop-graph.ts`) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 12 (call 32).** S8 reviewed and committed. S10 split (decision 25); S10a sent to the implementer. When the review returns: if accepted, record and commit S10a, then brief S10b (carrying S8 finding ii, the session-id collision). If a run ends before S10a's review is recorded, the next run reconciles S10a's files (`app/src/shared/loop-graph.ts`, `loop-graph-load.ts`, `loop-graph-write.ts`, `loop-node-help.ts`, a new `app/src/shared/loop-slices.ts`, a new `app/src/main/run-worktrees.ts`, `docs/loop/GRAPH_FORMAT.md`, their tests) before briefing again.
 
 ## Run log
 

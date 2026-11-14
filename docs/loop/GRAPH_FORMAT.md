@@ -134,9 +134,77 @@ An agent node may carry **`capabilities`**, a list of names for what DSpatch let
 
 - **What it grants.** The live step is offered DSpatch's tool `request_interactive_handoff(reason)` and nothing else: no permission changes, and no other step gets the tool. A call does not route: after the step's turn has settled, the runner journals `handoff-requested`, takes no edge and records no work result for that visit, and holds until the person answers. *Continue in the loop* journals `handoff-answered` and sends the same node on in its own session, as one more call counted against `maxCalls` and not as a rework round, with the inputs its arriving edge delivered; the tool then refuses for the rest of the run. *Continue interactively* ends the run with status `handed-over`. Silence never switches, and Cancel still ends the run.
 - **The answer is bound.** It names the run and the visit it answers; an answer for another run or an older visit is refused.
-- **Where it is not offered.** Copilot gives DSpatch tools on the chat surface only, so a Copilot loop step is not offered the tool. A dry run calls no provider, so no step there can call it; a run with no control a person could answer through continues in the loop and says so.
+- **Where it is offered, and where not.** Claude, Cursor and Copilot loop steps are all offered the tool, by reading the adapters: Copilot runs loop steps under its chat policy (`copilotPolicyFor('loop')`), whose chat surface passes DSpatch tools. This was corrected on 14 November 2026 (DSP-209 S9, mission decision 21); an earlier version of this line said Copilot loop steps were not offered it, which was wrong by reading. None of the three has been observed calling it in a live run. A dry run calls no provider, so no step there can call it; a run with no control a person could answer through continues in the loop and says so.
 
 Validation refuses a value that is not a list (`bad-capabilities`), an unknown name (`unknown-capability`) and the field on a node that is not an agent (`capabilities-on-a-non-agent`). An empty list means the same as none, and a drawing without the field loads, saves and behaves exactly as before.
+
+<a id="fan-out"></a>
+
+### Fan-out: one step's work split over parallel branches
+
+> **Specified, not yet implemented (DSP-209 S10).** Nothing in this section is honoured by the runner, validated by the loader or shown in the editor yet. It is the specification S10 implements, written 14 November 2026 from the reconciliation in [CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md §10](../CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md#10-reconciliation-with-adaptive-execution-14-november-2026) and the adapter research in DSP-209 S9. It records mission decisions 5–7, 9 and 21–23 under Niclas's authorisation of 13 November 2026.
+
+A fan-out runs **one agent node's visit as several branch instances at once**, each with its own slice of the work, its own session and, for writing work, its own worktree. The walk stays one node at a time: the run enters the fan-out node, starts its branches, waits for all of them to end, and leaves the node once, by one edge. It is not a fork and join of the graph, and no other node runs while the branches do.
+
+**The node field.** On an agent node only:
+
+```json
+"fanOut": { "slicesFrom": "slice", "maxConcurrent": 2, "isolation": "worktree" }
+```
+
+- `slicesFrom` names the node whose result holds the slice block below. It must be an agent node with `produces` of form `stored-result` or `markdown-file`, and some path through the graph must run it before the fan-out node (the same reachability question [`consumes`](#bågar) is asked).
+- `maxConcurrent` is an integer from 1 to 3: how many branches may run at the same time. More slices than that wait their turn; they are not refused.
+- `isolation` is `"worktree"` for branches that write, or `"shared-read-only"` for branches that only read (research, analysis). A `"shared-read-only"` branch runs in the run's working folder and is told it must not write; nothing in this increment enforces that beyond the instruction, and the run's before/after snapshot will show it if one did.
+
+**The effective concurrency** is the lower of `maxConcurrent` and the run's adapter cap: **Claude 3, Copilot 3, Cursor 1** (Cursor's branches run one after another). The caps are read from the adapters' code (DSP-209 S9): Claude and Copilot keep each session's state and process apart; Cursor runs its SDK inside DSpatch's process and two concurrent turns have never been observed. None of the three has been observed running concurrent turns. The run's journal and the node panel state the effective number and where it came from.
+
+**The slice block.** The `slicesFrom` node's result must contain exactly one fenced block whose info string is `dspatch-slices` and whose body is JSON:
+
+````text
+```dspatch-slices
+{
+  "slices": [
+    {
+      "id": "frontend",
+      "result": "The editor shows syntax colouring for Markdown code blocks.",
+      "ownedPaths": ["app/src/renderer/markdown.ts", "app/src/renderer/styles.css"],
+      "allowedActions": ["edit-owned", "run-targeted-tests"],
+      "contractRefs": ["docs/contracts/highlight-tokens.md@v1"],
+      "verification": "tests/markdown.test.ts"
+    }
+  ]
+}
+```
+````
+
+Per slice: `id` (unique within the block, usable in a branch name: letters, digits, `.`, `_`, `-`), `result` (one or two sentences), `ownedPaths` (repository-relative paths or directory prefixes the slice may change; empty for a read-only slice), `allowedActions` (strings the branch's prompt states; descriptive in this increment, not enforced), `contractRefs` (references to the agreed interfaces, by path and version, possibly empty), `verification` (the smallest relevant check, in words or as a test path). Validation of the block happens when the fan-out node is entered, against the producing visit's filed result, and refuses the fan-out, without starting any branch, as the declared failure `branch-failed` with a finding naming the cause, when:
+
+- there is no `dspatch-slices` block, or more than one, or its body is not JSON of this shape;
+- there are no slices, or more than **6**;
+- two slices share an `id`;
+- an `ownedPaths` entry is absolute, contains `..`, or leaves the repository;
+- two slices' `ownedPaths` overlap — the same path, or one a prefix of the other — which is overlapping write ownership;
+- under `"worktree"` isolation, a slice has no `ownedPaths` (a writing branch with nothing it may write).
+
+**Base commit and worktrees** (`"worktree"` isolation). Before the first branch starts, the run records one **base commit** for all branches: HEAD when the working copy has no uncommitted changes, otherwise the commit `git stash create` makes, which includes the uncommitted work without touching the working copy or the stash list. The base id is journalled. Each branch gets its own worktree from that base, at a path **outside the working copy** under DSpatch's data folder (`<userData>/loop-runs/<runId>/worktrees/<slice-id>`), on the temporary branch `dspatch/run/<runId>/<slice-id>`. The branch's session runs with that worktree as its working folder. When the branch ends, DSpatch commits whatever the branch left in its worktree to that temporary branch, with a message naming the run, the slice and the visit, so the integrator has one commit per slice to look at; a branch that changed nothing leaves no commit, which is journalled as such. The working copy itself is not touched by any branch. Worktrees are removed when the run ends, whatever its ending; the temporary branches stay until the integrator's step has run and are then listed in the run's ending for the person to keep or delete. With `"shared-read-only"` isolation there is no base, worktree or branch.
+
+**What each branch is given.** Its own session (session id per instance, `stepSessionId(runId, nodeId + '#' + sliceId)` or equivalent), the fan-out node's role and purpose, the run's mandate, its own slice entry verbatim, the base commit and its worktree path, and the person's instructions to the run (S11). It is not given the other slices' sessions. The `suggest-interactive` capability is refused on a fan-out node, so no branch can hold the whole run on its own recommendation; the person's own steering of a running turn is turned off during a fan-out, and their instructions reach every branch as engine-delivered text instead (S11).
+
+**The node's result.** When every branch has ended, the fan-out node produces **success** when every branch finished its turn, or the declared failure **`branch-failed`** when any branch faulted, timed out, was refused at start or produced nothing, with the failed slice ids in the journal. The graph must declare `branch-failed` in `failureKinds` and draw an edge for it from the fan-out node; validation refuses a fan-out node without one. The node's filed result is a list, per slice, of its temporary branch and commit (or none), its reply clipped with the cut stated, and its usage. Each branch's usage counts against the run's `maxCalls` as one call, and its provider turns, tokens and cost are recorded per branch and summed for the node, never double counted.
+
+**Journal kinds** to be added, appended after the existing ones so older records still parse: `branch-started` (slice id, branch instance id, session id, worktree path and temporary branch or none, base commit) and `branch-ended` (slice id, how it ended, its commit or none, usage). S11 adds `message-sent`, `message-delivered` and `message-acknowledged` for the mailbox between branches, and records a message to a branch that has already ended as undelivered.
+
+**Cancel.** Cancelling the run cancels every running branch and starts none of the waiting ones ("cancel all"). There is no per-branch cancel in this increment. Worktrees are removed on cancel as on any other ending; commits already made on temporary branches are kept and listed.
+
+**The integrator is a role.** The node the fan-out's success edge leads to is expected to be an agent step whose role integrates: it reads each slice's commit on its temporary branch, merges them into the working copy, resolves conflicts, checks the shared contracts and runs the checks the combination needs. The engine does not merge, does not decide conflicts and does not treat a clean merge as evidence that the result works. Nothing in the format marks a node as the integrator; it is a role like any other.
+
+**Refusals by validation**, each with its own finding:
+
+- `fanOut` on a node that is not an agent (`fan-out-on-a-non-agent`);
+- `slicesFrom` naming a node that is not in the graph, is not an agent with a result, or cannot run before the fan-out node (`fan-out-slices-from-unusable`);
+- `maxConcurrent` that is not an integer from 1 to 3, or an unknown `isolation` (`bad-fan-out`);
+- `capabilities` containing `suggest-interactive` on a fan-out node (`fan-out-with-handoff`);
+- a fan-out node with no `branch-failed` failure kind and edge (`fan-out-without-branch-failed`).
 
 <a id="det-som-gör-det-till-en-loop"></a>
 

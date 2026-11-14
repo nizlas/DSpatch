@@ -1001,9 +1001,9 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     honoured: true,
     by: 'DSP-209 S5a. "suggest-interactive" gives the live step DSpatch\'s request_interactive_handoff tool; a call holds the run for the person\'s answer.',
     caveat:
-      'Only where the provider\'s adapter takes DSpatch tools on a loop step: Claude and Cursor do, ' +
-      'Copilot offers DSpatch tools in the chat only, so a Copilot step is not given it. A dry run ' +
-      'calls no provider, so no step there can call it.',
+      'Claude, Cursor and Copilot loop steps are all given the tool by reading the adapters: Copilot ' +
+      'runs loop steps under the chat policy, which passes DSpatch tools (DSP-209 S9). Not observed in ' +
+      'a live run with any of them. A dry run calls no provider, so no step there can call it.',
   },
   {
     attribute: 'required',
