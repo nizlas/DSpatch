@@ -148,6 +148,8 @@ export type ProjectHostMethods = ReviewMethods & {
   // --- Loops -------------------------------------------------------------------------
   readonly 'loop.openGraph': (request: LoopGraphOpenRequest) => BridgeAnswer<'openLoopGraph'>;
   readonly 'loop.saveGraph': (request: LoopGraphSaveRequest) => BridgeAnswer<'saveLoopGraph'>;
+  /** A graph proposal's Apply or Discard (DSP-209 S23b); its own name, so an older host cannot take it as a plain save. */
+  readonly 'loop.actOnGraphProposal': (request: LoopGraphSaveRequest) => BridgeAnswer<'saveLoopGraph'>;
   readonly 'loop.resolveRoles': (references: readonly RoleReference[]) => BridgeAnswer<'resolveLoopRoles'>;
   readonly 'loop.locateRoleSource': (request: {
     readonly root: string;
@@ -342,6 +344,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'workspace.readFile': true,
   'loop.openGraph': true,
   'loop.saveGraph': true,
+  'loop.actOnGraphProposal': true,
   'loop.resolveRoles': true,
   'loop.locateRoleSource': true,
   'loop.listDefinitions': true,

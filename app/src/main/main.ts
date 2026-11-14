@@ -4972,7 +4972,10 @@ function registerLoopGraphIpc(): void {
 
   ipcMain.handle(
     SAVE_LOOP_GRAPH,
-    (_event, request: LoopGraphSaveRequest): Promise<LoopGraphSaveOutcome> => hostCall('loop.saveGraph', NO_SENDER, request),
+    // DSP-209 S23b: a proposal's Apply or Discard by its own method, which a host older than
+    // its checks does not serve (`project-host.ts`).
+    (_event, request: LoopGraphSaveRequest): Promise<LoopGraphSaveOutcome> =>
+      hostCall(request.proposal === undefined ? 'loop.saveGraph' : 'loop.actOnGraphProposal', NO_SENDER, request),
   );
 
   ipcMain.handle(

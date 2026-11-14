@@ -2215,28 +2215,31 @@ function registerLoopMethods(): void {
     },
   );
 
-  handle(
-    'loop.saveGraph',
-    // DSP-209 S23b: an editor's base hash and the chat's proposal actions are checked in
-    // `graph-save.ts`; a save with neither writes exactly as before. Nothing here starts a run.
-    (_event, request: LoopGraphSaveRequest): LoopGraphSaveOutcome => {
-      const running = (chatLoopAbort !== null || editorLoopAbort !== null) && runAudience.working();
-      const outcome = saveGraphChecked(request, {
-        projectFolders: openWorkspaceFolders(),
-        activeRunGraphId: running ? (runAudience.current()?.graphId ?? null) : null,
-        proposal: (conversationId, proposalId) =>
-          chatService.graphProposals(conversationId).find((each) => each.id === proposalId) ?? null,
-        keep: (proposal) => {
-          chatService.updateGraphProposal(proposal);
-        },
-        log,
-      });
-      if (request.proposal !== undefined) {
-        announceGraphProposals(request.proposal.conversationId);
-      }
-      return outcome;
-    },
-  );
+  // DSP-209 S23b: an editor's base hash and the chat's proposal actions are checked in
+  // `graph-save.ts`; a save with neither writes exactly as before. Nothing here starts a run.
+  const saveGraph = (_event: unknown, request: LoopGraphSaveRequest): LoopGraphSaveOutcome => {
+    const running = (chatLoopAbort !== null || editorLoopAbort !== null) && runAudience.working();
+    const outcome = saveGraphChecked(request, {
+      projectFolders: openWorkspaceFolders(),
+      activeRunGraphId: running ? (runAudience.current()?.graphId ?? null) : null,
+      proposal: (conversationId, proposalId) =>
+        chatService.graphProposals(conversationId).find((each) => each.id === proposalId) ?? null,
+      keep: (proposal) => {
+        chatService.updateGraphProposal(proposal);
+      },
+      log,
+    });
+    if (request.proposal !== undefined) {
+      announceGraphProposals(request.proposal.conversationId);
+    }
+    return outcome;
+  };
+  handle('loop.saveGraph', saveGraph);
+  // A proposal's Apply and Discard come by their own method, so the contract changes with
+  // them: a host built before S23b reads `loop.saveGraph` as a plain write of `path` and
+  // `text`, with no run, folder or conflict check, and Discard would write the proposal too.
+  // A client cannot use such a host for this at all.
+  handle('loop.actOnGraphProposal', saveGraph);
 
   handle(
     'loop.resolveRoles',
