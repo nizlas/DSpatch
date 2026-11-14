@@ -1851,37 +1851,13 @@
   text-overflow: ellipsis;
 }
 
-/* DSP-206: the question field grows with what is written, as the start page's does: one line
-   when empty, taller with every line, typed, pasted or wrapped by the panel's width, and back
-   when text is removed or a sent question clears it. The browser sizes it from its content
-   (`field-sizing`), so a new width, window height, zoom or place is taken into account without
-   anything being measured, and the draft, caret and selection are never touched. Above 40% of
-   the window's height it scrolls inside, so the conversation and the controls above it stay in
-   reach. While empty it keeps one line even when the hint would wrap.
-   The selector outweighs `.rv textarea`, whose `font: inherit` would otherwise reset the line
-   height that every step of growth is measured in; its colours, border and padding stay. */
+/* DSP-206: the question field grows with what is written; `.grow-field` in styles.css does it,
+   the same rule as the main chat's field. This keeps `.rv textarea`'s colours, border and
+   padding and names their height. The selector outweighs `.rv textarea`, whose `font: inherit`
+   would otherwise reset the line height that every step of growth is measured in. */
 .rv textarea.rv-discussion-composer {
-  --rv-composer-line: calc(1lh + 0.5rem + 2px);
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  field-sizing: content;
-  min-height: var(--rv-composer-line);
-  max-height: max(var(--rv-composer-line), 40vh);
-  overflow-y: auto;
+  --grow-field-edges: calc(0.5rem + 2px);
   line-height: 1.4;
-}
-
-.rv textarea.rv-discussion-composer:placeholder-shown {
-  field-sizing: fixed;
-  height: var(--rv-composer-line);
-}
-
-.rv-discussion-composer::placeholder {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* --- DSP-150: the diff review of a chosen revision pair ---------------------------

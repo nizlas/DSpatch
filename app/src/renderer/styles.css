@@ -1243,9 +1243,41 @@ body {
   overflow-y: auto;
 }
 
-.composer__input {
+/* A message field that grows with what is written (DSP-206), used by the main chat and by
+   Discussion, docked or in its own window: one line when empty, taller with every line, typed,
+   pasted or wrapped by the field's width, and back when text is removed or a sent message
+   clears it. The browser sizes it from its content (`field-sizing`), so a new width, window
+   height, zoom or place is taken into account without anything being measured, and the draft,
+   caret and selection are never touched. Above 40% of the window's height it scrolls inside, so
+   the conversation and the controls around it stay in reach. While empty it keeps one line even
+   when the hint would wrap. There is no drag handle: the content sets the height.
+   Each field sets `--grow-field-edges`, its vertical padding and border together, so one line
+   is one line of its own text. */
+textarea.grow-field {
+  --grow-field-line: calc(1lh + var(--grow-field-edges));
   display: block;
   width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  field-sizing: content;
+  min-height: var(--grow-field-line);
+  max-height: max(var(--grow-field-line), 40vh);
+  overflow-y: auto;
+}
+
+textarea.grow-field:placeholder-shown {
+  field-sizing: fixed;
+  height: var(--grow-field-line);
+}
+
+.grow-field::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer__input {
+  --grow-field-edges: calc(1rem + 2px);
   font: inherit;
   font-size: 0.9375rem;
   line-height: 1.5;
@@ -1254,7 +1286,6 @@ body {
   border: 1px solid var(--line);
   border-radius: 0.375rem;
   padding: 0.5rem 0.625rem;
-  resize: vertical;
 }
 
 .composer__input:disabled {

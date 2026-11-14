@@ -925,7 +925,7 @@ export function ReviewDiscussion({
           </div>
         )}
         <textarea
-          className="rv-discussion-composer"
+          className="rv-discussion-composer grow-field"
           data-ev="discussion-composer"
           rows={1}
           value={text}

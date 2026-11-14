@@ -3382,9 +3382,9 @@ function Workbench({
 
             <div className="composer">
               <textarea
-                className="composer__input"
+                className="composer__input grow-field"
                 data-ev="prompt"
-                rows={3}
+                rows={1}
                 /*
                   One sentence and the two keys, in both states (DSP-87). The long
                   version explained what `Use loop` was about to do every time the box
