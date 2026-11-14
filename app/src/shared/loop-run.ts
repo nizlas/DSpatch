@@ -281,7 +281,14 @@ export interface FanOutDriver {
   /** The base all branches of a visit start from. Changes nothing the person has. */
   base(): Promise<{ readonly commit: string; readonly kind: 'head' | 'stash-create'; readonly untrackedNotIncluded: number }>;
   /** A worktree for one slice, on its own temporary branch from `base`. */
-  open(input: { readonly runId: string; readonly sliceId: string; readonly base: string }): Promise<{
+  /** DSP-209 S10c: the node and its visit name the branch, so a second visit makes new ones. */
+  open(input: {
+    readonly runId: string;
+    readonly nodeId: string;
+    readonly visit: number;
+    readonly sliceId: string;
+    readonly base: string;
+  }): Promise<{
     readonly workspacePath: string;
     readonly branch: string;
   }>;
@@ -1525,7 +1532,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       let branch: string | null = null;
       if (driver !== undefined && base !== null) {
         try {
-          const opened = await driver.open({ runId: options.runId, sliceId: slice.id, base: base.commit });
+          const opened = await driver.open({ runId: options.runId, nodeId: node.id, visit: occurrence, sliceId: slice.id, base: base.commit });
           workspacePath = opened.workspacePath;
           branch = opened.branch;
         } catch (error) {

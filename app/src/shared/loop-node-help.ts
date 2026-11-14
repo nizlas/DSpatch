@@ -101,7 +101,8 @@ export const FAN_OUT_HELP: SettingHelp = {
     'time), each in its own session and, with "worktree" isolation, its own worktree from one ' +
     'recorded base commit. It ends in success, or in "branch-failed" when a branch or the slice ' +
     'block fails. The next step integrates: the engine does not merge. Cancel stops every branch ' +
-    'together, and steering reaches no branch while they run.',
+    'together, and steering reaches no branch while they run. The step\'s "maxMinutes" bounds the ' +
+    'whole visit, every branch included, not each branch on its own.',
   whenEmpty: 'The step runs once, as one agent, like any other step.',
 };
 

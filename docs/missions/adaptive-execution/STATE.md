@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c sent to the implementer (coordinator visit 14, call 38).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c reviewed after one rework round and committed (calls 39–43); S11 sent to the implementer (coordinator visit 15, call 43).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), then the S10b commit made on coordinator visit 14 (`(DSP-209 S10b)` in `git log`, the commit after `af09a3f`).
-- **Sub-goal in progress:** S10c (bundled parallel graph and roles, plus the second-visit branch-name fix), sent to the implementer on coordinator visit 14.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), then the S10c commit made on coordinator visit 15 (`(DSP-209 S10c)` in `git log`, the commit after `812a42c`).
+- **Sub-goal in progress:** S11 (mailbox between running branches), sent to the implementer on coordinator visit 15.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
@@ -39,9 +39,9 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | reviewed | 1 | `d516ceb` |
 | S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | done (research, recorded) | 1 | — (no files) |
 | S10a | Fan-out format: `fanOut` field, `dspatch-slices` block parsing and validation, worktree and temporary-branch manager (pure and unit-tested; not yet run by the engine) | S8, S9 | reviewed | 1 | `af09a3f` |
-| S10b | Fan-out in the engine: concurrent instances within one visit, session per instance, per-instance folder, journal kinds, cancel all, usage per branch, run view | S10a | reviewed | 1 | S10b commit after `af09a3f` |
-| S10c | Bundled parallel graph: slicer → fan-out implementer → integrator → review, with slicer and integrator roles | S10b | in progress | 1 | |
-| S11 | Mailbox between running branches | S10b, S9 | pending | 0 | |
+| S10b | Fan-out in the engine: concurrent instances within one visit, session per instance, per-instance folder, journal kinds, cancel all, usage per branch, run view | S10a | reviewed | 1 | `812a42c` |
+| S10c | Bundled parallel graph: slicer → fan-out implementer → integrator → review, with slicer and integrator roles | S10b | reviewed | 1 (one rework round) | S10c commit after `812a42c` |
+| S11 | Mailbox between running branches | S10b, S9 | in progress | 1 | |
 | S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | pending | 0 | |
 | S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | pending | 0 | |
 
@@ -77,7 +77,7 @@ Statuses:
 
 **S11 — Mailbox.** `send_message`, `check_messages`, `acknowledge_message` for fan-out instances; one mailbox per run, additive kinds for sent/delivered/acknowledged; delivery at the next safe boundary (into a running turn where S9 shows it works, otherwise at `check_messages`), with non-immediate delivery stated; no blocking wait; messages to ended branches recorded undelivered; `contract-change` is a non-binding proposal for the integrator; person's instructions reach every instance. *Acceptance:* scripted two-instance run where A's message reaches B before B ends; delivery and acknowledgement separate; nothing waits without bound.
 
-**S12 — Run report.** Also carries S4's finding (i): when a run ends at "Done, check skipped" and DSpatch's own before-and-after snapshots show changed files, the ending says so, as corroboration only, never routing. Ending summary from journal and record: path, skipped steps with reasons, handover, per-branch ownership and changed files, integrator, usage and cost per step and branch, what was reviewed and checked, what to try, "agent review is not your approval". Nothing inferred from prose; unknown says unknown.
+**S12 — Run report.** Also carries S10c finding (ii): a fan-out stopped for too few calls must not read as "A branch failed" — say it was a bound. Also carries S4's finding (i): when a run ends at "Done, check skipped" and DSpatch's own before-and-after snapshots show changed files, the ending says so, as corroboration only, never routing. Ending summary from journal and record: path, skipped steps with reasons, handover, per-branch ownership and changed files, integrator, usage and cost per step and branch, what was reviewed and checked, what to try, "agent review is not your approval". Nothing inferred from prose; unknown says unknown.
 
 **S13 — Documents and backlog.** Also proposes, as backlog candidates only, S7's open limitations: the recap rereads every run record on each run-state refresh and send (cache or track the last ended run); a recap removal is kept in memory until the next send, so a restart before sending offers it again. Dated line in BACKLOG.md's near-term follow-up pointing at this file (no duplicate entry); AGENT_BEHAVIOUR §4 status if S5 did not; INTERACTION_MODEL only where skipped / handed-over need naming. Backlog: note for DSP-31 that S5 builds the shared explicit-choice mechanism it should reuse (as a field-change proposal; the coordinator changes no other card).
 
@@ -202,9 +202,19 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Niclas tries:** nothing until S10c.
 - **Steps skipped:** research (S9 settled it); independent verification (not asked for).
 
-### S10c — Bundled parallel graph and roles
+### S10c — Bundled parallel graph and roles — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 14 (call 38). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 14 (call 38); implemented (call 39); review with one blocking finding, rework (call 40); reworked (call 41, `done`); review `accept` (call 42); committed on coordinator visit 15 (call 43). **Gap in the coordinator's evidence:** only the rework round's implementer and review accounts were handed to this visit; the first round's accounts were not. This record is reconstructed from the working copy, the rework accounts and read-only inspection; the first round's checks and its non-blocking suggestions are not known here beyond what the rework accounts quote.
+- **What was done (from the working copy).** Second-visit fix: `sliceBranch(runId, nodeId, visit, sliceId)` → `dspatch/run/<runId>/<node>/v<visit>/<slice>` (node and visit in branch and worktree path), in `run-worktrees.ts`, `loop-run.ts`, `loop-live.ts`, GRAPH_FORMAT, tests `run-worktrees`, `loop-fan-out-run`. Fan-out help says `maxMinutes` bounds the whole visit (finding i). New `docs/loop/graphs/dspatch-parallel-loop.graph.json`: `slice` → `work` (fan-out) → `integrate` → `review`; terminals `done`, `not-met`, `not-established`, `branches-failed`, `stopped`; `integrate` outcomes `integrated`, `rework` (back to `work`, a second visit), `not-integrated`; `review` outcomes `met`, `rework` (back to `integrate`), `not-met`, `could-not-check`; limits `maxCalls` 14, `maxReworkRounds` 2, `maxMinutes` 60, recorded as guesses. New `.dspatch/loops/dspatch-parallel-loop.loop.json` (choosable like the others). New roles `project-slice.role.md`, `project-branch.role.md`, `project-integrate.role.md`. New `app/tests/loop-parallel-loop.test.ts` (6, including a test pinning the integrator's protective sentences).
+- **Review verdict: accept after one rework round.** Blocking finding (round 1): the integrator role did not protect the person's uncommitted work — fixed: run `git status` first; never stash, commit, reset, check out, discard or move aside the person's changes; compare a branch with its base commit to see the slice's own changes; when `git merge` refuses, stop with `BLOCKED` and name the files. Clarification fixed: on a rework visit merge only the new visit's branches; never revert a merge without saying so. Open, non-blocking: (i) with uncommitted changes to tracked files, every branch's base holds them (decision 6), so `git merge` will refuse and the integrator stops `BLOCKED` — safe, but the loop only reaches a merge on a clean working copy (or untracked-only changes); **say so in GRAPH_FORMAT and the loop's description — carried into S11**; (ii) a fan-out with too few calls left ends at the `branches-failed` terminal ("A branch failed"), which reads as a branch failing rather than a bound — marked for later by the reviewer; **carried into S12**.
+- **Checked, by the implementer only (rework round):** `loop-parallel-loop` 6/6, `role-generate` 27/27, `loop-choice` 36/36 (single files from `app/`). First-round checks: not handed to the coordinator. The coordinator confirmed by read-only git: no `dspatch/*` branches, empty stash, only main and engine worktrees.
+- **Untested:** any live run; whether a model follows the integrator's rules when a merge meets uncommitted changes.
+- **Niclas tries:** in an isolated profile (`npm run dev -- --isolated-profile <folder>`) on a throwaway git repository, choose **Parallel loop** and give a small two-part change: the slicer splits it, two branches run with their states on the fan-out node, the integrator merges and names what it merged, review checks; afterwards the temporary branches `dspatch/run/<runId>/work/v1/<slice>` are listed and kept. Then once with an uncommitted change: the integrator should stop with `BLOCKED` and name the files. A billed run; concurrency caps are not observed.
+- **Steps skipped:** research (S9 settled it); independent verification (not asked for).
+
+### S11 — Mailbox between running branches
+
+- **Attempt 1:** briefed on coordinator visit 15 (call 43). Not yet reviewed.
 
 ### S9 — SDK support research
 
@@ -252,17 +262,17 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Continue once without pasting again [S6] — met by reviewed sub-goal (host path untested; Niclas's trial)
 - Chat gets the run's results, and the reverse [S7, S2] — met by reviewed sub-goals (window and host source untested; Niclas's trial)
 - No extra permissions on a mode change [S5a, S6] — met by reviewed sub-goals (same `sendTurn` body, same session and policy)
-- Parallelism optional and bounded (2–3) [S10a, S10b] — met by reviewed sub-goals in the engine (caps read from code, not observed live); no bundled graph uses it until S10c
+- Parallelism optional and bounded (2–3) [S10a, S10b] — met by reviewed sub-goals in the engine (caps read from code, not observed live); used by the bundled parallel loop (S10c)
 - Branches get bounded assignments and ownership [S10a, S10b] — met by reviewed sub-goals (slice block; overlap refused; ownership enforced by worktree only)
 - Worktrees from a known base [S10a, S10b] — met by reviewed sub-goals (HEAD or `git stash create`; untracked files not in the base, stated)
-- Coordinator may serialise or combine [S10] — open
+- Coordinator may serialise or combine [S10c] — met by reviewed sub-goal (slicer may return a single slice; role text, not enforced)
 - Messages through a mailbox with sender, recipient, purpose [S11] — open
 - Delivery separate from acknowledgement [S11] — open
 - Contract changes not binding until resolved [S11, resolved at integration] — open
 - No endless waiting; no restart from a stale message [S11] — open
 - Revision references on messages [S10, S11] — open
-- One integrator owns the combined result [S10] — open
-- Integration-targeted checks, not a suite per agent [S10] — open
+- One integrator owns the combined result [S10c] — met by reviewed sub-goal (integrator role merges; engine never merges; live behaviour untested)
+- Integration-targeted checks, not a suite per agent [S10] — met by reviewed sub-goal as role text (S10c integrator and branch roles; untested live)
 - Integration, completion and approval kept apart; report says implemented/reviewed/tested/skipped/left [S12] — open
 - Runtime owns identity, context versions, routing, branches, messages [S2, S3, S5, S10, S11] — open
 - Provider support checked before claimed [S9] — met by research (read from code; concurrency not observed live)
@@ -320,7 +330,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 14 (call 38).** S10b reviewed and committed. S10c sent to the implementer, carrying S10b's second-visit defect and findings (i)–(iii). When the review returns: if accepted, record and commit S10c, then brief S11. If a run ends before S10c's review is recorded, the next run reconciles S10c's files (a new `docs/loop/graphs/*parallel*.graph.json`, new slicer and integrator roles under `docs/loop/roles/`, `app/src/main/run-worktrees.ts`, `app/src/shared/loop-run.ts`, `loop-node-help.ts`, `loop-definition-choice.ts`, `docs/loop/GRAPH_FORMAT.md`, their tests) and checks for stray `dspatch/*` branches before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 15 (call 43).** S10c reviewed and committed. S11 sent to the implementer, carrying S10c finding (i). When the review returns: if accepted, record and commit S11, then brief S12, then S13, then the whole assessment. If a run ends before S11's review is recorded, the next run reconciles S11's files (a new `app/src/shared/run-mailbox.ts`, `app/src/shared/loop-run.ts`, `loop-chat.ts`, `loop-transcript.ts`, `loop-run-view.ts`, `app/src/main/loop-live.ts`, `app/src/host/project-host.ts`, `docs/loop/GRAPH_FORMAT.md`, the parallel loop's roles and description, their tests) before briefing again.
 
 ## Run log
 

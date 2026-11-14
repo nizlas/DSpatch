@@ -1777,6 +1777,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       costCents: null,
     };
     inspection.sessions.push(sessionRef);
+    // DSP-209 S10c: what the visit was handed — on a rework visit, the integrator's findings —
+    // reaches every branch, the same text an ordinary step would be given.
+    const receivedText = describeReceivedResults(context.received);
     const prompt =
       (options.promptFor ?? (() => LIVE_DURATION_PROMPT))(node, {
         runId: context.runId,
@@ -1784,8 +1787,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         callId: context.callId,
         freshSession: true,
         arrivedBy: null,
-        attachments: { receivedResults: false, requiredResult: false, runChange: false },
+        attachments: { receivedResults: receivedText !== '', requiredResult: false, runChange: false },
       }) +
+      receivedText +
       describeBranchAssignment(instance);
     const turn = waitForTurn(options.adapter, session.dspatchSessionId);
     let timer: ReturnType<typeof setTimeout> | undefined;

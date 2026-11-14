@@ -185,10 +185,10 @@ describe('fan-out in the engine (DSP-209 S10b)', () => {
     assert.equal(new Set(sessions).size, 2);
     assert.ok(started.every((entry) => entry.data?.['baseKind'] === 'stash-create'), 'uncommitted work is in the base');
 
-    assert.deepEqual(await listRunBranches(runGit, repo, 'run-two'), ['dspatch/run/run-two/a', 'dspatch/run/run-two/b']);
-    assert.equal(git(repo, 'show', 'dspatch/run/run-two/a:a.txt'), 'a');
-    assert.equal(git(repo, 'show', 'dspatch/run/run-two/b:a.txt'), 'one\nnot committed', 'each branch started from the base with the uncommitted change');
-    assert.equal(fs.existsSync(path.join(worktreesRoot, 'a')), false, 'worktrees are removed once committed');
+    assert.deepEqual(await listRunBranches(runGit, repo, 'run-two'), ['dspatch/run/run-two/work/v1/a', 'dspatch/run/run-two/work/v1/b']);
+    assert.equal(git(repo, 'show', 'dspatch/run/run-two/work/v1/a:a.txt'), 'a');
+    assert.equal(git(repo, 'show', 'dspatch/run/run-two/work/v1/b:a.txt'), 'one\nnot committed', 'each branch started from the base with the uncommitted change');
+    assert.equal(fs.existsSync(path.join(worktreesRoot, 'work', 'v1', 'a')), false, 'worktrees are removed once committed');
     assert.deepEqual(personState(repo), before, 'the person\'s working copy, branch, HEAD and stash list are untouched');
     assert.equal(fs.existsSync(path.join(repo, 'a.txt')) && fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'one\nnot committed\n');
 
@@ -273,8 +273,8 @@ describe('fan-out in the engine (DSP-209 S10b)', () => {
     const ended = result.journal.filter((entry) => entry.kind === 'branch-ended');
     assert.equal(ended.length, 2);
     for (const sliceId of ['a', 'b']) {
-      assert.equal(git(repo, 'show', `dspatch/run/run-cancel/${sliceId}:${sliceId}.txt`), sliceId, 'the branch\'s work is committed');
-      assert.equal(fs.existsSync(path.join(worktreesRoot, sliceId)), false);
+      assert.equal(git(repo, 'show', `dspatch/run/run-cancel/work/v1/${sliceId}:${sliceId}.txt`), sliceId, 'the branch\'s work is committed');
+      assert.equal(fs.existsSync(path.join(worktreesRoot, 'work', 'v1', sliceId)), false);
     }
     assert.deepEqual(personState(repo), before);
   });
@@ -294,7 +294,7 @@ describe('fan-out in the engine (DSP-209 S10b)', () => {
     assert.equal(ended?.data?.['worktreeKept'], true);
     assert.equal(ended?.data?.['commit'], '(none)');
     assert.match(String(ended?.data?.['problem'] ?? ''), /could not be committed, so its worktree was kept/);
-    const kept = path.join(worktreesRoot, 'a');
+    const kept = path.join(worktreesRoot, 'work', 'v1', 'a');
     assert.equal(fs.readFileSync(path.join(kept, 'a.txt'), 'utf8'), 'a\n', 'the work is still there');
     // The test removes its own worktree; DSpatch kept it for the person.
     git(repo, 'worktree', 'remove', '--force', kept);

@@ -1,0 +1,210 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "dspatch-parallel-loop",
+  "name": "Parallel loop",
+  "purpose": "One bounded loop started from ordinary chat that may split the work: a slicing step reads the mandate and divides it into two or three slices with their own owned paths, or keeps it as one slice when it does not split well; the implementing step then runs one branch per slice at the same time, each in its own session and its own worktree from one recorded base; an integrating step merges the branches into the working copy, resolves conflicts and checks the combination, and may send the work back to the branches with concrete findings; an independent review then finds the assignment met, sends it back, or finds that it cannot be met. The engine never merges. The concurrency caps (Claude 3, Copilot 3, Cursor 1) come from reading the adapters' code and have not been observed with a live provider.",
+  "target": "cursor",
+  "entry": "slice",
+  "onRuntimeFault": "stop-and-reconcile",
+  "notes": "DSP-209 S10c. The first bundled loop that runs work in parallel, and the drawing that records the decisions behind it: the vision's structured parallel execution, integration and ownership (ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md); the reconciliation in CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md §10; and DSP-209's mission decisions 5 (fan-out within one visit, the walk stays one node at a time), 6 (one base: HEAD, or a git stash create commit), 7 (the integrator is a role and it merges), 22 (caps Claude 3, Copilot 3, Cursor 1, read from code and not observed), 23 (messages between branches only at check_messages, not built yet), 24 (at most six slices; temporary branches kept for Niclas), 25-26 (the split and the ownership rule) and 27 (branches run on a contained path with no snapshot of their own). Splitting is optional: one slice is a fan-out of one branch, which is how the slicer serialises or combines work that does not split well. Branch names carry the node and its visit (dspatch/run/<runId>/<node>/v<visit>/<slice>), so a rework back to the implementing step makes new branches beside the first visit's. Not the chat loop, not the development loop and not the mission loop; none of them is changed by this one.",
+  "limits": {
+    "maxTasks": 1,
+    "maxCalls": 14,
+    "maxReworkRounds": 2,
+    "maxMinutes": 60,
+    "note": "All guesses, recorded as guesses (DSP-209 S10c). The slicer, three branches, the integrator and review are six calls; one rework from the integrator back to the branches is four more, and one review rework back to the integrator is two more, so 14 calls leaves room for one of each. The implementing step's 60 minutes bound its whole visit, every branch included; under Cursor's cap of one, its branches run one after another inside that. None of it has been measured."
+  },
+  "archive": {
+    "path": ".dspatch-loop/runs/<run-id>/reports/",
+    "entryPerNode": true,
+    "referenceReturned": true
+  },
+  "failureKinds": [
+    {
+      "id": "spec-error",
+      "label": "specification error",
+      "meaning": "The task's premise is wrong and the work cannot be done as asked. The run stops rather than inventing a different task."
+    },
+    {
+      "id": "blocked",
+      "label": "blocked",
+      "meaning": "A concrete obstacle prevents the work: missing access, or a decision this run cannot make."
+    },
+    {
+      "id": "branch-failed",
+      "label": "a branch failed",
+      "meaning": "A branch faulted, timed out or produced nothing, or the slice block could not be run. Every branch's work is kept on its temporary branch or in its kept worktree."
+    },
+    {
+      "id": "limit-reached",
+      "label": "correction rounds spent",
+      "meaning": "DSpatch's bound on correction rounds was spent while the work was still being sent back. DSpatch routes this when the bound is reached; no step declares it."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "slice",
+      "kind": "agent",
+      "label": "Split the work",
+      "purpose": "Read the Mandate and the project, and decide whether the work splits into two or three parts that can be done at the same time without writing the same files. Write one dspatch-slices block: two or three slices, or a single slice when it does not split well. Each slice names its result, the paths it owns, its allowed actions, the contracts it works against and its smallest check. Do not change any file.",
+      "role": {
+        "id": "project-slice",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-slice.role.md"
+        }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 15 },
+      "declaredFailures": ["spec-error", "blocked"],
+      "notes": "The slicer is a role and nothing more (the parallelism document's §7): nothing in the engine treats this node specially. Its result is required, because the implementing step's branches are made from the block in it.",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Exactly one dspatch-slices block, and a short account of why the work was split this way or kept whole." },
+      "view": { "x": 360, "y": 40 }
+    },
+    {
+      "id": "work",
+      "kind": "agent",
+      "label": "Do the slices",
+      "purpose": "Do your slice of the Mandate, in your own worktree, inside the paths your slice owns, and run your slice's check. On a later visit you are given the integrating step's findings: act on the ones that concern your slice.",
+      "role": {
+        "id": "project-branch",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-branch.role.md"
+        }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 60 },
+      "declaredFailures": ["branch-failed"],
+      "fanOut": { "slicesFrom": "slice", "maxConcurrent": 3, "isolation": "worktree" },
+      "notes": "The one fan-out node. Each slice runs as its own branch instance; DSpatch commits what each left to its temporary branch and removes its worktree, or keeps the worktree when the commit is refused. The step's own result lists every branch, its commit and its reply, clipped; the integrator reads the commits.",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": false, "form": "stored-result", "note": "Written by DSpatch: per slice, how it ended, its temporary branch and commit, and its reply, clipped." },
+      "view": { "x": 360, "y": 180 }
+    },
+    {
+      "id": "integrate",
+      "kind": "agent",
+      "label": "Combine the branches",
+      "purpose": "Merge each slice's temporary branch into the working copy in the order the slices were listed, resolve conflicts, check that the branches respect the contracts the slices named, and run the checks the combination needs. Name what you merged, from which branch and commit, and what conflicted and how you resolved it. If a branch has to be redone, declare rework with concrete findings for the slices concerned. Never delete a temporary branch.",
+      "role": {
+        "id": "project-integrate",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-integrate.role.md"
+        }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 30 },
+      "outcomes": ["integrated", "rework", "not-integrated"],
+      "whenUndeclared": "not-integrated",
+      "declaredFailures": ["spec-error", "blocked", "limit-reached"],
+      "consumes": ["work"],
+      "notes": "Decision 7: the integrator merges; the engine does not. It is handed the implementing step's result, which names every branch and commit; it reads the commits, not the clipped replies.",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": false, "form": "stored-result", "note": "Exactly what was merged, from which branch and commit, what conflicted and how it was resolved, and what was checked. On rework, the findings for each slice concerned." },
+      "view": { "x": 360, "y": 320 }
+    },
+    {
+      "id": "review",
+      "kind": "agent",
+      "label": "Check the combined work",
+      "purpose": "Establish independently whether the assignment was met by the combined work in the working copy. Discover how this project is checked and run those checks yourself where your tools can run commands. Judge from real results, not from the integrating step's account. If the combination can be fixed, say exactly what is wrong and declare rework; if it is met, declare met; if it cannot be met, declare not-met.",
+      "role": {
+        "id": "project-check",
+        "source": {
+          "kind": "role-source",
+          "path": "docs/loop/roles/project/project-check.role.md"
+        }
+      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 20 },
+      "outcomes": ["met", "rework", "not-met", "could-not-check"],
+      "whenUndeclared": "could-not-check",
+      "declaredFailures": ["spec-error", "blocked", "limit-reached"],
+      "consumes": ["integrate"],
+      "notes": "The same independent check as the chat loop's, on the integrated result: its own session, so it did not watch the work happen.",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": false, "form": "stored-result", "note": "Your verdict and findings. On rework they are the only thing the integrating step is given about what is wrong." },
+      "view": { "x": 360, "y": 460 }
+    },
+    {
+      "id": "done",
+      "kind": "terminal",
+      "label": "Assignment met",
+      "purpose": "The independent review declared that the combined work met the assignment. That is its named verdict. The temporary branches are kept for you to keep or delete.",
+      "ending": "success",
+      "view": { "x": 120, "y": 620 }
+    },
+    {
+      "id": "not-met",
+      "kind": "terminal",
+      "label": "Assignment not met",
+      "purpose": "The review or the integrating step declared that the assignment cannot be met, or the correction rounds were spent. What was merged is in the working copy; the temporary branches are kept.",
+      "ending": "not-success",
+      "view": { "x": 340, "y": 620 }
+    },
+    {
+      "id": "not-established",
+      "kind": "terminal",
+      "label": "Could not establish",
+      "purpose": "The run could not establish whether the assignment was met: the review could not decide, or it was blocked or wrongly specified. This is not a pass and not a failure of the project.",
+      "ending": "not-success",
+      "view": { "x": 560, "y": 620 }
+    },
+    {
+      "id": "branches-failed",
+      "kind": "terminal",
+      "label": "A branch failed",
+      "purpose": "A branch faulted, timed out or produced nothing, or the slice block could not be run, so the work was not combined. Each branch's work is kept on its temporary branch, or in its worktree when it could not be committed; the run's record lists them.",
+      "ending": "not-success",
+      "view": { "x": 640, "y": 180 }
+    },
+    {
+      "id": "stopped",
+      "kind": "terminal",
+      "label": "Stopped without doing the work",
+      "purpose": "A step reported that the premise was wrong or that it was blocked, so the work was not done or not finished. Its own sentence is in the conversation.",
+      "ending": "not-success",
+      "view": { "x": 80, "y": 180 }
+    }
+  ],
+  "edges": [
+    { "id": "p-sliced", "from": "slice", "to": "work", "when": { "on": "success" }, "label": "sliced" },
+    { "id": "p-slice-spec", "from": "slice", "to": "stopped", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error" },
+    { "id": "p-slice-blocked", "from": "slice", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
+    { "id": "p-branches-done", "from": "work", "to": "integrate", "when": { "on": "success" }, "label": "every branch finished" },
+    { "id": "p-branch-failed", "from": "work", "to": "branches-failed", "when": { "on": "declared-failure", "failure": "branch-failed" }, "label": "a branch failed" },
+    { "id": "p-integrated", "from": "integrate", "to": "review", "when": { "on": "outcome", "outcome": "integrated" }, "label": "integrated" },
+    {
+      "id": "p-integrate-rework",
+      "from": "integrate",
+      "to": "work",
+      "when": { "on": "outcome", "outcome": "rework" },
+      "label": "back to the branches with findings",
+      "delivers": ["integrate"],
+      "notes": "The second visit to the fan-out: new branches beside the first visit's, each given the integrating step's findings. Counted against maxReworkRounds."
+    },
+    { "id": "p-not-integrated", "from": "integrate", "to": "not-met", "when": { "on": "outcome", "outcome": "not-integrated" }, "label": "could not be combined" },
+    { "id": "p-integrate-spec", "from": "integrate", "to": "stopped", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error while combining" },
+    { "id": "p-integrate-blocked", "from": "integrate", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked while combining" },
+    { "id": "p-integrate-limit", "from": "integrate", "to": "not-met", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "correction rounds spent" },
+    { "id": "p-met", "from": "review", "to": "done", "when": { "on": "outcome", "outcome": "met" }, "label": "assignment met" },
+    {
+      "id": "p-review-rework",
+      "from": "review",
+      "to": "integrate",
+      "when": { "on": "outcome", "outcome": "rework" },
+      "label": "not met: back to the integrator with findings",
+      "delivers": ["review"],
+      "notes": "The review's findings go to the integrating step, which may fix the combination itself or send the branches back."
+    },
+    { "id": "p-review-not-met", "from": "review", "to": "not-met", "when": { "on": "outcome", "outcome": "not-met" }, "label": "assignment not met" },
+    { "id": "p-could-not-check", "from": "review", "to": "not-established", "when": { "on": "outcome", "outcome": "could-not-check" }, "label": "could not check" },
+    { "id": "p-review-spec", "from": "review", "to": "not-established", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error while checking" },
+    { "id": "p-review-blocked", "from": "review", "to": "not-established", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked while checking" },
+    { "id": "p-review-limit", "from": "review", "to": "not-met", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "correction rounds spent" }
+  ]
+}

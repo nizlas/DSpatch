@@ -3,7 +3,7 @@
  *
  * GRAPH_FORMAT.md's *Fan-out*: one base commit for all branches, recorded before the first
  * starts; one worktree per branch, outside the working copy, on its own temporary branch
- * `dspatch/run/<runId>/<sliceId>`; DSpatch commits what a branch left there when it ends; the
+ * `dspatch/run/<runId>/<node>/v<visit>/<sliceId>`; DSpatch commits what a branch left there when it ends; the
  * worktree is removed when the run ends and the branch is kept for the person and the
  * integrator. Mission decisions 6, 7 and 24.
  *
@@ -59,9 +59,26 @@ export function runBranchPrefix(runId: string): string {
   return `dspatch/run/${runId}/`;
 }
 
-/** A slice's temporary branch. */
-export function sliceBranch(runId: string, sliceId: string): string {
-  return `${runBranchPrefix(runId)}${sliceId}`;
+/**
+ * A node id as one segment of a branch name and a folder: letters, digits, `.`, `_` and `-`,
+ * never starting with `.` or ending in `.lock` or `.`, which git refuses in a ref.
+ */
+function placeSegment(nodeId: string): string {
+  const safe = nodeId.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '').replace(/(\.lock|\.)+$/i, '');
+  return safe === '' ? 'node' : safe;
+}
+
+/**
+ * A slice's temporary branch: `dspatch/run/<runId>/<node>/v<visit>/<slice>`.
+ *
+ * DSP-209 S10c (S10b review defect): the node and its visit are in the name, so a second visit
+ * to a fan-out node — a rework edge back to it — makes new branches beside the first visit's,
+ * which are kept, and two fan-out nodes in one run with the same slice ids stay apart. Every
+ * branch of a run has the same depth, so no branch name is ever a prefix of another (which git
+ * refuses).
+ */
+export function sliceBranch(runId: string, nodeId: string, visit: number, sliceId: string): string {
+  return `${runBranchPrefix(runId)}${placeSegment(nodeId)}/v${String(visit)}/${sliceId}`;
 }
 
 /**
@@ -98,7 +115,8 @@ export interface RunWorktree {
 }
 
 /**
- * A worktree for one slice, at `<worktreesRoot>/<sliceId>` on a new branch from `base`.
+ * A worktree for one slice, at `<worktreesRoot>/<node>/v<visit>/<sliceId>` on a new branch
+ * from `base`, named by {@link sliceBranch}.
  *
  * `worktreesRoot` is `<userData>/loop-runs/<runId>/worktrees`; it must lie outside the
  * repository, and the call refuses otherwise rather than writing into the person's folder.
@@ -106,14 +124,22 @@ export interface RunWorktree {
  */
 export async function createWorktree(
   git: GitRunner,
-  input: { readonly repo: string; readonly base: string; readonly runId: string; readonly sliceId: string; readonly worktreesRoot: string },
+  input: {
+    readonly repo: string;
+    readonly base: string;
+    readonly runId: string;
+    readonly nodeId: string;
+    readonly visit: number;
+    readonly sliceId: string;
+    readonly worktreesRoot: string;
+  },
 ): Promise<RunWorktree> {
-  const target = path.resolve(input.worktreesRoot, input.sliceId);
+  const target = path.resolve(input.worktreesRoot, placeSegment(input.nodeId), `v${String(input.visit)}`, input.sliceId);
   const relative = path.relative(path.resolve(input.repo), target);
   if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
     throw new Error(`The worktree for slice "${input.sliceId}" would be inside the working copy (${target}); it was not made.`);
   }
-  const branch = sliceBranch(input.runId, input.sliceId);
+  const branch = sliceBranch(input.runId, input.nodeId, input.visit, input.sliceId);
   const format = await git(['check-ref-format', '--branch', branch], input.repo);
   if (!format.ok) {
     throw new Error(`"${branch}" is not a usable branch name, so no worktree was made: ${format.stderr.trim()}`);
@@ -183,8 +209,8 @@ export function createWorktreeDriver(input: {
   const git = input.git ?? runGit;
   return {
     base: () => baseCommit(git, input.repo),
-    open: async ({ runId, sliceId, base }) => {
-      const tree = await createWorktree(git, { repo: input.repo, base, runId, sliceId, worktreesRoot: input.worktreesRoot });
+    open: async ({ runId, nodeId, visit, sliceId, base }) => {
+      const tree = await createWorktree(git, { repo: input.repo, base, runId, nodeId, visit, sliceId, worktreesRoot: input.worktreesRoot });
       return { workspacePath: tree.path, branch: tree.branch };
     },
     close: async ({ workspacePath, message }) => {

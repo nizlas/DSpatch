@@ -81,41 +81,65 @@ describe('run worktrees (DSP-209 S10a)', () => {
   it('makes a worktree outside the repository on its own branch, commits leftovers, removes it and keeps the branch', async () => {
     const { repo, worktreesRoot } = repository('lifecycle');
     const base = await baseCommit(runGit, repo);
-    const tree = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', sliceId: 'frontend', worktreesRoot });
-    assert.equal(tree.branch, sliceBranch('run-1', 'frontend'));
-    assert.equal(tree.branch, 'dspatch/run/run-1/frontend');
+    const tree = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', nodeId: 'work', visit: 1, sliceId: 'frontend', worktreesRoot });
+    assert.equal(tree.branch, sliceBranch('run-1', 'work', 1, 'frontend'));
+    assert.equal(tree.branch, 'dspatch/run/run-1/work/v1/frontend');
     assert.ok(path.relative(repo, tree.path).startsWith('..'), 'outside the working copy');
-    assert.equal(git(tree.path, 'branch', '--show-current'), 'dspatch/run/run-1/frontend');
+    assert.equal(git(tree.path, 'branch', '--show-current'), 'dspatch/run/run-1/work/v1/frontend');
     assert.equal(git(repo, 'branch', '--show-current'), 'main', 'the person\'s branch is unchanged');
 
     assert.equal(await commitLeftovers(runGit, tree.path, 'nothing yet'), null, 'nothing changed, no commit');
     fs.writeFileSync(path.join(tree.path, 'b.txt'), 'from the branch\n', 'utf8');
     const commit = await commitLeftovers(runGit, tree.path, 'DSpatch run run-1, slice frontend, visit 1');
     assert.ok(commit !== null);
-    assert.equal(git(repo, 'rev-parse', 'dspatch/run/run-1/frontend'), commit);
+    assert.equal(git(repo, 'rev-parse', 'dspatch/run/run-1/work/v1/frontend'), commit);
     assert.equal(fs.existsSync(path.join(repo, 'b.txt')), false, 'the working copy is not touched');
 
-    const other = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', sliceId: 'tools', worktreesRoot });
-    assert.deepEqual(await listRunBranches(runGit, repo, 'run-1'), ['dspatch/run/run-1/frontend', 'dspatch/run/run-1/tools']);
+    const other = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', nodeId: 'work', visit: 1, sliceId: 'tools', worktreesRoot });
+    assert.deepEqual(await listRunBranches(runGit, repo, 'run-1'), ['dspatch/run/run-1/work/v1/frontend', 'dspatch/run/run-1/work/v1/tools']);
     assert.deepEqual(await listRunBranches(runGit, repo, 'run-2'), []);
 
     await removeWorktree(runGit, repo, tree.path);
     await removeWorktree(runGit, repo, other.path);
     assert.equal(fs.existsSync(tree.path), false);
     assert.equal(git(repo, 'worktree', 'list', '--porcelain').includes(tree.path.split(path.sep).join('/')), false);
-    assert.deepEqual(await listRunBranches(runGit, repo, 'run-1'), ['dspatch/run/run-1/frontend', 'dspatch/run/run-1/tools'], 'branches are kept');
+    assert.deepEqual(await listRunBranches(runGit, repo, 'run-1'), ['dspatch/run/run-1/work/v1/frontend', 'dspatch/run/run-1/work/v1/tools'], 'branches are kept');
     assert.equal(git(repo, 'status', '--porcelain'), '');
+  });
+
+  // DSP-209 S10c (S10b review defect): a rework edge back to the fan-out node is its second visit.
+  it('gives a second visit to the same node, with the same slice ids, new branches, and keeps the first visit\'s', async () => {
+    const { repo, worktreesRoot } = repository('second-visit');
+    const base = await baseCommit(runGit, repo);
+    const first = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', nodeId: 'work', visit: 1, sliceId: 'a', worktreesRoot });
+    fs.writeFileSync(path.join(first.path, 'a.txt'), 'first visit\n', 'utf8');
+    const firstCommit = await commitLeftovers(runGit, first.path, 'visit 1');
+    await removeWorktree(runGit, repo, first.path);
+
+    const second = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', nodeId: 'work', visit: 2, sliceId: 'a', worktreesRoot });
+    assert.equal(second.branch, 'dspatch/run/run-1/work/v2/a');
+    assert.notEqual(second.path, first.path);
+    // Another fan-out node in the same run, with the same slice id, stays apart too.
+    const other = await createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', nodeId: 'research', visit: 1, sliceId: 'a', worktreesRoot });
+    assert.deepEqual(await listRunBranches(runGit, repo, 'run-1'), [
+      'dspatch/run/run-1/research/v1/a',
+      'dspatch/run/run-1/work/v1/a',
+      'dspatch/run/run-1/work/v2/a',
+    ]);
+    assert.equal(git(repo, 'rev-parse', 'dspatch/run/run-1/work/v1/a'), firstCommit, 'the first visit\'s branch is kept as it was');
+    await removeWorktree(runGit, repo, second.path);
+    await removeWorktree(runGit, repo, other.path);
   });
 
   it('refuses a worktree inside the working copy, and a branch name git would not accept', async () => {
     const { repo } = repository('refusals');
     const base = await baseCommit(runGit, repo);
     await assert.rejects(
-      createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', sliceId: 'x', worktreesRoot: path.join(repo, 'inside') }),
+      createWorktree(runGit, { repo, base: base.commit, runId: 'run-1', nodeId: 'work', visit: 1, sliceId: 'x', worktreesRoot: path.join(repo, 'inside') }),
       /would be inside the working copy/,
     );
     await assert.rejects(
-      createWorktree(runGit, { repo, base: base.commit, runId: 'run 1', sliceId: 'x..y', worktreesRoot: path.join(path.dirname(repo), 'w') }),
+      createWorktree(runGit, { repo, base: base.commit, runId: 'run 1', nodeId: 'work', visit: 1, sliceId: 'x..y', worktreesRoot: path.join(path.dirname(repo), 'w') }),
       /not a usable branch name/,
     );
   });

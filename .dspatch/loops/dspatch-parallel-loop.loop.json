@@ -1,0 +1,11 @@
+{
+  "format": "dspatch-loop-definition",
+  "formatVersion": 1,
+  "id": "dspatch-parallel-loop",
+  "name": "Parallel loop",
+  "description": "Split the mandate into two or three slices, do them at the same time in separate worktrees, combine them, then check the result. Concurrency caps are read from code, not observed.",
+  "resourceRoot": "../..",
+  "resourceRootNote": "The DSpatch working copy this file is filed in, two levels up from .dspatch/loops. Its graph and its role files live there.",
+  "graph": "docs/loop/graphs/dspatch-parallel-loop.graph.json",
+  "notes": "DSP-209 S10c. DSpatch's first bundled loop that runs work in parallel, declared like the others and found here because this folder is a folder DSpatch looks in. It is chosen for and run against whatever project is open in chat, which must be a git repository with a commit for its branches to be made."
+}
