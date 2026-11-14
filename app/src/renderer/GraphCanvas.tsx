@@ -63,6 +63,8 @@ export interface GraphCanvasProps {
   readonly showLabels: boolean;
   readonly edgesTaken: ReadonlySet<string>;
   readonly runStates: ReadonlyMap<string, NodeRunState>;
+  /** DSP-209 S10b: a fan-out node's branches in a few words, by node id. */
+  readonly branchSummaries?: ReadonlyMap<string, string>;
   readonly workingNodes: ReadonlySet<string>;
   readonly endingMarks: FinishedRunMarks | null;
   readonly severityOfNode?: (nodeId: string) => Finding['severity'] | null;
@@ -135,6 +137,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           ending={endingMarkFor(props.endingMarks, node.id)}
           severity={props.severityOfNode?.(node.id) ?? null}
           helpTitle={props.helpTitleOf?.(node)}
+          branches={props.branchSummaries?.get(node.id) ?? null}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}
         />
       ))}
@@ -255,6 +258,7 @@ function NodeShape({
   ending,
   severity,
   helpTitle,
+  branches,
   onMouseDown,
 }: {
   readonly node: LoopNode;
@@ -275,6 +279,7 @@ function NodeShape({
   readonly ending: EndingMark | null;
   readonly severity: Finding['severity'] | null;
   readonly helpTitle?: string;
+  readonly branches: string | null;
   readonly onMouseDown: (event: ReactMouseEvent) => void;
 }): React.JSX.Element {
   const x = node.view?.x ?? 0;
@@ -325,6 +330,7 @@ function NodeShape({
       // establish that renaming a terminal does not earn a tick.
       data-run-working={working ? 'true' : 'false'}
       data-run-ending={ending ?? ''}
+      data-run-branches={branches ?? ''}
       transform={`translate(${String(x)} ${String(y)})`}
       onMouseDown={onMouseDown}
       // Selection happens on mousedown, and the click that follows would otherwise
@@ -348,7 +354,7 @@ function NodeShape({
             : ending === 'success'
               ? ' — the run ended here, at the terminal this loop declares as the assignment being met'
               : ' — the run ended here, and this loop does not declare arriving here as the assignment being met'
-        }${helpTitle === undefined ? '' : ` — ${helpTitle}`}`}</title>
+        }${branches === null ? '' : ` — ${branches}`}${helpTitle === undefined ? '' : ` — ${helpTitle}`}`}</title>
       )}
       {/*
         The halo, under the body so only its outer half shows (DSP-80).

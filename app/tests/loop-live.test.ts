@@ -53,6 +53,7 @@ import type { LoopGraph, LoopNode } from '../src/shared/loop-graph';
 import {
   createDryRunExecutor,
   formatRunJournal,
+  instanceSessionId,
   runLoopGraph,
   type ArchivePlacement,
   type JournalKind,
@@ -3339,5 +3340,67 @@ describe('createLiveExecutor — the handoff tool (DSP-209 S5a)', () => {
     assert.equal(result.status, 'completed', result.fault?.detail ?? '');
     assert.ok(adapter.configs.every((config) => config.appTools === undefined));
     assert.equal(result.journal.some((entry) => entry.kind.startsWith('handoff-')), false);
+  });
+});
+
+/**
+ * DSP-209 S10b: a fan-out branch on the live executor's own contained path — its own session,
+ * its own folder, no app tools, no steering — with the run's other steps unchanged.
+ */
+describe('createLiveExecutor — fan-out branches (DSP-209 S10b)', () => {
+  it('opens one session per branch, in its own folder, offers it no tool and no steering, and labels its reply', async () => {
+    const workspace = scratch('fan-out-live');
+    const block = ['```dspatch-slices', JSON.stringify({ slices: ['a', 'b'].map((id) => ({ id, result: `${id} done`, ownedPaths: [], allowedActions: [], contractRefs: [], verification: 'read' })) }), '```'].join('\n');
+    const adapter = new FakeAdapter({ assistantText: `The slices.\n\n${block}` });
+    const replies: { nodeId: string; sliceId?: string; sessionId: string }[] = [];
+    const steerable: unknown[] = [];
+    const graph: LoopGraph = {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'live-fan',
+      name: 'Live fan-out',
+      purpose: 'Read in parallel.',
+      target: 'cursor',
+      entry: 'slice',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [{ id: 'branch-failed', label: 'branch failed', meaning: 'A branch failed.' }],
+      nodes: [
+        { id: 'slice', kind: 'agent', label: 'Slice', produces: { required: true, form: 'stored-result' } },
+        { id: 'read', kind: 'agent', label: 'Read', declaredFailures: ['branch-failed'], fanOut: { slicesFrom: 'slice', maxConcurrent: 2, isolation: 'shared-read-only' } },
+        { id: 'end', kind: 'terminal', label: 'End' },
+        { id: 'failed', kind: 'terminal', label: 'Failed', ending: 'not-success' },
+      ],
+      edges: [
+        { id: 'f1', from: 'slice', to: 'read', when: { on: 'success' } },
+        { id: 'f2', from: 'read', to: 'end', when: { on: 'success' } },
+        { id: 'f3', from: 'read', to: 'failed', when: { on: 'declared-failure', failure: 'branch-failed' } },
+      ],
+    };
+    const result = await runLoopGraph(graph, {
+      runId: 'live-fan',
+      dryRun: false,
+      resultStore: createFileResultStore(scratch('fan-out-live-store')),
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node) => `Do the ${node.id} step.`,
+        onAgentReply: (reply) => replies.push({ nodeId: reply.nodeId, ...(reply.sliceId === undefined ? {} : { sliceId: reply.sliceId }), sessionId: reply.sessionId }),
+        onSteerableStep: (step) => steerable.push(step),
+      }),
+    });
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.equal(result.terminalNodeId, 'end');
+    const ids = adapter.configs.map((config) => config.dspatchSessionId);
+    assert.equal(ids.length, 3, 'the slicer, and one session per branch');
+    assert.equal(new Set(ids).size, 3);
+    assert.ok(ids.includes(instanceSessionId('live-fan', 'read', 1, 'a')));
+    assert.ok(ids.includes(instanceSessionId('live-fan', 'read', 1, 'b')));
+    const branchConfigs = adapter.configs.filter((config) => String(config.dspatchSessionId).includes('+'));
+    assert.ok(branchConfigs.every((config) => config.appTools === undefined && config.workspacePath === workspace));
+    assert.ok(adapter.sends.some((prompt) => prompt.includes('## Your slice: a') && prompt.includes('only read: write no file')));
+    assert.deepEqual(replies.filter((reply) => reply.sliceId !== undefined).map((reply) => reply.sliceId).sort(), ['a', 'b']);
+    assert.equal(steerable.filter((step) => step !== null).length, 1, 'only the slicer was steerable; no branch was');
   });
 });

@@ -69,7 +69,7 @@ describe('the slice block (DSP-209 S10a)', () => {
     assert.deepEqual(codes(block({ slices: [slice('has space', ['x'])] })), ['unsafe-slice-id']);
     assert.deepEqual(codes(block({ slices: [slice('a.lock', ['x'])] })), ['unsafe-slice-id']);
     assert.deepEqual(codes(block({ slices: [slice('a', ['x']), slice('A', ['y'])] })), ['duplicate-slice-id']);
-    for (const unsafe of ['/etc/passwd', 'C:/Windows', 'C:\\Windows', '../outside', 'app/../../outside', 'app/*.ts', '', 'a//b']) {
+    for (const unsafe of ['.git/hooks/pre-commit', '.GIT', '/etc/passwd', 'C:/Windows', 'C:\\Windows', '../outside', 'app/../../outside', 'app/*.ts', '', 'a//b']) {
       assert.deepEqual(codes(block({ slices: [slice('a', [unsafe])] })), ['unsafe-owned-path'], unsafe);
     }
   });

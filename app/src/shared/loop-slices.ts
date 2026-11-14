@@ -165,6 +165,10 @@ export function normaliseOwnedPath(value: string): string | null {
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
     return null;
   }
+  // DSP-209 S10b (S10a review finding iii): git's own folder is never a slice's to write.
+  if ((segments[0] ?? '').toLowerCase() === '.git') {
+    return null;
+  }
   return path;
 }
 

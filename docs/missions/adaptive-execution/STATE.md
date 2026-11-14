@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b sent to the implementer (coordinator visit 13, call 35).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c sent to the implementer (coordinator visit 14, call 38).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), then the S10a commit made on coordinator visit 13 (`(DSP-209 S10a)` in `git log`, the commit after `d516ceb`).
-- **Sub-goal in progress:** S10b (fan-out in the engine), sent to the implementer on coordinator visit 13.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), then the S10b commit made on coordinator visit 14 (`(DSP-209 S10b)` in `git log`, the commit after `af09a3f`).
+- **Sub-goal in progress:** S10c (bundled parallel graph and roles, plus the second-visit branch-name fix), sent to the implementer on coordinator visit 14.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
@@ -38,9 +38,9 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S7 | The chat knows what a loop did (one-time run recap) | S1 | reviewed | 1 | `0cc65a5` |
 | S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | reviewed | 1 | `d516ceb` |
 | S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | done (research, recorded) | 1 | — (no files) |
-| S10a | Fan-out format: `fanOut` field, `dspatch-slices` block parsing and validation, worktree and temporary-branch manager (pure and unit-tested; not yet run by the engine) | S8, S9 | reviewed | 1 | S10a commit after `d516ceb` |
-| S10b | Fan-out in the engine: concurrent instances within one visit, session per instance, per-instance folder, journal kinds, cancel all, usage per branch, run view | S10a | in progress | 1 | |
-| S10c | Bundled parallel graph: slicer → fan-out implementer → integrator → review, with slicer and integrator roles | S10b | pending | 0 | |
+| S10a | Fan-out format: `fanOut` field, `dspatch-slices` block parsing and validation, worktree and temporary-branch manager (pure and unit-tested; not yet run by the engine) | S8, S9 | reviewed | 1 | `af09a3f` |
+| S10b | Fan-out in the engine: concurrent instances within one visit, session per instance, per-instance folder, journal kinds, cancel all, usage per branch, run view | S10a | reviewed | 1 | S10b commit after `af09a3f` |
+| S10c | Bundled parallel graph: slicer → fan-out implementer → integrator → review, with slicer and integrator roles | S10b | in progress | 1 | |
 | S11 | Mailbox between running branches | S10b, S9 | pending | 0 | |
 | S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | pending | 0 | |
 | S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | pending | 0 | |
@@ -192,9 +192,19 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Niclas tries:** nothing yet.
 - **Steps skipped:** research (S9 and the spec settled it); independent verification (not asked for).
 
-### S10b — Fan-out in the engine
+### S10b — Fan-out in the engine — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 13 (call 35). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 13 (call 35); implemented (call 36, `done`); review `accept` (call 37); committed on coordinator visit 14 (call 38).
+- **What was done.** `loop-run.ts`: `runFanOutVisit` replaces S10a's refusal — reads slices from the newest result `slicesFrom` filed; before any branch starts, invalid slices, too few calls, no project or no base end the node `branch-failed` with the reason and no worktree; one base for all branches; a pool of `min(effective, slices)` workers, `effective = min(maxConcurrent, FAN_OUT_ADAPTER_CAPS[provider])` (Claude 3, Copilot 3, Cursor 1); one call per instance, none for the node; after every instance, leftovers committed then worktree removed, a refused commit keeps the worktree with git's reason; success only when every branch finished; cancel ends as cancelled with every branch through the commit step. `StepContext.instance` (`FanOutInstance`), `FanOutDriver` interface, `instanceSessionId` (`…--node+visit+slice`, `+` never in a step id — S8 finding ii), appended kinds `branch-started`/`branch-ended`. `run-worktrees.ts`: `createWorktreeDriver`. `loop-live.ts`: contained `runInstance` path — own session and folder, no app tools, no handoff, no steering, no snapshots, only two appends to the shared record (decision 27); `describeBranchAssignment`; replies carry `sliceId`. `loop-live-run.ts` wires driver (worktrees beside the run's results) and cap. Host labels branch replies "‹step› · ‹slice›". `loop-run-view.ts`: `branchInstanceStates`, `describeBranchInstances`; canvas hover text and data attribute. Conversation lines "Branch “a” started./finished its turn./ended: ‹reason›.". `.git` first segment refused (S10a finding iii). Support row honoured; help and GRAPH_FORMAT status updated. Tests: new `loop-fan-out-run.test.ts` (7, heavy), a `loop-live` case, `loop-control-run` pins the kinds, `loop-fan-out` updated on purpose, a `.git` case.
+- **Review verdict: accept.** Eight criteria met by reading. The reviewer and the coordinator confirmed by read-only git: no `dspatch/*` branches, empty stash, only main and engine worktrees. **Defect outside the criteria, carried into S10c (must be fixed before the drawing loops back to the fan-out):** branch name `dspatch/run/<runId>/<sliceId>` and worktree path `<worktreesRoot>/<sliceId>` omit the visit; since branches are kept and `createWorktree` refuses an existing branch, a second visit to a fan-out node fails every branch (`no-worktree`) and ends `branch-failed` — fails safely, untested. Non-blocking: (i) the node's `maxMinutes` is one deadline for the whole visit, so a late-starting branch has less time — state it in help, or per-branch deadlines; (ii) `shared-read-only` is read-only by instruction only — S10c's drawing should use `worktree`; (iii) branch replies are clipped in the node's stored result — the integrator must read the commits.
+- **Checked, by the implementer only** (from `app/`, single files, 60 s): `loop-fan-out-run` 7/7, `loop-live` 71/71, `loop-fan-out` 4/4, `loop-slices` 6/6, `run-worktrees` 4/4, `loop-control-run` 15/15, `loop-run` 36/36, `loop-run-view` 32/32, `loop-chat` 80/80, `loop-transcript` 48/48, `loop-graph` 41/41, `loop-node-help` 28/28, `loop-graph-write` 5/5, `loop-skips` 14/14, `loop-handoff` 11/11, `loop-record` 40/40; `npm run typecheck` exit 0. The reviewer read the code and did not rerun.
+- **Untested:** concurrent turns with any real provider; the Cursor cap through `runLiveGraph`; the hover text and chat labels; branches have no per-branch snapshot; a slow repository hook delays the visit.
+- **Niclas tries:** nothing until S10c.
+- **Steps skipped:** research (S9 settled it); independent verification (not asked for).
+
+### S10c — Bundled parallel graph and roles
+
+- **Attempt 1:** briefed on coordinator visit 14 (call 38). Not yet reviewed.
 
 ### S9 — SDK support research
 
@@ -242,9 +252,9 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Continue once without pasting again [S6] — met by reviewed sub-goal (host path untested; Niclas's trial)
 - Chat gets the run's results, and the reverse [S7, S2] — met by reviewed sub-goals (window and host source untested; Niclas's trial)
 - No extra permissions on a mode change [S5a, S6] — met by reviewed sub-goals (same `sendTurn` body, same session and policy)
-- Parallelism optional and bounded (2–3) [S10] — open
-- Branches get bounded assignments and ownership [S10] — open
-- Worktrees from a known base [S10] — open
+- Parallelism optional and bounded (2–3) [S10a, S10b] — met by reviewed sub-goals in the engine (caps read from code, not observed live); no bundled graph uses it until S10c
+- Branches get bounded assignments and ownership [S10a, S10b] — met by reviewed sub-goals (slice block; overlap refused; ownership enforced by worktree only)
+- Worktrees from a known base [S10a, S10b] — met by reviewed sub-goals (HEAD or `git stash create`; untracked files not in the base, stated)
 - Coordinator may serialise or combine [S10] — open
 - Messages through a mailbox with sender, recipient, purpose [S11] — open
 - Delivery separate from acknowledgement [S11] — open
@@ -258,7 +268,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Provider support checked before claimed [S9] — met by research (read from code; concurrency not observed live)
 - Delivery limits shown when not immediate [S11] — open
 - Distinct states incl. handed over [S3, S5]; durable automatic resume — **skipped**: BRIEF §3 accepts manual continuation; S2 makes a new run from the same conversation carry earlier runs (limit stated, not met)
-- Cancel stops dispatch and accounts for tools in flight [S10; sequential exists] — open
+- Cancel stops dispatch and accounts for tools in flight [S10b; sequential exists] — met by reviewed sub-goal for "cancel all" (each branch still commits its leftovers); per-branch cancel open
 - Verification policy for every branch [S10, S11] — open
 - UI says why a method was chosen and what each branch owns [S3, S5, S10, S12] — open
 - Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — proposed **skipped** (Q2), not met
@@ -280,6 +290,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
 13. **"Done, check skipped" ends as `not-success` with its own sentences** (S4). Reason: `success` means "Assignment met"; `not-success` draws a neutral mark. Alternatives: `report-delivered` (would claim a report); a new `TerminalEnding` value (changes the graph-format contract for no gain).
 14. **One trailing `:` after the outcome name is accepted, by one shared reader** (S4). Reason: a step writing `RESULT: done-unchecked: docs only` otherwise lost its outcome and the skip; every existing name reads the same. Alternative: fix only the comment and leave colon-writers routed to the fallback.
+27. **Branches run on a contained instance path that never writes the run's shared inspection** (S10b). Reason: concurrent turns cannot corrupt the run record; a branch's commit on its temporary branch is its record of change. Cost: no per-branch before/after snapshot. Alternatives: serialise `inspection` writes (locks across async turns); a second executor type (a second set of wiring everywhere). Also: too few calls for every branch ends the node `branch-failed` before any starts, never a half-started fan-out (alternative: `limit-reached`).
 26. **Owned-path overlap rule and DSpatch's commit author** (S10a). Paths are normalised (forward slashes, no `./`, no trailing `/`) and overlap when equal or one contains the other, compared case-insensitively (Windows); empty, absolute, drive, UNC, `.`/`..` and glob paths are refused. Commits on temporary branches are authored `DSpatch <dspatch@localhost>`, so they are visibly DSpatch's. Alternatives: plain string prefix (`app/src` would overlap `app/srcx`); case-sensitive (two branches could write one Windows file); globs (overlap undecidable simply); committing as the person's git identity (would make DSpatch's commits look like his).
 24. **Fan-out specification choices made in S8** (S8, recorded after review): at most 6 slices per fan-out, with slices beyond the concurrency cap waiting for a free branch rather than refused; worktrees under `<userData>/loop-runs/<runId>/worktrees/` (outside the working copy); DSpatch commits each branch's leftover work to its temporary branch `dspatch/run/<runId>/<slice>` (a commit on a DSpatch-made branch, not a merge — decision 7 stands: the integrator merges); temporary branches kept and listed in the report for Niclas to keep or delete, never deleted by DSpatch; a malformed slice block ends the node as `branch-failed`, not as its own ending. Reason: each keeps the working copy untouched until integration and leaves deletion of anything in the repository to Niclas. Alternatives: refuse more than the cap; worktrees inside the repository; leave uncommitted work in the worktree (lost when it is removed); delete temporary branches at the run's end (deletes work).
 25. **S10 split into S10a, S10b, S10c** (coordination). Reason: S10 is the largest change of the mission; format and worktree code can be proven by unit tests before the engine runs instances concurrently, and the bundled graph comes last. Alternative: one sub-goal (the S10 stall risk the plan names).
@@ -309,7 +320,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 13 (call 35).** S10a reviewed and committed. S10b sent to the implementer, carrying S8 finding (ii) and S10a findings (i)–(iv). When the review returns: if accepted, record and commit S10b, then brief S10c, then S11. If S10b stalls, S10c, S11 and S12's branch parts depend on it; go on with S12's non-branch parts and S13. If a run ends before S10b's review is recorded, the next run reconciles S10b's files (`app/src/shared/loop-run.ts`, `loop-run-view.ts`, `loop-chat.ts`, `loop-transcript.ts`, `loop-record.ts`, `loop-slices.ts`, `app/src/main/loop-live.ts`, `run-worktrees.ts`, `app/src/host/project-host.ts`, renderer graph canvas, their tests) and checks the DSpatch working copy for stray `dspatch/*` branches and worktrees before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 14 (call 38).** S10b reviewed and committed. S10c sent to the implementer, carrying S10b's second-visit defect and findings (i)–(iii). When the review returns: if accepted, record and commit S10c, then brief S11. If a run ends before S10c's review is recorded, the next run reconciles S10c's files (a new `docs/loop/graphs/*parallel*.graph.json`, new slicer and integrator roles under `docs/loop/roles/`, `app/src/main/run-worktrees.ts`, `app/src/shared/loop-run.ts`, `loop-node-help.ts`, `loop-definition-choice.ts`, `docs/loop/GRAPH_FORMAT.md`, their tests) and checks for stray `dspatch/*` branches before briefing again.
 
 ## Run log
 

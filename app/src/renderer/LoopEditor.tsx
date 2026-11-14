@@ -105,6 +105,8 @@ import {
   UNVERSIONED_CANVAS,
   applyRunEvent,
   describePinnedDrawing,
+  branchInstanceStates,
+  describeBranchInstances,
   edgesTakenIn,
   finishedMarksBelongTo,
   finishedRunMarksFrom,
@@ -2186,6 +2188,20 @@ export function LoopEditor(): React.JSX.Element {
     () => (pinCheck === 'different' ? new Set<string>() : edgesTakenIn(watch)),
     [watch, pinCheck],
   );
+  // DSP-209 S10b: each fan-out node's branches, in a few words, with their slices listed.
+  const branchSummaries = useMemo(() => {
+    const summaries = new Map<string, string>();
+    if (pinCheck === 'different') {
+      return summaries;
+    }
+    for (const [nodeId, instances] of branchInstanceStates(watch)) {
+      const summary = describeBranchInstances(instances);
+      if (summary !== null) {
+        summaries.set(nodeId, `${summary} (${instances.map((item) => `${item.sliceId}: ${item.ending ?? item.state}`).join('; ')})`);
+      }
+    }
+    return summaries;
+  }, [watch, pinCheck]);
 
   /**
    * Which node is working, which is not the same question as which node is active.
@@ -2765,6 +2781,7 @@ export function LoopEditor(): React.JSX.Element {
               showLabels={showLabels}
               edgesTaken={edgeSet}
               runStates={runStates}
+              branchSummaries={branchSummaries}
               workingNodes={workingNodes}
               endingMarks={endingMarks}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}

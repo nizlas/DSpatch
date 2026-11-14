@@ -3294,7 +3294,10 @@ function registerLoopMethods(): void {
           // be collected and used only to classify the step; the conversation shows
           // it as the answer to the mandate, so it is forwarded as it was written.
           onAgentReply: (reply) => {
-            const nodeLabel = lookup.node(reply.nodeId)?.label ?? reply.nodeId;
+            // DSP-209 S10b: a fan-out branch's reply is labelled with its slice, in the record and
+            // the chat column alike.
+            const nodeLabel =
+              (lookup.node(reply.nodeId)?.label ?? reply.nodeId) + (reply.sliceId === undefined ? '' : ` · ${reply.sliceId}`);
             repliesByVisit.set(`${reply.nodeId}:${String(reply.occurrence)}`, reply.text);
             if (reply.terminalEnd === 'unconfirmed') {
               unconfirmedSteps.push({ sessionId: reply.sessionId, nodeLabel });

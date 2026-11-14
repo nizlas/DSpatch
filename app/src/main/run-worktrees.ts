@@ -17,6 +17,8 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 
+import type { FanOutDriver } from '../shared/loop-run';
+
 export interface GitResult {
   readonly ok: boolean;
   readonly stdout: string;
@@ -162,6 +164,54 @@ export async function removeWorktree(git: GitRunner, repo: string, worktree: str
   if (!removed.ok) {
     throw new Error(`git could not remove the worktree ${worktree}: ${removed.stderr.trim()}`);
   }
+}
+
+/**
+ * DSP-209 S10b: the fan-out driver the runner is handed for a run over `repo`, with its
+ * worktrees under `worktreesRoot` (`<userData>/loop-runs/<runId>/worktrees`).
+ *
+ * `close` commits leftovers **before** removing the worktree (S10a review finding iv). When
+ * the commit is refused — a signing requirement, a hook, the repository's author policy — the
+ * worktree is kept, not removed, and the refusal is returned in git's own words, so the work
+ * stays where the person can find it (findings i and ii). The branch is never deleted.
+ */
+export function createWorktreeDriver(input: {
+  readonly git?: GitRunner;
+  readonly repo: string;
+  readonly worktreesRoot: string;
+}): FanOutDriver {
+  const git = input.git ?? runGit;
+  return {
+    base: () => baseCommit(git, input.repo),
+    open: async ({ runId, sliceId, base }) => {
+      const tree = await createWorktree(git, { repo: input.repo, base, runId, sliceId, worktreesRoot: input.worktreesRoot });
+      return { workspacePath: tree.path, branch: tree.branch };
+    },
+    close: async ({ workspacePath, message }) => {
+      let commit: string | null;
+      try {
+        commit = await commitLeftovers(git, workspacePath, message);
+      } catch (error) {
+        return {
+          commit: null,
+          removed: false,
+          problem:
+            `The branch's work could not be committed, so its worktree was kept with the work in it: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      try {
+        await removeWorktree(git, input.repo, workspacePath);
+        return { commit, removed: true, problem: null };
+      } catch (error) {
+        return {
+          commit,
+          removed: false,
+          problem: `The worktree could not be removed and is kept: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    },
+  };
 }
 
 /** The run's temporary branches, by name, sorted. */

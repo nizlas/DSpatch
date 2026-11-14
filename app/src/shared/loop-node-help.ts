@@ -100,8 +100,8 @@ export const FAN_OUT_HELP: SettingHelp = {
     'one branch per slice, at most "maxConcurrent" at a time (1 to 3, and Cursor runs one at a ' +
     'time), each in its own session and, with "worktree" isolation, its own worktree from one ' +
     'recorded base commit. It ends in success, or in "branch-failed" when a branch or the slice ' +
-    'block fails. The next step integrates: the engine does not merge. This build validates the ' +
-    'field and refuses a run that reaches the node; running the branches comes with DSP-209 S10b.',
+    'block fails. The next step integrates: the engine does not merge. Cancel stops every branch ' +
+    'together, and steering reaches no branch while they run.',
   whenEmpty: 'The step runs once, as one agent, like any other step.',
 };
 

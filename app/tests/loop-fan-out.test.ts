@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION, type LoopGraph, type LoopNode } from '../src/shared/loop-graph';
 import { checkLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 import { serialiseLoopGraph } from '../src/shared/loop-graph-write';
+import { createMemoryResultStore } from '../src/shared/loop-results';
 import { runLoopGraph, type StepExecutor } from '../src/shared/loop-run';
 
 const role = { id: 'r', source: { kind: 'role-source' as const, path: 'docs/loop/roles/r.role.md' } };
@@ -61,7 +62,7 @@ function parsedErrors(value: unknown): string[] {
 }
 
 describe('fanOut in the format (DSP-209 S10a)', () => {
-  it('loads a valid fan-out, round-trips it, and says it is not yet honoured', () => {
+  it('loads a valid fan-out, round-trips it, and no longer calls it unhonoured (S10b runs it)', () => {
     const text = serialiseLoopGraph(graph());
     const back = parseLoopGraph(text);
     assert.ok(back.ok, back.ok ? '' : JSON.stringify(back.findings));
@@ -70,7 +71,7 @@ describe('fanOut in the format (DSP-209 S10a)', () => {
     assert.match(text, /"fanOut": \{ "slicesFrom": "slice", "maxConcurrent": 2, "isolation": "worktree" \}/);
     assert.deepEqual(errors(back.graph), []);
     const notice = checkLoopGraph(back.graph).find((finding) => finding.code === 'not-yet-honoured' && finding.message.includes('"fanOut"'));
-    assert.ok(notice !== undefined, 'an author is told nothing runs it yet');
+    assert.equal(notice, undefined, 'S10b honours it, so the notice is gone');
   });
 
   it('refuses each misuse with its own finding', () => {
@@ -107,18 +108,24 @@ describe('fanOut in the format (DSP-209 S10a)', () => {
   });
 });
 
-describe('a run reaching a fan-out node (DSP-209 S10a)', () => {
-  it('stops there with a fault naming S10b, and never runs it as an ordinary step', async () => {
+describe('a run reaching a fan-out node (DSP-209 S10a, as changed by S10b)', () => {
+  it('never runs it as one ordinary step: with no slice block it ends as branch-failed, having started no branch', async () => {
     const ran: string[] = [];
     const executor: StepExecutor = async (context) => {
-      ran.push(context.node.id);
+      ran.push(context.instance === undefined ? context.node.id : `${context.node.id}/${context.instance.sliceId}`);
       return { product: { kind: 'success' }, summary: 'scripted', providerTurns: 0, resultBody: 'slices' };
     };
-    const result = await runLoopGraph(graph(), { runId: 'fan-1', dryRun: true, executor });
-    assert.deepEqual(ran, ['slice'], 'the fan-out node was not executed');
-    assert.equal(result.status, 'runtime-fault');
-    assert.equal(result.fault?.nodeId, 'work');
-    assert.match(result.fault?.detail ?? '', /does not run fan-out yet \(DSP-209 S10b\)/);
-    assert.equal(result.journal.some((entry) => entry.kind === 'node-entered' && entry.nodeId === 'work'), false);
+    const result = await runLoopGraph(graph(), {
+      runId: 'fan-1',
+      dryRun: true,
+      resultStore: createMemoryResultStore((body) => `digest-${String(body.length)}`),
+      executor,
+    });
+    assert.deepEqual(ran, ['slice'], 'the fan-out node was not executed as an ordinary step, and no branch started');
+    assert.equal(result.status, 'completed');
+    assert.equal(result.terminalNodeId, 'failed');
+    assert.equal(result.journal.some((entry) => entry.kind === 'branch-started'), false);
+    const produced = result.journal.find((entry) => entry.kind === 'node-produced' && entry.nodeId === 'work');
+    assert.match(produced?.detail ?? '', /no fenced `dspatch-slices` block/);
   });
 });

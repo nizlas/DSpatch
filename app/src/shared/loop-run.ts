@@ -36,7 +36,9 @@
  * provider to call, so it *cannot* spend a turn rather than being trusted not to.
  */
 
-import type { LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
+import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
+import { BRANCH_FAILED } from './loop-graph';
+import { readSlices, type Slice } from './loop-slices';
 import { isWorkStep, stepWorkFor, type StepHold, type StepRef } from './loop-control';
 import {
   bodyBytes,
@@ -245,7 +247,72 @@ export interface StepContext {
   readonly handoffDeclined?: boolean;
   /** DSP-209 S5a: this visit is the one the person sent on in the loop, after that reason. */
   readonly continuedAfterHandoff?: { readonly reason: string };
+  /**
+   * DSP-209 S10b: this call is one branch instance of a fan-out node's visit, not the node's
+   * ordinary step. Absent for every other call, which is how every other executor path stays
+   * exactly what it was.
+   */
+  readonly instance?: FanOutInstance;
 }
+
+/** DSP-209 S10b: one branch instance of a fan-out visit, as its executor call is given it. */
+export interface FanOutInstance {
+  /** `<node>#<visit>/<slice>`: unique in the run. */
+  readonly instanceId: string;
+  readonly sliceId: string;
+  readonly slice: Slice;
+  readonly isolation: FanOutIsolation;
+  /** The provider session this instance runs in; never any other step's or instance's. */
+  readonly sessionId: string;
+  /** The worktree it works in, or `null` under `shared-read-only` (the run's working folder). */
+  readonly workspacePath: string | null;
+  /** Its temporary branch, or `null` under `shared-read-only`. */
+  readonly branch: string | null;
+  /** The base commit every branch of this visit starts from, or `null` without worktrees. */
+  readonly base: string | null;
+}
+
+/**
+ * DSP-209 S10b: where a fan-out's writing branches work. The runner never runs git; it is
+ * handed this, and a run without it refuses `worktree` isolation rather than writing in the
+ * person's working copy. See `main/run-worktrees.ts` for the one this build provides.
+ */
+export interface FanOutDriver {
+  /** The base all branches of a visit start from. Changes nothing the person has. */
+  base(): Promise<{ readonly commit: string; readonly kind: 'head' | 'stash-create'; readonly untrackedNotIncluded: number }>;
+  /** A worktree for one slice, on its own temporary branch from `base`. */
+  open(input: { readonly runId: string; readonly sliceId: string; readonly base: string }): Promise<{
+    readonly workspacePath: string;
+    readonly branch: string;
+  }>;
+  /**
+   * Commit what the branch left, then remove its worktree and keep its branch. When the
+   * commit is refused, the worktree is kept, so no work is lost, and `problem` says why.
+   */
+  close(input: { readonly workspacePath: string; readonly branch: string; readonly message: string }): Promise<{
+    readonly commit: string | null;
+    readonly removed: boolean;
+    readonly problem: string | null;
+  }>;
+}
+
+/**
+ * DSP-209 S10b: an instance's provider session id. Regular step ids are made of letters,
+ * digits, `.`, `_` and `-` only (`stepSessionId`), so the `+` here can never be produced by
+ * any node id: no instance shares a session with a step, and two instances differ by visit
+ * or by slice id, which is unique within a visit.
+ */
+export function instanceSessionId(runId: string, nodeId: string, occurrence: number, sliceId: string): string {
+  const safe = (text: string): string => text.replace(/[^A-Za-z0-9._-]+/g, '-');
+  return `dsp-session-${safe(runId)}--${safe(nodeId)}+${String(occurrence)}+${safe(sliceId)}`;
+}
+
+/** DSP-209 S10b: how many branches each adapter may run at once (mission decision 22; read from code, not observed). */
+export const FAN_OUT_ADAPTER_CAPS: Readonly<Record<'claude' | 'copilot' | 'cursor', number>> = {
+  claude: 3,
+  copilot: 3,
+  cursor: 1,
+};
 
 /** Where a step's entry lands and who is responsible for filing it. */
 export interface ArchivePlacement {
@@ -403,6 +470,10 @@ export const JOURNAL_KINDS = [
   'handoff-requested',
   /** The person's answer to that recommendation: `loop` or `interactive`, or a cancel. */
   'handoff-answered',
+  /** DSP-209 S10b: one branch instance of a fan-out visit started, in its own session and worktree. */
+  'branch-started',
+  /** That instance ended: how, its commit on its temporary branch or none, and whether its worktree was kept. */
+  'branch-ended',
 ] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
 
@@ -580,6 +651,16 @@ export interface RunOptions {
    * DSP-29 existed.
    */
   readonly control?: RunControlPort;
+  /**
+   * DSP-209 S10b: makes and closes a fan-out's worktrees. Left out, a fan-out with
+   * `worktree` isolation ends as `branch-failed` before any branch starts, saying why.
+   */
+  readonly fanOutDriver?: FanOutDriver;
+  /**
+   * DSP-209 S10b: the run's adapter cap on concurrent branches (`FAN_OUT_ADAPTER_CAPS`).
+   * Left out — a dry run, a test — only the node's own `maxConcurrent` bounds it.
+   */
+  readonly fanOutAdapterCap?: number;
   /**
    * Whether the operator has cancelled, read before every node the walk enters.
    *
@@ -1320,6 +1401,284 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       }
     }) ?? null;
 
+  /**
+   * DSP-209 S10b: one visit of a fan-out node, run as branch instances (GRAPH_FORMAT.md,
+   * *Fan-out*). The walk stays here: no other node runs while the branches do, and the visit
+   * ends once, with success when every branch finished, `branch-failed` otherwise, or a fault
+   * when the run was cancelled. Each started instance is one call; the node adds none.
+   *
+   * Every instance that got a worktree is closed through the driver whatever its ending —
+   * leftovers committed to its temporary branch first, the worktree removed only after, and
+   * kept, with the reason, when the commit was refused — so no branch's work is lost.
+   */
+  const runFanOutVisit = async (visit: {
+    readonly node: LoopNode;
+    readonly occurrence: number;
+    readonly callId: number;
+    readonly limits: StepLimits;
+    readonly deadlineAt: number | null;
+    readonly arrival: ArrivalRef | null;
+    readonly received: readonly RecordedResult[];
+    readonly placement: ArchivePlacement | null;
+  }): Promise<{ readonly execution: StepExecution; readonly calls: number }> => {
+    const { node, occurrence } = visit;
+    const fanOut = node.fanOut;
+    const failed = (summary: string, extra: Partial<StepExecution> = {}, spent = 0) => ({
+      execution: {
+        product: { kind: 'declared-failure' as const, failure: BRANCH_FAILED },
+        summary,
+        providerTurns: 0,
+        ...extra,
+      },
+      calls: spent,
+    });
+    if (fanOut === undefined) {
+      return failed(`"${node.id}" has no fan-out to run.`);
+    }
+
+    // The slices, from the newest result the named step filed in this run.
+    const source = [...results].reverse().find((result) => result.nodeId === fanOut.slicesFrom) ?? null;
+    if (source === null) {
+      return failed(
+        `"${node.id}" found no result from "${fanOut.slicesFrom}" in this run to read its slices from, ` +
+          'so no branch was started.',
+      );
+    }
+    const reading = readSlices(source.body, { isolation: fanOut.isolation });
+    if (!reading.ok) {
+      return failed(
+        `The slices in "${fanOut.slicesFrom}"'s result cannot be run, so no branch was started and no ` +
+          `worktree was made: ${reading.problems.map((problem) => problem.message).join(' ')}`,
+      );
+    }
+    const slices = reading.slices;
+
+    // Room for every branch, asked before any starts, so a fan-out never stops half-started.
+    const maxCalls = graph.limits?.maxCalls;
+    if (maxCalls !== undefined && calls + slices.length > maxCalls) {
+      return failed(
+        `"${node.id}" has ${String(slices.length)} slices, one call each, and the run has ` +
+          `${String(Math.max(0, maxCalls - calls))} of its ${String(maxCalls)} calls left, so no branch was started.`,
+      );
+    }
+
+    // One base for every branch, recorded before the first starts (mission decision 6).
+    const driver = options.fanOutDriver;
+    let base: { readonly commit: string; readonly kind: string; readonly untrackedNotIncluded: number } | null = null;
+    if (fanOut.isolation === 'worktree') {
+      if (driver === undefined) {
+        return failed(
+          `"${node.id}" runs its branches in worktrees, and this run has no project to make worktrees ` +
+            'in, so no branch was started. Nothing was written in the working copy.',
+        );
+      }
+      try {
+        base = await driver.base();
+      } catch (error) {
+        return failed(`No base commit could be recorded, so no branch was started: ${messageOf(error)}`);
+      }
+    }
+
+    const effective = Math.max(1, Math.min(fanOut.maxConcurrent, options.fanOutAdapterCap ?? fanOut.maxConcurrent));
+    interface BranchOutcome {
+      readonly slice: Slice;
+      readonly ending: string;
+      readonly ok: boolean;
+      readonly branch: string | null;
+      readonly commit: string | null;
+      readonly keptWorktree: string | null;
+      readonly problem: string | null;
+      readonly reply: string;
+    }
+    const outcomes: BranchOutcome[] = [];
+    let started = 0;
+    let turns = 0;
+
+    const runOne = async (slice: Slice): Promise<void> => {
+      const instanceId = `${node.id}#${String(occurrence)}/${slice.id}`;
+      const sessionId = instanceSessionId(options.runId, node.id, occurrence, slice.id);
+      const ended = (outcome: BranchOutcome, detail: string, data: Record<string, string | number | boolean> = {}): void => {
+        outcomes.push(outcome);
+        record('branch-ended', detail, {
+          nodeId: node.id,
+          data: {
+            instanceId,
+            sliceId: slice.id,
+            sessionId,
+            branch: outcome.branch ?? '(none)',
+            ending: outcome.ending,
+            commit: outcome.commit ?? '(none)',
+            worktreeKept: outcome.keptWorktree !== null,
+            ...(outcome.problem === null ? {} : { problem: outcome.problem }),
+            ...data,
+          },
+        });
+      };
+      if (options.signal?.aborted === true) {
+        ended(
+          { slice, ending: 'not-started', ok: false, branch: null, commit: null, keptWorktree: null, problem: null, reply: '' },
+          `Branch "${slice.id}" of "${node.id}" was not started: the run was cancelled.`,
+        );
+        return;
+      }
+      let workspacePath: string | null = null;
+      let branch: string | null = null;
+      if (driver !== undefined && base !== null) {
+        try {
+          const opened = await driver.open({ runId: options.runId, sliceId: slice.id, base: base.commit });
+          workspacePath = opened.workspacePath;
+          branch = opened.branch;
+        } catch (error) {
+          ended(
+            { slice, ending: 'no-worktree', ok: false, branch: null, commit: null, keptWorktree: null, problem: messageOf(error), reply: '' },
+            `Branch "${slice.id}" of "${node.id}" was not started: its worktree could not be made. ${messageOf(error)}`,
+          );
+          return;
+        }
+      }
+      started += 1;
+      record(
+        'branch-started',
+        `Branch "${slice.id}" of "${node.id}" started in its own session` +
+          (workspacePath === null ? ', in the working folder, read-only by its brief.' : `, in its worktree ${workspacePath} on ${branch ?? ''}.`),
+        {
+          nodeId: node.id,
+          data: {
+            instanceId,
+            sliceId: slice.id,
+            sessionId,
+            branch: branch ?? '(none)',
+            workspacePath: workspacePath ?? '(the working folder)',
+            base: base?.commit ?? '(none)',
+            ...(base === null ? {} : { baseKind: base.kind, untrackedNotIncluded: base.untrackedNotIncluded }),
+            concurrency: effective,
+          },
+        },
+      );
+      let execution: StepExecution | null = null;
+      let threw: string | null = null;
+      try {
+        execution = await options.executor({
+          runId: options.runId,
+          graph,
+          node,
+          occurrence,
+          callId: visit.callId,
+          limits: visit.limits,
+          deadlineAt: visit.deadlineAt,
+          archive: null,
+          arrivedBy: visit.arrival,
+          received: visit.received,
+          note: (kind, detail, data) => {
+            record(kind, detail, { nodeId: node.id, ...(data === undefined ? {} : { data }) });
+          },
+          instance: { instanceId, sliceId: slice.id, slice, isolation: fanOut.isolation, sessionId, workspacePath, branch, base: base?.commit ?? null },
+        });
+      } catch (error) {
+        threw = messageOf(error);
+      }
+      turns += execution?.providerTurns ?? 0;
+      const product = execution?.product ?? null;
+      const ok = product !== null && (product.kind === 'success' || product.kind === 'outcome');
+      const ending =
+        threw !== null
+          ? 'threw'
+          : product === null
+            ? 'failed'
+            : product.kind === 'runtime-fault'
+              ? product.fault
+              : product.kind === 'declared-failure'
+                ? product.failure
+                : 'finished';
+      // Leftovers first, then the worktree; kept when the commit is refused.
+      let commit: string | null = null;
+      let keptWorktree: string | null = null;
+      let problem: string | null = threw;
+      if (driver !== undefined && workspacePath !== null && branch !== null) {
+        try {
+          const closed = await driver.close({
+            workspacePath,
+            branch,
+            message: `DSpatch run ${options.runId}: "${node.id}" visit ${String(occurrence)}, slice ${slice.id} (${ending})`,
+          });
+          commit = closed.commit;
+          keptWorktree = closed.removed ? null : workspacePath;
+          problem = closed.problem ?? problem;
+        } catch (error) {
+          keptWorktree = workspacePath;
+          problem = messageOf(error);
+        }
+      }
+      ended(
+        { slice, ending, ok, branch, commit, keptWorktree, problem, reply: execution?.resultBody ?? execution?.summary ?? '' },
+        `Branch "${slice.id}" of "${node.id}" ended: ${ending}` +
+          (branch === null ? '.' : `; ${commit === null ? 'no commit' : `commit ${commit}`} on ${branch}.`) +
+          (keptWorktree === null ? '' : ` Its worktree is kept at ${keptWorktree}.`) +
+          (problem === null ? '' : ` ${problem}`),
+        { providerTurns: execution?.providerTurns ?? 0 },
+      );
+    };
+
+    const queue = [...slices];
+    const worker = async (): Promise<void> => {
+      for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+        await runOne(next);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(effective, queue.length) }, () => worker()));
+
+    // In the slices' own order, whatever order they ended in.
+    const ordered = slices.map((slice) => outcomes.find((outcome) => outcome.slice.id === slice.id)).filter(
+      (outcome): outcome is BranchOutcome => outcome !== undefined,
+    );
+    const lines = ordered.map(
+      (outcome) =>
+        `- ${outcome.slice.id}: ${outcome.ending}` +
+        (outcome.branch === null ? '' : `, ${outcome.commit === null ? 'no commit' : `commit ${outcome.commit}`} on ${outcome.branch}`) +
+        (outcome.keptWorktree === null ? '' : `, worktree kept at ${outcome.keptWorktree}`) +
+        (outcome.problem === null ? '' : ` (${outcome.problem})`),
+    );
+    const untracked =
+      base !== null && base.untrackedNotIncluded > 0
+        ? ` ${String(base.untrackedNotIncluded)} untracked file${base.untrackedNotIncluded === 1 ? ' was' : 's were'} not in the base, so no branch saw ${base.untrackedNotIncluded === 1 ? 'it' : 'them'}.`
+        : '';
+    const summary =
+      `Fan-out of ${String(slices.length)} slice${slices.length === 1 ? '' : 's'}, at most ${String(effective)} at a time` +
+      (base === null ? '' : `, from base ${base.commit} (${base.kind})`) +
+      `.${untracked} Steering reaches no branch while a fan-out runs.\n${lines.join('\n')}`;
+    const resultBody = [
+      `# Fan-out of "${node.id}", visit ${String(occurrence)}`,
+      '',
+      summary,
+      ...ordered.flatMap((outcome) => [
+        '',
+        `## ${outcome.slice.id}`,
+        '',
+        `Result asked for: ${outcome.slice.result}`,
+        '',
+        clipReply(outcome.reply),
+      ]),
+    ].join('\n');
+    if (options.signal?.aborted === true) {
+      return {
+        execution: {
+          product: {
+            kind: 'runtime-fault',
+            fault: 'no-outcome-delivered',
+            detail: `The run was cancelled during the fan-out of "${node.id}". ${summary}`,
+          },
+          summary,
+          providerTurns: turns,
+        },
+        calls: started,
+      };
+    }
+    const allOk = ordered.length === slices.length && ordered.every((outcome) => outcome.ok);
+    return allOk
+      ? { execution: { product: { kind: 'success' }, summary, providerTurns: turns, resultBody }, calls: started }
+      : failed(summary, { providerTurns: turns, resultBody }, started);
+  };
+
   let current: LoopNode = entry;
   /**
    * The edge that brought the run to `current`, which is what lets a step's inputs and
@@ -1353,18 +1712,6 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         `The run reached terminal "${current.id}" after ${transitions} transitions and ` +
           `${calls} calls.`,
         { terminalNodeId: current.id, ...(current.ending === undefined ? {} : { terminalEnding: current.ending }) },
-      );
-    }
-
-    // DSP-209 S10a: a fan-out node is drawn and validated in this build but not run by it.
-    // Refused before anything starts, so no ordinary single step stands in for its branches.
-    if (current.fanOut !== undefined) {
-      return fail(
-        neverStarted(
-          current.id,
-          `"${current.id}" fans its work out over parallel branches, and this build does not run ` +
-            'fan-out yet (DSP-209 S10b).',
-        ),
       );
     }
 
@@ -1560,8 +1907,23 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     const continuedAfterHandoff = continueAfterHandoff;
     continueAfterHandoff = null;
     control?.stepStarted(step);
+    // DSP-209 S10b: a fan-out node's one visit runs its branch instances, each its own call.
+    let fanOutCalls: number | null = null;
     try {
-      execution = await options.executor({
+      if (current.fanOut !== undefined) {
+        const fanned = await runFanOutVisit({
+          node: current,
+          occurrence,
+          callId,
+          limits,
+          deadlineAt,
+          arrival,
+          received,
+          placement,
+        });
+        execution = fanned.execution;
+        fanOutCalls = fanned.calls;
+      } else execution = await options.executor({
         ...(handoffDeclined ? { handoffDeclined: true } : {}),
         ...(continuedAfterHandoff === null ? {} : { continuedAfterHandoff }),
         runId: options.runId,
@@ -1597,7 +1959,11 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
 
     nodesExecuted += 1;
     providerTurns += execution.providerTurns;
-    if (spendsACall(current)) {
+    // DSP-209 S10b: a fan-out visit spends one call per instance it started, and the node
+    // itself spends none on top of them.
+    if (fanOutCalls !== null) {
+      calls += fanOutCalls;
+    } else if (spendsACall(current)) {
       calls += 1;
     }
     const stepMs = now() - startedStepAt;
@@ -1983,6 +2349,22 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   }
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** DSP-209 S10b: a branch's reply in the fan-out node's result, cut with the cut stated. */
+function clipReply(reply: string): string {
+  const limit = 2_000;
+  const trimmed = reply.trim();
+  if (trimmed === '') {
+    return 'No reply was kept.';
+  }
+  return trimmed.length <= limit
+    ? trimmed
+    : `${trimmed.slice(0, limit)}\n[DSpatch cut this reply at ${String(limit)} of ${String(trimmed.length)} characters.]`;
+}
+
 /**
  * DSP-209 S3: a skip's reason, on one line, or {@link NO_SKIP_REASON}. One line for the
  * reason `withRecordFieldsOnOneLine` in `context-snapshot.ts` gives: the reason is written
@@ -2227,6 +2609,8 @@ const MARKERS: Readonly<Record<JournalKind, string>> = {
   'node-skipped': '~>',
   'handoff-requested': '?~',
   'handoff-answered': '<~',
+  'branch-started': '=>',
+  'branch-ended': '<=',
 };
 
 /**

@@ -55,6 +55,8 @@ import {
 } from '../shared/loop-graph';
 import { createFileRoleResolver } from './loop-graph-roles';
 import { createFileResultStore } from './loop-result-store';
+import { createWorktreeDriver } from './run-worktrees';
+import { FAN_OUT_ADAPTER_CAPS } from '../shared/loop-run';
 import {
   describeUnobservedOutside,
   workingRootsFrom,
@@ -380,6 +382,12 @@ async function driveLive(
       ...(options.control === undefined ? {} : { control: options.control }),
       ...(options.onJournalEntry === undefined ? {} : { onJournalEntry: options.onJournalEntry }),
       ...(resultsDir === null ? {} : { resultStore: createFileResultStore(resultsDir) }),
+      // DSP-209 S10b: a fan-out's worktrees sit beside the run's results, outside the working
+      // copy, and its concurrency is bounded by the run's adapter (decision 22).
+      ...(resultsDir === null
+        ? {}
+        : { fanOutDriver: createWorktreeDriver({ repo: workspacePath, worktreesRoot: path.join(path.dirname(resultsDir), 'worktrees') }) }),
+      fanOutAdapterCap: FAN_OUT_ADAPTER_CAPS[options.provider],
       executor: createLiveExecutor({
         workspacePath,
         workingRoots: roots,

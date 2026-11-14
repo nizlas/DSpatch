@@ -91,6 +91,7 @@ import {
   type WorkingRoot,
 } from '../shared/working-roots';
 import type {
+  FanOutInstance,
   StepContext,
   StepExecution,
   StepExecutor,
@@ -326,6 +327,8 @@ export interface LiveAgentReply {
    * the prompt to find out. `null` for a node that names no role.
    */
   readonly role: { readonly id: string; readonly sourcePath: string } | null;
+  /** DSP-209 S10b: the slice, when this reply is one branch instance's of a fan-out. */
+  readonly sliceId?: string;
   /**
    * The provider session this step ran in.
    *
@@ -1011,6 +1014,34 @@ export function stepSessionId(runId: string, nodeId: string): DspatchSessionId {
   return `dsp-session-${safe(runId)}--${safe(nodeId)}`;
 }
 
+/**
+ * DSP-209 S10b: what a fan-out branch is told about its own slice, after the node's brief.
+ * Its slice entry verbatim, where it works, and what DSpatch does with what it leaves.
+ */
+export function describeBranchAssignment(instance: FanOutInstance): string {
+  const slice = instance.slice;
+  const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.map((item) => `\`${item}\``).join(', '));
+  return [
+    '',
+    '',
+    `## Your slice: ${slice.id}`,
+    '',
+    'You are one branch of this step, working in parallel with others. Each branch has its own slice; this is yours.',
+    '',
+    `- Result: ${slice.result}`,
+    `- Paths you own: ${list(slice.ownedPaths)}. Change no other path.`,
+    `- Allowed actions: ${list(slice.allowedActions)}.`,
+    `- Contracts you work against: ${list(slice.contractRefs)}.`,
+    `- Check: ${slice.verification}`,
+    '',
+    instance.workspacePath === null
+      ? 'You work in the run\'s working folder and only read: write no file there.'
+      : `You work in your own worktree, ${instance.workspacePath}, on the branch ${instance.branch ?? ''}, from the ` +
+        `base commit ${instance.base ?? ''}. Do not commit, push, switch or create branches: when you end your turn, ` +
+        'DSpatch commits what you leave in the worktree to your branch, and the integrating step combines the branches.',
+  ].join('\n');
+}
+
 /** DSP-209 S5a: the DSpatch tool a step uses to recommend continuing interactively. */
 export const HANDOFF_TOOL_NAME = 'request_interactive_handoff';
 
@@ -1692,6 +1723,138 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     return execution;
   };
 
+  /**
+   * DSP-209 S10b: one branch instance of a fan-out, on its own path.
+   *
+   * Contained on purpose, so concurrent branches cannot disturb each other or the run's
+   * account (S9's engine-side collisions):
+   * - its own session (`instance.sessionId`), never the node's and never another branch's;
+   * - its worktree as its only folder under `worktree` isolation;
+   * - no handoff tool (a fan-out node cannot carry the capability; refused here as well);
+   * - no steering: the person's steering reaches no branch while a fan-out runs, and their
+   *   messages reach branches only through S11;
+   * - no working-copy snapshots and no writes to the run's shared inspection beyond adding
+   *   its session to the list and its usage readings, both appends: the branch's commit on
+   *   its temporary branch is the record of what it changed.
+   * Cancel stops it through the run's signal, like any other step.
+   */
+  const runInstance = async (context: StepContext, instance: FanOutInstance): Promise<StepExecution> => {
+    const node = context.node;
+    const cancelledNow = (): boolean => options.abortSignal?.aborted === true;
+    const fault = (kind: 'no-outcome-delivered' | 'step-timed-out', detail: string, turns = 0): StepExecution => ({
+      product: { kind: 'runtime-fault', fault: kind, detail },
+      summary: `Branch "${instance.sliceId}": ${detail}`,
+      providerTurns: turns,
+    });
+    if (offersHandoff(node)) {
+      return fault('no-outcome-delivered', 'A fan-out branch is never offered the handoff tool, and this node asks for it, so the branch was not started.');
+    }
+    const waitMs = remainingMs(context.deadlineAt, now, fallbackMs);
+    if (waitMs === 0 || options.abortSignal?.aborted === true) {
+      return fault(
+        options.abortSignal?.aborted === true ? 'no-outcome-delivered' : 'step-timed-out',
+        options.abortSignal?.aborted === true ? 'The run was cancelled before this branch started.' : 'There was no time left for this branch to start.',
+      );
+    }
+    const runProvider = options.provider;
+    const session = await options.adapter.startSession({
+      provider: runProvider as ProviderId,
+      dspatchSessionId: instance.sessionId as DspatchSessionId,
+      modelRequested: options.modelRequested,
+      workspacePath: instance.workspacePath ?? options.workspacePath,
+      workspacePaths: instance.workspacePath === null ? providerRootPathsFor(rootsOfRun) : [instance.workspacePath],
+    });
+    if (runProvider !== undefined && session.provider !== runProvider) {
+      throw new Error(`The adapter opened branch "${instance.sliceId}" for ${session.provider}, but this run is bound to ${runProvider}.`);
+    }
+    const sessionRef: LiveSessionRef = {
+      nodeId: `${node.id}/${instance.sliceId}`,
+      dspatchSessionId: session.dspatchSessionId,
+      provider: session.provider,
+      providerSessionId: session.providerSessionId,
+      openedAtUtc: new Date(now()).toISOString(),
+      turns: 1,
+      costCents: null,
+    };
+    inspection.sessions.push(sessionRef);
+    const prompt =
+      (options.promptFor ?? (() => LIVE_DURATION_PROMPT))(node, {
+        runId: context.runId,
+        occurrence: context.occurrence,
+        callId: context.callId,
+        freshSession: true,
+        arrivedBy: null,
+        attachments: { receivedResults: false, requiredResult: false, runChange: false },
+      }) +
+      describeBranchAssignment(instance);
+    const turn = waitForTurn(options.adapter, session.dspatchSessionId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const cancel = (): void => {
+      void options.adapter.cancel(session.dspatchSessionId).catch(() => {
+        // The run's cancel stands either way; files are left as they are.
+      });
+    };
+    options.abortSignal?.addEventListener('abort', cancel, { once: true });
+    try {
+      await options.adapter.send(session.dspatchSessionId, prompt);
+      await Promise.race([
+        turn.finished,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            cancel();
+            resolve();
+          }, waitMs);
+        }),
+      ]);
+    } catch (error) {
+      return fault('no-outcome-delivered', `The provider refused the branch's turn: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      options.abortSignal?.removeEventListener('abort', cancel);
+    }
+    const text = turn.assistantText();
+    options.onAgentReply?.({
+      nodeId: node.id,
+      occurrence: context.occurrence,
+      text,
+      terminalStatus: turn.terminalStatus(),
+      terminalEnd: turn.terminalEnd(),
+      prompt,
+      role: node.role === undefined ? null : { id: node.role.id, sourcePath: node.role.source.path },
+      sliceId: instance.sliceId,
+      sessionId: session.dspatchSessionId,
+    });
+    const readings = turn.readings();
+    inspection.usageReadings.push(...readings);
+    const cents = centsIn(readings);
+    if (cents !== null) {
+      sessionRef.costCents = cents;
+    }
+    // Read again, not narrowed: the cancel may have arrived while the turn was awaited.
+    if (cancelledNow()) {
+      return fault('no-outcome-delivered', 'The run was cancelled while this branch was working. Its worktree keeps what it had done.', 1);
+    }
+    if (timedOut) {
+      return fault('step-timed-out', `The branch outran ${describeLimits(context.limits)} and was cancelled.`, 1);
+    }
+    if (turn.terminalStatus() !== 'finished') {
+      return fault('no-outcome-delivered', `The branch's turn ended as ${turn.terminalStatus() ?? 'nothing reported'}${turn.terminalError() === null ? '' : `: ${turn.terminalError() ?? ''}`}.`, 1);
+    }
+    if (text.trim() === '') {
+      return fault('no-outcome-delivered', 'The branch finished its turn and wrote nothing, which is not a result.', 1);
+    }
+    return {
+      product: { kind: 'success' },
+      summary: `Branch "${instance.sliceId}": one provider turn in session ${session.dspatchSessionId}.`,
+      providerTurns: 1,
+      resultBody: text,
+    };
+  };
+
   return async (context: StepContext): Promise<StepExecution> => {
     const key = `${context.node.id}:${String(context.occurrence)}`;
     const previous = completed.get(key);
@@ -1995,6 +2158,11 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         summary: 'No provider turn: an external node is out of this call.',
         providerTurns: 0,
       });
+    }
+
+    // DSP-209 S10b: a fan-out branch runs on its own, contained path (see `runInstance`).
+    if (context.instance !== undefined) {
+      return runInstance(context, context.instance);
     }
 
     // Agent: the only kind that may reach the adapter.

@@ -475,6 +475,69 @@ export function nodeRunStates(
   return states;
 }
 
+/** DSP-209 S10b: one branch instance of a fan-out, as the run view shows it. */
+export interface BranchInstanceState {
+  readonly sliceId: string;
+  readonly state: 'running' | 'finished' | 'failed';
+  /** How it ended, in the journal's word, once it has. */
+  readonly ending: string | null;
+}
+
+/**
+ * DSP-209 S10b: each fan-out node's branch instances and their states, latest visit only,
+ * folded from `branch-started` and `branch-ended`. A branch that was never started (cancel,
+ * no worktree) appears as failed with its ending. Nothing is inferred from anything else.
+ */
+export function branchInstanceStates(view: RunView | null): ReadonlyMap<string, readonly BranchInstanceState[]> {
+  const byNode = new Map<string, BranchInstanceState[]>();
+  if (view === null) {
+    return byNode;
+  }
+  for (const entry of view.entries) {
+    const nodeId = entry.nodeId;
+    if (nodeId === undefined) {
+      continue;
+    }
+    if (entry.kind === 'node-entered') {
+      // A new visit to the node starts a new set of branches.
+      if (byNode.has(nodeId)) {
+        byNode.set(nodeId, []);
+      }
+      continue;
+    }
+    if (entry.kind !== 'branch-started' && entry.kind !== 'branch-ended') {
+      continue;
+    }
+    const sliceId = typeof entry.data?.['sliceId'] === 'string' ? entry.data['sliceId'] : null;
+    if (sliceId === null) {
+      continue;
+    }
+    const list = byNode.get(nodeId) ?? [];
+    const ending = typeof entry.data?.['ending'] === 'string' ? entry.data['ending'] : null;
+    const next: BranchInstanceState =
+      entry.kind === 'branch-started'
+        ? { sliceId, state: 'running', ending: null }
+        : { sliceId, state: ending === 'finished' ? 'finished' : 'failed', ending };
+    const at = list.findIndex((item) => item.sliceId === sliceId);
+    byNode.set(nodeId, at < 0 ? [...list, next] : list.map((item, index) => (index === at ? next : item)));
+  }
+  return byNode;
+}
+
+/** DSP-209 S10b: a fan-out node's branches in a few words, e.g. "branches: 1 running, 2 finished". */
+export function describeBranchInstances(instances: readonly BranchInstanceState[]): string | null {
+  if (instances.length === 0) {
+    return null;
+  }
+  const count = (state: BranchInstanceState['state']): number => instances.filter((item) => item.state === state).length;
+  const parts = [
+    count('running') > 0 ? `${String(count('running'))} running` : null,
+    count('finished') > 0 ? `${String(count('finished'))} finished` : null,
+    count('failed') > 0 ? `${String(count('failed'))} failed` : null,
+  ].filter((part): part is string => part !== null);
+  return `branches: ${parts.join(', ')}`;
+}
+
 export function nodeRunStateFor(
   states: ReadonlyMap<string, NodeRunState>,
   nodeId: string,

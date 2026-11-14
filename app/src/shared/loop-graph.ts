@@ -1024,8 +1024,14 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
   },
   {
     attribute: 'fanOut',
-    honoured: false,
-    by: 'DSP-209 S10b. This build validates it and refuses a run that reaches the node; running its branches comes with S10b.',
+    honoured: true,
+    by: 'DSP-209 S10b. The runner reads the slice block, records one base, and runs one branch instance per slice in its own session and, for "worktree", its own worktree and temporary branch, at most the lower of maxConcurrent and the adapter\'s cap at a time; it ends in success or branch-failed.',
+    caveat:
+      'The caps (Claude 3, Copilot 3, Cursor 1) are read from the adapters, not observed running at ' +
+      'once. A dry run has no project, so a "worktree" fan-out ends as branch-failed there. Cancel ' +
+      'stops every branch together; there is no per-branch cancel. Steering reaches no branch, and ' +
+      'messages between branches are not built yet (DSP-209 S11). The engine never merges: the next ' +
+      'step integrates.',
   },
   {
     attribute: 'capabilities',

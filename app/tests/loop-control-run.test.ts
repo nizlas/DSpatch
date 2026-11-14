@@ -890,7 +890,9 @@ describe('the run record vocabulary is added to, not changed', () => {
     // DSP-173's resource governor, appended after DSP-74's for the same reason.
     assert.deepEqual(JOURNAL_KINDS.slice(14, 15), ['resource-governor']);
     // DSP-209: S3's skip and S5a's handoff pair, appended after it for the same reason.
-    assert.deepEqual(JOURNAL_KINDS.slice(15), ['node-skipped', 'handoff-requested', 'handoff-answered']);
+    assert.deepEqual(JOURNAL_KINDS.slice(15, 18), ['node-skipped', 'handoff-requested', 'handoff-answered']);
+    // DSP-209 S10b's fan-out pair, appended after those.
+    assert.deepEqual(JOURNAL_KINDS.slice(18), ['branch-started', 'branch-ended']);
   });
 
   it('renders the added kinds rather than printing undefined into the journal', () => {

@@ -2239,6 +2239,17 @@ export function formatChatLiveLogLine(
           : NO_SKIP_REASON;
       return `“${label}” recommends continuing interactively: ${reason}. The run is waiting for your answer.`;
     }
+    // DSP-209 S10b: each branch of a fan-out, by its slice, in one line as it starts and ends.
+    case 'branch-started': {
+      const slice = typeof entry.data?.['sliceId'] === 'string' ? entry.data['sliceId'] : 'a slice';
+      return `Branch “${slice}” started.`;
+    }
+    case 'branch-ended': {
+      const slice = typeof entry.data?.['sliceId'] === 'string' ? entry.data['sliceId'] : 'a slice';
+      const ending = typeof entry.data?.['ending'] === 'string' ? entry.data['ending'] : 'ended';
+      const kept = entry.data?.['worktreeKept'] === true ? ' Its worktree is kept: see the run record.' : '';
+      return `Branch “${slice}” ${ending === 'finished' ? 'finished its turn' : `ended: ${ending}`}.${kept}`;
+    }
     case 'handoff-answered': {
       const choice = entry.data?.['choice'];
       return choice === 'interactive'
