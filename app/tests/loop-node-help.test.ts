@@ -714,7 +714,9 @@ describe('requirement answers by the run’s agent and the step’s kind (DSP-13
     assert.equal(claude.get('tool-restriction')?.enforcement, 'enforced');
     assert.equal(claude.get('no-file-writes')?.enforcement, 'other-means');
     assert.match(claude.get('no-file-writes')?.howItHolds ?? '', /^Claude does not enforce this/);
-    assert.match(claude.get('fixed-model-selection')?.howItHolds ?? '', /whatever model the step names/);
+    // DSP-209 S19: each step now runs its own fixed model, so the answer no longer says the
+    // step's model is overridden by the run's.
+    assert.match(claude.get('fixed-model-selection')?.howItHolds ?? '', /each step runs its own fixed model/);
     assert.match(claude.get('tool-restriction')?.howItHolds ?? '', /not observed against the real Claude runtime/);
     const cursor = of('cursor');
     assert.equal(cursor.get('no-subagent-delegation')?.enforcement, 'other-means');

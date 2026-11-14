@@ -37,7 +37,8 @@
  */
 
 import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
-import { BRANCH_FAILED } from './loop-graph';
+import { BRANCH_FAILED, stepModelChoice } from './loop-graph';
+import type { ModelSelectionRecord } from './run-presentation';
 import { readSlices, type Slice } from './loop-slices';
 import { createRunMailbox, type MailboxMessage, type MailboxPort } from './run-mailbox';
 import { isWorkStep, stepWorkFor, type StepHold, type StepRef } from './loop-control';
@@ -513,6 +514,99 @@ export interface SkippedStep {
 export const NO_SKIP_REASON = 'no reason given';
 
 /**
+ * DSP-209 S19: the run's provider and the model it asks for a step that names none — the
+ * person's choice for that provider. What `inherit` resolves to in the journal.
+ */
+export interface RunModel {
+  readonly provider: string;
+  readonly model: string;
+}
+
+/** DSP-209 S19: the reason recorded for a `select` visit that no edge chose for. */
+export const MODEL_DEFAULT_REASON = 'default';
+
+/**
+ * DSP-209 S19: a visit's model choice as journal data on `node-entered` and `branch-started`,
+ * in flat fields because journal data is flat: `model`, `modelProvider`, `modelPolicy`,
+ * `modelOption`, `modelReason`, `modelSource`. {@link modelSelectionFromData} reads them back
+ * as S16's {@link ModelSelectionRecord}. Only agent steps carry it.
+ *
+ * Without a {@link RunModel} — a dry run, a test — a step that names no model records only its
+ * policy, if it has one, and the provider reads "unknown".
+ */
+export function modelSelectionData(
+  node: Pick<LoopNode, 'kind' | 'model'>,
+  arrival: Pick<LoopEdge, 'selectsModel'> | null,
+  reason: string | undefined,
+  run: RunModel | undefined,
+): Readonly<Record<string, string>> {
+  if (node.kind !== 'agent') {
+    return {};
+  }
+  const choice = stepModelChoice(node, arrival);
+  const policy: Record<string, string> = choice.policy === null ? {} : { modelPolicy: choice.policy };
+  const model = choice.model ?? run?.model ?? null;
+  if (model === null) {
+    return policy;
+  }
+  const why =
+    choice.by === 'edge'
+      ? oneLineReason(reason)
+      : choice.by === 'default'
+        ? MODEL_DEFAULT_REASON
+        : choice.policy === 'fixed'
+          ? 'fixed by the step'
+          : `the model chosen for ${run?.provider ?? 'the run'}${model === '' ? ' (the provider’s default)' : ''}`;
+  return {
+    model,
+    modelProvider: run?.provider ?? 'unknown',
+    ...policy,
+    ...(choice.option === null ? {} : { modelOption: choice.option }),
+    modelReason: why,
+    modelSource: choice.policy === 'fixed' ? 'fixed' : choice.policy === 'select' ? 'policy' : 'person',
+  };
+}
+
+/**
+ * DSP-209 S19: the model a node's latest visit in these entries runs with, for the node
+ * panel during a run; `null` when the node has not been entered or recorded none.
+ */
+export function latestModelSelection(
+  entries: readonly RunJournalEntry[],
+  nodeId: string,
+): ModelSelectionRecord | null {
+  for (let at = entries.length - 1; at >= 0; at -= 1) {
+    const entry = entries[at];
+    if (entry?.kind === 'node-entered' && entry.nodeId === nodeId) {
+      return modelSelectionFromData(entry.data);
+    }
+  }
+  return null;
+}
+
+/** DSP-209 S19: {@link modelSelectionData} read back from a journal entry, or `null` when it has none. */
+export function modelSelectionFromData(
+  data: Readonly<Record<string, string | number | boolean>> | undefined,
+): ModelSelectionRecord | null {
+  const text = (key: string): string | null => (typeof data?.[key] === 'string' ? (data[key] as string) : null);
+  const model = text('model');
+  const reason = text('modelReason');
+  const source = text('modelSource');
+  if (model === null || reason === null || (source !== 'fixed' && source !== 'policy' && source !== 'person')) {
+    return null;
+  }
+  const policy = text('modelPolicy');
+  return {
+    provider: text('modelProvider') ?? 'unknown',
+    model,
+    policy: policy === 'fixed' ? null : policy,
+    option: text('modelOption'),
+    reason,
+    source,
+  };
+}
+
+/**
  * The journal kinds a step may write for itself while it is still running.
  *
  * A closed list, and the closure is the content: a step gets to say that it is
@@ -758,6 +852,12 @@ export interface RunOptions {
    * and writes nothing at it.
    */
   readonly resultStore?: ResultStore;
+  /**
+   * DSP-209 S19: the run's provider and its own model, for recording what an `inherit` step
+   * ran with. Left out, such a step records no model. Never changes what runs: the executor
+   * decides the session's model from {@link stepModelChoice}, as this record does.
+   */
+  readonly runModel?: RunModel;
 }
 
 const DEFAULT_MAX_TRANSITIONS = 200;
@@ -1455,6 +1555,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     readonly arrival: ArrivalRef | null;
     readonly received: readonly RecordedResult[];
     readonly placement: ArchivePlacement | null;
+    /** DSP-209 S19: the visit's model choice, recorded on every `branch-started` as on `node-entered`. */
+    readonly modelData: Readonly<Record<string, string>>;
   }): Promise<{ readonly execution: StepExecution; readonly calls: number; readonly bound?: 'maxCalls' }> => {
     const { node, occurrence } = visit;
     const fanOut = node.fanOut;
@@ -1605,6 +1707,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             concurrency: effective,
             // DSP-209 S12: what the slice owned, as the runner read it, for the run report.
             ownedPaths: slice.ownedPaths.join(', '),
+            ...visit.modelData,
           },
         },
       );
@@ -1752,6 +1855,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
    * its brief depend on how it was reached. `null` at the entry, which nothing routed to.
    */
   let arrival: ArrivalRef | null = null;
+  // DSP-209 S19: the deciding step's own reason for the outcome that took the arrival, for the
+  // model choice an edge's `selectsModel` makes. Not the step's, and so none, after a bound route.
+  let arrivalReason: string | undefined;
   const arrivalOn = (edge: LoopEdge, fromNode: LoopNode, fromOccurrence: number): ArrivalRef => ({
     edgeId: edge.id,
     from: fromNode.id,
@@ -1850,6 +1956,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
 
     const placement = archivePlacement(graph, current, options.runId, callId, options.resultStore);
     const deadlineAt = limits.maxMinutes === undefined ? null : now() + limits.maxMinutes * 60_000;
+    // DSP-209 S19: the model this visit runs with, by the same rule the executor opens its session by.
+    const arrivedOnEdge = arrival === null ? null : (graph.edges.find((edge) => edge.id === arrival?.edgeId) ?? null);
+    const modelData = modelSelectionData(current, arrivedOnEdge, arrivalReason, options.runModel);
 
     record(
       'node-entered',
@@ -1874,7 +1983,10 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           ...(arrival === null
             ? {}
             : { arrivedBy: arrival.edgeId, arrivedFrom: arrival.from }),
-          ...(current.model ? { model: current.model.policy } : {}),
+          // DSP-209 S19: `model` was the policy's name until S19; it is now the model id, with
+          // the policy in `modelPolicy`. A non-agent step with a policy keeps its name there.
+          ...(current.model && current.kind !== 'agent' ? { modelPolicy: current.model.policy } : {}),
+          ...modelData,
           ...(limits.maxMinutes === undefined ? {} : { maxMinutes: limits.maxMinutes }),
           ...(placement
             ? { archive: placement.path, reportWrittenBy: placement.writtenBy }
@@ -1990,6 +2102,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           arrival,
           received,
           placement,
+          modelData,
         });
         execution = fanned.execution;
         fanOutCalls = fanned.calls;
@@ -2342,6 +2455,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         },
       );
       arrival = arrivalOn(boundEdge, current, occurrence);
+      arrivalReason = undefined;
       current = boundTarget;
     } else {
       const target = nodeById.get(productEdge.to);
@@ -2405,6 +2519,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         );
       }
       arrival = arrivalOn(productEdge, current, occurrence);
+      arrivalReason = execution.reason;
       current = target;
     }
 

@@ -54,7 +54,7 @@ import {
   type CommandFingerprint,
   type RootSnapshot,
 } from './loop-snapshot';
-import { undeclaredOutcomeOf, type LoopNode, type StepLimits } from '../shared/loop-graph';
+import { stepModelChoice, undeclaredOutcomeOf, type LoopNode, type StepLimits } from '../shared/loop-graph';
 import {
   carriesRunChange,
   declaredFailureFrom,
@@ -395,7 +395,7 @@ export interface LivePromptStep {
  */
 export type LoopStepAdapter = Pick<
   AgentAdapter,
-  'startSession' | 'subscribe' | 'send' | 'cancel' | 'readUsage' | 'dispose' | 'steer'
+  'startSession' | 'subscribe' | 'send' | 'cancel' | 'readUsage' | 'dispose' | 'steer' | 'setSessionModel'
 >;
 
 /**
@@ -1665,6 +1665,20 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
    * resumable, not run at once â€” and it holds.
    */
   const sessions = new Map<string, SessionHandle>();
+  /** DSP-209 S19: the model each node's session last asked for, to notice a change between visits. */
+  const sessionModels = new Map<string, string>();
+  /**
+   * DSP-209 S19: the model this visit runs with: its node's own fixed model or `select` option
+   * (by the arriving edge's `selectsModel`, else the default), else the run's model. The same
+   * rule the runner records on `node-entered`, so the journal and the session agree.
+   */
+  const modelOfStep = (context: StepContext): string => {
+    const edge =
+      context.arrivedBy === null
+        ? null
+        : (context.graph.edges.find((candidate) => candidate.id === context.arrivedBy?.edgeId) ?? null);
+    return stepModelChoice(context.node, edge).model ?? options.modelRequested;
+  };
   /**
    * Which code each gate visit's command ran against, keyed `node#visit` (DSP-139).
    *
@@ -1841,7 +1855,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     const session = await options.adapter.startSession({
       provider: runProvider as ProviderId,
       dspatchSessionId: instance.sessionId as DspatchSessionId,
-      modelRequested: options.modelRequested,
+      // DSP-209 S19: every branch of the visit runs the visit's model.
+      modelRequested: modelOfStep(context),
       workspacePath: instance.workspacePath ?? options.workspacePath,
       workspacePaths: instance.workspacePath === null ? providerRootPathsFor(rootsOfRun) : [instance.workspacePath],
       // DSP-209 S11: the mailbox tools, and no other DSpatch tool.
@@ -2256,6 +2271,28 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     }
 
     // Agent: the only kind that may reach the adapter.
+    // DSP-209 S19: a revisit whose model differs from its session's. Claude switches the
+    // session's model for the next turn; any other adapter gets a new session for the node,
+    // and the step's summary says so. A visit with the same model is exactly what it was.
+    const stepModel = modelOfStep(context);
+    const previousModel = sessionModels.get(node.id);
+    let modelNote = '';
+    if (sessions.has(node.id) && previousModel !== undefined && previousModel !== stepModel) {
+      const existing = sessions.get(node.id);
+      if (options.provider === 'claude' && options.adapter.setSessionModel !== undefined && existing !== undefined) {
+        options.adapter.setSessionModel(existing.dspatchSessionId, stepModel);
+        modelNote =
+          ` Its model changed from ${previousModel || 'the provider default'} to ` +
+          `${stepModel || 'the provider default'}, switched in the same session for this turn.`;
+      } else {
+        sessions.delete(node.id);
+        modelNote =
+          ` Its model changed from ${previousModel || 'the provider default'} to ` +
+          `${stepModel || 'the provider default'}, so this visit opened a new session: this ` +
+          `provider's session keeps the model it was opened with.`;
+      }
+    }
+    sessionModels.set(node.id, stepModel);
     const reusedSession = sessions.has(node.id);
     const waitMs = remainingMs(context.deadlineAt, now, fallbackMs);
     if (waitMs === 0 || options.abortSignal?.aborted === true) {
@@ -2282,8 +2319,12 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         // The run's provider (DSP-138), never a default. Left out, the config names
         // none and a real adapter refuses it at start - see `LiveExecutorOptions.provider`.
         provider: runProvider as ProviderId,
-        dspatchSessionId: stepSessionId(context.runId, node.id),
-        modelRequested: options.modelRequested,
+        // DSP-209 S19: a node's later session, opened for a changed model, has an id of its own.
+        dspatchSessionId:
+          modelNote === ''
+            ? stepSessionId(context.runId, node.id)
+            : (`${stepSessionId(context.runId, node.id)}--visit-${String(context.occurrence)}` as DspatchSessionId),
+        modelRequested: stepModel,
         workspacePath: options.workspacePath,
         // Every root of the run, working directory first. One root produces the same
         // single-folder session as before; the adapter omits `dirs` for it, because the
@@ -2928,13 +2969,13 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     // to stop being true. The reused case has not disappeared, it has narrowed: a node
     // revisited on a rework edge continues its **own** conversation, which is what a
     // rework round is.
-    const sessionNote = reusedSession
+    const sessionNote = (reusedSession
       ? ` This step continued "${node.id}"'s own session (${openSession.dspatchSessionId}), ` +
         `visit ${String(context.occurrence)}, so it still has what it did on its earlier ` +
         `visits to this node and nothing from any other node.`
       : ` This step ran in its own session (${openSession.dspatchSessionId}), opened for ` +
         `"${node.id}". It was given the brief above and has no history of the run's other ` +
-        `steps, so anything it needed had to be in that brief.`;
+        `steps, so anything it needed had to be in that brief.`) + modelNote;
     const changed = diff.changed.map((file) => `${file.relPath} ${file.beforeSha256.slice(0, 16)}â†’${file.afterSha256.slice(0, 16)}`);
     // The reply, whole, as the body of this step's result â€” handed over once, and only
     // where the runner is the one filing it.
@@ -2966,7 +3007,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       ...(reason === null ? {} : { reason }),
       ...(handoffReason === null ? {} : { handoff: { reason: handoffReason } }),
       summary:
-        `One provider turn. Requested ${options.modelRequested}, reported ` +
+        `One provider turn. Requested ${stepModel}, reported ` +
         `${inspection.modelReported ?? 'unknown'}. Snapshot ${snapshotIdFor(before)} â†’ ` +
         `${snapshotIdFor(after)}. Changed: ${changed.length > 0 ? changed.join(', ') : 'none'}.` +
         (declared.why === null ? '' : ` ${declared.why}`) +

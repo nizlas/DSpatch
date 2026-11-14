@@ -99,7 +99,10 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   ],
   '/nodes/*/role': ['id', 'source'],
   '/nodes/*/role/source': ['kind', 'path'],
-  '/nodes/*/model': ['policy', 'model', 'description'],
+  // DSP-209 S19: a `select` policy's options and default follow the older fields, so a graph
+  // without them is written exactly as before.
+  '/nodes/*/model': ['policy', 'model', 'description', 'options', 'default'],
+  '/nodes/*/model/options/*': ['id', 'model', 'note'],
   '/nodes/*/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/nodes/*/report': ['writtenBy', 'path'],
   '/nodes/*/produces': ['required', 'form', 'note'],
@@ -108,7 +111,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   // `delivers` sits next to `when`, because the two together are what an arrival is:
   // when it is taken, and what travels along it.
   // `skips` follows them: what taking the edge passes by (DSP-209 S3).
-  '/edges/*': ['id', 'from', 'to', 'when', 'delivers', 'skips', 'label', 'notes'],
+  // `selectsModel` after them: which model the visit it leads to runs (DSP-209 S19).
+  '/edges/*': ['id', 'from', 'to', 'when', 'delivers', 'skips', 'selectsModel', 'label', 'notes'],
   '/edges/*/when': ['on', 'outcome', 'failure'],
 };
 
@@ -122,6 +126,9 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
 const INLINE_PATHS: ReadonlySet<string> = new Set([
   '/nodes/*/role/source',
   '/nodes/*/model',
+  // DSP-209 S19: inside the one-line model policy, so its options stay on that line.
+  '/nodes/*/model/options',
+  '/nodes/*/model/options/*',
   '/nodes/*/limits',
   '/nodes/*/report',
   '/nodes/*/produces',
