@@ -272,6 +272,12 @@ Graph, diff and detail views complement the conversation. Reading and continuing
 
 At a glance, the conversation and graph should answer: **who is working, on what, what are they waiting for, and what happens next?** Distinguish active work, waiting for the user, a requested stop, an actual stop and an uncertain execution state. Do not present a running animation as proof of activity when activity is not known. Summarise the current step and relevant recent handovers; make detailed history available without forcing the user to read raw logs.
 
+Three further states come from DSP-209, authorised by Niclas on 13 November 2026 (its BRIEF §3) and recorded in the mission's decisions in `docs/missions/adaptive-execution/STATE.md`:
+
+- **Skipped:** a step the run passed by on purpose, because the edge it took names the step in `skips`, with the deciding step's reason. It is never shown as met or checked (S3).
+- **Waiting for the person's choice:** a step has recommended continuing interactively, and the run holds for the person to choose between the loop and interactive work. Nothing switches without that choice (S5a, S5b).
+- **Handed over:** the run ended because the person chose interactive work. It is neither delivered nor failed, and the work continues in the chat (S5a).
+
 ### 9.1 Readable messages and stable scrolling
 
 User messages appear in distinct, compact containers with a subtle background and border, following the Cursor reference. Agent replies remain clearly distinguishable below them in the same thread. Do not present the user's message as a faint quotation embedded in the agent's answer. Keep role labels readable at handovers without surrounding every reply with diagnostic text.

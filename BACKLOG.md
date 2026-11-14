@@ -22,6 +22,27 @@ Start with `docs/INTERACTION_MODEL.md`, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.
 
 **Extended on 13 November 2026.** This follow-up is now carried out by the mission in [DSP-209](backlog/tasks/dsp-209%20-%20Adaptive-execution-and-shared-context-the-main-assignment-run-through-the-mission-loop.md), which implements [ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md](docs/ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md) through DSpatch's own run engine with the loop *DSpatch mission loop*. [DSP-208](backlog/tasks/dsp-208%20-%20Prepare-a-long-running-adaptive-execution-assignment-through-DSpatchs-own-loop-engine.md) prepared it. Its start brief and working state are in `docs/missions/adaptive-execution/`. Niclas starts it, so it has not started yet.
 
+**14 November 2026: DSP-209's night run.** Niclas started the mission. Its run (`chat-loop-2026-11-14T01-36-57-404Z`) built these, each one sub-goal in [STATE.md](docs/missions/adaptive-execution/STATE.md), where the records, decisions and open questions (Q1–Q4) are kept:
+- context transfer from the conversation into a loop run (S1, S2);
+- skipped steps as a visible, reasoned state, and an adaptive route in the bundled chat loop (S3, S4);
+- a step's recommendation to continue interactively, the person's choice, and the continuation in the chat (S5a, S5b, S6);
+- the chat learning what a loop run did (S7);
+- the reconciliation of controlled parallelism with adaptive execution (S8) and the SDK support research (S9);
+- fan-out of slices into worktrees with one integrator, and a bundled parallel loop (S10a–S10c);
+- a recorded mailbox between running branches (S11);
+- a run report built only from what DSpatch recorded (S12).
+
+All of it is agent-reviewed, not approved by Niclas; his trials are listed in STATE.md.
+
+Follow-up candidates. Each is a proposal, not a plan:
+- *Proposal (S7):* the recap rereads every run record on each run-state refresh and send; cache it or track the last ended run.
+- *Proposal (S7):* a recap removal is kept in memory until the next send, so a restart before sending offers it again.
+- *Proposal (S7):* the recap is rebuilt at send time, so a run ending between display and send could be included unseen.
+- *Proposal (S3):* renaming a node does not rename its id in edges' `skips` lists; validation then reports `skips-a-missing-node`.
+- *Proposal (S10a, S10b):* cancel and deadlines per branch; a before-and-after snapshot per branch; Windows long paths, paths with spaces, worktrees on another drive, hooks and signing.
+- *Proposal (S12):* the run report does not list steps that were never reached, because the run record does not hold the graph's steps.
+- *Proposal (S5a, for DSP-31):* S5a built a shared mechanism for waiting on an explicit choice bound to the run and the visit; DSP-31 should reuse it instead of building its own.
+
 
 The sequence begins with **DSP-7**, a preparatory [development-loop](docs/DEVELOPMENT_LOOP.md) probe in Cursor: real specialist calls, planning quality and recovery. Its ID was assigned later but it comes first in execution order. Consult its task status rather than repeating a completed calibration.
 

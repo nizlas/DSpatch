@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c reviewed after one rework round and committed (calls 39–43); S11 reviewed and committed (calls 44–46); S12 reviewed after one rework round and committed (calls 47–51); S13 sent to the implementer (coordinator visit 17, call 51).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b reviewed and committed (calls 19–21); S6 reviewed and committed (calls 22–24); S7 reviewed and committed (calls 25–27); S9 researched and recorded (calls 28–29); S8 reviewed and committed (calls 30–32); S10 split into S10a–S10c; S10a reviewed and committed (calls 33–35); S10b reviewed and committed (calls 36–38); S10c reviewed after one rework round and committed (calls 39–43); S11 reviewed and committed (calls 44–46); S12 reviewed after one rework round and committed (calls 47–51); S13 reviewed and committed (calls 52–54); every planned sub-goal is reviewed; the whole is sent to assessment (coordinator visit 18, call 54).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), then the S12 commit made on coordinator visit 17 (`(DSP-209 S12)` in `git log`, the commit after `6de7fd6`).
-- **Sub-goal in progress:** S13 (documents and backlog), sent to the implementer on coordinator visit 17.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), then the S13 commit made on coordinator visit 18 (`(DSP-209 S13)` in `git log`, the commit after `0b50fd3`).
+- **Sub-goal in progress:** none. Whole assessment sent out on coordinator visit 18.
 - **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
@@ -42,8 +42,8 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S10b | Fan-out in the engine: concurrent instances within one visit, session per instance, per-instance folder, journal kinds, cancel all, usage per branch, run view | S10a | reviewed | 1 | `812a42c` |
 | S10c | Bundled parallel graph: slicer → fan-out implementer → integrator → review, with slicer and integrator roles | S10b | reviewed | 1 (one rework round) | `a8e49a9` |
 | S11 | Mailbox between running branches | S10b, S9 | reviewed | 1 | `6de7fd6` |
-| S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | reviewed | 1 (one rework round) | S12 commit after `6de7fd6` |
-| S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | in progress | 1 | |
+| S12 | Run report with exact scope and provenance | S3 (S5, S10 add parts) | reviewed | 1 (one rework round) | `0b50fd3` |
+| S13 | Documents and backlog (BACKLOG near-term follow-up line, AGENT_BEHAVIOUR §4 status) | those described | reviewed | 1 | S13 commit after `0b50fd3` |
 
 Statuses:
 - **pending**;
@@ -232,9 +232,18 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Niclas tries:** after any loop run, open the report under its ending; after a parallel-loop run, check branches, commits, messages and costs against what happened; restart DSpatch and check the report is still there.
 - **Steps skipped:** research; independent verification (not asked for).
 
-### S13 — Documents and backlog
+### S13 — Documents and backlog — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 17 (call 51). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 17 (call 51); implemented (call 52, `done`); review `accept` (call 53); committed on coordinator visit 18 (call 54).
+- **What was done.** `BACKLOG.md`, under the existing *Near-term follow-up: adaptive loops and interactive chat* (no new section): a dated 14 November 2026 entry "DSP-209's night run" listing S1–S12 by outcome, pointing to this file, saying all is agent-reviewed and not approved; seven follow-up candidates marked *Proposal* with sources (S7 ×3, S3 rename, S10a/b per-branch cancel, deadlines, snapshots and Windows/signing cases, S12 steps not reached, the DSP-31 note). No card under `backlog/tasks/` changed. `docs/INTERACTION_MODEL.md` §9: three new states — skipped (S3), waiting for the person's choice (S5a/S5b), handed over (S5a) — introduced as authorised on 13 November 2026 (BRIEF §3). Consistency fixes (wording): AGENT_BEHAVIOUR's opening paragraph no longer calls §4 unapproved; GRAPH_FORMAT's fan-out status note (S10c, S11, S12 built; only the editor control missing), journal kinds "appended", mailbox paragraph "sent, not delivered"; `loop-graph.ts` `fanOut` support-row string (wording only).
+- **Review verdict: accept.** Five criteria met; no remaining wrong Copilot caveat outside the mission's records. Suggestion (not blocking): the 13 November BACKLOG line saying the mission "has not started yet" is left as history; one word such as "(then)" would avoid misreading — left open as a wording nit.
+- **Checked, by the implementer only:** `loop-graph` 41/41, `loop-node-help` 28/28, `npm run typecheck` exit 0.
+- **Niclas tries:** read BACKLOG.md's new entry.
+- **Steps skipped:** independent verification (documents).
+
+### Whole assessment
+
+- Sent on coordinator visit 18 (call 54). Not yet returned.
 
 ### S9 — SDK support research
 
@@ -274,7 +283,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Required steps stay required [S3] — met by reviewed sub-goal (validation refuses)
 - Skipped shown as its own state; available and taken paths shown [S3] — met by reviewed sub-goal (look untested; Niclas's trial)
 - Explicit routing decisions, not inferred from prose [S3, S5a] — met by reviewed sub-goals (declared `RESULT:` line; handoff tool)
-- A new decision surfaced, not absorbed [S5; existing blocked routes] — open
+- A new decision surfaced, not absorbed [S5a; existing blocked and spec-error routes] — met by reviewed sub-goal plus existing routes (handoff tool and hold; `BLOCKED` declared failures)
 - Recommendation prompt with the user's choice [S5a, S5b] — met by reviewed sub-goals (prompt's look untested; Niclas's trial)
 - Not repeated after refusal [S5a] — met by reviewed sub-goal
 - Recorded as handed over [S5a] — met by reviewed sub-goal (`handed-over` status, journal, record)
@@ -294,7 +303,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - One integrator owns the combined result [S10c] — met by reviewed sub-goal (integrator role merges; engine never merges; live behaviour untested)
 - Integration-targeted checks, not a suite per agent [S10] — met by reviewed sub-goal as role text (S10c integrator and branch roles; untested live)
 - Integration, completion and approval kept apart; report says implemented/reviewed/tested/skipped/left [S12] — met by reviewed sub-goal (run report from recorded events only; steps not reached are not listed — the record lacks the graph's steps)
-- Runtime owns identity, context versions, routing, branches, messages [S2, S3, S5, S10, S11] — open
+- Runtime owns identity, context versions, routing, branches, messages [S2, S3, S5a, S10b, S11] — met by reviewed sub-goals (snapshot id and record; declared skips; handoff hold; branch sessions and journal; mailbox journal)
 - Provider support checked before claimed [S9] — met by research (read from code; concurrency not observed live)
 - Delivery limits shown when not immediate [S11] — met by reviewed sub-goal ("delivered when each branch next checks its messages")
 - Distinct states incl. handed over [S3, S5]; durable automatic resume — **skipped**: BRIEF §3 accepts manual continuation; S2 makes a new run from the same conversation carry earlier runs (limit stated, not met)
@@ -352,7 +361,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 17 (call 51).** S12 reviewed and committed. S13 sent to the implementer. When the review returns: record and commit S13, append the coordinator's dated DSP-209 note, then send the whole to assessment. If a run ends before S13's review is recorded, the next run reconciles S13's files (`BACKLOG.md`, `docs/INTERACTION_MODEL.md`, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md`, the DSP-31 card's notes) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 18 (call 54).** S13 reviewed and committed; every planned sub-goal (S1–S13, with S5 and S10 split) is reviewed by agent review or recorded as research (S9). The whole is sent to assessment against the vision's success criteria (BRIEF §1.3). Open and not met: dialogue-based graph construction (Q2, proposed skipped); durable automatic resume (skipped, BRIEF §3); steps not reached in the report; per-branch cancel; every live-provider behaviour (Niclas's trials). Questions for Niclas: Q1–Q4, none blocking. When the assessment returns: if it finds required work open with a path, brief it as a new sub-goal; otherwise record its verdict and the run log line. If a run ends before the assessment is recorded, the next run sends the whole to assessment again (it changes no files).
 
 ## Run log
 

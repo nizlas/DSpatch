@@ -1029,9 +1029,9 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     caveat:
       'The caps (Claude 3, Copilot 3, Cursor 1) are read from the adapters, not observed running at ' +
       'once. A dry run has no project, so a "worktree" fan-out ends as branch-failed there. Cancel ' +
-      'stops every branch together; there is no per-branch cancel. Steering reaches no branch, and ' +
-      'messages between branches are not built yet (DSP-209 S11). The engine never merges: the next ' +
-      'step integrates.',
+      'stops every branch together; there is no per-branch cancel. Steering reaches no branch; ' +
+      'branches exchange messages only through the mailbox, delivered when each checks (DSP-209 S11). ' +
+      'The engine never merges: the next step integrates.',
   },
   {
     attribute: 'capabilities',
