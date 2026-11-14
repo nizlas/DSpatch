@@ -496,7 +496,12 @@ export function loopTurnsAfter(
       // DSP-209 S12: the report from what the run recorded, the replies this window was given.
       const report =
         outcome.kind === 'finished' || outcome.kind === 'cancelled'
-          ? buildRunReport({ journal: outcome.result.journal, replies: turn.replies, ending: outcome.recorded?.ending ?? null })
+          ? buildRunReport({
+              journal: outcome.result.journal,
+              replies: turn.replies,
+              ending: outcome.recorded?.ending ?? null,
+              drawnSteps: outcome.recorded?.drawnSteps ?? null,
+            })
           : null;
       return replaced({ ...turn, ending: describeLoopEnding(outcome, turn), ...(report === null ? {} : { report }) });
     }
@@ -1396,7 +1401,12 @@ export function loopTurnsFromRecords(
       ending: endingFromRecord(record, entry.error),
       restoredFrom: 'record',
       // DSP-209 S12: the same report the run had when it was watched, from its record.
-      report: buildRunReport({ journal: record.journal, replies: record.replies, ending: record.ending }),
+      report: buildRunReport({
+        journal: record.journal,
+        replies: record.replies,
+        ending: record.ending,
+        drawnSteps: identity.drawnSteps ?? null,
+      }),
       ...((): { messages?: readonly LoopInstruction[] } => {
         const messages = messagesFromEnding(identity.runId, record.ending?.messages);
         return messages.length === 0 ? {} : { messages };

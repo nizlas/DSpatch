@@ -15,7 +15,7 @@
  * Pure and shared: no Node built-ins, so the window builds it from a record it read back.
  */
 
-import type { RecordedRunEnding, RecordedSnapshots } from './loop-record';
+import type { RecordedDrawnStep, RecordedRunEnding, RecordedSnapshots } from './loop-record';
 import { CHECK_SKIPPED_TERMINAL, isGateCommand } from './loop-record';
 import type { RunJournalEntry } from './loop-run';
 
@@ -40,7 +40,15 @@ export interface RunReportInput {
   readonly replies: readonly RunReportReply[];
   /** `null` when the run wrote no ending (interrupted) or no record came back. */
   readonly ending: RecordedRunEnding | null;
+  /**
+   * DSP-209 S14: the drawing's steps as the record's header names them. Absent or `null` in a
+   * record written before the field: steps not reached are then "not recorded".
+   */
+  readonly drawnSteps?: readonly RecordedDrawnStep[] | null;
 }
+
+/** The fixed last line of "Left for you to examine". */
+export const NOTHING_TRIED_BY_HAND = 'Nothing here was tried by hand; agent review is not your approval.';
 
 export interface RunReportSection {
   readonly id:
@@ -53,7 +61,9 @@ export interface RunReportSection {
     | 'usage'
     | 'reviewed'
     | 'files'
-    | 'branches';
+    | 'branches'
+    | 'not-reached'
+    | 'left';
   readonly title: string;
   readonly lines: readonly string[];
 }
@@ -134,6 +144,10 @@ interface Visit {
 /** Labels the record knows: terminals carry theirs, replies carry the step's. */
 function labelsFrom(input: RunReportInput): Map<string, string> {
   const labels = new Map<string, string>();
+  // The drawing's own labels first (DSP-209 S14), then what replies and the journal say.
+  for (const step of Array.isArray(input.drawnSteps) ? input.drawnSteps : []) {
+    labels.set(step.id, step.label);
+  }
   for (const reply of input.replies) {
     labels.set(reply.nodeId, reply.nodeLabel);
   }
@@ -368,7 +382,13 @@ function messageLines(journal: readonly RunJournalEntry[]): string[] {
   return lines;
 }
 
-function integrationLines(input: RunReportInput, visits: readonly Visit[], branches: readonly BranchRecord[]): string[] {
+function integrationLines(
+  input: RunReportInput,
+  visits: readonly Visit[],
+  branches: readonly BranchRecord[],
+  /** Filled with one line per open proposal, for "Left for you to examine". */
+  proposalsOut: string[] = [],
+): string[] {
   const lines: string[] = [];
   const keys = [...new Set(branches.map((branch) => branch.visitKey))];
   for (const key of keys) {
@@ -384,6 +404,9 @@ function integrationLines(input: RunReportInput, visits: readonly Visit[], branc
     const ids = proposals.map((entry) => text(entry.data, 'messageId') ?? '');
     if (next === undefined || next.kind === 'terminal') {
       lines.push(`Fan-out ${key}: no step ran after it${ids.length === 0 ? '' : `, so its open proposals (${ids.join(', ')}) reached nobody`}.`);
+      for (const id of ids) {
+        proposalsOut.push(`Open proposal ${id}: no step ran after the fan-out to resolve it.`);
+      }
       continue;
     }
     lines.push(
@@ -397,16 +420,15 @@ function integrationLines(input: RunReportInput, visits: readonly Visit[], branc
       (entry) => entry.nodeId === next.nodeId && (entry.occurrence === undefined || entry.occurrence === next.occurrence),
     );
     for (const id of ids) {
-      if (reply === undefined) {
-        lines.push(`  ${id}: its reply is not recorded.`);
-        continue;
-      }
-      const said = reply.text.split(/\r?\n/).filter((line) => line.includes(id));
-      lines.push(
-        said.length === 0
-          ? `  ${id}: its reply does not name it.`
-          : `  ${id}: ${quoteBody(said.join(' '), 300)} (${next.label}'s words, not DSpatch's finding).`,
-      );
+      const said = reply === undefined ? null : reply.text.split(/\r?\n/).filter((line) => line.includes(id));
+      const claim =
+        said === null
+          ? 'its reply is not recorded.'
+          : said.length === 0
+            ? 'its reply does not name it.'
+            : `${quoteBody(said.join(' '), 300)} (${next.label}'s words, not DSpatch's finding).`;
+      lines.push(`  ${id}: ${claim}`);
+      proposalsOut.push(`Open proposal ${id}, given to “${next.label}”: ${claim}`);
     }
   }
   return lines;
@@ -604,7 +626,8 @@ export function buildRunReport(input: RunReportInput): RunReport {
   add('handover', 'Handover', handoverLines(input));
   add('fan-outs', 'Fan-outs', fanOutLines(branches, visits));
   add('messages', 'Messages between the branches', messageLines(input.journal));
-  add('integration', 'Integration', integrationLines(input, visits, branches));
+  const proposals: string[] = [];
+  add('integration', 'Integration', integrationLines(input, visits, branches, proposals));
   add('usage', 'Usage and cost', usageLines(input, visits, branches));
   add('reviewed', 'What was reviewed and checked', reviewedLines(input, visits, labels));
   add('files', 'Changed files DSpatch observed', fileLines(input.ending));
@@ -614,6 +637,70 @@ export function buildRunReport(input: RunReportInput): RunReport {
     'Temporary branches kept for you',
     names.length === 0 ? [] : [...names, 'DSpatch does not delete them: keep or delete each yourself.'],
   );
+
+  // DSP-209 S14: drawn steps with no visit and no skip. Terminals and routers are not work.
+  const drawn = Array.isArray(input.drawnSteps) ? input.drawnSteps : null;
+  const notReached =
+    drawn === null
+      ? null
+      : drawn.filter(
+          (step) =>
+            step.kind !== 'terminal' &&
+            step.kind !== 'router' &&
+            !visits.some((visit) => visit.nodeId === step.id) &&
+            !skipped.some((entry) => entry.nodeId === step.id),
+        );
+  add(
+    'not-reached',
+    'Steps not reached',
+    notReached === null
+      ? ['Steps not reached: not recorded (older record).']
+      : notReached.length === 0
+        ? ['Every drawn step was visited or skipped.']
+        : notReached.map((step) => `“${step.label}” (${step.id}), a ${step.kind} step: the run never reached it.`),
+  );
+
+  // DSP-209 S14: what is left for the person to examine, from recorded facts only; each line
+  // points at the section with the detail rather than repeating it.
+  const left: string[] = [];
+  if (skipped.length > 0) {
+    left.push(
+      `${plural(skipped.length, 'skipped step')} with ${skipped.length === 1 ? 'its reason' : 'their reasons'}: ` +
+        `${skipped.map((entry) => `“${labels.get(entry.nodeId ?? '') ?? entry.nodeId ?? 'a step'}”`).join(', ')} (see Skipped steps).`,
+    );
+  }
+  const corroboration = checkSkippedCorroboration(input.ending?.terminalNodeId ?? null, input.ending?.snapshots);
+  if (corroboration !== null) {
+    left.push(corroboration);
+  }
+  const handoverRaw: unknown = input.ending?.handover;
+  if (typeof handoverRaw === 'object' && handoverRaw !== null && (handoverRaw as Record<string, unknown>)['turn'] === 'refused') {
+    const note = (handoverRaw as Record<string, unknown>)['note'];
+    left.push(
+      `The handover turn was not sent into the chat${typeof note === 'string' && note.trim() !== '' ? `: ${note.trim().replace(/\.$/, '')}` : ''} (see Handover).`,
+    );
+  }
+  const undelivered = input.journal.filter((entry) => entry.kind === 'message-undelivered').length;
+  if (undelivered > 0) {
+    left.push(`${plural(undelivered, 'message')} recorded undelivered (see Messages between the branches).`);
+  }
+  left.push(...proposals);
+  if (names.length > 0) {
+    left.push(`${plural(names.length, 'temporary branch', 'temporary branches')} kept for you to keep or delete (see Temporary branches kept for you).`);
+  }
+  for (const branch of branches.filter((entry) => entry.ended?.['worktreeKept'] === true)) {
+    left.push(`The worktree of branch ${branch.sliceId} (${branch.visitKey}) was kept: ${text(branch.ended ?? undefined, 'problem') ?? 'reason not recorded'}.`);
+  }
+  for (const visit of visits.filter((entry) => entry.kind !== 'terminal' && entry.declared !== null)) {
+    left.push(`“${visit.label}” declared “${visit.declared ?? ''}”: its own verdict, not checked by DSpatch.`);
+  }
+  if (notReached !== null && notReached.length > 0) {
+    left.push(`${plural(notReached.length, 'drawn step')} never reached: ${notReached.map((step) => `“${step.label}”`).join(', ')} (see Steps not reached).`);
+  }
+  add('left', 'Left for you to examine', [
+    ...(left.length === 0 ? ['The record holds nothing that was skipped, left undelivered, kept or declared for you to examine.'] : left),
+    NOTHING_TRIED_BY_HAND,
+  ]);
 
   const steps = visits.filter((visit) => visit.kind !== 'terminal').length;
   const fileCount =

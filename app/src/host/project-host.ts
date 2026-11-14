@@ -3037,6 +3037,8 @@ function registerLoopMethods(): void {
         provider: agent.provider,
         appVersion: config().appVersion,
         startedAtUtc: new Date().toISOString(),
+        // DSP-209 S14: the steps of the drawing actually loaded, so the run report can list those never reached.
+        drawnSteps: loaded.graph.nodes.map((node) => ({ id: node.id, label: node.label ?? node.id, kind: node.kind })),
         ...(contextSnapshot === null
           ? {}
           : {
@@ -3438,7 +3440,11 @@ function registerLoopMethods(): void {
           result: delivery.result,
           journalText: delivery.journalText,
           workspaceNote,
-          recorded,
+          // DSP-209 S14: the same drawn steps the record's header holds, for the live run report.
+          recorded: {
+            ...recorded,
+            drawnSteps: loaded.graph.nodes.map((node) => ({ id: node.id, label: node.label ?? node.id, kind: node.kind })),
+          },
           ...(handoverNote === null || cancelled ? {} : { handoverNote }),
         };
       } catch (error) {

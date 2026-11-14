@@ -23,7 +23,7 @@ import type { StepActivity } from './loop-activity';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
-import type { ParsedRunRecord, RecordedRunEnding } from './loop-record';
+import type { ParsedRunRecord, RecordedDrawnStep, RecordedRunEnding } from './loop-record';
 import type { RunJournalEntry, RunResult } from './loop-run';
 import type { LiveRunAnnouncement, LoopRunEvent, RunView } from './loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from './loop-run-agent-text';
@@ -3183,6 +3183,8 @@ export interface ChatLoopRecordInfo {
   readonly recordPath: string | null;
   /** What could not be written, or `null`. Never silent about a lost record. */
   readonly recordNote: string | null;
+  /** DSP-209 S14: the drawing's steps as the record's header names them, for the run report. */
+  readonly drawnSteps?: readonly RecordedDrawnStep[];
 }
 
 export type ChatLoopRunOutcome =

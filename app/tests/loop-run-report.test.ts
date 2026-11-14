@@ -240,7 +240,8 @@ describe('the run report (DSP-209 S12)', () => {
     ].join('\n');
     const report = loopTurnsFromRecordText(recordText)[0]?.report;
     assert.ok(report !== undefined);
-    assert.deepEqual(report.sections.map((section) => section.id), ['path', 'usage', 'reviewed', 'files']);
+    // S14 added "Steps not reached" (not recorded in an older record) and "Left for you to examine".
+    assert.deepEqual(report.sections.map((section) => section.id), ['path', 'usage', 'reviewed', 'files', 'not-reached', 'left']);
     assert.match(runReportText(report), /“Implementer” \(implementer\): produced/);
     assert.match(runReportText(report), /Not recorded: No snapshot\./);
     assert.match(runReportText(report), /- “Implementer”: 1 visit, provider turns not recorded; cost not recorded\./);
@@ -262,6 +263,82 @@ describe('the run report (DSP-209 S12)', () => {
     assert.match(all, /“Skeptic”: 1 visit, 1 provider turn; cost not recorded\./);
     assert.match(all, /Whether the handover turn was sent into the chat: not recorded\./);
     assert.match(runReportText(buildRunReport({ journal: [], replies: [], ending: ending() })), /No step declared a verdict, and DSpatch ran no check of its own\./);
+  });
+
+  it('lists drawn steps never reached, and says "not recorded" for an older record (DSP-209 S14)', () => {
+    const journal = [
+      entry('node-entered', 'work', { kind: 'agent', occurrence: 1, label: 'Work' }),
+      entry('node-produced', 'work', { product: 'success', providerTurns: 1 }),
+      entry('node-skipped', 'check', { decidedBy: 'work', reason: 'docs only' }, 'e1'),
+      entry('node-entered', 'done', { kind: 'terminal', occurrence: 1, label: 'Done' }),
+    ];
+    const drawnSteps = [
+      { id: 'work', label: 'Work', kind: 'agent' },
+      { id: 'check', label: 'Check', kind: 'agent' },
+      { id: 'gate', label: 'Build gate', kind: 'gate' },
+      { id: 'done', label: 'Done', kind: 'terminal' },
+      { id: 'failed', label: 'Failed', kind: 'terminal' },
+    ];
+    const lines = (input: Parameters<typeof buildRunReport>[0], id: string): string =>
+      buildRunReport(input).sections.find((section) => section.id === id)?.lines.join('\n') ?? '';
+    assert.equal(lines({ journal, replies: [], ending: ending(), drawnSteps }, 'not-reached'), '“Build gate” (gate), a gate step: the run never reached it.');
+    assert.equal(lines({ journal, replies: [], ending: ending() }, 'not-reached'), 'Steps not reached: not recorded (older record).');
+  });
+
+  it('lists in "Left for you to examine" exactly the recorded items, and says so in one line when there are none (DSP-209 S14)', () => {
+    const changed = { beforeId: 'b', beforeFileCount: 1, afterId: 'a', afterFileCount: 1, changed: [{ relPath: 'x.ts', beforeSha256: '1', afterSha256: '2', beforeBytes: 1, afterBytes: 1 }], added: [], removed: [], truncated: null };
+    const journal = [
+      entry('node-entered', 'slice', { kind: 'agent', occurrence: 1, label: 'Slice' }),
+      entry('node-produced', 'slice', { product: 'success' }),
+      entry('node-skipped', 'review', { decidedBy: 'slice', reason: 'tiny' }, 'e1'),
+      entry('node-entered', 'work', { kind: 'agent', occurrence: 1, label: 'Work' }),
+      entry('branch-started', 'work', { instanceId: 'work#1/a', sliceId: 'a', branch: 'dspatch/run/r/work/v1/a', base: 'abc', ownedPaths: 'x.ts' }),
+      entry('message-sent', 'work', { messageId: 'work#1/m1', from: 'a', to: 'integrator', purpose: 'contract-change', body: 'Rename it.', recipients: '' }),
+      entry('message-sent', 'work', { messageId: 'work#1/m2', from: 'a', to: 'b', purpose: 'finding', body: 'Note.', recipients: 'b' }),
+      entry('message-undelivered', 'work', { messageId: 'work#1/m2', from: 'a', to: 'b', reason: 'recipient-ended-unchecked' }),
+      entry('branch-ended', 'work', { instanceId: 'work#1/a', sliceId: 'a', branch: 'dspatch/run/r/work/v1/a', ending: 'finished', commit: 'def', worktreeKept: true, problem: 'commit refused' }),
+      entry('node-produced', 'work', { product: 'success' }),
+      entry('node-entered', 'integrate', { kind: 'agent', occurrence: 1, label: 'Integrate' }),
+      entry('node-produced', 'integrate', { product: 'outcome', outcome: 'merged', outcomeSource: 'step-declared' }),
+      entry('node-entered', 'check-skipped', { kind: 'terminal', occurrence: 1, label: 'Done, check skipped' }),
+    ];
+    const report = buildRunReport({
+      journal,
+      replies: [{ nodeId: 'integrate', nodeLabel: 'Integrate', occurrence: 1, text: 'work#1/m1 rejected: keep the name.' }],
+      ending: ending({ terminalNodeId: 'check-skipped', snapshots: changed, handover: { turn: 'refused', note: 'the chat was busy.' } }),
+      drawnSteps: [
+        { id: 'slice', label: 'Slice', kind: 'agent' },
+        { id: 'review', label: 'Review', kind: 'agent' },
+        { id: 'polish', label: 'Polish', kind: 'agent' },
+        { id: 'work', label: 'Work', kind: 'agent' },
+        { id: 'integrate', label: 'Integrate', kind: 'agent' },
+        { id: 'check-skipped', label: 'Done, check skipped', kind: 'terminal' },
+      ],
+    });
+    const left = report.sections.find((section) => section.id === 'left')?.lines ?? [];
+    assert.deepEqual(left, [
+      '1 skipped step with its reason: “Review” (see Skipped steps).',
+      'DSpatch observed 1 changed file, and the check was skipped, so nothing reviewed it.',
+      'The handover turn was not sent into the chat: the chat was busy (see Handover).',
+      '1 message recorded undelivered (see Messages between the branches).',
+      'Open proposal work#1/m1, given to “Integrate”: “work#1/m1 rejected: keep the name.” (Integrate\'s words, not DSpatch\'s finding).',
+      '1 temporary branch kept for you to keep or delete (see Temporary branches kept for you).',
+      'The worktree of branch a (work#1) was kept: commit refused.',
+      '“Integrate” declared “merged”: its own verdict, not checked by DSpatch.',
+      '1 drawn step never reached: “Polish” (see Steps not reached).',
+      'Nothing here was tried by hand; agent review is not your approval.',
+    ]);
+
+    const quiet = buildRunReport({
+      journal: [entry('node-entered', 'work', { kind: 'agent', occurrence: 1, label: 'Work' }), entry('node-produced', 'work', { product: 'success' })],
+      replies: [],
+      ending: ending(),
+      drawnSteps: [{ id: 'work', label: 'Work', kind: 'agent' }],
+    });
+    assert.deepEqual(quiet.sections.find((section) => section.id === 'left')?.lines, [
+      'The record holds nothing that was skipped, left undelivered, kept or declared for you to examine.',
+      'Nothing here was tried by hand; agent review is not your approval.',
+    ]);
   });
 
   it('says an instruction the mailbox took was sent to the branches, not delivered', () => {

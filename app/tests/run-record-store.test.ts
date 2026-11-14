@@ -252,6 +252,21 @@ describe('the context a run was given', () => {
     assert.equal(odd.identity?.mandate, 'Add the missing field.');
   });
 
+  it('keeps the drawn steps in the header, and ignores a malformed list (DSP-209 S14)', () => {
+    const steps = [
+      { id: 'work', label: 'Work', kind: 'agent' },
+      { id: 'done', label: 'Done', kind: 'terminal' },
+    ];
+    const store = new RunRecordStore(path.join(scratch('drawn-steps'), 'loop-runs'));
+    store.open(identity({ drawnSteps: steps }));
+    assert.deepEqual(store.read(identity().runId).record?.identity?.drawnSteps, steps);
+    const odd = parseRunRecord(
+      `${JSON.stringify({ line: 'header', formatVersion: 1, identity: { ...identity(), drawnSteps: [{ id: 3 }] } })}\n`,
+    );
+    assert.equal(odd.identity?.drawnSteps, undefined);
+    assert.equal(odd.identity?.mandate, 'Add the missing field.');
+  });
+
   it('gives a second run in the conversation the first run\'s mandate and ending', () => {
     const store = new RunRecordStore(path.join(scratch('second-run'), 'loop-runs'));
     const first = store.open(identity({ runId: 'chat-loop-first', mandate: 'Fix the typo in README.' }));

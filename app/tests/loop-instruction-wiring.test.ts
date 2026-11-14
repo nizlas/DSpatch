@@ -53,12 +53,21 @@ describe('the chat run handler carries a message to the next step', () => {
       'the queue must be drained inside promptFor, so a message is marked delivered at the ' +
         'instant its text enters the prompt',
     );
+    // DSP-209 S11 (decision 29) added the one other drain on purpose: while a fan-out runs, the
+    // mailbox takes the queue at a branch's check, and a branch's own prompt does not drain it.
+    // `takeFor` removes what it returns, so the two never hand one message out twice.
     assert.equal(
       (handler.match(/chatLoopInstructions\.takeFor\(/g) ?? []).length,
-      1,
-      'exactly one drain. A second would hand the same message to two steps, and an ' +
-        'instruction applied twice cannot be un-applied',
+      2,
+      'exactly two drains, the step prompt and the fan-out mailbox. Another would hand the same ' +
+        'message to two steps, and an instruction applied twice cannot be un-applied',
     );
+    assert.match(
+      handler,
+      /takeInstructions: \([^)]*\) => \{\s*const taken = chatLoopInstructions\.takeFor\(request\.runId\)/,
+      'the second drain is the mailbox’s, and nowhere else',
+    );
+    assert.match(handler, /if \(step\.branch === true\) \{\s*return `\$\{earlier\}\$\{prompt\}`;/, 'a branch prompt does not drain');
     assert.match(
       handler,
       /instructionPreamble\(taken\.map\(\(entry\) => entry\.text\)\)/,

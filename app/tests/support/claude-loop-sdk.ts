@@ -13,6 +13,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
 import { ClaudeAgentSdkAdapter, type ClaudePermissionPolicy } from '../../src/adapter/claude-agent-sdk-adapter.ts';
+import type { ClaudeToolKit } from '../../src/adapter/claude-support.ts';
 import type { ToolPolicy } from '../../src/adapter/cursor-sdk-adapter.ts';
 import type { ChatAdapter } from '../../src/main/chat-service.ts';
 import { providerAdapters, type ProviderAdaptersOptions } from '../../src/main/provider-adapters.ts';
@@ -418,6 +419,16 @@ export function claudeSdk(turns: readonly Turn[], onQuery?: (index: number) => v
 
 // --- The factory, with both constructions observed --------------------------------
 
+/** A tool kit that builds nothing real: the scripted SDK never calls the tools it describes. */
+async function fakeToolKit(): Promise<ClaudeToolKit> {
+  const schema = { describe: () => schema, optional: () => schema };
+  return {
+    z: { string: () => schema, array: () => schema },
+    tool: (name: string) => ({ name }),
+    createSdkMcpServer: (options: { name: string }) => ({ type: 'sdk', name: options.name, instance: {} }),
+  } as unknown as ClaudeToolKit;
+}
+
 export interface Built {
   readonly claudePermissions: ClaudePermissionPolicy[];
   readonly cursorPolicies: ToolPolicy[];
@@ -446,6 +457,9 @@ export function adapters(
           spawnProcess: sdk.spawnProcess,
           env: CLEAN_ENV,
           permissions,
+          // DSP-209 S5a gave the chat loop's work step DSpatch's handoff tool, so its session
+          // builds an in-process tool server; a scripted tool kit, never Claude support on disk.
+          toolKit: fakeToolKit,
         });
         const dispose = adapter.dispose.bind(adapter);
         adapter.dispose = async () => {

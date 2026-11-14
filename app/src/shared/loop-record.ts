@@ -87,6 +87,18 @@ export interface RunRecordIdentity {
    * given none (no conversation, or an empty one) and in records written before S2.
    */
   readonly contextSnapshot?: RecordedContextSnapshot;
+  /**
+   * DSP-209 S14: the steps of the drawing this run loaded, by id, label and kind, so the run
+   * report can name the ones never reached. Absent in records written before it: not recorded.
+   */
+  readonly drawnSteps?: readonly RecordedDrawnStep[];
+}
+
+/** DSP-209 S14: one step of the drawing a run walked, as its record names it. */
+export interface RecordedDrawnStep {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: string;
 }
 
 /** Which snapshot a run was given (DSP-209 S2): enough to find and compare it, not its text. */
@@ -691,7 +703,23 @@ function parseIdentity(value: unknown): RunRecordIdentity | null {
     appVersion: asString(value['appVersion'], 'unknown'),
     startedAtUtc: asString(value['startedAtUtc'], ''),
     ...contextSnapshotField(value['contextSnapshot']),
+    ...drawnStepsField(value['drawnSteps']),
   };
+}
+
+/** The drawn steps, only when every entry has the shape this build writes; otherwise nothing. */
+function drawnStepsField(value: unknown): { readonly drawnSteps?: readonly RecordedDrawnStep[] } {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const steps: RecordedDrawnStep[] = [];
+  for (const entry of value as unknown[]) {
+    if (!isRecord(entry) || typeof entry['id'] !== 'string' || typeof entry['kind'] !== 'string') {
+      return {};
+    }
+    steps.push({ id: entry['id'], label: typeof entry['label'] === 'string' ? entry['label'] : entry['id'], kind: entry['kind'] });
+  }
+  return { drawnSteps: steps };
 }
 
 /** The snapshot reference, only when it has the shape this build writes; otherwise nothing. */
