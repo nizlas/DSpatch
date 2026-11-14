@@ -33,7 +33,7 @@ import {
 } from './loop-live';
 import type { WorkingCopyClaim } from './working-copy-lock';
 import type { StepActivity } from '../shared/loop-activity';
-import { chatPromptFor, describeChosenLoopBinding } from '../shared/loop-chat';
+import { chatPromptFor, describeChosenLoopBinding, skippingRoutesOf } from '../shared/loop-chat';
 import {
   describeLiveBinding,
   editorLiveBindingFor,
@@ -275,6 +275,8 @@ function withEditorBinding(
           mandate: graph.purpose,
           mandateFrom: 'drawing',
           step,
+          // DSP-209 S3. Empty for every node without a skipping outcome.
+          skipping: skippingRoutesOf(graph, node.id),
           role:
             resolved === null
               ? null

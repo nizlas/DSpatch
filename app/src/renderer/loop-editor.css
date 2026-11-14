@@ -492,6 +492,19 @@
 
 .node-run-stopped .node-run-mark { fill: #d98b6a; }
 
+/*
+ * Skipped (DSP-209 S3): passed by on purpose. Long dashes and a muted fill, so it reads as
+ * decided and not done; the word "skipped" beside it is what carries the difference.
+ */
+.node-run-skipped .node-body {
+  stroke: #9a93b8;
+  stroke-width: 2;
+  stroke-dasharray: 9 4;
+  fill-opacity: 0.55;
+}
+
+.node-run-skipped .node-run-mark { fill: #9a93b8; }
+
 /* Not reached: nothing at all, which is the ordinary state of most of a drawing. */
 .node-run-not-reached .node-run-mark { fill: transparent; }
 

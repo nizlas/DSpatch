@@ -73,6 +73,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'kind',
     'label',
     'purpose',
+    // DSP-209 S3: whether a step may be skipped is part of what the step is.
+    'required',
     // Beside `purpose`, because that is what it is: one more sentence about what this
     // step means, on the only kind of node that has no role, no limits and no outcomes.
     'ending',
@@ -100,7 +102,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/nodes/*/view': ['x', 'y'],
   // `delivers` sits next to `when`, because the two together are what an arrival is:
   // when it is taken, and what travels along it.
-  '/edges/*': ['id', 'from', 'to', 'when', 'delivers', 'label', 'notes'],
+  // `skips` follows them: what taking the edge passes by (DSP-209 S3).
+  '/edges/*': ['id', 'from', 'to', 'when', 'delivers', 'skips', 'label', 'notes'],
   '/edges/*/when': ['on', 'outcome', 'failure'],
 };
 

@@ -55,7 +55,7 @@ Six kinds, and each one is drawn by [the reference figure](../assets/agentloop_g
 
 **The figure's three gates are not evidence for the gate rule, and this table used to imply they were.** Transcribing the figure on 16 September 2026 showed that *Plangrind*, *Jobbgrind* and *Skeptic* each draw exactly one arrow out, so all three fail the two-verdict rule above and had to be given an invented reject verdict and an invented edge before the graph would validate. The rule is right and the drawing is loose: a checkpoint drawn with one way out is a step, and the arrow that means *rejected* is the one a whiteboard leaves off. Our own loop's plan and implementation gates are the examples that satisfy it, each declaring accept, rework and needs-decision.
 
-Node attributes belong to the format, not to the editor: `id`, `kind`, `label`, `purpose`, `ending`, `role`, `model`, `limits`, `requirements`, `outcomes`, `whenUndeclared`, `declaredFailures`, `report`, `produces`, `consumes`, `notes`, `view`. Edges have `id`, `from`, `to`, `when`, `delivers`, `label` and `notes`.
+Node attributes belong to the format, not to the editor: `id`, `kind`, `label`, `purpose`, `ending`, `role`, `model`, `limits`, `requirements`, `outcomes`, `whenUndeclared`, `declaredFailures`, `report`, `produces`, `consumes`, `required`, `notes`, `view`. Edges have `id`, `from`, `to`, `when`, `delivers`, `skips`, `label` and `notes`.
 
 - **`model`** is a policy rather than a slug: `{"policy":"inherit"}`, `{"policy":"fixed","model":"…"}` or `{"policy":"described","description":"…"}`. `described` exists because [DSP-8](../../backlog/tasks/dsp-8%20-%20Prova-uppgiftsstyrt-modellval-i-utvecklingsloopen.md) has not been decided: a graph can record how the model *should* be chosen without pretending the choice is automated.
 - **`limits`** bound a step, and the same shape on the graph bounds the run: `maxCalls`, `maxReworkRounds`, `maxMinutes`, `maxTasks`, `note`.
@@ -111,6 +111,20 @@ Three rules, and the third is the one worth stating twice:
 - **A delivered result is bound to the run, the producing node and the visit.** Where the edge delivers the node it leaves from, the visit is the one that produced the outcome that took the edge — not that node's newest result. On a third rework round the two differ, and the difference is a review of the wrong attempt arriving with nothing about it looking wrong.
 
 Validation asks of each delivered id the same three questions `consumes` is asked, but about `from` rather than about `to`: it must be a node in the graph, it must declare a result, and some path must run it before the edge's source. Asking about the target would pass a drawing whose loop-back reaches the target by an entirely different route from the one the edge is on. At run time, an arrival that promises something the path did not produce is `required-result-missing` and names the edge, because the edge is where the promise was made.
+
+<a id="skipped-steps"></a>
+
+### Skipping a step on purpose
+
+An edge may carry **`skips`**, a list of node ids: taking that edge passes those steps by on purpose. A node may carry **`"required": true`**: no edge may skip it. [DSP-209](../../backlog/tasks/dsp-209%20-%20Adaptive-execution-and-shared-context-the-main-assignment-run-through-the-mission-loop.md) S3, from the vision's section on adaptive loops: a loop may leave out a step it does not need, provided the skip is visible, has a reason, and a required step stays required.
+
+- **Declared, never inferred.** A node the run simply did not visit is *not reached*. Only a node named in `skips` on an edge the run actually took is *skipped*. Nothing is read from a reply's prose to decide either.
+- **It records; it does not route.** The edge is chosen exactly as it would be without the field. When it is taken, the runner appends one `node-skipped` journal entry per skipped node, after the `edge-taken` line, with the edge, the deciding node (`decidedBy`) and the reason. `RunResult.skipped` lists them in order.
+- **The reason is the deciding step's own.** It is the text after the outcome word on the step's `RESULT:` line (`RESULT: done-unchecked documentation only` gives *documentation only*), on one line, or *no reason given*. It is taken only when the outcome the step declared is the one recorded; an outcome DSpatch substituted has no reason from the step. A step with a skipping outcome is told which outcome skips which steps and asked for that reason; every other step's prompt is unchanged. A `success` or declared-failure edge may also skip, and then records *no reason given*, because there is no outcome word to read after.
+- **A skipped step can still run later.** Another route reaching it visits it as usual, and the run view then shows that visit's state.
+- **The run view** marks a skipped node *skipped*, distinct from not reached, done, failed and stopped. The conversation says *“<step>” skipped: <reason>.*, never that it finished or passed.
+
+Validation refuses, each with its own finding: an id that is not a node (`skips-a-missing-node`), a `required` node (`skips-a-required-node`), a terminal (`skips-a-terminal`), the edge's own target (`skips-its-own-target`) and its own source (`skips-its-own-source`). `required` other than `true` is `bad-required`. An empty `skips` list means the same as none. Graphs and records without either field load, validate, save and behave exactly as before, and a record without `node-skipped` reads as it always did.
 
 <a id="det-som-gör-det-till-en-loop"></a>
 

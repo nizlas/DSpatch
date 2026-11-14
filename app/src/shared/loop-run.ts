@@ -278,6 +278,12 @@ export interface StepExecution {
    * canonical and the runner reads it rather than writing beside it.
    */
   readonly resultBody?: string;
+  /**
+   * DSP-209 S3: the step's own reason for its outcome — the text after the outcome word on
+   * its `RESULT:` line — where it gave one and the outcome it named is the one recorded.
+   * Read only when the edge taken skips steps; never used to choose the edge.
+   */
+  readonly reason?: string;
 }
 
 export type StepExecutor = (context: StepContext) => Promise<StepExecution>;
@@ -342,8 +348,28 @@ export const JOURNAL_KINDS = [
    * design: a change of the health, never every reading.
    */
   'resource-governor',
+  /**
+   * DSP-209 S3: a step the run passed by on purpose, because the edge it took names it in
+   * `skips`. One line per skipped step, with the edge, the deciding step and its reason.
+   * Appended, so a record written before it still parses unchanged.
+   */
+  'node-skipped',
 ] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
+
+/** DSP-209 S3: one step the run skipped, as the journal recorded it. */
+export interface SkippedStep {
+  readonly nodeId: string;
+  /** The edge whose `skips` named it. */
+  readonly edgeId: string;
+  /** The step that decided, by taking that edge. */
+  readonly decidedBy: string;
+  /** The deciding step's own words after its outcome on the `RESULT:` line, or "no reason given". */
+  readonly reason: string;
+}
+
+/** What a skip records when the deciding step gave no reason. */
+export const NO_SKIP_REASON = 'no reason given';
 
 /**
  * The journal kinds a step may write for itself while it is still running.
@@ -411,6 +437,8 @@ export interface RunResult {
   readonly path: readonly string[];
   /** Edge ids in the order they were taken. This is the answer to "which edge, and why". */
   readonly edgesTaken: readonly string[];
+  /** DSP-209 S3: the steps skipped, in the order the edges that skipped them were taken. */
+  readonly skipped: readonly SkippedStep[];
   readonly terminalNodeId: string | null;
   readonly terminalEnding?: TerminalEnding;
   /** Bounds that were spent during the run, whether or not the run then continued. */
@@ -1037,6 +1065,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   const results: RecordedResult[] = [];
   const path: string[] = [];
   const edgesTaken: string[] = [];
+  const skipped: SkippedStep[] = [];
   const limitsReached: string[] = [];
   const occurrences = new Map<string, number>();
   /** A bound is offered to the graph once. The second time it is spent, the run stops. */
@@ -1113,6 +1142,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       endedAtIso: new Date(endedAt).toISOString(),
       path,
       edgesTaken,
+      skipped,
       terminalNodeId: parts.terminalNodeId ?? null,
       ...(parts.terminalEnding === undefined ? {} : { terminalEnding: parts.terminalEnding }),
       limitsReached,
@@ -1762,6 +1792,22 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           },
         },
       );
+      // DSP-209 S3. After the edge line, because the skip is a consequence of taking it.
+      // The edge was chosen above exactly as without `skips`; this only records it.
+      const reason = oneLineReason(execution.reason);
+      for (const skippedId of productEdge.skips ?? []) {
+        skipped.push({ nodeId: skippedId, edgeId: productEdge.id, decidedBy: current.id, reason });
+        record(
+          'node-skipped',
+          `Skipped "${skippedId}": edge "${productEdge.id}", taken from "${current.id}", passes it ` +
+            `by. Reason: ${reason}.`,
+          {
+            nodeId: skippedId,
+            edgeId: productEdge.id,
+            data: { decidedBy: current.id, reason },
+          },
+        );
+      }
       arrival = arrivalOn(productEdge, current, occurrence);
       current = target;
     }
@@ -1778,6 +1824,16 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       });
     }
   }
+}
+
+/**
+ * DSP-209 S3: a skip's reason, on one line, or {@link NO_SKIP_REASON}. One line for the
+ * reason `withRecordFieldsOnOneLine` in `context-snapshot.ts` gives: the reason is written
+ * bare inside DSpatch's own sentences. `\s` covers every line terminator JavaScript knows.
+ */
+export function oneLineReason(reason: string | undefined): string {
+  const flat = (reason ?? '').replace(/\s+/g, ' ').trim();
+  return flat === '' ? NO_SKIP_REASON : flat;
 }
 
 interface SpentBound {
@@ -2011,6 +2067,7 @@ const MARKERS: Readonly<Record<JournalKind, string>> = {
   'person-answered': '?>',
   'result-filed': '[=',
   'resource-governor': '%%',
+  'node-skipped': '~>',
 };
 
 /**

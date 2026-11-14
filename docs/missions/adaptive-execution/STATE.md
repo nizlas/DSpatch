@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 sent to the implementer (coordinator visit 4, call 9).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 sent to the implementer (coordinator visit 5, call 12).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), then the S2 commit made on coordinator visit 4 (`(DSP-209 S2)` in `git log`, the commit after `610fa1a`).
-- **Sub-goal in progress:** S3 (skipped as a visible state), sent to the implementer on coordinator visit 4.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), then the S3 commit made on coordinator visit 5 (`(DSP-209 S3)` in `git log`, the commit after `5c3c1ae`).
+- **Sub-goal in progress:** S4 (adaptive route in the bundled chat loop), sent to the implementer on coordinator visit 5.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
 ## Mapping (planner, run `chat-loop-2026-11-14T01-36-57-404Z`, call 2)
@@ -28,9 +28,9 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | Id | Sub-goal | Depends on | Status | Attempts | Commit |
 | --- | --- | --- | --- | --- | --- |
 | S1 | Context snapshot builder (pure shared code) | — | reviewed | 1 | `610fa1a` |
-| S2 | Carry the snapshot into the chat loop run | S1 | reviewed | 1 | S2 commit after `610fa1a` |
-| S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | in progress | 1 | |
-| S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | pending | 0 | |
+| S2 | Carry the snapshot into the chat loop run | S1 | reviewed | 1 | `5c3c1ae` |
+| S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | reviewed | 1 | S3 commit after `5c3c1ae` |
+| S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | in progress | 1 | |
 | S5 | Agent can recommend interactive work (handoff tool, `handed-over`) | — (S2 useful) | pending | 0 | |
 | S6 | Continue interactively without resubmitting | S5, S1 | pending | 0 | |
 | S7 | The chat knows what a loop did (one-time run recap) | S1 | pending | 0 | |
@@ -63,7 +63,7 @@ Statuses:
 
 **S6 — Continue interactively.** On `handed-over`, one chat turn into the conversation's session, idempotent by run id, with the mandate verbatim, snapshot reference, the run's decisions/results/questions/changed files and the reason; shown as DSpatch's handover, not the person's message; *Use loop* unticked; same tool policy. *Acceptance:* exactly one turn; contains mandate and account; nothing typed; no resend after restart; stored apart from person's text as `resentContext` is. *Checks:* `chat-service` test, `conversation-store` parse test, type check.
 
-**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; make `chatLoopContextSnapshot` fall back to `null` with the failure recorded. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
+**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii) and S3's finding (iii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; move `SkippingRoute` / `skippingRoutesOf` off `outcomeInstructions`'s doc comment in `loop-chat.ts`; make `chatLoopContextSnapshot` fall back to `null` with the failure recorded. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
 
 **S8 — Reconcile parallelism.** Reconciliation section in `CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md` saying which §9 open decisions the vision settles (2–3 agents, worktrees for writers, single integrator, mailbox, slicer as a role), naming the first increment (one-level fan-out of one node with one integration point); GRAPH_FORMAT spec for `fanOut`, the slice block and S5's capability. Documentation only.
 
@@ -100,9 +100,20 @@ Statuses:
 - **Niclas tries:** discuss a change in chat and reject one approach; tick **Use loop**, send "implement that"; open *prompt sent* for the first step (DSpatch context block with the rejection quoted) and a later step (only the person's words); check `context.md` in the run's folder under `loop-runs`; start a second run in the same conversation and check the first is listed.
 - **Steps skipped:** research (code settled it); independent verification (not asked for).
 
-### S3 — Skipped as a visible state
+### S3 — Skipped as a visible state — reviewed (agent review, not Niclas's approval)
 
-- **Attempt 1:** briefed on coordinator visit 4 (call 9). Not yet reviewed.
+- **Attempt 1:** briefed on coordinator visit 4 (call 9); implemented (call 10, `done`); review `accept` (call 11); committed on coordinator visit 5 (call 12).
+- **What was done.** `loop-graph.ts`: optional `LoopEdge.skips` and `LoopNode.required` (empty `skips` read as none). `loop-graph-load.ts` refuses, each with its own finding: `skips-a-missing-node`, `skips-its-own-target`, `skips-its-own-source`, `skips-a-terminal`, `skips-a-required-node`, `bad-required`. `loop-graph-write.ts`: fixed key places; drawings without the fields save byte-identically. `loop-run.ts`: `node-skipped` appended to `JOURNAL_KINDS`; after `edge-taken`, one entry per skipped node with edge, deciding node and reason (one line, "no reason given" fallback); `RunResult.skipped`; reason travels as an optional `reason` on the step's result (the runner reads no prose). `loop-chat.ts`: `declaredReasonFrom()` (text after the outcome word; `declaredOutcomeFrom` unchanged); conversation line `“<label>” skipped: <reason>.`; prompt for a node with a skipping outcome names which outcome skips which steps and asks for a reason after the name ("starting with one of these names" for that node only); `skippingRoutesOf()` used by both prompt builders (`host/project-host.ts`, `main/loop-live-run.ts`). `main/loop-live.ts` passes the reason only when the step's own declared outcome is recorded. `loop-run-view.ts`: `skipped` state and mark; CSS in `loop-editor.css`. `LoopEditor.tsx`: edge field "Steps this connection skips", node box "Required — never skipped", texts from new `loop-node-help.ts` entries. `docs/loop/GRAPH_FORMAT.md`: section "Skipping a step on purpose". New `app/tests/loop-skips.test.ts` (9 tests, in the `loop` group); `loop-graph.test.ts` lists `required`.
+- **Implementer's design choices:** reason on the step's result, not read by the engine from reply text; only outcome edges carry a reason (`success` and declared-failure edges may skip with "no reason given", stated in GRAPH_FORMAT); a skipped node reached later by another route is visited and shows its later state, while `RunResult.skipped` keeps the skip.
+- **Review verdict: accept.** All six criteria met by reading; `selectEdge` untouched. Non-blocking findings: (i) the prompt says "that step is not run", but the engine only records the skip and validation does not check that the edge goes around the skipped step — **carried into S4** (draw the edge around it, and add a validation warning or soften the sentence); (ii) `declaredReasonFrom`'s comment says a `:` after the outcome word is dropped, but both readers take the first space-separated word, so `RESULT: quick: docs only` is not recognised — **carried into S4** (fix the comment or decide on a trailing `:`); (iii) `SkippingRoute` and `skippingRoutesOf` sit between `outcomeInstructions` and its doc comment in `loop-chat.ts` — **carried into S7** with S2's similar finding; (iv) renaming a node does not rename ids in `skips` (as for `delivers`); validation then reports `skips-a-missing-node` — open, stated limitation.
+- **Checked, by the implementer only** (from `app/`, single files): `loop-skips` 9/9, `loop-graph` 41/41, `loop-graph-write` 5/5, `loop-graph-open` 12/12, `loop-run` 36/36, `loop-run-view` 32/32, `loop-chat` 80/80, `loop-node-help` 28/28, `loop-record` 40/40, `loop-transcript` 48/48, `loop-live` 67/67; `npm run typecheck` exit 0. The reviewer read the code and did not rerun. Line endings: the implementer restored CRLF in `project-host.ts` and `loop-live-run.ts` after a `sed -i`; the coordinator's `git diff --stat` showed only the real changes (397 insertions, 12 deletions over 15 files).
+- **Untested:** the look of the editor panels and the skipped mark; the reason passing through the live executor in a real run.
+- **Niclas tries:** in the loop editor, set an edge's "Steps this connection skips" to its own target and see the refusal; tick "Required — never skipped" on a node another edge skips and see that refusal; after S4, a one-line documentation question through **Use loop** showing check as **skipped** with the reason.
+- **Steps skipped:** research (code settled it); independent verification (not asked for).
+
+### S4 — Adaptive route in the bundled chat loop
+
+- **Attempt 1:** briefed on coordinator visit 5 (call 12). Not yet reviewed.
 
 ## Requirements of the vision
 
@@ -118,9 +129,9 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Exclusions apply to every recipient [S1, S2, S11] — open
 - Later user messages are changes to the task [sequential: works today; branches: S11] — open for branches
 - Works across a provider or model change [S1] — met by construction (DSpatch's own record); not exercised across providers
-- Steps may be skipped with a recorded reason [S3, S4] — open
-- Required steps stay required [S3] — open
-- Skipped shown as its own state; available and taken paths shown [S3] — open
+- Steps may be skipped with a recorded reason [S3, S4] — engine and format met by reviewed S3; no bundled loop uses it until S4 — open
+- Required steps stay required [S3] — met by reviewed sub-goal (validation refuses)
+- Skipped shown as its own state; available and taken paths shown [S3] — met by reviewed sub-goal (look untested; Niclas's trial)
 - Explicit routing decisions, not inferred from prose [S3, S5] — open
 - A new decision surfaced, not absorbed [S5; existing blocked routes] — open
 - Recommendation prompt with the user's choice [S5] — open
@@ -178,7 +189,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 4 (call 9).** S2 reviewed and committed. S3 sent to the implementer (no dependencies; research skipped, the planner's map names the code). When the review returns: if accepted, record and commit S3, then brief S4 (depends on S3). If a run ends before S3's review is recorded, the next run reconciles S3's files (`app/src/shared/loop-graph.ts`, `loop-graph-load.ts`, `loop-run.ts`, `loop-run-view.ts`, `loop-chat.ts`, `loop-node-help.ts`, `app/src/renderer/GraphCanvas.tsx` and its CSS, `docs/loop/GRAPH_FORMAT.md`, their tests) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 5 (call 12).** S3 reviewed and committed. S4 sent to the implementer, carrying S3's review findings (i) and (ii). When the review returns: if accepted, record and commit S4, then brief S5 (no hard dependency). If a run ends before S4's review is recorded, the next run reconciles S4's files (`docs/loop/graphs/dspatch-chat-loop.graph.json`, `docs/loop/roles/project/project-work.role.md`, `app/src/shared/loop-transcript.ts`, `loop-graph-load.ts`, `loop-chat.ts`, their tests) before briefing again.
 
 ## Run log
 

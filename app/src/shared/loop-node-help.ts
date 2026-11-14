@@ -58,6 +58,27 @@ export interface SettingHelp {
   readonly whenEmpty: string;
 }
 
+/** DSP-209 S3: an edge's `skips`, as the edge panel explains it. */
+export const SKIPS_HELP: SettingHelp = {
+  name: 'Steps this connection skips',
+  detail:
+    'Taking this connection passes the named steps by on purpose. The run records each one as ' +
+    'skipped, with the reason the deciding step gives after its outcome on its RESULT: line, and ' +
+    'the drawing marks it skipped rather than not reached. It does not change which connection ' +
+    'is taken. A required step, a terminal, and the connection\'s own two ends cannot be skipped. ' +
+    'A skipped step reached later by another route runs as usual.',
+  whenEmpty: 'Taking this connection skips nothing.',
+};
+
+/** DSP-209 S3: a node's `required`, as the node panel explains it. */
+export const REQUIRED_HELP: SettingHelp = {
+  name: 'Required — never skipped',
+  detail:
+    'No connection may name this step in what it skips; a drawing where one does is refused ' +
+    'when it is checked.',
+  whenEmpty: 'A connection may skip this step, if the drawing says so on that connection.',
+};
+
 /** The four bounds a graph or a node may set. */
 export type LimitKey = 'maxCalls' | 'maxReworkRounds' | 'maxMinutes' | 'maxTasks';
 

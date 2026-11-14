@@ -556,6 +556,11 @@ export interface LoopNode {
   /** One sentence on what this step is for. */
   readonly purpose?: string;
   /**
+   * DSP-209 S3: this step is never skipped. An edge whose `skips` names it is refused by
+   * validation. Only `true` is written; absent means the drawing allows skipping it.
+   */
+  readonly required?: true;
+  /**
    * What arriving here means for the assignment. Terminals only. See {@link TerminalEnding}.
    */
   readonly ending?: TerminalEnding;
@@ -698,6 +703,18 @@ export interface LoopEdge {
    * way it checks `consumes`, and the node panel shows what each arrival brings.
    */
   readonly delivers?: readonly string[];
+  /**
+   * DSP-209 S3: the steps taking this edge skips, by node id.
+   *
+   * Declared in the drawing, never inferred: a node that is merely not visited is
+   * `not-reached`, and only a node named here, on an edge the run actually took, is
+   * `skipped`. The runner journals one `node-skipped` per id, with the deciding step's own
+   * reason from its `RESULT:` line. Routing is unchanged: the edge is chosen exactly as it
+   * would be without this field. Validation refuses an unknown id, a `required` node, a
+   * terminal, and the edge's own source or target. A skipped node reached later by another
+   * path is visited as usual.
+   */
+  readonly skips?: readonly string[];
   /** What the figure writes on the arrow. Falls back to the condition. */
   readonly label?: string;
   readonly notes?: string;
@@ -959,6 +976,19 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
       'so a later rework cannot be handed an older review. The same two paths that hand nothing ' +
       'over at all still hand nothing over: a dry run files nothing, and an executor that ' +
       'ignores StepContext.received is given them and uses none.',
+  },
+  {
+    attribute: 'skips',
+    honoured: true,
+    by: 'DSP-209 S3. Taking the edge journals "node-skipped" for each named step, with the deciding step\'s reason from its RESULT: line, and the run view marks those steps skipped.',
+    caveat:
+      'It records a skip; it does not route. The edge is chosen exactly as it would be without ' +
+      'the field, and a skipped step reached later by another path is visited as usual.',
+  },
+  {
+    attribute: 'required',
+    honoured: true,
+    by: 'DSP-209 S3. Validation refuses any edge whose "skips" names a required step.',
   },
   { attribute: 'view', honoured: true, by: 'DSP-22, the editor. Presentation only; it never affects meaning.' },
   {

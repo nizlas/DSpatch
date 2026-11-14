@@ -91,6 +91,7 @@ const AREAS = {
       'loop-results.test.ts',
       'loop-run.test.ts',
       'loop-run-audience.test.ts',
+      'loop-skips.test.ts',
       'loop-stop-means-stop.test.ts',
       'loop-transcript.test.ts',
       'resource-governor.test.ts',

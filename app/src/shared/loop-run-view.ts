@@ -59,7 +59,14 @@ export type NodeRunState =
   | 'active'
   | 'finished'
   | 'failed'
-  | 'stopped';
+  | 'stopped'
+  /**
+   * DSP-209 S3: passed by on purpose, because the edge the run took names this step in
+   * `skips`. Not `not-reached`, which says nothing was decided about it, and never
+   * finished: it did not run. A later visit by another path replaces it with that visit's
+   * own state, the latest statement winning as everywhere here.
+   */
+  | 'skipped';
 
 /**
  * The mark each state carries, and the class that draws it.
@@ -111,6 +118,11 @@ export const NODE_RUN_STATE_MARKS: Readonly<
     mark: 'stopped',
     label: 'entered, and the run ended before it produced anything',
     className: 'node-run-stopped',
+  },
+  skipped: {
+    mark: 'skipped',
+    label: 'skipped on purpose: the route taken passes it by, with the reason in the run',
+    className: 'node-run-skipped',
   },
 };
 
@@ -428,6 +440,10 @@ export function nodeRunStates(
         break;
       case 'runtime-fault':
         states.set(nodeId, 'failed');
+        break;
+      // DSP-209 S3. Only this line makes a node skipped; a node never entered stays not-reached.
+      case 'node-skipped':
+        states.set(nodeId, 'skipped');
         break;
       default:
         // `edge-taken` and `limit-reached` name a node without changing what that

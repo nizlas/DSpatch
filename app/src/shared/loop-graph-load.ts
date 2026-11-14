@@ -564,12 +564,24 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       findings,
     );
     const view = parseView(entry['view'], `${pointer}/view`, nodeId, findings);
+    // DSP-209 S3. Only `true` says anything; absent is the default and stays absent.
+    const required = entry['required'];
+    if (required !== undefined && required !== true) {
+      findings.error(
+        'bad-required',
+        `${pointer}/required`,
+        `Node "${nodeId}": "required" can only be true, meaning no edge may skip this step. ` +
+          `Leave it out to allow skipping.`,
+        { nodeId },
+      );
+    }
 
     nodes.push({
       id: nodeId,
       kind: kind as NodeKind,
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['purpose']) ? { purpose: entry['purpose'] as string } : {}),
+      ...(required === true ? { required: true as const } : {}),
       ...(ending ? { ending } : {}),
       ...(role ? { role } : {}),
       ...(model ? { model } : {}),
@@ -1037,12 +1049,16 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
     // earlier result. `parseStringList` returns null for a field nobody wrote, which is
     // the silence that falls back to the node's own `consumes`.
     const delivers = parseDelivers(entry['delivers'], `${pointer}/delivers`, edgeId, findings);
+    // DSP-209 S3. Absent and [] both mean the edge skips nothing, so only a non-empty list is
+    // kept on the parsed edge; a graph without the field parses exactly as before.
+    const skips = parseDelivers(entry['skips'], `${pointer}/skips`, edgeId, findings, 'skips');
     edges.push({
       id: edgeId,
       from,
       to,
       when,
       ...(delivers === null ? {} : { delivers }),
+      ...(skips === null ? {} : { skips }),
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['notes']) ? { notes: entry['notes'] as string } : {}),
     });
@@ -1062,17 +1078,21 @@ function parseDelivers(
   pointer: string,
   edgeId: string,
   findings: Findings,
+  field: 'delivers' | 'skips' = 'delivers',
 ): readonly string[] | null {
   if (value === undefined) {
     return null;
   }
   if (!Array.isArray(value)) {
     findings.error(
-      'bad-delivers',
+      field === 'delivers' ? 'bad-delivers' : 'bad-skips',
       pointer,
-      `Edge "${edgeId}": "delivers" must be a list of node ids — which earlier steps' ` +
-        `results this arrival hands to the step it leads to. Leave it out entirely for the ` +
-        `step's own "consumes" to decide, and write [] to say this arrival hands over nothing.`,
+      field === 'delivers'
+        ? `Edge "${edgeId}": "delivers" must be a list of node ids — which earlier steps' ` +
+            `results this arrival hands to the step it leads to. Leave it out entirely for the ` +
+            `step's own "consumes" to decide, and write [] to say this arrival hands over nothing.`
+        : `Edge "${edgeId}": "skips" must be a list of node ids — the steps taking this edge ` +
+            `passes by on purpose. Leave it out when the edge skips nothing.`,
       { edgeId },
     );
     return null;
@@ -1093,13 +1113,16 @@ function parseDelivers(
       findings.error(
         'duplicate-name',
         `${pointer}/${String(index)}`,
-        `Edge "${edgeId}" delivers "${item}" twice.`,
+        `Edge "${edgeId}" ${field === 'delivers' ? 'delivers' : 'skips'} "${item}" twice.`,
         { edgeId },
       );
       return;
     }
     items.push(item);
   });
+  if (field === 'skips' && items.length === 0) {
+    return null;
+  }
   return items;
 }
 
@@ -1872,6 +1895,69 @@ function checkResultFlow(
       }
     }
   }
+
+  // DSP-209 S3: what an edge may skip. Each refusal has its own finding, because each says
+  // something different about the drawing and has a different fix.
+  for (const edge of graph.edges) {
+    if (edge.skips === undefined) {
+      continue;
+    }
+    const pointer = `${edgePointerOf.get(edge.id) ?? '/edges'}/skips`;
+    const ids: Ids = { edgeId: edge.id };
+    for (const skippedId of edge.skips) {
+      const skipped = byId.get(skippedId);
+      if (skipped === undefined) {
+        findings.error(
+          'skips-a-missing-node',
+          pointer,
+          `Edge "${edge.id}" skips "${skippedId}", which is not a node in this graph.`,
+          ids,
+        );
+        continue;
+      }
+      if (skippedId === edge.to) {
+        findings.error(
+          'skips-its-own-target',
+          pointer,
+          `Edge "${edge.id}" skips "${skippedId}", which is the step it leads to. Taking the ` +
+            `edge starts that step, so it cannot also pass it by.`,
+          ids,
+        );
+        continue;
+      }
+      if (skippedId === edge.from) {
+        findings.error(
+          'skips-its-own-source',
+          pointer,
+          `Edge "${edge.id}" skips "${skippedId}", which is the step it leaves. That step has ` +
+            `just run and decided to take this edge, so it was not skipped.`,
+          ids,
+        );
+        continue;
+      }
+      if (skipped.kind === 'terminal') {
+        findings.error(
+          'skips-a-terminal',
+          pointer,
+          `Edge "${edge.id}" skips "${skippedId}", which is a terminal. A terminal is where a ` +
+            `run ends, not a step to pass by; draw the edge to the terminal that says how this ` +
+            `path ends instead.`,
+          ids,
+        );
+        continue;
+      }
+      if (skipped.required === true) {
+        findings.error(
+          'skips-a-required-node',
+          pointer,
+          `Edge "${edge.id}" skips "${skippedId}", which is marked "required": this step is ` +
+            `never to be skipped. Remove it from "skips", or remove "required" from the step if ` +
+            `skipping it is right.`,
+          ids,
+        );
+      }
+    }
+  }
 }
 
 function reportNotYetHonoured(graph: LoopGraph, findings: Findings): void {
@@ -1918,6 +2004,9 @@ function reportNotYetHonoured(graph: LoopGraph, findings: Findings): void {
   for (const edge of graph.edges) {
     if (edge.delivers !== undefined) {
       note('delivers', `edge ${edge.id}`);
+    }
+    if (edge.skips !== undefined) {
+      note('skips', `edge ${edge.id}`);
     }
   }
 

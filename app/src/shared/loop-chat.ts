@@ -13,7 +13,7 @@ import type { LoopEdge, LoopGraph, LoopNode, NodeKind, ResultForm } from './loop
 import { kindEffect } from './loop-node-help';
 import { type LiveBinding } from './loop-editor-run';
 import { describeApprovalRule, describeGateEvidenceRule, type SuccessRoute } from './loop-results';
-import type { RunJournalEntry } from './loop-run';
+import { NO_SKIP_REASON, type RunJournalEntry } from './loop-run';
 import { describeWorkingRootsForAgent, type WorkingRoot } from './working-roots';
 
 /**
@@ -604,6 +604,38 @@ export function declaredOutcomeFrom(
 }
 
 /**
+ * DSP-209 S3: the step's reason for an outcome, from its own `RESULT:` line.
+ *
+ * The companion of {@link declaredOutcomeFrom} and never a replacement: it is asked only
+ * after that has settled the outcome, and it reads the text after the outcome word on the
+ * first `RESULT:` line naming that outcome — `RESULT: done-unchecked documentation only`
+ * gives "documentation only". A separator the agent put between the two (`:`, `-`, `—`,
+ * `–`, `(`) is dropped, as is a closing bracket or Markdown emphasis around the line.
+ * `null` when there is no such line or nothing after the word.
+ */
+export function declaredReasonFrom(text: string, outcome: string): string | null {
+  for (const raw of text.split(/\r?\n/)) {
+    const opening = raw.trim().replace(/^[*_\s]+/, '');
+    if (!opening.startsWith(RESULT_TOKEN)) {
+      continue;
+    }
+    const rest = opening.slice(RESULT_TOKEN.length).trim();
+    const token = (rest.split(/\s+/)[0] ?? '').replace(/[*_]+$/, '');
+    if (token !== outcome) {
+      continue;
+    }
+    const reason = rest
+      .slice(rest.indexOf(token) + token.length)
+      .replace(/^[*_]+/, '')
+      .replace(/^[\s:;,.\-–—(]+/, '')
+      .replace(/[\s*_)]+$/, '')
+      .trim();
+    return reason === '' ? null : reason;
+  }
+  return null;
+}
+
+/**
  * What an agent step that produced no text at all should be read as.
  *
  * DSP-57 #1: **an empty reply must never be reported as a successful result.**
@@ -806,14 +838,57 @@ function rolePreamble(role: ChatRoleText | null | undefined): readonly string[] 
  * its success edge regardless. A prompt that leaves an agent no true answer gets an
  * invented one, which is the failure mode the whole card is about.
  */
+/** DSP-209 S3: an outcome of a node whose edge skips steps, as the prompt names it. */
+export interface SkippingRoute {
+  readonly outcome: string;
+  /** The skipped steps, by label where the drawing has one. */
+  readonly skips: readonly string[];
+}
+
+/**
+ * DSP-209 S3: the outcomes of this node whose edge declares `skips`, for its prompt.
+ *
+ * Outcome edges only, because the reason is read after the outcome word on the `RESULT:`
+ * line: a `success` or declared-failure edge that skips records "no reason given".
+ */
+export function skippingRoutesOf(graph: Pick<LoopGraph, 'edges' | 'nodes'>, nodeId: string): readonly SkippingRoute[] {
+  return graph.edges
+    .filter((edge) => edge.from === nodeId && edge.when.on === 'outcome' && (edge.skips ?? []).length > 0)
+    .map((edge) => ({
+      outcome: edge.when.on === 'outcome' ? edge.when.outcome : '',
+      skips: (edge.skips ?? []).map((id) => {
+        const label = graph.nodes.find((node) => node.id === id)?.label;
+        return label === undefined || label === id ? `"${id}"` : `"${label}" (${id})`;
+      }),
+    }));
+}
+
 function outcomeInstructions(
   node: Pick<LoopNode, 'outcomes' | 'whenUndeclared' | 'declaredFailures'>,
+  skipping: readonly SkippingRoute[] = [],
 ): readonly string[] {
   const verdicts = node.outcomes ?? [];
   const failures = (node.declaredFailures ?? []).filter((name) => !verdicts.includes(name));
   if (verdicts.length === 0 && failures.length === 0) {
     return [];
   }
+  // Only a node with a skipping route is told anything new; every other prompt is unchanged.
+  const skipRoutes = skipping.filter((route) => verdicts.includes(route.outcome));
+  const skipLines =
+    skipRoutes.length === 0
+      ? []
+      : [
+          ...skipRoutes.map(
+            (route) =>
+              `Naming ${route.outcome} skips ${route.skips.join(', ')}: ` +
+              `${route.skips.length === 1 ? 'that step is' : 'those steps are'} not run, and the run ` +
+              `records ${route.skips.length === 1 ? 'it' : 'them'} as skipped, not as done.`,
+          ),
+          `If you name ${skipRoutes.length === 1 ? 'that outcome' : 'one of those outcomes'}, put a short ` +
+            'reason after the name on the same line, saying why skipping is right here — for example ' +
+            `${RESULT_TOKEN} ${skipRoutes[0]?.outcome ?? ''} the change is documentation only. The run ` +
+            'records that reason with the skip. After any other name, nothing else goes on the line.',
+        ];
   const failureLines =
     failures.length === 0
       ? []
@@ -831,8 +906,11 @@ function outcomeInstructions(
     ...(verdicts.length === 0
       ? []
       : [
-          'When you finish this step, write a whole line exactly in this form, using one of these names and nothing else on that line:',
+          skipLines.length === 0
+            ? 'When you finish this step, write a whole line exactly in this form, using one of these names and nothing else on that line:'
+            : 'When you finish this step, write a whole line in this form, starting with one of these names:',
           ...verdicts.map((name) => `${RESULT_TOKEN} ${name}`),
+          ...skipLines,
         ]),
     ...failureLines,
     resultLineSentence(node),
@@ -1263,13 +1341,18 @@ export function chatPromptFor(
      * mandate. Absent leaves every prompt byte for byte what it was.
      */
     readonly context?: { readonly text: string; readonly personWordsText: string };
+    /**
+     * DSP-209 S3: this node's outcomes whose edge skips steps, from
+     * {@link skippingRoutesOf}. Absent or empty leaves every prompt byte for byte what it was.
+     */
+    readonly skipping?: readonly SkippingRoute[];
   },
 ): string {
   const fromDrawing = options.mandateFrom === 'drawing';
   const precedence = fromDrawing ? DRAWING_TASK_PRECEDENCE : TASK_PRECEDENCE;
   const preamble = rolePreamble(options.role);
   const declared = declarationInstructions(node.declaredFailures);
-  const results = outcomeInstructions(node);
+  const results = outcomeInstructions(node, options.skipping);
   // After the role and before the mandate, for the reason `rolePreamble` gives about
   // order: where the folders are is part of understanding the work, and a model that
   // reads the task before it knows there are two folders has already started planning
@@ -2120,6 +2203,17 @@ export function formatChatLiveLogLine(
     // change of the health it only observed stays in the journal, so observe mode adds no chatter.
     case 'resource-governor':
       return entry.data?.['acted'] === true ? entry.detail : null;
+    // DSP-209 S3. Said in the conversation, because a step passed by is part of the path a
+    // person has to see. "Skipped", never finished or passed: it did not run.
+    case 'node-skipped': {
+      const node = entry.nodeId === undefined ? null : lookup.node(entry.nodeId);
+      const label = node?.label ?? entry.nodeId ?? 'a step';
+      const reason =
+        typeof entry.data?.['reason'] === 'string' && entry.data['reason'].trim() !== ''
+          ? entry.data['reason'].trim()
+          : NO_SKIP_REASON;
+      return `“${label}” skipped: ${reason}.`;
+    }
     default: {
       // Every journal kind, listed. This is what the switch was missing on 20 September
       // 2026, when an edit that appeared only to *add* a case silently removed

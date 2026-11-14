@@ -59,6 +59,7 @@ import {
   declaredFailureFrom,
   declaredFailureLineFrom,
   declaredOutcomeFrom,
+  declaredReasonFrom,
   describeRunChange,
   describeSnapshotChange,
   emptyReplyOutcome,
@@ -2618,9 +2619,16 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       node.produces === undefined || node.produces.form === 'none' || filesItsOwn
         ? undefined
         : turn.assistantText();
+    // DSP-209 S3: the step's own reason, only where the outcome it declared is the one that
+    // stands. An outcome DSpatch put in its place has no reason from the step.
+    const reason =
+      product === declaredProduct && product.kind === 'outcome' && product.source === 'step-declared'
+        ? declaredReasonFrom(turn.assistantText(), product.outcome)
+        : null;
     return remember(context, {
       product,
       ...(resultBody === undefined ? {} : { resultBody }),
+      ...(reason === null ? {} : { reason }),
       summary:
         `One provider turn. Requested ${options.modelRequested}, reported ` +
         `${inspection.modelReported ?? 'unknown'}. Snapshot ${snapshotIdFor(before)} â†’ ` +

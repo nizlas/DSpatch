@@ -134,6 +134,8 @@ import {
   requirementStandings,
   undeclaredStanding,
   LIMIT_KEYS,
+  REQUIRED_HELP,
+  SKIPS_HELP,
 } from '../shared/loop-node-help';
 import { GraphCanvas } from './GraphCanvas';
 import { Markdown } from './Markdown';
@@ -3492,6 +3494,23 @@ function NodeInspector({
           </select>
         </label>
 
+        {node.kind === 'terminal' ? null : (
+          <label className="check setting">
+            <input
+              type="checkbox"
+              checked={node.required === true}
+              onChange={(event) => onChange({ ...node, required: event.target.checked ? true : undefined })}
+            />
+            <span className="setting-name">
+              {REQUIRED_HELP.name} <code>required</code>
+            </span>
+            <span className="muted">
+              {' '}
+              {node.required === true ? REQUIRED_HELP.detail : REQUIRED_HELP.whenEmpty}
+            </span>
+          </label>
+        )}
+
         {node.kind !== 'terminal' ? null : (
           <label>
             Terminal outcome
@@ -4048,6 +4067,20 @@ function EdgeInspector({
               edge.delivers.length === 1 ? 'that one' : 'those'
             }, instead of what it normally consumes. Each is bound to the visit this run actually
             made, so coming back a third time does not pick up the first time's work.`}
+      </p>
+
+      <label>
+        {SKIPS_HELP.name} <code>skips</code>
+        <input
+          value={(edge.skips ?? []).join(', ')}
+          placeholder="empty — taking this connection skips nothing"
+          onChange={(event) => onChange({ ...edge, skips: splitList(event.target.value) })}
+        />
+      </label>
+      <p className="muted">
+        {edge.skips === undefined || edge.skips.length === 0
+          ? SKIPS_HELP.whenEmpty
+          : `Skips ${edge.skips.map((id) => nodeById(graph, id)?.label ?? id).join(', ')}. ${SKIPS_HELP.detail}`}
       </p>
 
       <label>

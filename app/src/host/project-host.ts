@@ -56,6 +56,7 @@ import {
 import {
   boundedPathList,
   chatPromptFor,
+  skippingRoutesOf,
   describeChosenLoopBinding,
   lookupFromGraph,
   modelForChatNode,
@@ -3156,6 +3157,8 @@ function registerLoopMethods(): void {
               ...(contextSnapshot === null
                 ? {}
                 : { context: { text: contextSnapshot.text, personWordsText: contextSnapshot.personWordsText } }),
+              // DSP-209 S3. Which outcomes skip which steps; empty for every node without one.
+              skipping: skippingRoutesOf(loaded.graph, node.id),
             });
             // DSP-32. The one place a step's prompt is built is the one place a
             // waiting message can be handed over, and draining it here means the
