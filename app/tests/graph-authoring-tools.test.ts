@@ -14,9 +14,11 @@ import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { graphAuthoringTools, type GraphAuthoringHost } from '../src/host/graph-authoring-tools';
+import { saveGraphChecked } from '../src/host/graph-save';
+import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { graphContentHash, isNewLoopTarget, supersedeWith, type GraphEditProposal } from '../src/shared/graph-proposal';
 import { parseLoopDefinition } from '../src/shared/loop-definition';
-import { parseLoopGraph } from '../src/shared/loop-graph-load';
+import { hasErrors, loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const scratchRoots: string[] = [];
@@ -45,6 +47,8 @@ function graph(id: string, nodes: readonly Record<string, unknown>[], edges: rea
     2,
   )}\n`;
 }
+
+const ROLE_WORKER = ['---', 'role: worker', 'title: Worker', 'summary: Does the work.', 'targets: cursor', '---', '', '## Purpose', '', 'You do the work the mandate asks for.'].join('\n');
 
 const TINY = graph(
   'tiny',
@@ -158,7 +162,7 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
     const draft = graph(
       'fresh',
       [
-        { id: 'start', kind: 'agent', label: 'Work', role: { id: 'fresh-worker', source: { kind: 'role-source', path: '.dspatch/loops/roles/fresh-worker.role.md' } } },
+        { id: 'start', kind: 'agent', label: 'Work', role: { id: 'worker', source: { kind: 'role-source', path: '.dspatch/loops/roles/fresh-worker.role.md' } } },
         { id: 'done', kind: 'terminal', label: 'Done' },
       ],
       [{ id: 'e1', from: 'start', to: 'done', when: { on: 'success' } }],
@@ -167,7 +171,7 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
       target: 'new:fresh',
       graphText: draft,
       explanation: 'One step and an ending.',
-      roleFiles: ['worker\nYou do the work the mandate asks for.'],
+      roleFiles: [ROLE_WORKER],
     });
     assert.equal(answer.isError, false, answer.text);
     const proposal = kept()[0];
@@ -183,6 +187,64 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
     // A new loop whose id is taken is refused.
     const taken = await tool(host, 'propose_loop_graph')({ target: 'new:tiny', graphText: draft, explanation: 'Again.' });
     assert.equal(taken.isError, true);
+  });
+
+  it('gives a project without roles a loop from what the tools say alone, its roles in the same proposal, written only by Apply', async () => {
+    // A project with nothing of DSpatch's in it: no .dspatch folder, no role files.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-graph-tools-bare-'));
+    scratchRoots.push(root);
+    fs.writeFileSync(path.join(root, 'README.md'), 'A project.\n');
+    const { host, kept } = hostFor(root);
+    const files = (): readonly string[] => fs.readdirSync(root, { recursive: true }).map(String).sort();
+    const before = files();
+
+    // The agent's only source: the building blocks' smallest graph and role source.
+    const blocks = (await tool(host, 'describe_loop_building_blocks')({})).text;
+    const graphText = /```json\n([\s\S]*?)\n```/.exec(blocks)?.[1];
+    const roleText = /```markdown\n([\s\S]*?)\n```/.exec(blocks)?.[1];
+    assert.ok(graphText !== undefined && roleText !== undefined, 'the building blocks show a graph and a role source');
+    assert.ok(!blocks.includes('GRAPH_FORMAT.md'), 'nothing points at a file in DSpatch’s own repository');
+
+    // A guessed path is refused with the reference that works.
+    const guessed = graphText.replace('.dspatch/loops/roles/example-worker.role.md', '.dspatch/roles/worker.role.md');
+    const wrong = await tool(host, 'propose_loop_graph')({ target: 'new:example', graphText: guessed, explanation: 'One step.', roleFiles: [roleText] });
+    assert.equal(wrong.isError, true);
+    assert.ok(wrong.text.includes('{"id":"worker","source":{"kind":"role-source","path":".dspatch/loops/roles/example-worker.role.md"}}'), wrong.text);
+    // A role text that is not a role source is refused with what is wrong and the form to use.
+    const plain = await tool(host, 'propose_loop_graph')({ target: 'new:example', graphText, explanation: 'One step.', roleFiles: ['worker\nDo the work.'] });
+    assert.equal(plain.isError, true);
+    assert.match(plain.text, /not a role source[\s\S]*---\nrole: worker/);
+    assert.deepEqual(kept(), []);
+
+    const answer = await tool(host, 'propose_loop_graph')({ target: 'new:example', graphText, explanation: 'One step.', roleFiles: [roleText] });
+    assert.equal(answer.isError, false, answer.text);
+    const proposal = kept()[0];
+    assert.ok(proposal !== undefined);
+    const rolePath = path.join(root, '.dspatch', 'loops', 'roles', 'example-worker.role.md');
+    assert.deepEqual(
+      isNewLoopTarget(proposal.target) ? [proposal.target.newLoop.graphPath, proposal.target.newLoop.definitionPath, ...proposal.roleFiles.map((file) => file.path)] : [],
+      [path.join(root, '.dspatch', 'loops', 'example.graph.json'), path.join(root, '.dspatch', 'loops', 'example.loop.json'), rolePath],
+      'the proposal holds the graph, the definition and the role, which the card lists',
+    );
+    assert.deepEqual(files(), before, 'proposing wrote nothing');
+
+    const context = (activeRunGraphId: string | null) => ({
+      projectFolders: [root],
+      activeRunGraphId,
+      proposal: () => kept().find((each) => each.id === proposal.id) ?? null,
+      keep: () => undefined,
+    });
+    const act = (action: 'apply' | 'discard', activeRunGraphId: string | null = null) =>
+      saveGraphChecked({ path: '', text: '', proposal: { conversationId: 'conv-1', proposalId: proposal.id, action } }, context(activeRunGraphId));
+    assert.equal(act('discard').kind, 'refused');
+    assert.deepEqual(files(), before, 'Discard wrote nothing');
+    assert.equal(act('apply', 'example').kind, 'refused', 'not while a run of it is active');
+    assert.deepEqual(files(), before);
+    assert.equal(act('apply').kind, 'written');
+    assert.equal(fs.readFileSync(rolePath, 'utf8'), `${roleText}\n`);
+    // Once written, the graph reads from disk without errors: the role resolves as it did when proposed.
+    const loaded = loadLoopGraph(fs.readFileSync(path.join(root, '.dspatch', 'loops', 'example.graph.json'), 'utf8'), { resolveRole: createFileRoleResolver(root) });
+    assert.ok(!hasErrors(loaded.findings), JSON.stringify(loaded.findings));
   });
 
   it('reads the graph as it is on disk, with what was changed by hand since the last applied proposal', async () => {

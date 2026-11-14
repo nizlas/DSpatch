@@ -71,7 +71,15 @@ function resolveOnce(root: string, reference: RoleReference): ResolvedRole | nul
   } catch {
     return null;
   }
+  return resolveRoleText(text, reference, requested);
+}
 
+/**
+ * A role file's text, read as the file at `requested` would be. A chat proposal's new role
+ * files are checked through this before they exist (DSP-209 S23a), so a role that passes there
+ * reads the same once Apply has written it.
+ */
+export function resolveRoleText(text: string, reference: RoleReference, requested: string): ResolvedRole | null {
   if (reference.source.kind === 'role-source') {
     return resolveRoleSource(text, reference);
   }

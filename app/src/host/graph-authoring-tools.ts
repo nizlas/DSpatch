@@ -19,6 +19,12 @@
  * The tools read only what the chat agent can already read: the open folders and DSpatch's own
  * loops. A new loop's place is decision 50's: `<first folder>/.dspatch/loops/<id>.loop.json`
  * and `<id>.graph.json`, with new roles at `.dspatch/loops/roles/<id>-<role>.role.md`.
+ *
+ * A project with no roles of its own can still be given a loop: its roles go in the same
+ * proposal, as role sources, and are checked as the file will read once Apply has written it.
+ * The tools say where such a role goes and how a node refers to it — in the building blocks, in
+ * the tool's description and in every answer about roles — so the agent never has to read
+ * DSpatch's own files or guess a path.
  */
 
 import fs from 'node:fs';
@@ -26,7 +32,8 @@ import path from 'node:path';
 
 import type { AppTool, AppToolResult } from '../adapter/types';
 import { discoverLoopDefinitions, type LoopDefinitionRow } from '../main/loop-definition-files';
-import { createFileRoleResolver } from '../main/loop-graph-roles';
+import { createFileRoleResolver, resolveRoleText } from '../main/loop-graph-roles';
+import { parseRoleSource, ROLE_SECTIONS } from '../main/role-source';
 import {
   createProposal,
   describeChangeLines,
@@ -42,6 +49,7 @@ import {
   NODE_KINDS,
   REQUIREMENTS,
   RUN_PROVIDER_CAPABILITIES,
+  type RoleReference,
   type RoleResolver,
   type RunProvider,
 } from '../shared/loop-graph';
@@ -78,6 +86,77 @@ export interface GraphAuthoringHost {
 
 /** The ids a new loop and its roles may take: lower case, digits and hyphens. */
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/** The smallest role source a proposal can add: the form every `role-source` reference is read in. */
+const ROLE_SOURCE_EXAMPLE = [
+  '---',
+  'role: worker',
+  'title: Worker',
+  'summary: "Do the work the mandate asks for and say what was done."',
+  `targets: ${LOOP_TARGETS[0]}`,
+  '---',
+  '',
+  '## Purpose',
+  '',
+  'Do the work the mandate asks for.',
+  '',
+  '## Delivery',
+  '',
+  'Say what you changed and how you checked it.',
+].join('\n');
+
+/** The rules of a role source, as `parseRoleSource` holds them. */
+const ROLE_SOURCE_RULES =
+  '`role` is its id (lower case, digits, hyphens) and is the id a node references; `title` and `summary` are required; ' +
+  `\`targets\` lists the frameworks it supports (${LOOP_TARGETS.join(', ')}) and must include the graph's own target; ` +
+  `\`requires\` is optional (${REQUIREMENTS.join(', ')}). The prose goes under the headings ` +
+  `${ROLE_SECTIONS.map((section) => `## ${section[0]?.toUpperCase() ?? ''}${section.slice(1)}`).join(', ')}, in that order, ` +
+  '`## Purpose` required and nothing outside them.';
+
+/** Where a new role of `loopId` goes, as a path from the loop's resource root. */
+function rolePlace(loopsDir: string, resourceRoot: string, loopId: string, role: string): { readonly file: string; readonly reference: string } {
+  const file = path.join(loopsDir, 'roles', `${loopId}-${role}.role.md`);
+  return { file, reference: path.relative(resourceRoot, file).split(path.sep).join('/') };
+}
+
+/** A node's role reference, written out as the graph file wants it. */
+function referenceText(role: string, referencePath: string): string {
+  return JSON.stringify({ id: role, source: { kind: 'role-source', path: referencePath } });
+}
+
+/** The smallest graph that uses the role above, for a new loop "example". */
+function graphExample(): string {
+  return JSON.stringify(
+    {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'example',
+      name: 'Example loop',
+      purpose: 'What the loop is for, in a sentence or two.',
+      target: LOOP_TARGETS[0],
+      entry: 'work',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [],
+      nodes: [
+        { id: 'work', kind: 'agent', label: 'Do the work', role: { id: 'worker', source: { kind: 'role-source', path: '.dspatch/loops/roles/example-worker.role.md' } } },
+        { id: 'done', kind: 'terminal', label: 'Done' },
+      ],
+      edges: [{ id: 'e-done', from: 'work', to: 'done', when: { on: 'success' } }],
+    },
+    null,
+    2,
+  );
+}
+
+/** The findings that are about a node's role, after which the agent is told how roles are referenced. */
+const ROLE_FINDINGS = new Set([
+  'agent-without-role',
+  'role-without-source',
+  'bad-role-source-kind',
+  'role-does-not-resolve',
+  'role-id-mismatch',
+  'role-does-not-support-target',
+]);
 
 function ok(text: string): AppToolResult {
   return { text, isError: false };
@@ -187,14 +266,20 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
         'the proposal is kept on this conversation, and only the person can apply it. The draft is ' +
         'checked first; if it has errors they are returned and nothing is kept, so fix them and ' +
         'propose again. target is a loop id from list_loops, or "new:<id>" for a new loop in this ' +
-        'project. Each roleFiles entry is a new role: its name on the first line, then the role text.',
+        'project. Every agent node needs a role. A role the project does not have yet goes in ' +
+        'roleFiles, in the same proposal, written to disk only when the person applies it: each ' +
+        'entry is a whole role source (describe_loop_building_blocks shows one). A new role R of ' +
+        'loop L is placed at .dspatch/loops/roles/L-R.role.md, and a node references it as ' +
+        '{"id": "R", "source": {"kind": "role-source", "path": ".dspatch/loops/roles/L-R.role.md"}}; ' +
+        'for a new loop the path is from the project folder.',
       parameters: {
         target: { type: 'string', description: 'A loop id from list_loops, or "new:<id>" with a lower-case id.' },
         graphText: { type: 'string', description: 'The whole graph file, in the dspatch-loop-graph format.' },
         explanation: { type: 'string', description: 'Why this graph, in your words. Shown to the person as yours.' },
         roleFiles: {
           type: 'string-list',
-          description: 'New roles: each entry is the role name (lower case, hyphens) on the first line, then its text.',
+          description:
+            'New roles: each entry is one whole role source, starting with its "---" field block; its "role" field is the id a node references.',
           optional: true,
         },
       },
@@ -281,20 +366,44 @@ function propose(
     resourceRoot = row.resourceRoot;
   }
 
-  // New roles: created beside the loop, never over an existing file.
+  // New roles: role sources, created beside the loop, never over an existing file.
   const roleFiles: ProposedRoleFile[] = [];
-  for (const entry of roleArgs) {
-    const [first, ...rest] = entry.split(/\r?\n/);
-    const role = (first ?? '').trim();
-    if (!SLUG.test(role) || rest.join('\n').trim() === '') {
-      return refuse(`A roleFiles entry needs a lower-case role name on its first line and the role text below it ("${role}"). Nothing was proposed.`);
+  const added: { readonly role: string; readonly reference: string }[] = [];
+  for (const [index, entry] of roleArgs.entries()) {
+    const text = `${entry.trim()}\n`;
+    const parsedRole = parseRoleSource(text);
+    if (!parsedRole.ok) {
+      const problems = parsedRole.problems.map((problem) => `- ${problem.line === undefined ? '' : `line ${String(problem.line)}: `}${problem.message}`);
+      return refuse(
+        `roleFiles entry ${String(index + 1)} is not a role source, so nothing was proposed:\n${problems.join('\n')}\n\n` +
+          `A role source looks like this. ${ROLE_SOURCE_RULES}\n\n${ROLE_SOURCE_EXAMPLE}`,
+      );
     }
-    const file = path.join(loopsDir, 'roles', `${loopId}-${role}.role.md`);
-    if (fs.existsSync(file)) {
-      return refuse(`${file} exists already, and a proposal only ever adds role files. Reference it instead. Nothing was proposed.`);
+    const role = parsedRole.source.id;
+    if (!SLUG.test(role)) {
+      return refuse(`roleFiles entry ${String(index + 1)} has role "${role}"; use lower-case letters, digits and hyphens. Nothing was proposed.`);
     }
-    roleFiles.push({ path: file, text: `${rest.join('\n').trim()}\n` });
+    if (added.some((each) => each.role === role)) {
+      return refuse(`Two roleFiles entries are both role "${role}". Nothing was proposed.`);
+    }
+    const place = rolePlace(loopsDir, resourceRoot, loopId, role);
+    if (fs.existsSync(place.file)) {
+      return refuse(
+        `${place.file} exists already, and a proposal only ever adds role files. Reference it as ${referenceText(role, place.reference)} instead. Nothing was proposed.`,
+      );
+    }
+    roleFiles.push({ path: place.file, text });
+    added.push({ role, reference: place.reference });
   }
+  // How roles are referenced here, said with every answer about a node's role.
+  const roleHelp = (): string =>
+    [
+      added.length === 0
+        ? `This draft adds no role. A role the project does not have goes in roleFiles as a role source (describe_loop_building_blocks shows one); ` +
+          `role R is placed at ${rolePlace(loopsDir, resourceRoot, loopId, 'R').reference}, and a node references it by that path.`
+        : `The roles this draft adds, as a node references them:\n${added.map((each) => `- ${referenceText(each.role, each.reference)}`).join('\n')}`,
+      `A role path is read from ${resourceRoot}; a role outside it, such as one of DSpatch's own, cannot be used here.`,
+    ].join('\n');
 
   // Nodes without a position are placed by the layered layout (S18b), so the drawing is readable.
   let graphText = graphArg;
@@ -306,23 +415,13 @@ function propose(
     }
   }
 
-  // The loader's own check, with the proposed role files resolvable as if they existed.
+  // The loader's own check, with the proposed role files read as they will be once written.
   const onDisk = createFileRoleResolver(resourceRoot);
   const pending = new Map(roleFiles.map((file) => [path.resolve(file.path).toLowerCase(), file]));
-  const resolveRole: RoleResolver = (reference) => {
-    const proposedFile = pending.get(path.resolve(resourceRoot, reference.source.path).toLowerCase());
-    if (proposedFile === undefined) {
-      return onDisk(reference);
-    }
-    return {
-      id: reference.id,
-      sourcePath: reference.source.path,
-      targets: [...LOOP_TARGETS],
-      targetsDeclared: false,
-      requirements: [],
-      requirementsDeclared: false,
-      instructions: proposedFile.text,
-    };
+  const resolveRole: RoleResolver = (reference: RoleReference) => {
+    const requested = path.resolve(resourceRoot, reference.source.path);
+    const proposedFile = pending.get(requested.toLowerCase());
+    return proposedFile === undefined ? onDisk(reference) : resolveRoleText(proposedFile.text, reference, requested);
   };
   const proposal = createProposal(
     {
@@ -337,8 +436,12 @@ function propose(
     { resolveRole },
   );
   if (hasErrors(proposal.findings)) {
+    const errors = proposal.findings.filter((finding) => finding.severity === 'error');
     return refuse(
-      `The draft has errors, so it was not kept. Fix them and propose again:\n${describeFindings(proposal.findings.filter((finding) => finding.severity === 'error'))}`,
+      [
+        `The draft has errors, so it was not kept. Fix them and propose again:\n${describeFindings(errors)}`,
+        ...(errors.some((finding) => ROLE_FINDINGS.has(finding.code)) ? [roleHelp()] : []),
+      ].join('\n\n'),
     );
   }
   const kept = host.record(proposal);
@@ -350,7 +453,9 @@ function propose(
     [
       `Proposed (${proposal.id}) for ${targetGraphPath(proposal.target)}. Nothing has been written and nothing runs: the person reviews the proposal and applies it.`,
       proposal.change === null ? 'The change could not be described.' : `The change:\n${describeChangeLines(proposal.change).map((line) => `- ${line}`).join('\n')}`,
-      ...(roleFiles.length === 0 ? [] : [`New role files: ${roleFiles.map((file) => file.path).join(', ')}`]),
+      ...(roleFiles.length === 0
+        ? []
+        : [`New role files, written only when the person applies the proposal: ${roleFiles.map((file) => file.path).join(', ')}`]),
       ...(notes.length === 0 ? [] : [`Warnings and notices:\n${describeFindings(notes)}`]),
     ].join('\n\n'),
   );
@@ -381,7 +486,13 @@ function buildingBlocks(): string {
     return `- ${provider}:\n${answers.join('\n')}`;
   });
   return [
-    'The graph format is dspatch-loop-graph; DSpatch documents it in docs/loop/GRAPH_FORMAT.md. One provider runs a whole run.',
+    'The graph format is dspatch-loop-graph. One provider runs a whole run. read_loop_graph shows any listed loop whole, as a fuller example. ' +
+      'The smallest graph, for a new loop "example" (propose it with target "new:example"), and the role source it uses, passed in roleFiles:',
+    `\`\`\`json\n${graphExample()}\n\`\`\``,
+    `\`\`\`markdown\n${ROLE_SOURCE_EXAMPLE}\n\`\`\``,
+    `Roles. Every agent node references one role, as {"id", "source": {"kind": "role-source", "path"}}. The path is read from the loop's resource root, ` +
+      'which for a new loop is the project folder; a role outside it cannot be used. A role the project does not have goes in the proposal\'s roleFiles: ' +
+      `role R of loop L is placed at .dspatch/loops/roles/L-R.role.md, and nothing is written until the person applies the proposal. A role source: ${ROLE_SOURCE_RULES}`,
     `Node kinds:\n${kinds.join('\n')}`,
     `Settings on a node or edge:\n${settings.join('\n')}`,
     `What DSpatch honours, attribute by attribute:\n${attributes.join('\n')}`,
