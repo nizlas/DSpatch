@@ -30,6 +30,7 @@ import type { AgentAdapter } from '../adapter/agent-adapter';
 import type {
   AgentCommandRecord,
   AgentEvent,
+  AppTool,
   DspatchSessionId,
   ProviderId,
   RunEnd,
@@ -96,6 +97,7 @@ import type {
   StepNote,
   StepProduct,
 } from '../shared/loop-run';
+import { CONTINUED_IN_LOOP_LINE } from '../shared/loop-run';
 import {
   DEFAULT_GATE_COMMAND_TIMEOUT_MS,
   finishCommand,
@@ -1004,6 +1006,68 @@ export function emptyInspection(
  * Filename-safe, because {@link SessionConfig} says a provider may use it as a
  * directory name, and never starting `bc-`, which Cursor reads as a cloud run.
  */
+/** DSP-209 S5a: the DSpatch tool a step uses to recommend continuing interactively. */
+export const HANDOFF_TOOL_NAME = 'request_interactive_handoff';
+
+/**
+ * DSP-209 S5a: what the handoff tool knows during one run. One step runs at a time, so one
+ * state per run: `requested` is reset before each turn and read after it settles, and
+ * `declined` is the runner's word that the person already chose the loop.
+ */
+export interface HandoffToolState {
+  requested: string | null;
+  declined: boolean;
+}
+
+/** Whether this node is offered the handoff tool: an agent node that enables it. */
+export function offersHandoff(node: Pick<LoopNode, 'kind' | 'capabilities'>): boolean {
+  return node.kind === 'agent' && (node.capabilities ?? []).includes('suggest-interactive');
+}
+
+/**
+ * DSP-209 S5a: `request_interactive_handoff(reason)`, as a provider-neutral DSpatch tool.
+ *
+ * Calling it records nothing in the run by itself: it notes the request for this turn, and
+ * the runner journals it once the turn has settled. It grants nothing and reads nothing.
+ * After the person chose to continue in the loop it refuses, and notes nothing new.
+ */
+export function createHandoffTool(state: HandoffToolState): AppTool {
+  return {
+    name: HANDOFF_TOOL_NAME,
+    description:
+      'Recommend that the person continues this work interactively, in the chat, instead of in ' +
+      'this loop. Use it only when working step by step with the person would clearly serve the ' +
+      'assignment better — for example a decision only they can make, or a task that has become ' +
+      'exploratory. Give a short reason. DSpatch then asks the person; nothing switches without ' +
+      'their answer. After calling it, end your turn.',
+    parameters: {
+      reason: { type: 'string', description: 'Why continuing interactively would serve the assignment better, in one or two sentences.' },
+    },
+    readOnly: true,
+    execute: (args) => {
+      if (state.declined) {
+        return Promise.resolve({
+          text:
+            'Not recorded: the person already chose to continue in the loop in this run, so this ' +
+            'recommendation is not offered again. Carry on with the step.',
+          isError: true,
+        });
+      }
+      const reason = typeof args['reason'] === 'string' ? args['reason'].trim() : '';
+      if (reason === '') {
+        return Promise.resolve({ text: 'Not recorded: give a reason.', isError: true });
+      }
+      state.requested = reason;
+      return Promise.resolve({
+        text:
+          'Recorded. DSpatch will ask the person whether to continue interactively once this turn ' +
+          'ends. End your turn now with a short account of where the work stands.',
+        isError: false,
+      });
+    },
+  };
+}
+
 export function stepSessionId(runId: string, nodeId: string): DspatchSessionId {
   const safe = (text: string): string => text.replace(/[^A-Za-z0-9._-]+/g, '-');
   return `dsp-session-${safe(runId)}--${safe(nodeId)}`;
@@ -1402,6 +1466,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
   const now = options.now ?? (() => Date.now());
   // Defaulting to true keeps every caller written before DSP-91 byte-for-byte what it was.
   const hashRoots = options.hashWorkingRoots ?? true;
+  // DSP-209 S5a: the handoff tool's state for this run, shared by the sessions that offer it.
+  const handoff: HandoffToolState = { requested: null, declined: false };
   // DSP-163: one snapshotter per run, so scans of a root by its steps and commands coalesce,
   // and stopped by the run's own signal so Stop is not held up by a scan.
   const snapshotter =
@@ -1965,6 +2031,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         // single-folder session as before; the adapter omits `dirs` for it, because the
         // provider treats a merged list of one as no list.
         workspacePaths: providerRootPathsFor(rootsOfRun),
+        // DSP-209 S5a: only a node the drawing enables is offered the tool; every other
+        // step's session config is exactly what it was.
+        ...(offersHandoff(node) ? { appTools: [createHandoffTool(handoff)] } : {}),
       });
       // A session is bound to the run's provider. An adapter that answers for another
       // is a fault on this step - thrown, so the walk records it here and goes no
@@ -2305,7 +2374,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       changeText +
       commandsText +
       approvalText +
-      requiredText;
+      requiredText +
+      // DSP-209 S5a: the visit the person sent on in the loop is told so, once.
+      (context.continuedAfterHandoff === undefined ? '' : `\n\n${CONTINUED_IN_LOOP_LINE}`);
     // Announced before `send`, because the interval this increment exists for is the
     // one *before* the first provider event â€” the few seconds, or minutes, where a
     // step is genuinely running and nothing has come back. Without an opened step
@@ -2344,6 +2415,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
                 steer(openSession.dspatchSessionId, text, onUpdate),
             }),
       });
+      // DSP-209 S5a: a request belongs to this turn only.
+      handoff.requested = null;
+      handoff.declined = context.handoffDeclined === true;
       await options.adapter.send(openSession.dspatchSessionId, prompt);
       await Promise.race([
         turn.finished,
@@ -2625,10 +2699,14 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       product === declaredProduct && product.kind === 'outcome' && product.source === 'step-declared'
         ? declaredReasonFrom(turn.assistantText(), product.outcome)
         : null;
+    // DSP-209 S5a: read after the turn has settled, so a tool call still in flight when the
+    // reply text arrived has been accounted for. From the tool, never from the reply.
+    const handoffReason = offersHandoff(node) ? handoff.requested : null;
     return remember(context, {
       product,
       ...(resultBody === undefined ? {} : { resultBody }),
       ...(reason === null ? {} : { reason }),
+      ...(handoffReason === null ? {} : { handoff: { reason: handoffReason } }),
       summary:
         `One provider turn. Requested ${options.modelRequested}, reported ` +
         `${inspection.modelReported ?? 'unknown'}. Snapshot ${snapshotIdFor(before)} â†’ ` +

@@ -445,6 +445,15 @@ export function nodeRunStates(
       case 'node-skipped':
         states.set(nodeId, 'skipped');
         break;
+      // DSP-209 S5a: the step's turn is over and the run waits on the person's answer. An
+      // answer to continue in the loop is followed by the node being entered again; an
+      // answer to hand over ends the run with the step stopped, never finished.
+      case 'handoff-requested':
+        states.set(nodeId, 'waiting');
+        break;
+      case 'handoff-answered':
+        states.set(nodeId, 'stopped');
+        break;
       default:
         // `edge-taken` and `limit-reached` name a node without changing what that
         // node is doing: a spent bound is the run's business, not the step's.

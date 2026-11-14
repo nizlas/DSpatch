@@ -45,6 +45,7 @@ import {
   type LiveInspection,
 } from '../src/main/loop-live';
 import { createFileResultStore } from '../src/main/loop-result-store';
+import { LoopRunController } from '../src/main/loop-control-runtime';
 import { describeLoopEnding } from '../src/shared/loop-transcript';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
@@ -3158,5 +3159,185 @@ describe('a gate result handed to a later step (DSP-139)', () => {
     assert.equal(result.terminalNodeId, 'not-established');
     const produced = result.journal.find((entry) => entry.kind === 'node-produced' && entry.nodeId === 'check');
     assert.equal(produced?.data?.['outcomeSource'], 'step-declared');
+  });
+});
+
+/**
+ * DSP-209 S5a: a live step recommends continuing interactively through DSpatch's tool.
+ *
+ * The fake adapter stands in for the agent by calling the tool from the session config the
+ * run gave it, which is exactly what a real provider would be handed. The person's answer
+ * goes through the real control, bound to the run and the visit.
+ */
+describe('createLiveExecutor — the handoff tool (DSP-209 S5a)', () => {
+  const role = {
+    id: 'live-role',
+    source: { kind: 'cursor-agent-file' as const, path: 'docs/loop/roles/live.role.md' },
+  };
+  function handoffGraph(enabled: boolean): LoopGraph {
+    return {
+      format: 'dspatch-loop-graph',
+      formatVersion: 1,
+      id: 'live-handoff',
+      name: 'Handoff',
+      purpose: 'A fixture for the handoff tool.',
+      target: 'cursor',
+      entry: 'work',
+      onRuntimeFault: 'stop-and-reconcile',
+      failureKinds: [],
+      limits: { maxCalls: 5 },
+      nodes: [
+        {
+          id: 'work',
+          kind: 'agent',
+          label: 'Work',
+          role,
+          outcomes: ['done'],
+          ...(enabled ? { capabilities: ['suggest-interactive' as const] } : {}),
+        },
+        { id: 'next', kind: 'agent', label: 'Next', role },
+        { id: 'end', kind: 'terminal', label: 'End' },
+      ],
+      edges: [
+        { id: 'h1', from: 'work', to: 'next', when: { on: 'outcome', outcome: 'done' } },
+        { id: 'h2', from: 'next', to: 'end', when: { on: 'success' } },
+      ],
+    };
+  }
+
+  async function until(check: () => boolean): Promise<void> {
+    for (let tries = 0; tries < 400 && !check(); tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(check(), 'the condition was reached');
+  }
+
+  it('offers the tool only to an enabled node, holds after the turn, and continues in the same session', async () => {
+    const workspace = scratch('handoff-loop');
+    const toolResults: { readonly text: string; readonly isError: boolean }[] = [];
+    let adapter: FakeAdapter;
+    adapter = new FakeAdapter({
+      assistantText: 'Here is where it stands.\n\nRESULT: done',
+      onSend: () => {
+        const tool = adapter.configs.find((config) => config.dspatchSessionId === stepSessionId('handoff-1', 'work'))
+          ?.appTools?.[0];
+        if (tool !== undefined && adapter.sends.length <= 2) {
+          void tool.execute({ reason: 'the next decision is yours to make' }).then((result) => toolResults.push(result));
+        }
+      },
+    });
+    const control = new LoopRunController();
+    const abort = new AbortController();
+    control.beginRun('handoff-1', abort.signal);
+    const running = runLoopGraph(handoffGraph(true), {
+      runId: 'handoff-1',
+      dryRun: false,
+      control,
+      signal: abort.signal,
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+    await until(() => control.report().handoff !== undefined);
+    assert.equal(adapter.sends.length, 1, 'nothing else starts while the run holds');
+    const pending = control.report().handoff;
+    assert.equal(pending?.nodeId, 'work');
+    assert.equal(pending?.visit, 1);
+    assert.equal(pending?.reason, 'the next decision is yours to make');
+    assert.equal(control.answerHandoff({ runId: 'another-run', visit: 1, choice: 'interactive' }).accepted, false);
+    assert.equal(control.answerHandoff({ runId: 'handoff-1', visit: 2, choice: 'interactive' }).accepted, false);
+    assert.equal(control.answerHandoff({ runId: 'handoff-1', visit: 1, choice: 'loop' }).accepted, true);
+    const result = await running;
+    control.endRun('handoff-1');
+
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.deepEqual(result.path, ['work', 'work', 'next', 'end']);
+    assert.deepEqual(result.edgesTaken, ['h1', 'h2'], 'no edge was taken on the recommendation');
+    assert.equal(result.usage.reworkRounds, 0);
+    assert.equal(result.usage.calls, 3, 'the visit sent on in the loop is a call');
+    const workConfigs = adapter.configs.filter((config) => config.dspatchSessionId === stepSessionId('handoff-1', 'work'));
+    assert.equal(workConfigs.length, 1, 'the same session continues');
+    assert.deepEqual(workConfigs[0]?.appTools?.map((tool) => tool.name), ['request_interactive_handoff']);
+    const nextConfig = adapter.configs.find((config) => config.dspatchSessionId === stepSessionId('handoff-1', 'next'));
+    assert.equal(nextConfig?.appTools, undefined, 'a node without the capability is offered no tool');
+    assert.ok(adapter.sends[1]?.includes('the person chose to continue in the'));
+    assert.equal(adapter.sends[2]?.includes('the person chose to continue in the'), false, 'said once');
+    assert.deepEqual(toolResults.map((entry) => entry.isError), [false, true], 'the second request is refused');
+    const kinds = result.journal.map((entry) => entry.kind);
+    assert.equal(kinds.filter((kind) => kind === 'handoff-requested').length, 1, 'the refused request records nothing');
+    assert.equal(kinds.filter((kind) => kind === 'handoff-answered').length, 1);
+    const firstProduced = result.journal.findIndex((entry) => entry.kind === 'node-produced');
+    assert.ok(kinds.indexOf('handoff-requested') < firstProduced, 'the recommendation is not a work result');
+  });
+
+  it('ends handed over when the person chooses interactive work, and cancelled when the run is cancelled instead', async () => {
+    for (const ending of ['interactive', 'cancel'] as const) {
+      const workspace = scratch(`handoff-${ending}`);
+      let adapter: FakeAdapter;
+      adapter = new FakeAdapter({
+        assistantText: 'RESULT: done',
+        onSend: () => {
+          void adapter.configs[0]?.appTools?.[0]?.execute({ reason: 'exploratory from here' });
+        },
+      });
+      const control = new LoopRunController();
+      const abort = new AbortController();
+      const runId = `handoff-${ending}`;
+      control.beginRun(runId, abort.signal);
+      const running = runLoopGraph(handoffGraph(true), {
+        runId,
+        dryRun: false,
+        control,
+        signal: abort.signal,
+        executor: createLiveExecutor({
+          workspacePath: workspace,
+          adapter,
+          modelRequested: 'composer-2',
+          inspection: emptyInspection(workspace, 'composer-2'),
+          promptFor: (node) => `Do the ${node.id} step.`,
+        }),
+      });
+      await until(() => control.report().handoff !== undefined);
+      if (ending === 'interactive') {
+        assert.equal(control.answerHandoff({ runId, visit: 1, choice: 'interactive' }).accepted, true);
+      } else {
+        abort.abort();
+      }
+      const result = await running;
+      control.endRun(runId);
+      assert.equal(adapter.sends.length, 1);
+      if (ending === 'interactive') {
+        assert.equal(result.status, 'handed-over');
+        assert.deepEqual(result.handedOver, { nodeId: 'work', occurrence: 1, reason: 'exploratory from here' });
+      } else {
+        assert.notEqual(result.status, 'handed-over');
+        assert.equal(result.handedOver, null);
+        assert.equal(result.journal.find((entry) => entry.kind === 'handoff-answered')?.data?.['choice'], 'cancelled');
+      }
+      assert.deepEqual(result.edgesTaken, []);
+    }
+  });
+
+  it('leaves a drawing without the capability exactly as it was: no tool, no hold', async () => {
+    const workspace = scratch('handoff-off');
+    const adapter = new FakeAdapter({ assistantText: 'RESULT: done' });
+    const result = await runLoopGraph(handoffGraph(false), {
+      runId: 'handoff-off',
+      dryRun: false,
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        modelRequested: 'composer-2',
+        inspection: emptyInspection(workspace, 'composer-2'),
+        promptFor: (node) => `Do the ${node.id} step.`,
+      }),
+    });
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.ok(adapter.configs.every((config) => config.appTools === undefined));
+    assert.equal(result.journal.some((entry) => entry.kind.startsWith('handoff-')), false);
   });
 });

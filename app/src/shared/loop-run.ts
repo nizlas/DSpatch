@@ -238,6 +238,13 @@ export interface StepContext {
    * beside it. {@link STEP_NOTE_KINDS} is the whole of what a step may say.
    */
   readonly note: StepNote;
+  /**
+   * DSP-209 S5a: the person has already chosen to continue in the loop after a handoff
+   * recommendation in this run, so the tool must refuse a second request. Absent is false.
+   */
+  readonly handoffDeclined?: boolean;
+  /** DSP-209 S5a: this visit is the one the person sent on in the loop, after that reason. */
+  readonly continuedAfterHandoff?: { readonly reason: string };
 }
 
 /** Where a step's entry lands and who is responsible for filing it. */
@@ -284,7 +291,37 @@ export interface StepExecution {
    * Read only when the edge taken skips steps; never used to choose the edge.
    */
   readonly reason?: string;
+  /**
+   * DSP-209 S5a: the step called DSpatch's `request_interactive_handoff` tool during its
+   * turn, with this reason. Set by the executor from the tool call, never from reply text.
+   * When present the runner takes no edge and records no work result for this visit: it
+   * journals the request and holds for the person's answer.
+   */
+  readonly handoff?: { readonly reason: string };
 }
+
+/** DSP-209 S5a: the recommendation the run is holding on, as the control port is asked it. */
+export interface HandoffRequest {
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly nodeLabel: string;
+  /** The visit that made the request; an answer must name this visit. */
+  readonly occurrence: number;
+  readonly callId: number;
+  readonly reason: string;
+}
+
+/** DSP-209 S5a: what the person answered, or that the run was cancelled while it waited. */
+export interface HandoffAnswer {
+  readonly kind: 'loop' | 'interactive' | 'cancelled';
+  readonly detail: string;
+  readonly waitedMs: number;
+}
+
+/** The engine's line to a step sent on in the loop after its recommendation (DSP-209 S5a). */
+export const CONTINUED_IN_LOOP_LINE =
+  'DSpatch: you recommended continuing interactively, and the person chose to continue in the ' +
+  'loop. Carry on with this step here. The recommendation is not offered again in this run.';
 
 export type StepExecutor = (context: StepContext) => Promise<StepExecution>;
 
@@ -298,7 +335,12 @@ export type RunStatus =
   /** A human step is pending. History intact, nothing repeated. */
   | 'awaiting-human'
   /** The runner would not start: the graph could not be walked at all. */
-  | 'refused';
+  | 'refused'
+  /**
+   * DSP-209 S5a: a step recommended continuing interactively and the person chose to.
+   * Not finished, not failed and not delivered: the work goes on outside the loop.
+   */
+  | 'handed-over';
 
 export const JOURNAL_KINDS = [
   'run-started',
@@ -354,6 +396,13 @@ export const JOURNAL_KINDS = [
    * Appended, so a record written before it still parses unchanged.
    */
   'node-skipped',
+  /**
+   * DSP-209 S5a: a step recommended continuing interactively through DSpatch's tool, and
+   * the run is holding for the person's answer. Written after the step's turn settled.
+   */
+  'handoff-requested',
+  /** The person's answer to that recommendation: `loop` or `interactive`, or a cancel. */
+  'handoff-answered',
 ] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
 
@@ -439,6 +488,8 @@ export interface RunResult {
   readonly edgesTaken: readonly string[];
   /** DSP-209 S3: the steps skipped, in the order the edges that skipped them were taken. */
   readonly skipped: readonly SkippedStep[];
+  /** DSP-209 S5a: set when `status` is `handed-over`: which step recommended it, and why. */
+  readonly handedOver: { readonly nodeId: string; readonly occurrence: number; readonly reason: string } | null;
   readonly terminalNodeId: string | null;
   readonly terminalEnding?: TerminalEnding;
   /** Bounds that were spent during the run, whether or not the run then continued. */
@@ -511,6 +562,13 @@ export interface RunControlPort {
    * called when it ends. A control without such lines leaves it out.
    */
   notices?(post: (detail: string, data: Readonly<Record<string, string | number | boolean>>) => void): () => void;
+  /**
+   * DSP-209 S5a: hold the run on a step's handoff recommendation until the person answers.
+   * May wait indefinitely: silence never switches. Resolves `cancelled` when the run is
+   * cancelled while it waits. A control without it is one nobody can answer, and the
+   * runner then continues in the loop and says so.
+   */
+  awaitHandoffAnswer?(request: HandoffRequest): Promise<HandoffAnswer>;
 }
 
 export interface RunOptions {
@@ -1066,6 +1124,10 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   const path: string[] = [];
   const edgesTaken: string[] = [];
   const skipped: SkippedStep[] = [];
+  /** DSP-209 S5a: the person chose the loop over a handoff once; the tool refuses from then on. */
+  let handoffDeclined = false;
+  /** DSP-209 S5a: the next visit is the one sent on in the loop after this reason. */
+  let continueAfterHandoff: { readonly reason: string } | null = null;
   const limitsReached: string[] = [];
   const occurrences = new Map<string, number>();
   /** A bound is offered to the graph once. The second time it is spent, the run stops. */
@@ -1119,6 +1181,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       readonly fault?: RuntimeFault | null;
       readonly awaiting?: { readonly nodeId: string; readonly question: string } | null;
       readonly refusal?: string | null;
+      readonly handedOver?: RunResult['handedOver'];
     } = {},
   ): RunResult => {
     closeNotices();
@@ -1143,6 +1206,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       path,
       edgesTaken,
       skipped,
+      handedOver: parts.handedOver ?? null,
       terminalNodeId: parts.terminalNodeId ?? null,
       ...(parts.terminalEnding === undefined ? {} : { terminalEnding: parts.terminalEnding }),
       limitsReached,
@@ -1480,9 +1544,14 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     // `finally`: a step that blew up has still ended, and a run that could never say
     // it had stopped would be the opposite failure of one that says so too early.
     const control = isWorkStep(step.work) ? options.control : undefined;
+    // DSP-209 S5a: said once, to the visit it applies to.
+    const continuedAfterHandoff = continueAfterHandoff;
+    continueAfterHandoff = null;
     control?.stepStarted(step);
     try {
       execution = await options.executor({
+        ...(handoffDeclined ? { handoffDeclined: true } : {}),
+        ...(continuedAfterHandoff === null ? {} : { continuedAfterHandoff }),
         runId: options.runId,
         graph,
         node: current,
@@ -1521,6 +1590,81 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     }
     const stepMs = now() - startedStepAt;
     const producedOutcome = producedOutcomeOf(execution.product);
+
+    // DSP-209 S5a: a recommendation to continue interactively, made through DSpatch's tool.
+    //
+    // Here, after the executor has settled — the live executor returns only once the turn
+    // has finished, so a tool still in flight has been accounted for — and before anything
+    // reads the step's product. It is not a work result: no `node-produced`, no edge, no
+    // rework round. The run holds for the person; silence never switches. A request after
+    // the person already chose the loop is ignored here as well as refused by the tool.
+    if (execution.handoff !== undefined && !handoffDeclined) {
+      const reason = oneLineReason(execution.handoff.reason);
+      record(
+        'handoff-requested',
+        `"${current.id}" recommends continuing interactively: ${reason}. Its turn has ended; the ` +
+          `run is holding for your answer, and nothing switches without it. ${execution.summary}`,
+        { nodeId: current.id, data: { reason, occurrence, callId, stepMs, providerTurns: execution.providerTurns } },
+      );
+      const request: HandoffRequest = {
+        runId: options.runId,
+        nodeId: current.id,
+        nodeLabel: current.label ?? current.id,
+        occurrence,
+        callId,
+        reason,
+      };
+      const answer: HandoffAnswer =
+        options.control?.awaitHandoffAnswer === undefined
+          ? {
+              kind: 'loop',
+              detail: 'This run has no control a person could answer through, so it continues in the loop.',
+              waitedMs: 0,
+            }
+          : await options.control.awaitHandoffAnswer(request);
+      record('handoff-answered', answer.detail, {
+        nodeId: current.id,
+        data: { choice: answer.kind, occurrence, waitedMs: answer.waitedMs },
+      });
+      if (answer.kind === 'cancelled') {
+        return fail({
+          kind: 'no-outcome-delivered',
+          nodeId: current.id,
+          detail:
+            `The run was cancelled while it held on "${current.id}"'s recommendation to continue ` +
+            `interactively, so it was not handed over and no further step was started.`,
+          reconcile:
+            'Nothing was repeated. The step had finished its turn before the run held; its reply ' +
+            'and anything it changed are in the record and the working copy.',
+        });
+      }
+      if (answer.kind === 'interactive') {
+        return finish(
+          'handed-over',
+          `Handed over to interactive work at "${current.id}", as the person chose: ${reason}. ` +
+            `The loop took no edge from this step and ran nothing after it.`,
+          { handedOver: { nodeId: current.id, occurrence, reason } },
+        );
+      }
+      // `loop`: the same node again, in its own session, as one more call.
+      handoffDeclined = true;
+      const spent = boundsSpent({ graph, calls, reworkRounds, isRework: false, reworkOutcomes });
+      if (spent !== null && spent.bound === 'maxCalls') {
+        limitsReached.push(spent.bound);
+        record('limit-reached', spent.detail, {
+          nodeId: current.id,
+          data: { bound: spent.bound, limit: spent.limit, reached: spent.reached, declaredFailure: false, runtimeFault: false },
+        });
+        return finish(
+          'limit-reached',
+          `${spent.detail} The person chose to continue "${current.id}" in the loop, and there is no ` +
+            `call left to send it on with.`,
+        );
+      }
+      continueAfterHandoff = { reason };
+      arrival = null;
+      continue;
+    }
 
     record(
       'node-produced',
@@ -2068,6 +2212,8 @@ const MARKERS: Readonly<Record<JournalKind, string>> = {
   'result-filed': '[=',
   'resource-governor': '%%',
   'node-skipped': '~>',
+  'handoff-requested': '?~',
+  'handoff-answered': '<~',
 };
 
 /**

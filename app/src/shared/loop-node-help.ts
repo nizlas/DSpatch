@@ -79,6 +79,18 @@ export const REQUIRED_HELP: SettingHelp = {
   whenEmpty: 'A connection may skip this step, if the drawing says so on that connection.',
 };
 
+/** DSP-209 S5a: the `suggest-interactive` capability, as the node panel explains it. */
+export const SUGGEST_INTERACTIVE_HELP: SettingHelp = {
+  name: 'May recommend continuing interactively',
+  detail:
+    'This step is offered DSpatch\'s request_interactive_handoff tool. When it calls it with a ' +
+    'reason, the step ends its turn and the run holds until you answer: continue interactively ' +
+    'ends the run as handed over, continue in the loop sends the same step on in its own session ' +
+    'and the recommendation is not offered again in this run. Nothing switches without your ' +
+    'answer, and the reply text is never read for it. The step gets no other permission.',
+  whenEmpty: 'The step is not offered the tool, and the run never stops to ask about working interactively.',
+};
+
 /** The four bounds a graph or a node may set. */
 export type LimitKey = 'maxCalls' | 'maxReworkRounds' | 'maxMinutes' | 'maxTasks';
 

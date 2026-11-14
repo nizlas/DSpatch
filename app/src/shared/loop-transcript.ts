@@ -96,6 +96,8 @@ export type LoopEndingKind =
   | 'limit-reached'
   | 'runtime-fault'
   | 'awaiting-human'
+  /** DSP-209 S5a: the person took the work on interactively at a step's recommendation. */
+  | 'handed-over'
   | 'refused'
   | 'failed'
   | 'cancelled'
@@ -731,6 +733,8 @@ function endingKindOf(status: RunStatus): LoopEndingKind {
       return 'runtime-fault';
     case 'awaiting-human':
       return 'awaiting-human';
+    case 'handed-over':
+      return 'handed-over';
     case 'refused':
       return 'refused';
   }
@@ -776,6 +780,15 @@ function describeRunResult(result: RunResult, measuredFileChanges: boolean | nul
         ? endingWithoutDetail('awaiting-human')
         : `The run is waiting for a person: ${question} Nothing was repeated. Resuming ` +
           `from here is not built yet, so a repeat starts a new run.`;
+    }
+    case 'handed-over': {
+      const handed = result.handedOver;
+      return handed === null
+        ? 'Handed over to interactive work. The loop ran nothing after that.'
+        : `Handed over to interactive work at your choice, after "${
+            terminalNameFor(handed.nodeId, result.journal) ?? handed.nodeId
+          }" recommended it: ${handed.reason}. The loop ran nothing after that step; nothing ` +
+            `was repeated and what changed is in the working copy.`;
     }
     case 'refused': {
       const refusal = result.refusal?.trim() ?? '';
@@ -991,6 +1004,8 @@ const LOOP_ENDING_BADGE: Record<LoopEndingKind, CapabilitySupport> = {
   // Not failures. Neither is a verdict either: what the run left in the project is
   // in its sentence, not in its colour.
   'awaiting-human': 'unknown',
+  // DSP-209 S5a: a choice the person made, not a fault and not a verdict.
+  'handed-over': 'unknown',
   'limit-reached': 'unknown',
   // The machinery broke, the runner would not walk the graph, the call could not be
   // made, or the user stopped the run before it finished.
@@ -1085,6 +1100,7 @@ const LOOP_ENDING_BADGE_TEXT: Record<LoopEndingKind, string> = {
   'limit-reached': 'spent a bound',
   'runtime-fault': 'could not finish',
   'awaiting-human': 'waiting for a person',
+  'handed-over': 'handed over to interactive work',
   refused: 'did not start',
   failed: 'could not be run',
   cancelled: 'stopped short',

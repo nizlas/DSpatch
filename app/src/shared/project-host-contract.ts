@@ -169,6 +169,7 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'loop.readRunAgent': (query: unknown) => BridgeAnswer<'readLoopRunAgent'>;
   readonly 'loop.requestPause': () => BridgeAnswer<'requestLoopPause'>;
   readonly 'loop.continue': () => BridgeAnswer<'continueLoop'>;
+  readonly 'loop.answerHandoff': (answer: unknown) => BridgeAnswer<'answerLoopHandoff'>;
   readonly 'loop.setMode': (mode: LoopMode) => BridgeAnswer<'setLoopMode'>;
   readonly 'loop.readControl': () => BridgeAnswer<'loopControl'>;
   readonly 'loop.cancelEditorRun': () => BridgeAnswer<'cancelEditorLoopRun'>;
@@ -354,6 +355,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'loop.readRunAgent': true,
   'loop.requestPause': true,
   'loop.continue': true,
+  'loop.answerHandoff': true,
   'loop.setMode': true,
   'loop.readControl': true,
   'loop.cancelEditorRun': true,

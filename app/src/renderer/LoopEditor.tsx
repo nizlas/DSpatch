@@ -136,6 +136,7 @@ import {
   LIMIT_KEYS,
   REQUIRED_HELP,
   SKIPS_HELP,
+  SUGGEST_INTERACTIVE_HELP,
 } from '../shared/loop-node-help';
 import { GraphCanvas } from './GraphCanvas';
 import { Markdown } from './Markdown';
@@ -3507,6 +3508,30 @@ function NodeInspector({
             <span className="muted">
               {' '}
               {node.required === true ? REQUIRED_HELP.detail : REQUIRED_HELP.whenEmpty}
+            </span>
+          </label>
+        )}
+
+        {node.kind !== 'agent' ? null : (
+          <label className="check setting">
+            <input
+              type="checkbox"
+              checked={(node.capabilities ?? []).includes('suggest-interactive')}
+              onChange={(event) =>
+                onChange({
+                  ...node,
+                  capabilities: event.target.checked ? ['suggest-interactive'] : undefined,
+                })
+              }
+            />
+            <span className="setting-name">
+              {SUGGEST_INTERACTIVE_HELP.name} <code>suggest-interactive</code>
+            </span>
+            <span className="muted">
+              {' '}
+              {(node.capabilities ?? []).includes('suggest-interactive')
+                ? SUGGEST_INTERACTIVE_HELP.detail
+                : SUGGEST_INTERACTIVE_HELP.whenEmpty}
             </span>
           </label>
         )}

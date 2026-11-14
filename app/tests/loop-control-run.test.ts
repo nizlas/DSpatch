@@ -888,7 +888,9 @@ describe('the run record vocabulary is added to, not changed', () => {
     // where it was, so its records still parse.
     assert.deepEqual(JOURNAL_KINDS.slice(13, 14), ['result-filed']);
     // DSP-173's resource governor, appended after DSP-74's for the same reason.
-    assert.deepEqual(JOURNAL_KINDS.slice(14), ['resource-governor']);
+    assert.deepEqual(JOURNAL_KINDS.slice(14, 15), ['resource-governor']);
+    // DSP-209: S3's skip and S5a's handoff pair, appended after it for the same reason.
+    assert.deepEqual(JOURNAL_KINDS.slice(15), ['node-skipped', 'handoff-requested', 'handoff-answered']);
   });
 
   it('renders the added kinds rather than printing undefined into the journal', () => {

@@ -815,6 +815,8 @@ function outcomeFromGateCommands(input: RunOutcomeInput): RunOutcomeKind {
     input.cancelled ||
     input.status === null ||
     input.status === 'awaiting-human' ||
+    // DSP-209 S5a: the work went on outside the loop, so the loop established nothing.
+    input.status === 'handed-over' ||
     input.status === 'refused' ||
     input.status === 'runtime-fault' ||
     input.status === 'limit-reached'

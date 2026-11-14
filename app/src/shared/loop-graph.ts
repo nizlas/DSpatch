@@ -548,6 +548,10 @@ export interface ResultPolicy {
   readonly note?: string;
 }
 
+/** DSP-209 S5a: the capabilities a drawing may give an agent node. */
+export const NODE_CAPABILITIES = ['suggest-interactive'] as const;
+export type NodeCapability = (typeof NODE_CAPABILITIES)[number];
+
 export interface LoopNode {
   readonly id: string;
   readonly kind: NodeKind;
@@ -560,6 +564,13 @@ export interface LoopNode {
    * validation. Only `true` is written; absent means the drawing allows skipping it.
    */
   readonly required?: true;
+  /**
+   * DSP-209 S5a: what DSpatch lets this step do beyond its role. Agent nodes only.
+   * `suggest-interactive` offers the step DSpatch's `request_interactive_handoff` tool, so
+   * it can recommend continuing interactively; the run then holds for the person's answer.
+   * Absent offers nothing, which is every drawing written before this field.
+   */
+  readonly capabilities?: readonly NodeCapability[];
   /**
    * What arriving here means for the assignment. Terminals only. See {@link TerminalEnding}.
    */
@@ -984,6 +995,15 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     caveat:
       'It records a skip; it does not route. The edge is chosen exactly as it would be without ' +
       'the field, and a skipped step reached later by another path is visited as usual.',
+  },
+  {
+    attribute: 'capabilities',
+    honoured: true,
+    by: 'DSP-209 S5a. "suggest-interactive" gives the live step DSpatch\'s request_interactive_handoff tool; a call holds the run for the person\'s answer.',
+    caveat:
+      'Only where the provider\'s adapter takes DSpatch tools on a loop step: Claude and Cursor do, ' +
+      'Copilot offers DSpatch tools in the chat only, so a Copilot step is not given it. A dry run ' +
+      'calls no provider, so no step there can call it.',
   },
   {
     attribute: 'required',

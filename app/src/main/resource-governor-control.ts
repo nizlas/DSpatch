@@ -15,7 +15,7 @@
  */
 
 import type { StepHold, StepRef } from '../shared/loop-control';
-import type { RunControlPort, StepReleaseOutcome } from '../shared/loop-run';
+import type { HandoffAnswer, HandoffRequest, RunControlPort, StepReleaseOutcome } from '../shared/loop-run';
 import type { HealthChange, ResourceGovernor } from './resource-governor';
 
 type JournalData = Readonly<Record<string, string | number | boolean>>;
@@ -152,5 +152,20 @@ export class GovernedRunControl implements RunControlPort {
 
   stepEnded(step: StepRef): void {
     this.inner.stepEnded(step);
+  }
+
+  /**
+   * DSP-209 S5a: the person's answer is the run's own control's business; the governor
+   * holds nothing here. An inner control without it is one nobody can answer through.
+   */
+  awaitHandoffAnswer(request: HandoffRequest): Promise<HandoffAnswer> {
+    return (
+      this.inner.awaitHandoffAnswer?.(request) ??
+      Promise.resolve({
+        kind: 'loop',
+        detail: 'This run has no control a person could answer through, so it continues in the loop.',
+        waitedMs: 0,
+      })
+    );
   }
 }

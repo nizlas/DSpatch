@@ -181,6 +181,7 @@ const LIST_RUN_RECORDS: BridgeChannel = 'dspatch:list-run-records';
 const READ_LOOP_CONTROL: BridgeChannel = 'dspatch:read-loop-control';
 const REQUEST_LOOP_PAUSE: BridgeChannel = 'dspatch:request-loop-pause';
 const CONTINUE_LOOP: BridgeChannel = 'dspatch:continue-loop';
+const ANSWER_LOOP_HANDOFF: BridgeChannel = 'dspatch:answer-loop-handoff';
 const SET_LOOP_MODE: BridgeChannel = 'dspatch:set-loop-mode';
 
 /** Set by `scripts/dev.mjs`; points to the Vite development server. */
@@ -5037,6 +5038,9 @@ function registerLoopGraphIpc(): void {
   );
   ipcMain.handle(REQUEST_LOOP_PAUSE, (): Promise<LoopControlOutcome> => hostCall('loop.requestPause', NO_SENDER));
   ipcMain.handle(CONTINUE_LOOP, (): Promise<LoopControlOutcome> => hostCall('loop.continue', NO_SENDER));
+  ipcMain.handle(ANSWER_LOOP_HANDOFF, (_event, answer: unknown): Promise<LoopControlOutcome> =>
+    hostCall('loop.answerHandoff', NO_SENDER, answer),
+  );
   ipcMain.handle(SET_LOOP_MODE, (_event, mode: LoopMode): Promise<LoopControlOutcome> =>
     hostCall('loop.setMode', NO_SENDER, mode),
   );

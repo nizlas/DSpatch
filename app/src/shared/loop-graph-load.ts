@@ -27,6 +27,7 @@ import {
   LOOP_GRAPH_FORMAT,
   LOOP_GRAPH_FORMAT_VERSION,
   LOOP_TARGETS,
+  NODE_CAPABILITIES,
   NODE_KINDS,
   REPORT_WRITTEN_BY_SELF,
   REQUIREMENTS,
@@ -43,6 +44,7 @@ import {
 import type {
   ArchivePolicy,
   EdgeCondition,
+  NodeCapability,
   FailureKind,
   LoopEdge,
   LoopGraph,
@@ -575,6 +577,8 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
         { nodeId },
       );
     }
+    // DSP-209 S5a. A list of known capability names, on an agent node only.
+    const capabilities = parseCapabilities(entry['capabilities'], `${pointer}/capabilities`, nodeId, kind as NodeKind, findings);
 
     nodes.push({
       id: nodeId,
@@ -582,6 +586,7 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['purpose']) ? { purpose: entry['purpose'] as string } : {}),
       ...(required === true ? { required: true as const } : {}),
+      ...(capabilities === null ? {} : { capabilities }),
       ...(ending ? { ending } : {}),
       ...(role ? { role } : {}),
       ...(model ? { model } : {}),
@@ -1064,6 +1069,58 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
     });
   });
   return edges;
+}
+
+/**
+ * DSP-209 S5a: a node's capabilities. `null` for none written, or an empty list, so a
+ * node without them parses exactly as before. Each refusal has its own finding.
+ */
+function parseCapabilities(
+  value: unknown,
+  pointer: string,
+  nodeId: string,
+  kind: NodeKind,
+  findings: Findings,
+): readonly NodeCapability[] | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    findings.error(
+      'bad-capabilities',
+      pointer,
+      `Node "${nodeId}": "capabilities" must be a list of names: ${NODE_CAPABILITIES.map((name) => `"${name}"`).join(', ')}.`,
+      { nodeId },
+    );
+    return null;
+  }
+  if (value.length > 0 && kind !== 'agent') {
+    findings.error(
+      'capabilities-on-a-non-agent',
+      pointer,
+      `Node "${nodeId}" is a ${kind} node and gives capabilities, which only an agent step can ` +
+        `use: they are DSpatch tools offered to the agent. Remove "capabilities" from this node.`,
+      { nodeId },
+    );
+    return null;
+  }
+  const items: NodeCapability[] = [];
+  value.forEach((entry, index) => {
+    if (!(NODE_CAPABILITIES as readonly unknown[]).includes(entry)) {
+      findings.error(
+        'unknown-capability',
+        `${pointer}/${String(index)}`,
+        `Node "${nodeId}": ${JSON.stringify(entry)} is not a capability DSpatch knows. Known: ` +
+          `${NODE_CAPABILITIES.map((name) => `"${name}"`).join(', ')}.`,
+        { nodeId },
+      );
+      return;
+    }
+    if (!items.includes(entry as NodeCapability)) {
+      items.push(entry as NodeCapability);
+    }
+  });
+  return items.length === 0 ? null : items;
 }
 
 /**

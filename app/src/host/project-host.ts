@@ -63,6 +63,7 @@ import {
   type ChatRoleText,
 } from '../shared/loop-chat';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
+import { handoffAnswerFrom } from '../shared/loop-control';
 import { describeLiveBinding } from '../shared/loop-editor-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
 import type { LoopGraph, LoopNode, LoopTarget, RoleReference, RoleResolver } from '../shared/loop-graph';
@@ -2836,6 +2837,14 @@ function registerLoopMethods(): void {
    */
   handle('loop.requestPause', (): LoopControlOutcome => loopControl.requestPause());
   handle('loop.continue', (): LoopControlOutcome => loopControl.continueRun());
+  // DSP-209 S5a: the person's answer to a handoff recommendation, checked here for shape and
+  // by the control for the run and visit it answers.
+  handle('loop.answerHandoff', (_event, answer: unknown): LoopControlOutcome => {
+    const parsed = handoffAnswerFrom(answer);
+    return parsed === null
+      ? { accepted: false, note: 'That answer was not one DSpatch understands, so nothing changed.', report: loopControl.report() }
+      : loopControl.answerHandoff(parsed);
+  });
   handle('loop.setMode', (_event, mode: LoopMode): LoopControlOutcome => loopControl.setMode(mode));
   handle('loop.readControl', (): LoopControlReport => loopControl.report());
 

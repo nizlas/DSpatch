@@ -20,7 +20,7 @@ import type {
   UsageReading,
 } from '../adapter/types';
 import type { StepActivity } from './loop-activity';
-import type { LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
+import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
 import type { ParsedRunRecord, RecordedRunEnding } from './loop-record';
@@ -2770,6 +2770,11 @@ export interface DspatchBridge {
   /** Clear a pause and let exactly one held work step start. Repeats nothing. */
   continueLoop(): Promise<LoopControlOutcome>;
   /**
+   * DSP-209 S5a: answer a step's recommendation to continue interactively. Bound to the run
+   * and visit the control report's `handoff` names; any other answer is refused.
+   */
+  answerLoopHandoff(answer: HandoffAnswerAction): Promise<LoopControlOutcome>;
+  /**
    * Choose who decides the next step, during a run or before one.
    *
    * Changes that and nothing else: the mandate, the graph version, the history, the
@@ -3430,6 +3435,7 @@ export type BridgeChannel =
   | 'dspatch:read-loop-control'
   | 'dspatch:request-loop-pause'
   | 'dspatch:continue-loop'
+  | 'dspatch:answer-loop-handoff'
   | 'dspatch:set-loop-mode'
   | 'dspatch:workspace-folders'
   | 'dspatch:workspace-folders-changed'

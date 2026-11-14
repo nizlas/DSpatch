@@ -213,7 +213,50 @@ export function controlPhase(state: LoopControlState): ControlPhase {
 
 /** Why a step is not starting. */
 /** `resources`: the resource governor holds a new step while the machine is under pressure (DSP-173). */
-export type StepHold = 'pause' | 'interactive-mode' | 'human-node' | 'resources';
+/** `handoff`: a step recommended continuing interactively and the run waits for the answer (DSP-209 S5a). */
+export type StepHold = 'pause' | 'interactive-mode' | 'human-node' | 'resources' | 'handoff';
+
+/**
+ * DSP-209 S5a: the recommendation a run is holding on, as the windows are shown it.
+ * `visit` is the node's 1-based visit that made it; an answer must name the same run and visit.
+ */
+export interface PendingHandoff {
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly nodeLabel: string;
+  readonly visit: number;
+  readonly reason: string;
+  readonly heldSinceUtc: string;
+}
+
+/** DSP-209 S5a: the person's explicit answer, bound to the run and the visit it answers. */
+export interface HandoffAnswerAction {
+  readonly runId: string;
+  readonly visit: number;
+  readonly choice: 'loop' | 'interactive';
+}
+
+/** DSP-209 S5a: an answer as it arrives from a window, or `null` when it is not one. */
+export function handoffAnswerFrom(value: unknown): HandoffAnswerAction | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const entry = value as Record<string, unknown>;
+  const runId = entry['runId'];
+  const visit = entry['visit'];
+  const choice = entry['choice'];
+  if (
+    typeof runId !== 'string' ||
+    runId === '' ||
+    typeof visit !== 'number' ||
+    !Number.isInteger(visit) ||
+    visit < 1 ||
+    (choice !== 'loop' && choice !== 'interactive')
+  ) {
+    return null;
+  }
+  return { runId, visit, choice };
+}
 
 export type StepDecision =
   | { readonly start: true; readonly why: string }
@@ -455,6 +498,11 @@ export interface LoopControlReport {
   /** The run being controlled, or `null` when nothing is running. */
   readonly runId: string | null;
   readonly state: LoopControlState;
+  /**
+   * DSP-209 S5a: the handoff recommendation the run is holding on. Present only while it
+   * waits, so a report without one reads exactly as before.
+   */
+  readonly handoff?: PendingHandoff;
 }
 
 /** What a press of one of these buttons achieved, in the words the window shows. */

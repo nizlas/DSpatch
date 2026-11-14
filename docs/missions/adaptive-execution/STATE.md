@@ -4,11 +4,12 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5 sent to the implementer (coordinator visit 6, call 15).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 reviewed and committed (calls 10–12); S4 reviewed and committed (calls 13–15); S5a reviewed and committed (calls 16–18); S5b sent to the implementer (coordinator visit 7, call 18).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), then the S4 commit made on coordinator visit 6 (`(DSP-209 S4)` in `git log`, the commit after `3fb6574`).
-- **Sub-goal in progress:** S5 (agent can recommend interactive work), sent to the implementer on coordinator visit 6.
+- **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), then the S5a commit made on coordinator visit 7 (`(DSP-209 S5a)` in `git log`, the commit after `b07ce40`).
+- **Sub-goal in progress:** S5b (handoff in the window), sent to the implementer on coordinator visit 7.
+- **For the next engine transition (Niclas):** S5a adds a host method (`answerLoopHandoff`), which changes the host contract; installing a build with it asks to stop the old host instead of offering Restart host.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
 ## Mapping (planner, run `chat-loop-2026-11-14T01-36-57-404Z`, call 2)
@@ -30,9 +31,10 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 | S1 | Context snapshot builder (pure shared code) | — | reviewed | 1 | `610fa1a` |
 | S2 | Carry the snapshot into the chat loop run | S1 | reviewed | 1 | `5c3c1ae` |
 | S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | reviewed | 1 | `3fb6574` |
-| S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | reviewed | 1 | S4 commit after `3fb6574` |
-| S5 | Agent can recommend interactive work (handoff tool, `handed-over`) | — (S2 useful) | in progress | 1 | |
-| S6 | Continue interactively without resubmitting | S5, S1 | pending | 0 | |
+| S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | reviewed | 1 | `b07ce40` |
+| S5a | Handoff request in the engine: node capability, app tool on loop steps, hold, explicit answer, `handed-over` | — | reviewed | 1 | S5a commit after `b07ce40` |
+| S5b | Handoff in the window: inline prompt and buttons; chat loop's work node enables it; role text; AGENT_BEHAVIOUR §4 status | S5a | in progress | 1 | |
+| S6 | Continue interactively without resubmitting | S5a, S5b, S1 | pending | 0 | |
 | S7 | The chat knows what a loop did (one-time run recap) | S1 | pending | 0 | |
 | S8 | Reconcile the parallelism document; spec `fanOut` in GRAPH_FORMAT | — | pending | 0 | |
 | S9 | Research: installed SDK support for concurrency, mid-turn input, tools, cancel | — | pending | 0 | |
@@ -63,7 +65,7 @@ Statuses:
 
 **S6 — Continue interactively.** On `handed-over`, one chat turn into the conversation's session, idempotent by run id, with the mandate verbatim, snapshot reference, the run's decisions/results/questions/changed files and the reason; shown as DSpatch's handover, not the person's message; *Use loop* unticked; same tool policy. *Acceptance:* exactly one turn; contains mandate and account; nothing typed; no resend after restart; stored apart from person's text as `resentContext` is. *Checks:* `chat-service` test, `conversation-store` parse test, type check.
 
-**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii) and S3's finding (iii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; move `SkippingRoute` / `skippingRoutesOf` off `outcomeInstructions`'s doc comment in `loop-chat.ts`; make `chatLoopContextSnapshot` fall back to `null` with the failure recorded. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
+**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii) and S3's finding (iii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; move `SkippingRoute` / `skippingRoutesOf` off `outcomeInstructions`'s doc comment in `loop-chat.ts`; move the handoff code off `stepSessionId`'s doc comment in `loop-live.ts` (S5a finding i); make `chatLoopContextSnapshot` fall back to `null` with the failure recorded. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
 
 **S8 — Reconcile parallelism.** Reconciliation section in `CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md` saying which §9 open decisions the vision settles (2–3 agents, worktrees for writers, single integrator, mailbox, slicer as a role), naming the first increment (one-level fan-out of one node with one integration point); GRAPH_FORMAT spec for `fanOut`, the slice block and S5's capability. Documentation only.
 
@@ -121,9 +123,21 @@ Statuses:
 - **Niclas tries:** a one-line documentation question through **Use loop** — should end at "Done, check skipped" with check marked skipped and the reason shown; a small code change — should still go through "Check the work".
 - **Steps skipped:** research (code settled it); independent verification (not asked for).
 
-### S5 — Agent can recommend interactive work
+### S5a — Handoff request in the engine
 
-- **Attempt 1:** briefed on coordinator visit 6 (call 15). Not yet reviewed.
+- **Split (coordinator visit 6):** S5 split into S5a (engine, tool, hold, answer, status, record, transcript, host IPC) and S5b (renderer prompt, enabling it in the chat loop, role text, AGENT_BEHAVIOUR §4 status), so each part stays reviewable in one round. S6 depends on S5a and S5b.
+- **Status: reviewed** (agent review, not Niclas's approval). Attempt 1: briefed on coordinator visit 6 (call 15); implemented (call 16, `done`); review `accept` (call 17); committed on coordinator visit 7 (call 18).
+- **What was done.** Agent-node field `capabilities: ["suggest-interactive"]` (`loop-graph.ts`, support row says Copilot does not get the tool on loop steps; `loop-graph-load.ts` refusals `bad-capabilities`, `unknown-capability`, `capabilities-on-a-non-agent`; fixed writer key; help text; editor checkbox). `main/loop-live.ts`: `createHandoffTool()` / `offersHandoff()` — only an enabled node's session config gets `appTools`; empty reason refused; after the person chose the loop the tool returns an error and notes nothing; request read after the turn settles; the revisit gets one engine line appended to the prompt. `loop-run.ts`: appended kinds `handoff-requested`, `handoff-answered`; status `handed-over`; `StepExecution.handoff`, `RunResult.handedOver`, optional `RunControlPort.awaitHandoffAnswer`; handoff handled before the product is read (no `node-produced`, no edge, no result, not rework); "loop" revisits the same node as one more call (`limit-reached` if none left); "interactive" finishes `handed-over`; cancel during the hold ends as an ordinary cancel (`no-outcome-delivered`). `loop-control.ts`: `PendingHandoff`, `HandoffAnswerAction`, `handoffAnswerFrom()`, `StepHold` `'handoff'` (unused, see findings). `loop-control-runtime.ts`: `awaitHandoffAnswer()` with no timer; `answerHandoff()` refuses another run, another visit, nothing pending, a second answer. `resource-governor-control.ts` passes it through. Record reads `handed-over` as unresolved; transcript badge "handed over to interactive work"; run view shows waiting during the hold, stopped after a handover; conversation lines in `loop-chat.ts`. Host and bridge: `answerLoopHandoff()` in bridge, preload, `main.ts`, host contract and handler. With no control port (dry runs) the run continues in the loop and says so. Tests: new `loop-handoff.test.ts` (8), 3 end-to-end cases in `loop-live.test.ts`, `loop-graph.test.ts` field list.
+- **Finding against S3 and S4 (and their reviews):** `tests/loop-control-run.test.ts` pins the journal-kind list and failed from S3's `node-skipped` onward; neither S3 nor S4 ran it, so `3fb6574` and `b07ce40` were committed with that test failing. Fixed in S5a (old kinds keep positions; appended kinds listed after `resource-governor`). Lesson for briefs: any change to `JOURNAL_KINDS` runs `loop-control-run`.
+- **Review verdict: accept.** Six criteria met. Non-blocking findings: (i) third misplaced doc comment — `loop-live.ts:~1004`, `stepSessionId`'s comment now above `HANDOFF_TOOL_NAME` — **carried into S7**; (ii) the "loop" revisit sets `arrival = null`, so it takes inputs from the node's `consumes` rather than what its arriving edge delivered — **carried into S5b** (keep `arrival`); (iii) `StepHold` `'handoff'` is produced by nothing — **carried into S5b** (use it or drop it); (iv) host contract change — recorded under *Where the mission stands*. Coordinator's own finding: `capabilities` is not documented in `docs/loop/GRAPH_FORMAT.md` — **carried into S5b**.
+- **Checked, by the implementer only** (from `app/`, single files): `loop-handoff` 8/8, `loop-live` 70/70, `loop-graph` 41/41, `loop-graph-write` 5/5, `loop-graph-open` 12/12, `loop-run` 36/36, `loop-run-view` 32/32, `loop-chat` 80/80, `loop-node-help` 28/28, `loop-record` 40/40, `loop-transcript` 48/48, `loop-control` 26/26, `loop-control-run` 15/15, `loop-skips` 14/14, `resource-governor-run` 7/7, `run-record-store` 10/10, `project-host-boundary` 2/2; `npm run typecheck` exit 0. The reviewer read the code and did not rerun.
+- **Untested:** host startup's contract check; a real provider calling the tool; the checkbox's look. Copilot loop steps never get the tool.
+- **Niclas tries:** nothing until S5b.
+- **Steps skipped:** research (code settled it); independent verification (not asked for).
+
+### S5b — Handoff in the window
+
+- **Attempt 1:** briefed on coordinator visit 7 (call 18). Not yet reviewed.
 
 ## Requirements of the vision
 
@@ -142,12 +156,12 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Steps may be skipped with a recorded reason [S3, S4] — met by reviewed sub-goals (chat loop's check; live model behaviour is Niclas's trial)
 - Required steps stay required [S3] — met by reviewed sub-goal (validation refuses)
 - Skipped shown as its own state; available and taken paths shown [S3] — met by reviewed sub-goal (look untested; Niclas's trial)
-- Explicit routing decisions, not inferred from prose [S3, S5] — open
+- Explicit routing decisions, not inferred from prose [S3, S5a] — met by reviewed sub-goals (declared `RESULT:` line; handoff tool)
 - A new decision surfaced, not absorbed [S5; existing blocked routes] — open
-- Recommendation prompt with the user's choice [S5] — open
-- Not repeated after refusal [S5] — open
-- Recorded as handed over [S5] — open
-- Safe point before the switch [S5] — open
+- Recommendation prompt with the user's choice [S5a engine and answer; S5b prompt] — open (engine reviewed; window prompt in S5b)
+- Not repeated after refusal [S5a] — met by reviewed sub-goal
+- Recorded as handed over [S5a] — met by reviewed sub-goal (`handed-over` status, journal, record)
+- Safe point before the switch [S5a] — met by reviewed sub-goal (read after the turn settles; no step starts during the hold)
 - Continue once without pasting again [S6] — open
 - Chat gets the run's results, and the reverse [S7, S2] — open
 - No extra permissions on a mode change [S5, S6] — open
@@ -189,6 +203,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
 13. **"Done, check skipped" ends as `not-success` with its own sentences** (S4). Reason: `success` means "Assignment met"; `not-success` draws a neutral mark. Alternatives: `report-delivered` (would claim a report); a new `TerminalEnding` value (changes the graph-format contract for no gain).
 14. **One trailing `:` after the outcome name is accepted, by one shared reader** (S4). Reason: a step writing `RESULT: done-unchecked: docs only` otherwise lost its outcome and the skip; every existing name reads the same. Alternative: fix only the comment and leave colon-writers routed to the fallback.
+15. **S5 split into S5a (engine) and S5b (window)** (coordination). Reason: S5 spans engine, tools, control port, record, IPC and renderer; one review round over all of it risks stalling, and the engine part can be tested with a scripted executor on its own. Alternative: one sub-goal (larger rework risk).
 12. **The bundled chat loop's check becomes skippable** (S4). The chat loop's notes record the interaction-model correction's "a successful work step always reaches check"; the vision (adaptive loops) and BACKLOG's near-term follow-up ("mandatory checking in the small chat loop is not evidence") supersede that for this graph, under Niclas's 13 November authorisation (BRIEF §3). The graph's notes are updated to say which decision they now record. A skipped check ends at a terminal that never reads as "met". Alternatives: keep check mandatory and demonstrate skips only in a new graph (leaves the vision's main case unbuilt); make check skippable in the development loop too (not asked for; that loop guards code changes).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
@@ -202,7 +217,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 6 (call 15).** S4 reviewed and committed. S5 sent to the implementer (the largest sequential sub-goal so far). When the review returns: if accepted, record and commit S5, then brief S6 (depends on S5, S1). If S5 stalls or blocks, S6 depends on it; go on with S7, then S8 and S9. If a run ends before S5's review is recorded, the next run reconciles S5's files (`app/src/shared/loop-run.ts`, `loop-control.ts`, `loop-graph.ts`, `loop-graph-load.ts`, `loop-record.ts`, `loop-transcript.ts`, `loop-chat.ts`, `bridge.ts`, `app/src/main/loop-live.ts`, `loop-control-runtime.ts`, `app/src/host/project-host.ts`, renderer files, the chat loop graph and work role, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md`, their tests) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 7 (call 18).** S5a reviewed and committed. S5b sent to the implementer, carrying S5a findings (ii), (iii) and the GRAPH_FORMAT gap. When the review returns: if accepted, record and commit S5b, then brief S6 (depends on S5a, S5b, S1). If S5b stalls, S6 depends on it; go on with S7, then S8 and S9. If a run ends before S5b's review is recorded, the next run reconciles S5b's files (renderer chat column and its CSS, `docs/loop/graphs/dspatch-chat-loop.graph.json`, `docs/loop/roles/project/project-work.role.md`, `docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md`, `docs/loop/GRAPH_FORMAT.md`, `app/src/shared/loop-run.ts`, `loop-control.ts`, `loop-chat.ts`, their tests) before briefing again.
 
 ## Run log
 

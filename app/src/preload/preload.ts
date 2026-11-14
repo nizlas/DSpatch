@@ -171,6 +171,7 @@ const LOOP_CONTROL: BridgeChannel = 'dspatch:loop-control';
 const READ_LOOP_CONTROL: BridgeChannel = 'dspatch:read-loop-control';
 const REQUEST_LOOP_PAUSE: BridgeChannel = 'dspatch:request-loop-pause';
 const CONTINUE_LOOP: BridgeChannel = 'dspatch:continue-loop';
+const ANSWER_LOOP_HANDOFF: BridgeChannel = 'dspatch:answer-loop-handoff';
 const SET_LOOP_MODE: BridgeChannel = 'dspatch:set-loop-mode';
 const WORKSPACE_FOLDERS: BridgeChannel = 'dspatch:workspace-folders';
 const WORKSPACE_FOLDERS_CHANGED: BridgeChannel = 'dspatch:workspace-folders-changed';
@@ -413,6 +414,7 @@ const bridge: DspatchBridge = {
     >,
   requestLoopPause: () => ipcRenderer.invoke(REQUEST_LOOP_PAUSE) as Promise<LoopControlOutcome>,
   continueLoop: () => ipcRenderer.invoke(CONTINUE_LOOP) as Promise<LoopControlOutcome>,
+  answerLoopHandoff: (answer) => ipcRenderer.invoke(ANSWER_LOOP_HANDOFF, answer) as Promise<LoopControlOutcome>,
   setLoopMode: (mode: LoopMode) =>
     ipcRenderer.invoke(SET_LOOP_MODE, mode) as Promise<LoopControlOutcome>,
   loopControl: () => ipcRenderer.invoke(READ_LOOP_CONTROL) as Promise<LoopControlReport>,

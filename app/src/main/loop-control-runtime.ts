@@ -29,10 +29,12 @@ import {
   type LoopControlReport,
   type LoopControlState,
   type LoopMode,
+  type HandoffAnswerAction,
+  type PendingHandoff,
   type StepHold,
   type StepRef,
 } from '../shared/loop-control';
-import type { RunControlPort, StepReleaseOutcome } from '../shared/loop-run';
+import type { HandoffAnswer, HandoffRequest, RunControlPort, StepReleaseOutcome } from '../shared/loop-run';
 
 /**
  * What a request to start a run achieved.
@@ -76,8 +78,62 @@ export class LoopRunController implements RunControlPort {
     this.now = options.now ?? ((): number => Date.now());
   }
 
+  /** DSP-209 S5a: the recommendation the run holds on, and the answer once it is given. */
+  private pendingHandoff: PendingHandoff | null = null;
+
+  private handoffChoice: HandoffAnswerAction['choice'] | null = null;
+
   report(): LoopControlReport {
-    return { runId: this.runId, state: this.state };
+    return {
+      runId: this.runId,
+      state: this.state,
+      ...(this.pendingHandoff === null ? {} : { handoff: this.pendingHandoff }),
+    };
+  }
+
+  /**
+   * DSP-209 S5a: the person's answer to a step's recommendation to continue interactively.
+   *
+   * Bound to the run and the visit it answers (INTERACTION_MODEL §4.6): an answer for
+   * another run, for an older visit, or with nothing waiting is refused and changes
+   * nothing. The first accepted answer stands; a second one is refused.
+   */
+  answerHandoff(action: HandoffAnswerAction): LoopControlOutcome {
+    const pending = this.pendingHandoff;
+    if (this.runId === null || pending === null) {
+      return { accepted: false, note: 'No step is waiting for an answer about continuing interactively.', report: this.report() };
+    }
+    if (action.runId !== this.runId || action.runId !== pending.runId) {
+      return {
+        accepted: false,
+        note: `That answer was for run ${action.runId}, not the run that is waiting (${pending.runId}). Nothing changed.`,
+        report: this.report(),
+      };
+    }
+    if (action.visit !== pending.visit) {
+      return {
+        accepted: false,
+        note:
+          `That answer was for visit ${String(action.visit)} of "${pending.nodeLabel}", and the run is ` +
+          `waiting on visit ${String(pending.visit)}. Nothing changed.`,
+        report: this.report(),
+      };
+    }
+    if (this.handoffChoice !== null) {
+      return { accepted: false, note: 'This recommendation has already been answered.', report: this.report() };
+    }
+    this.handoffChoice = action.choice;
+    this.wake();
+    this.publish(this.report());
+    return {
+      accepted: true,
+      note:
+        action.choice === 'interactive'
+          ? 'Handing over to interactive work. The loop will start nothing more.'
+          : `Continuing in the loop: "${pending.nodeLabel}" goes on in its own session, and it will not ` +
+            'recommend this again in this run.',
+      report: this.report(),
+    };
   }
 
   /* --------------------------------------------------------------------- */
@@ -210,6 +266,8 @@ export class LoopRunController implements RunControlPort {
     }
     this.runId = null;
     this.state = controlForNewRun(this.state);
+    this.pendingHandoff = null;
+    this.handoffChoice = null;
     this.attachAbort(null);
     this.wake();
     this.publish(this.report());
@@ -254,6 +312,51 @@ export class LoopRunController implements RunControlPort {
       // this wait, and it will do it by making `decideNextStep` answer differently
       // rather than by adding a second rule beside it.
       await this.nextChange();
+    }
+  }
+
+  /**
+   * DSP-209 S5a: hold until the person answers the recommendation, or the run is cancelled.
+   * No timer: silence never switches.
+   */
+  async awaitHandoffAnswer(request: HandoffRequest): Promise<HandoffAnswer> {
+    const heldAt = this.now();
+    this.pendingHandoff = {
+      runId: request.runId,
+      nodeId: request.nodeId,
+      nodeLabel: request.nodeLabel,
+      visit: request.occurrence,
+      reason: request.reason,
+      heldSinceUtc: new Date(heldAt).toISOString(),
+    };
+    this.handoffChoice = null;
+    this.publish(this.report());
+    try {
+      for (;;) {
+        if (this.abortSignal?.aborted === true) {
+          return {
+            kind: 'cancelled',
+            detail: 'The run was cancelled while it waited for your answer, so it was not handed over.',
+            waitedMs: this.now() - heldAt,
+          };
+        }
+        const choice = this.handoffChoice;
+        if (choice !== null) {
+          return {
+            kind: choice,
+            detail:
+              choice === 'interactive'
+                ? `You chose to continue interactively after "${request.nodeLabel}" recommended it.`
+                : `You chose to continue in the loop; "${request.nodeLabel}" goes on in its own session.`,
+            waitedMs: this.now() - heldAt,
+          };
+        }
+        await this.nextChange();
+      }
+    } finally {
+      this.pendingHandoff = null;
+      this.handoffChoice = null;
+      this.publish(this.report());
     }
   }
 

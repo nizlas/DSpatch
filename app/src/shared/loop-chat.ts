@@ -2228,6 +2228,27 @@ export function formatChatLiveLogLine(
           : NO_SKIP_REASON;
       return `“${label}” skipped: ${reason}.`;
     }
+    // DSP-209 S5a. The recommendation and the answer are both the person's business, so both
+    // are said. Neither line says the step finished, failed, met anything or delivered.
+    case 'handoff-requested': {
+      const node = entry.nodeId === undefined ? null : lookup.node(entry.nodeId);
+      const label = node?.label ?? entry.nodeId ?? 'A step';
+      const reason =
+        typeof entry.data?.['reason'] === 'string' && entry.data['reason'].trim() !== ''
+          ? entry.data['reason'].trim()
+          : NO_SKIP_REASON;
+      return `“${label}” recommends continuing interactively: ${reason}. The run is waiting for your answer.`;
+    }
+    case 'handoff-answered': {
+      const choice = entry.data?.['choice'];
+      return choice === 'interactive'
+        ? 'You chose to continue interactively; the run is handed over to interactive work.'
+        : choice === 'loop'
+          ? 'You chose to continue in the loop.'
+          : choice === 'cancelled'
+            ? 'The run was cancelled while it waited for your answer.'
+            : null;
+    }
     default: {
       // Every journal kind, listed. This is what the switch was missing on 20 September
       // 2026, when an edit that appeared only to *add* a case silently removed

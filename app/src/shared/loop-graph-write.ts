@@ -87,6 +87,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     // list: it is which of those names a reply that declares none is routed on.
     'whenUndeclared',
     'declaredFailures',
+    // DSP-209 S5a: what the step may do beyond its role, after the names it may answer with.
+    'capabilities',
     'report',
     'produces',
     'consumes',
