@@ -34,6 +34,7 @@ import type {
 } from './loop-graph';
 import type { Finding } from './loop-graph-load';
 import { nodeSize } from './loop-edge-geometry';
+import { edgeLabelText } from './loop-edge-labels';
 import { countRouteCrossings, routeLoopEdges, sidePathEdges } from './loop-edge-routing';
 import { LAYER_GAP, layeredLayout } from './loop-layout';
 
@@ -224,23 +225,62 @@ function placedAt(graph: LoopGraph, layout: Positions): LoopGraph {
   };
 }
 
+/** How many times the layout may make more room for labels that found no clear place. */
+const LABEL_ROOM_TRIES = 4;
+
 /**
  * The layered layout to use (Niclas, 14 November 2026: side paths outside the main flow where
- * possible). Two candidates: the endings only side paths reach set beside the main flow, and
- * every ending in the last row. The one whose routes cross fewer times wins, the first on a
- * tie; a drawing with no side path has one candidate. Routing both costs two routings, which
- * is why it happens on **Arrange** and on opening a drawing with unplaced nodes, never while
- * a node is dragged.
+ * possible, and room for every edge's label from the start). Two candidates: the endings only
+ * side paths reach set beside the main flow, and every ending in the last row. Each is routed
+ * with the labels the canvas draws; while some label finds no place clear of nodes and other
+ * labels, the layout makes more room where that label is — the column beside the flow moves out
+ * when the label's edge goes into it, every gap grows otherwise — and it is routed again, up to
+ * {@link LABEL_ROOM_TRIES} times. Then the candidate with fewer such labels wins, and between
+ * equals the one whose routes cross fewer times, the first on a tie; a drawing with no side
+ * path has one candidate. That is a few routings, which is why it happens on **Arrange** and
+ * when unplaced nodes are laid out, never while a node is dragged. Labels are placed the same
+ * whether they are shown or not, so a selection that shows some of them moves nothing.
  */
 function bestLayout(graph: LoopGraph): Positions {
-  const plain = layeredLayout(graph).positions;
   const side = sidePathEdges(graph);
-  if (side.size === 0) {
-    return plain;
+  const edges = new Map(graph.edges.map((edge) => [edge.id, edge]));
+  const labelOf = (edgeId: string): string => {
+    const edge = edges.get(edgeId);
+    return edge === undefined ? '' : edgeLabelText(edge);
+  };
+  type Scored = { readonly positions: Positions; readonly conflicts: number; readonly crossings: number };
+  let best: Scored | null = null;
+  for (const besideEndings of side.size === 0 ? [false] : [true, false]) {
+    let chosen: Scored | null = null;
+    let widen = 0;
+    let widenBeside = 0;
+    for (let attempt = 0; attempt <= LABEL_ROOM_TRIES; attempt += 1) {
+      const layout = layeredLayout(graph, { sidePaths: side, besideEndings, labelOf, widen, widenBeside });
+      let conflicts: readonly string[] = [];
+      const routes = routeLoopEdges(placedAt(graph, layout.positions), {
+        labelOf: edgeLabelText,
+        report: (report) => (conflicts = report.labelConflicts),
+      });
+      if (chosen === null || conflicts.length < chosen.conflicts) {
+        chosen = { positions: layout.positions, conflicts: conflicts.length, crossings: countRouteCrossings(routes) };
+      }
+      if (conflicts.length === 0) {
+        break;
+      }
+      if (conflicts.some((id) => layout.beside.has(edges.get(id)?.to ?? ''))) {
+        widenBeside += 1;
+      } else {
+        widen += 1;
+      }
+    }
+    if (
+      chosen !== null &&
+      (best === null || chosen.conflicts < best.conflicts || (chosen.conflicts === best.conflicts && chosen.crossings < best.crossings))
+    ) {
+      best = chosen;
+    }
   }
-  const beside = layeredLayout(graph, { sidePaths: side }).positions;
-  const crossings = (layout: Positions): number => countRouteCrossings(routeLoopEdges(placedAt(graph, layout)));
-  return crossings(beside) <= crossings(plain) ? beside : plain;
+  return best?.positions ?? new Map();
 }
 
 /**

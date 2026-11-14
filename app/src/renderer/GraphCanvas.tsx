@@ -24,6 +24,7 @@ import {
   nodeOutlinePath,
   nodeSize,
 } from '../shared/loop-edge-geometry';
+import { edgeLabelText, LABEL_LINE_HEIGHT } from '../shared/loop-edge-labels';
 import { routeExtent, routeLoopEdges, sidePathEdges, type EdgeRoute } from '../shared/loop-edge-routing';
 import { NODE_RUN_STATE_MARKS, endingMarkFor, nodeRunStateFor, type EndingMark, type FinishedRunMarks, type NodeRunState } from '../shared/loop-run-view';
 
@@ -49,18 +50,6 @@ export function graphBounds(
   }
   const extent = routes === undefined ? { maxX: 0, maxY: 0 } : routeExtent(routes);
   return { width: Math.max(maxX + 120, extent.maxX + 60), height: Math.max(maxY + 120, extent.maxY + 60) };
-}
-
-/** The words an edge is labelled with on the canvas. */
-function edgeText(edge: LoopEdge): string {
-  return (
-    edge.label ??
-    (edge.when.on === 'outcome'
-      ? edge.when.outcome
-      : edge.when.on === 'declared-failure'
-        ? edge.when.failure
-        : 'success')
-  );
 }
 
 export interface GraphCanvasProps {
@@ -102,7 +91,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
     declarations and edge ends — so nothing a run changes can move one. Kept for as long as
     the graph object is the same, which is every run update.
   */
-  const routes = useMemo(() => routeLoopEdges(graph, { labelOf: edgeText }), [graph]);
+  const routes = useMemo(() => routeLoopEdges(graph, { labelOf: edgeLabelText }), [graph]);
   // Niclas, 14 November 2026: failures and a node's own "nothing established" route are drawn
   // fainter, and while something is selected, connections that do not touch it step back.
   const sidePaths = useMemo(() => sidePathEdges(graph), [graph]);
@@ -272,7 +261,11 @@ function EdgeShape({
       <circle className="edge-dot" cx={end.x} cy={end.y} r={ANCHOR_DOT_RADIUS} />
       {showLabel || selected || highlighted ? (
         <text x={route.label.x} y={route.label.y} className="edge-label">
-          {edgeText(edge)}
+          {route.labelLines.map((line, index) => (
+            <tspan key={index} x={route.label.x} dy={index === 0 ? 0 : LABEL_LINE_HEIGHT}>
+              {line}
+            </tspan>
+          ))}
         </text>
       ) : null}
     </g>

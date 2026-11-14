@@ -13,8 +13,9 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { nodeSize } from '../src/shared/loop-edge-geometry';
-import { countRouteCrossings, findBackEdges, routeLoopEdges, sidePathEdges } from '../src/shared/loop-edge-routing';
+import { nodeSize, type Box, type Point } from '../src/shared/loop-edge-geometry';
+import { edgeLabelText, LABEL_WRAP_WIDTH, labelTextWidth } from '../src/shared/loop-edge-labels';
+import { countRouteCrossings, findBackEdges, routeLoopEdges, routingBox, segmentCrossesBox, sidePathEdges } from '../src/shared/loop-edge-routing';
 import type { LoopEdge, LoopGraph, LoopNode } from '../src/shared/loop-graph';
 import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION } from '../src/shared/loop-graph';
 import { arrangeGraph, layOutMissingViews } from '../src/shared/loop-graph-editing';
@@ -147,11 +148,11 @@ describe('the layered layout (DSP-209 S18b)', () => {
     }
   });
 
-  it('routes every arranged drawing without S18a’s last-resort route (review suggestion 2)', () => {
+  it('routes every arranged drawing without S18a’s last-resort route (review suggestion 2), every label clear', () => {
     for (const { name, graph } of cases()) {
-      let report: { readonly narrowed: boolean; readonly dogLegs: readonly string[] } | null = null;
-      routeLoopEdges(arrangeGraph(graph), { report: (seen) => (report = seen) });
-      assert.deepEqual(report, { narrowed: false, dogLegs: [] }, `${name}: no narrowed pass and no dog-leg`);
+      let report: { readonly narrowed: boolean; readonly dogLegs: readonly string[]; readonly labelConflicts: readonly string[] } | null = null;
+      routeLoopEdges(arrangeGraph(graph), { labelOf: edgeLabelText, report: (seen) => (report = seen) });
+      assert.deepEqual(report, { narrowed: false, dogLegs: [], labelConflicts: [] }, `${name}: no narrowed pass, no dog-leg, no label without room`);
     }
   });
 });
@@ -169,15 +170,19 @@ describe('side paths outside the main flow (Niclas, 14 November 2026)', () => {
     assert.ok(side.size > 0);
   });
 
-  it('Arrange never leaves more crossings than the old last-row layout, and no boxes overlap', () => {
+  it('Arrange never crosses the main flow more than a layout that ignores side paths, and no boxes overlap', () => {
+    // Side paths are drawn fainter and kept out of the main flow's grouping (Niclas, 14 November
+    // 2026), so what Arrange must not make worse is the main flow: its own edges' crossings.
+    const mainCrossings = (graph: LoopGraph): number => {
+      const side = sidePathEdges(graph);
+      const routes = routeLoopEdges(graph);
+      return countRouteCrossings(new Map([...routes].filter(([id, route]) => !side.has(id) && !route.back)));
+    };
     for (const { name, graph } of cases()) {
       const plain = layeredLayout(graph).positions;
       const placedPlain = { ...graph, nodes: graph.nodes.map((node) => ({ ...node, view: plain.get(node.id) ?? node.view })) };
       const arranged = arrangeGraph(graph);
-      assert.ok(
-        countRouteCrossings(routeLoopEdges(arranged)) <= countRouteCrossings(routeLoopEdges(placedPlain)),
-        `${name}: no more crossings than before`,
-      );
+      assert.ok(mainCrossings(arranged) <= mainCrossings(placedPlain), `${name}: the main flow crosses no more`);
       assert.deepEqual(overlaps(arranged), [], `${name}: no boxes overlap`);
     }
     // The chat loop's endings that only failures and "not established" reach go beside the flow,
@@ -186,5 +191,124 @@ describe('side paths outside the main flow (Niclas, 14 November 2026)', () => {
     const plain = layeredLayout(chat).positions;
     const placedPlain = { ...chat, nodes: chat.nodes.map((node) => ({ ...node, view: plain.get(node.id) ?? node.view })) };
     assert.ok(countRouteCrossings(routeLoopEdges(arrangeGraph(chat))) < countRouteCrossings(routeLoopEdges(placedPlain)));
+  });
+});
+
+/**
+ * Alternative paths that join later, with failures and a rework edge around them. Built from
+ * `names`, so the same structure can be asserted under other node names and another file order:
+ * the rules come from the drawing's structure, never from what its nodes are called.
+ */
+function branching(
+  names: Readonly<Record<'start' | 'short' | 'fork' | 'merge' | 'join' | 'ok' | 'no' | 'unsure' | 'halted' | 'partFailed', string>>,
+  longFirst: boolean,
+): LoopGraph {
+  const n = names;
+  const agent = (id: string, extra: Partial<LoopNode> = {}): LoopNode => ({ id, kind: 'agent', label: id, ...extra });
+  const fork = agent(n.fork, { failures: ['part-failed'] });
+  const branchNodes = longFirst ? [fork, agent(n.merge), agent(n.short)] : [agent(n.short), fork, agent(n.merge)];
+  const nodes: LoopNode[] = [
+    agent(n.start, { outcomes: ['quick', 'split', 'unsure'], whenUndeclared: 'unsure', failures: ['blocked'] }),
+    ...branchNodes,
+    agent(n.join, { outcomes: ['ok', 'redo', 'no', 'unsure'], whenUndeclared: 'unsure' }),
+    ...[n.ok, n.no, n.unsure, n.halted, n.partFailed].map((id): LoopNode => ({ id, kind: 'terminal', label: id })),
+  ];
+  const edge = (id: string, from: string, to: string, when: LoopEdge['when'], label: string): LoopEdge => ({ id, from, to, when, label });
+  const edges: LoopEdge[] = [
+    edge('s-quick', n.start, n.short, { on: 'outcome', outcome: 'quick' }, 'one person can do it'),
+    edge('s-split', n.start, n.fork, { on: 'outcome', outcome: 'split' }, 'in parts'),
+    edge('s-unsure', n.start, n.unsure, { on: 'outcome', outcome: 'unsure' }, 'no readable choice'),
+    edge('s-blocked', n.start, n.halted, { on: 'declared-failure', failure: 'blocked' }, 'blocked'),
+    edge('short-done', n.short, n.join, { on: 'success' }, 'done, to the check'),
+    edge('fork-done', n.fork, n.merge, { on: 'success' }, 'every part done'),
+    edge('fork-failed', n.fork, n.partFailed, { on: 'declared-failure', failure: 'part-failed' }, 'every one of the partial results failed'),
+    edge('merge-done', n.merge, n.join, { on: 'success' }, 'merged, to the check'),
+    edge('join-ok', n.join, n.ok, { on: 'outcome', outcome: 'ok' }, 'met'),
+    edge('join-redo', n.join, n.short, { on: 'outcome', outcome: 'redo' }, 'rework with findings'),
+    edge('join-no', n.join, n.no, { on: 'outcome', outcome: 'no' }, 'not met'),
+    edge('join-unsure', n.join, n.unsure, { on: 'outcome', outcome: 'unsure' }, 'could not check'),
+  ];
+  return {
+    format: LOOP_GRAPH_FORMAT,
+    formatVersion: LOOP_GRAPH_FORMAT_VERSION,
+    id: 'branching',
+    name: 'Branching',
+    purpose: 'Layout test.',
+    target: 'cursor',
+    entry: n.start,
+    onRuntimeFault: 'stop-and-reconcile',
+    failureKinds: [],
+    nodes,
+    edges,
+  };
+}
+
+const NAMINGS = [
+  {
+    names: { start: 'triage', short: 'patch', fork: 'divide', merge: 'combine', join: 'inspect', ok: 'shipped', no: 'rejected', unsure: 'undecided', halted: 'halted', partFailed: 'parts-failed' },
+    longFirst: false,
+  },
+  {
+    names: { start: 'intake', short: 'solo', fork: 'fan', merge: 'gather', join: 'verify', ok: 'accepted', no: 'declined', unsure: 'unclear', halted: 'stuck', partFailed: 'lost-part' },
+    longFirst: true,
+  },
+] as const;
+
+describe('alternative paths and room for labels (Niclas, 14 November 2026)', () => {
+  const width = nodeSize({ kind: 'agent' }).width;
+  const centre = (graph: LoopGraph, id: string): number => (graph.nodes.find((node) => node.id === id)?.view?.x ?? 0) + width / 2;
+  const top = (graph: LoopGraph, id: string): number => graph.nodes.find((node) => node.id === id)?.view?.y ?? 0;
+
+  it('keeps a step that belongs to one path along it until the paths join, under any names', () => {
+    for (const { names, longFirst } of NAMINGS) {
+      const arranged = arrangeGraph(branching(names, longFirst));
+      // The step only the long path has sits under that path's first step, in its column.
+      assert.equal(centre(arranged, names.merge), centre(arranged, names.fork), `${names.merge}: in line with ${names.fork}`);
+      assert.ok(top(arranged, names.merge) > top(arranged, names.fork), `${names.merge}: below ${names.fork}`);
+      // The short path goes straight to the join: in a column of its own, through no node.
+      assert.ok(Math.abs(centre(arranged, names.short) - centre(arranged, names.merge)) >= width, `${names.short}: its own column`);
+      const shortRoute = routeLoopEdges(arranged).get('short-done');
+      assert.ok(shortRoute !== undefined);
+      for (const node of arranged.nodes.filter((item) => item.id !== names.short && item.id !== names.join)) {
+        const crosses = shortRoute.points.slice(1).some((point, index) => segmentCrossesBox(shortRoute.points[index] as Point, point, routingBox(node)));
+        assert.ok(!crosses, `${names.short} → ${names.join} passes ${node.id}`);
+      }
+      // The paths meet at the join, which sits below both and between them.
+      assert.ok(top(arranged, names.join) > top(arranged, names.merge), `${names.join}: below the long path`);
+      const [left, right] = [centre(arranged, names.short), centre(arranged, names.merge)].sort((a, b) => a - b) as [number, number];
+      assert.ok(centre(arranged, names.join) >= left && centre(arranged, names.join) <= right, `${names.join}: between the paths`);
+    }
+  });
+
+  it('gives every label room, whole and clear of nodes and other labels, from the first layout', () => {
+    for (const { names, longFirst } of NAMINGS) {
+      const unplaced = branching(names, longFirst);
+      // A new graph without positions and Arrange follow the same rules.
+      const arranged = arrangeGraph(unplaced);
+      assert.deepEqual(
+        layOutMissingViews(unplaced).graph.nodes.map((node) => node.view),
+        arranged.nodes.map((node) => node.view),
+      );
+      // Placed the same whether shown or not: Edge labels, or only a selection's.
+      const routes = routeLoopEdges(arranged, { labelOf: edgeLabelText });
+      const labels = [...routes.values()].map((route) => ({ id: route.edgeId, box: route.labelBox, lines: route.labelLines }));
+      const meets = (a: Box, b: Box): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+      for (const { id, box, lines } of labels) {
+        assert.ok(box.x >= 0 && box.y >= 0, `${id}: inside the drawing`);
+        for (const node of arranged.nodes) {
+          assert.ok(!meets(box, routingBox(node)), `${id}'s label is on ${node.id}`);
+        }
+        for (const other of labels.filter((entry) => entry.id !== id)) {
+          assert.ok(!meets(box, other.box), `${id}'s label is on ${other.id}'s`);
+        }
+        const edge = arranged.edges.find((item) => item.id === id) as LoopEdge;
+        assert.equal(lines.join(' '), edgeLabelText(edge), `${id}: the whole text`);
+        for (const line of lines) {
+          assert.ok(labelTextWidth(line) <= LABEL_WRAP_WIDTH || !line.includes(' '), `"${line}" fits its line`);
+        }
+      }
+      // A long label is broken between words rather than cut.
+      assert.ok((labels.find((entry) => entry.id === 'fork-failed')?.lines.length ?? 0) >= 2);
+    }
   });
 });

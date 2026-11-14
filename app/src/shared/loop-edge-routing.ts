@@ -27,6 +27,7 @@
 
 import type { NodeKind } from './loop-graph';
 import { nodeCornerRadius, nodeSize, type Box, type NodeSide, type Point } from './loop-edge-geometry';
+import { LABEL_LINE_HEIGHT, measureLabel, type LabelSize } from './loop-edge-labels';
 
 /* ------------------------------------------------------------------------- */
 /* Inputs and outputs                                                         */
@@ -65,8 +66,12 @@ export interface EdgeRoute {
   readonly lane: LaneSide | null;
   readonly sourceSide: NodeSide;
   readonly targetSide: NodeSide;
-  /** Where the label's text is centred (baseline), on a segment clear of nodes and other labels. */
+  /** Where the label's text is centred (the first line's baseline), on a segment clear of nodes and other labels. */
   readonly label: Point;
+  /** The label's lines, as {@link measureLabel} breaks them; drawn one below the other from `label`. */
+  readonly labelLines: readonly string[];
+  /** The box the label takes, which no node and no other label overlaps when it could be placed so. */
+  readonly labelBox: Box;
 }
 
 export interface RouteOptions<E extends RoutingEdge = RoutingEdge> {
@@ -75,9 +80,15 @@ export interface RouteOptions<E extends RoutingEdge = RoutingEdge> {
   /**
    * DSP-209 S18b: told how the routes were found, for tests. `narrowed` is the second pass at
    * half the margin, taken when some route could not be found at full margin; `dogLegs` are
-   * the edges that even then fell back to a plain dog-leg. Changes no route.
+   * the edges that even then fell back to a plain dog-leg. `labelConflicts` are the edges whose
+   * label found no place clear of every node and every other label (Niclas, 14 November 2026),
+   * which the layout reads to widen its gaps. Changes no route.
    */
-  readonly report?: (report: { readonly narrowed: boolean; readonly dogLegs: readonly string[] }) => void;
+  readonly report?: (report: {
+    readonly narrowed: boolean;
+    readonly dogLegs: readonly string[];
+    readonly labelConflicts: readonly string[];
+  }) => void;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -97,9 +108,10 @@ const BEND_COST = 40;
 const SHARED_COST = 0.6;
 /** Corner rounding of the drawn path. */
 export const ROUTE_CORNER_RADIUS = 8;
-/** Label metrics, matching `.edge-label` (10px). */
-const LABEL_CHAR_WIDTH = 5.6;
-const LABEL_HEIGHT = 12;
+/** How far a label keeps from a node's box and from another label. */
+const LABEL_CLEARANCE = 3;
+/** A label slides along its segment in steps of this many units, outwards from the middle. */
+const LABEL_STEP = 6;
 
 /* ------------------------------------------------------------------------- */
 /* Back edges                                                                 */
@@ -822,15 +834,18 @@ export function routeLoopEdges<E extends RoutingEdge>(
   const full = routeAll(plans, ports, allBoxes, MARGIN);
   const dogLegs: string[] = [];
   const routed = full ?? routeAll(plans, ports, allBoxes, MARGIN / 2, true, dogLegs);
-  options.report?.({ narrowed: full === null, dogLegs });
 
   // 4. Labels on free segments.
   const result = new Map<string, EdgeRoute>();
   const placed: Box[] = [];
+  const labelConflicts: string[] = [];
   for (const plan of plans) {
     const points = (routed as Map<string, Point[]>).get(plan.edge.id) as Point[];
-    const text = options.labelOf?.(plan.edge as E) ?? 'success';
-    const label = placeLabel(points, text, allBoxes, placed);
+    const size = measureLabel(options.labelOf?.(plan.edge as E) ?? 'success');
+    const label = placeLabel(points, size, allBoxes, placed);
+    if (!label.clear) {
+      labelConflicts.push(plan.edge.id);
+    }
     result.set(plan.edge.id, {
       edgeId: plan.edge.id,
       points,
@@ -839,9 +854,12 @@ export function routeLoopEdges<E extends RoutingEdge>(
       lane: plan.lane,
       sourceSide: plan.fromSide,
       targetSide: plan.toSide,
-      label,
+      label: label.anchor,
+      labelLines: size.lines,
+      labelBox: label.box,
     });
   }
+  options.report?.({ narrowed: full === null, dogLegs, labelConflicts });
   return result;
 }
 
@@ -1046,11 +1064,20 @@ function stubEndAt(box: Box, side: NodeSide, port: Point, margin: number): Point
 }
 
 /**
- * The label's centre: the middle of the longest segment where the text clears every node
- * and every label already placed; the longest segment when none does.
+ * Where the label goes: beside one of its route's segments, clear of every node and every label
+ * already placed, by a few clearance units, and never left of or above the drawing's origin.
+ * Segments are tried longest first; on each, the middle, then points sliding outwards from it
+ * in {@link LABEL_STEP} steps; at each point, above a horizontal segment or right of a vertical
+ * one, then the other side. When nothing is clear, the middle of the longest segment, reported
+ * as not clear so the layout can make room.
  */
-function placeLabel(points: readonly Point[], text: string, boxes: readonly Box[], placed: Box[]): Point {
-  const width = text.length * LABEL_CHAR_WIDTH + 6;
+function placeLabel(
+  points: readonly Point[],
+  size: LabelSize,
+  boxes: readonly Box[],
+  placed: Box[],
+): { readonly anchor: Point; readonly box: Box; readonly clear: boolean } {
+  const { width, height } = size;
   const segments: { a: Point; b: Point; length: number; index: number }[] = [];
   for (let i = 1; i < points.length; i += 1) {
     const a = points[i - 1] as Point;
@@ -1058,36 +1085,53 @@ function placeLabel(points: readonly Point[], text: string, boxes: readonly Box[
     segments.push({ a, b, length: Math.abs(b.x - a.x) + Math.abs(b.y - a.y), index: i });
   }
   segments.sort((p, q) => q.length - p.length || p.index - q.index);
-  const at = (segment: { a: Point; b: Point }): { anchor: Point; rect: Box } => {
-    const mid = { x: (segment.a.x + segment.b.x) / 2, y: (segment.a.y + segment.b.y) / 2 };
-    if (segment.a.y === segment.b.y) {
-      return {
-        anchor: { x: mid.x, y: mid.y - 4 },
-        rect: { x: mid.x - width / 2, y: mid.y - 4 - LABEL_HEIGHT + 2, width, height: LABEL_HEIGHT },
-      };
-    }
-    return {
-      anchor: { x: mid.x + 4 + width / 2, y: mid.y + 3 },
-      rect: { x: mid.x + 4, y: mid.y + 3 - LABEL_HEIGHT + 2, width, height: LABEL_HEIGHT },
-    };
+  // The first line's baseline sits this far below the top of its box.
+  const baseline = LABEL_LINE_HEIGHT - 2;
+  const at = (segment: { a: Point; b: Point }, stop: number, first: boolean): { anchor: Point; box: Box } => {
+    const point = { x: segment.a.x + (segment.b.x - segment.a.x) * stop, y: segment.a.y + (segment.b.y - segment.a.y) * stop };
+    const box: Box =
+      segment.a.y === segment.b.y
+        ? { x: point.x - width / 2, y: first ? point.y - 2 - height : point.y + 3, width, height }
+        : { x: first ? point.x + 4 : point.x - 4 - width, y: Math.round(point.y - height / 2) - 1, width, height };
+    return { anchor: { x: box.x + width / 2, y: box.y + baseline }, box };
   };
+  const grown = (box: Box): Box => ({
+    x: box.x - LABEL_CLEARANCE,
+    y: box.y - LABEL_CLEARANCE,
+    width: box.width + 2 * LABEL_CLEARANCE,
+    height: box.height + 2 * LABEL_CLEARANCE,
+  });
   for (const segment of segments) {
-    const candidate = at(segment);
-    if (
-      !boxes.some((box) => rectsOverlap(candidate.rect, box)) &&
-      !placed.some((other) => rectsOverlap(candidate.rect, other))
-    ) {
-      placed.push(candidate.rect);
-      return candidate.anchor;
+    const steps = Math.floor(segment.length / 2 / LABEL_STEP);
+    const stops = [0.5];
+    for (let step = 1; step <= steps; step += 1) {
+      const along = (step * LABEL_STEP) / Math.max(1, segment.length);
+      stops.push(0.5 - along, 0.5 + along);
+    }
+    for (const stop of stops) {
+      for (const first of [true, false]) {
+        const candidate = at(segment, stop, first);
+        const around = grown(candidate.box);
+        if (
+          candidate.box.x >= 0 &&
+          candidate.box.y >= 0 &&
+          !boxes.some((box) => rectsOverlap(around, box)) &&
+          !placed.some((other) => rectsOverlap(around, other))
+        ) {
+          placed.push(candidate.box);
+          return { ...candidate, clear: true };
+        }
+      }
     }
   }
   const fallback = segments[0];
   if (fallback === undefined) {
-    return points[0] ?? { x: 0, y: 0 };
+    const point = points[0] ?? { x: 0, y: 0 };
+    return { anchor: point, box: { x: point.x - width / 2, y: point.y - baseline, width, height }, clear: false };
   }
-  const candidate = at(fallback);
-  placed.push(candidate.rect);
-  return candidate.anchor;
+  const candidate = at(fallback, 0.5, true);
+  placed.push(candidate.box);
+  return { ...candidate, clear: false };
 }
 
 /** What {@link sidePathEdges} reads: how an edge is taken, and each node's fallback outcome. */
@@ -1159,10 +1203,12 @@ export function routeExtent(routes: ReadonlyMap<string, EdgeRoute>): { readonly 
   let maxX = 0;
   let maxY = 0;
   for (const route of routes.values()) {
-    for (const point of [...route.points, route.label]) {
+    for (const point of route.points) {
       maxX = Math.max(maxX, point.x);
       maxY = Math.max(maxY, point.y);
     }
+    maxX = Math.max(maxX, route.labelBox.x + route.labelBox.width);
+    maxY = Math.max(maxY, route.labelBox.y + route.labelBox.height);
   }
   return { maxX, maxY };
 }
