@@ -2020,6 +2020,33 @@ body {
   line-height: 1.45;
 }
 
+/* DSP-209 S26 (R7): a control's full explanation, opened beside it and readable. */
+.inline-help {
+  display: inline-block;
+  max-width: 28rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  user-select: text;
+}
+
+.inline-help > summary {
+  cursor: pointer;
+}
+
+.app__note .muted,
+.muted {
+  color: var(--muted);
+}
+
+/* DSP-209 S26 (R7): what each answer does, in full, beside the buttons. */
+.loop-handoff__explain {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
 .loop-handoff__reason {
   margin: 0;
   padding-left: 0.5rem;

@@ -13,7 +13,10 @@ import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport } from 
 export interface HandoffChoiceView {
   readonly choice: HandoffAnswerAction['choice'];
   readonly label: string;
+  /** The full sentence, shown under the buttons (DSP-209 S26, R7). */
   readonly title: string;
+  /** DSP-209 S26 (R7): the button's hover, a few words; {@link title} is the full text. */
+  readonly hint: string;
   readonly answer: HandoffAnswerAction;
 }
 
@@ -42,12 +45,14 @@ export function handoffPromptView(report: LoopControlReport): HandoffPromptView 
         title:
           'End the loop run here as handed over. DSpatch then sends the run’s mandate and what it ' +
           'did to the agent in this chat, once, and the work continues there; you do not type it again.',
+        hint: 'End the run; carry on in this chat',
         answer: { ...bound, choice: 'interactive' },
       },
       {
         choice: 'loop',
         label: 'Continue in the loop',
         title: 'Let this step carry on in the loop. It will not recommend this again in this run.',
+        hint: 'Let this step carry on in the loop',
         answer: { ...bound, choice: 'loop' },
       },
     ],

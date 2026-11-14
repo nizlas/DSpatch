@@ -1016,6 +1016,68 @@
   color: #e0b3c6;
 }
 
+/* DSP-209 S26 (R7): a badge that opens to its full text, which stays shown until closed. */
+.support-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.support-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.support-details[open] {
+  display: block;
+  margin: 4px 0 0;
+  white-space: normal;
+}
+
+.support-full {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  user-select: text;
+}
+
+/* DSP-209 S26 (R7): the toolbar's Details, fixed below its button, open until closed. */
+.editor-details__panel {
+  position: fixed;
+  right: 16px;
+  z-index: 30;
+  width: min(34rem, 85vw);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid #2f3742;
+  border-radius: 6px;
+  background: #151a20;
+  color: #d5dbe3;
+  font-size: 12px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.editor-details__panel dl {
+  margin: 0;
+}
+
+.editor-details__panel dt {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+.editor-details__panel dd {
+  margin: 2px 0 0;
+}
+
+/* The node panel's full help, where the canvas hover used to carry it. */
+.node-kind-help > summary {
+  cursor: pointer;
+  color: #8b98a8;
+}
+
 /* The node's own heading line: kind, id and whether its role resolved. */
 .inspector .kind-line {
   margin: 0 0 10px;

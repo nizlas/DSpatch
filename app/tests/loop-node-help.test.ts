@@ -39,6 +39,8 @@ import {
   DRAWING_TASK_PRECEDENCE,
   ENTRY_LINE_FROM_DRAWING,
   MANDATE_INTRO_FROM_DRAWING,
+  NODE_HELP_LABEL_MAX,
+  nodeHelpLabel,
   nodeHelpText,
   ROLE_BLOCK_CLOSE,
   ROLE_BLOCK_OPEN,
@@ -896,5 +898,15 @@ describe('the brief panel for a drawing whose purpose is the mandate (DSP-139)',
       TASK_PRECEDENCE.filter((line) => line !== ''),
     );
     assert.equal(person.find((part) => part.id === 'mandate')?.text, undefined);
+  });
+});
+
+describe('the canvas hover is a short label, and the full help stays in the panel (DSP-209 S26, R7)', () => {
+  it('keeps nodeHelpLabel within NODE_HELP_LABEL_MAX, and the full text whole', () => {
+    const long = { id: 'work', kind: 'agent' as const, label: 'Work', purpose: `${'Do the careful work the mandate asks for '.repeat(5)}.` };
+    assert.ok(nodeHelpLabel(long).length <= NODE_HELP_LABEL_MAX, nodeHelpLabel(long));
+    assert.ok(nodeHelpText(long).length > NODE_HELP_LABEL_MAX, 'the full help is not cut');
+    assert.equal(nodeHelpLabel({ id: 'work', label: 'Work', purpose: 'Write it. Then test it.' }), 'Write it.');
+    assert.equal(nodeHelpLabel({ id: 'work', label: 'Work' }), 'No purpose written for "Work"');
   });
 });

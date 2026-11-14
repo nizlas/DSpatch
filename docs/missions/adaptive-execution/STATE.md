@@ -14,10 +14,10 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S26 (`implement`, decision 54), from call 53 of run `chat-loop-2026-11-14T09-54-18-366Z`, after the fourth whole assessment returned gaps. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** S27 (`implement`, decision 55), from call 56 of run `chat-loop-2026-11-14T09-54-18-366Z`. S26 is reviewed and committed. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
 - **For Niclas's next engine transition:** host code changed in S19, S19b, S20, S21, S21b, S22, S23a and S23b. Rebuild `DSpatch-engine` at the commit this run ends on, then use **Restart host**. No host method was added, so the host contract is unchanged. Never do this during a run.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
-- **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 and Q5 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
+- **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4, Q5 and Q6 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
 ## Extension of 14 November 2026: understandable workflows (R1–R6)
 
@@ -160,8 +160,8 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b (both reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S23a)` after `9f5caa6` |
 | S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1, R7 | S17, S23a (both reviewed) | **reviewed** after one rework round (see its record) | 1 | `(DSP-209 S23b)` after `144624d` |
 | S21b | S21's open S-a: read a `SUBGOAL:` line only from nodes that declare `subgoal`, as the S21 brief said. The reader is `subGoalClaimFrom` in `shared/run-presentation.ts` (l.412, used at l.554 and l.571), not `step-report-cards.ts` as first written here | R4 | S21 | **reviewed** (see its record) | 1 | `(DSP-209 S21b)` after `976df7d` |
-| S26 | R7 sweep. Every hover text in the loop editor, the canvas, the run view and the chat's loop surfaces becomes a short label, with the full text in a persistent, readable detail view. Known cases are in R7 under *Requirements of the vision*. From the whole assessment (call 52) | R7 | — | **in progress**: sent to `implement` on call 53 (decision 54) | 1 | — |
-| S27 | A run read back from its record shows sub-goal claims again. This needs an additive `declares` data field on `node-entered`, read by `stepReportsForTurn` for restored turns. From the whole assessment | R4 | S21b | pending | 0 | — |
+| S26 | R7 sweep. Every hover text in the loop editor, the canvas, the run view and the chat's loop surfaces becomes a short label, with the full text in a persistent, readable detail view. Known cases are in R7 under *Requirements of the vision*. From the whole assessment (call 52) | R7 | — | **reviewed** (see its record) | 1 | `(DSP-209 S26)` after `7ba31bf` |
+| S27 | A run read back from its record shows sub-goal claims again. This needs an additive `declares` data field on `node-entered`, read by `stepReportsForTurn` for restored turns. From the whole assessment | R4 | S21b | **in progress**: sent to `implement` on call 56 (decision 55) | 1 | — |
 | S28 | One integrated run of the `loop` test group and the type check on the final commit, fixing any failure. This follows decision 31's precedent and the concrete risk the assessment named: single-file checks missed failing tests twice. From the whole assessment | all | S26, S27 | pending | 0 | — |
 
 The acceptance criteria and checks for each sub-goal are the planner's, from call 2. Each brief repeats the ones it needs. Section 3 of that result defines the R5 counters: sub-goal, agent step (node visit), branch invocation, rework round, calls, provider turns, tool calls, elapsed time and usage. S16 implements those definitions.
@@ -390,6 +390,40 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S26 — R7 sweep on the workflow surfaces — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1.** Run `chat-loop-2026-11-14T09-54-18-366Z`. Briefed on coordinator visit 14 (call 53, decision 54); implemented (call 54, `done`); review `accept` (call 55, round 1); recorded and committed on coordinator visit 15 (call 56). `git status` showed exactly the ten files the implementer named.
+- **What was done:**
+  - **Canvas node hover.** It now shows the label, the state and the ending's short mark. With **Help** on, it also shows the purpose, cut to 60 characters by the new `nodeHelpLabel` in `loop-chat.ts`. The full `nodeHelpText` is in the node panel's new **About this kind of step** disclosure.
+  - **Palette kind buttons.** The hover is the kind's hint. "Required: …" is shown when a kind is picked, and in **About this kind of step**.
+  - **Badges.** They are now disclosures that open to their full reason. Their hovers are "Show why" and "Show the limits".
+  - **`HandoffPrompt`.** It lives in `LoopControlBar.tsx`, not `App.tsx` as the brief said. Each choice gets a short `hint` in `handoff-prompt.ts`, and its full sentence is listed under the buttons.
+  - **Editor toolbar and run row.**
+    - A new **Details** panel holds the full text of every control and chip.
+    - The hovers are short labels.
+  - **Chat.**
+    - **Edit agent loops** gets a short hover.
+    - **Use loop** gets a short hover and a **What is this?** disclosure.
+    - The recap's **Remove** gets a short hover, with visible text beside it.
+  - Styles go in `loop-editor.css` and `styles.css`.
+  - The shared help texts are kept whole.
+  - Tests check the length of `nodeHelpLabel` (at most 60 characters) and of the handoff hints (at most 40).
+  - Unchanged: control behaviour, format, saved data, prompts, the host contract and layout.
+- **Left unchanged, as already short or out of scope:**
+  - `KIND_HINTS` (up to 70 characters) and the canvas state word (up to about 75), both visible elsewhere.
+  - The review and walk views (`ReviewView.tsx`, `PairReview.tsx`, `WalkLoopFollow.tsx` and the like) and the rest of the app. That is Q6.
+- **Review verdict: accept.** All three criteria are met by reading. The reviewer relied on the implementer's inventory for the four cards that have no hovers. Open, not blocking:
+  - The **Remove** note, "Removed, these runs are not offered again.", is shown before anything is removed. It should say "Once removed, …".
+  - The `nodeHelpLabel` block sits between `nodeHelpText`'s doc comment and `nodeHelpText`, in `loop-chat.ts` before l.2440.
+  - Two hovers run slightly over one line.
+  - The placement of the **Details** panel and of **What is this?** is unchecked.
+  - The two wording and comment points are folded into S28.
+- **Checked, by the implementer** (the reviewer reused these): `loop-node-help` 29/29, `handoff-prompt` 5/5, `loop-chat` 80/80, `loop-control` 28/28, `loop-run-view` 33/33, `npm run typecheck` exit 0.
+- **Niclas tries.** These are renderer and shared changes, so try them from the working copy with `npm run dev -- --isolated-profile <folder>`.
+  - Hover over canvas nodes (with **Help** on and off), the palette, the badges, the toolbar and chips, and the handoff choices. Each hover should be short.
+  - Find the full texts in the editor's **Details**, in **About this kind of step**, in an opened badge, under the handoff buttons, and in **What is this?**.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### Fourth whole assessment (run `chat-loop-2026-11-14T09-54-18-366Z`, call 52)
@@ -1033,6 +1067,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
     - `HandoffPrompt`'s `choice.title`.
 
     These now go to **S26**.
+  - **After S26 (call 56): met on the workflow surfaces, by a reviewed sub-goal.** Those surfaces are the loop editor, the canvas, the loop control bar, the handoff prompt, the chat's loop surfaces, the step and branch cards, the final card and the proposal card. The look is untested and is Niclas's trial. **Open, Q6:** the review and walk views and the rest of the app were not swept. They lie outside this extension's workflow scope, but Niclas's wording does not limit R7.
   - The look is untested; that is Niclas's trial.
 - **R1–R6** (extension of 14 November 2026). These are agent-reviewed sub-goals only: no live run, no window trial, and not approved by Niclas. Recorded on coordinator visit 13 (call 51), before the whole assessment.
   - **R1, graphs through conversation** [S17, S23a, S23b]. Met by reviewed sub-goals.
@@ -1138,6 +1173,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
     Alternatives:
     - S28 first: it would have to be repeated after S26 and S27.
     - S27 folded into S28: that mixes a change with its own check.
+55. **S27 goes to the one implementer (`implement`); R7 beyond the workflow surfaces becomes Q6** (visit 15). S27 is small and coherent: one optional data field on `node-entered`, written by the runner and read when a turn is restored. Q6 is a scope question. The mission continues without it. Alternative: sweep the whole app now (a scope widening the brief reserves for Niclas).
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -1150,12 +1186,26 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 **Q5 — May the mission graph and its coordinator role opt into S21's `declares: ["subgoal"]` (and later S19's model policy), between runs?** These are BRIEF §5's fixed files, so Niclas has to edit them or allow the edit. Without that, the mission loop's own step cards show "sub-goal unknown". (From planner N2, 14 November 2026.) Recommendation: yes, as a between-runs edit after S21 is reviewed. Continues without it: everything.
 
+**Q6 — Does R7 (short hover text, full instructions in a persistent readable view) apply to the whole app, or to the workflow surfaces this extension covers?** (Run `chat-loop-2026-11-14T09-54-18-366Z`, visit 15.)
+- **What is done:** S26 swept the workflow surfaces.
+- **What is not done:** the review and walk views (DSP-152's area), the continuity panel, the sidebar and the rest of the app still have hover-only text.
+- **Why it is yours:** sweeping them widens the mission beyond the workflow scope of 14 November, and BRIEF §3 makes a scope change your decision. Your wording did not limit R7 to some surfaces, so the coordinator does not record it as met for the whole app.
+- **Recommendation:** treat it as a separate, app-wide task, with `WalkLoopFollow.tsx` first because it is a loop window.
+- **What continues without an answer:** everything.
+
 **Q2 — Dialogue-based graph construction: skipped in this mission?** The vision frames it as future; this mission makes the concepts reusable and explained, but builds no conversational graph assembly. Recommendation: record as skipped with that reason, not as met. Continues without it: everything; if wanted in scope, it becomes a sub-goal after S12.
 - **Answered by Niclas, 14 November 2026** (run `chat-loop-2026-11-14T09-03-54-467Z`'s mandate): **in scope.** He wrote: "Niclas explicitly approves including Q2, dialogue-based graph construction, in this assignment. Extend the existing mission and record this decision. Preserve completed work, including S15." It is requirement R1. It is no longer a question.
 
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 15 (call 56).** S26 is reviewed and committed with this file. Q6 is recorded. S27 went to `implement` (decision 55). **Next:**
+1. Record S27's review and commit it.
+2. Then S28: the integrated `loop` group run and the type check. It also fixes the two S26 points: the **Remove** note's wording and the misplaced doc comment in `loop-chat.ts`.
+3. Then the whole assessment again.
+
+If this run ends first, the next run reconciles S27 from the uncommitted working copy.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 14 (call 53).** The fourth whole assessment returned gaps; they are recorded and became S26, S27 and S28 (decision 54). S26 went to `implement`.
 

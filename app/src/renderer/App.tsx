@@ -3098,7 +3098,7 @@ function Workbench({
                   type="button"
                   className="button button--quiet"
                   data-ev="edit-agent-loops"
-                  title="Opens a separate window. This conversation and any running loop keep working."
+                  title="Opens in its own window; nothing here stops"
                   onClick={() => {
                     // Its own window, not this one. The editor used to replace the chat
                     // here, and on 17 September that lost Niclas his open project; keeping
@@ -3483,7 +3483,7 @@ function Workbench({
                   // "beside this box" until DSP-85 moved the chooser into the graph editor.
                   // The tick is unchanged and the sentence has to keep pointing at where the
                   // choice is actually made, or it names a control that is not there.
-                  title="When on, Send runs the loop chosen in the graph editor, on this project. Off is ordinary single-agent chat."
+                  title="Send runs the chosen loop"
                 >
                   <input
                     type="checkbox"
@@ -3549,6 +3549,13 @@ function Workbench({
                   Use loop
                 </label>
                 )}
+                {/* DSP-209 S26 (R7): what the tick does, readable and open until closed, not only on hover. */}
+                {session.origin !== 'no-workspace' && (
+                  <details className="inline-help" data-ev="use-loop-help">
+                    <summary>What is this?</summary>
+                    When on, Send runs the loop chosen in the graph editor, on this project. Off is ordinary single-agent chat.
+                  </details>
+                )}
                 {/*
                   There is no loop chooser here, and no `Choose a file…` (DSP-85 #5).
 
@@ -3590,7 +3597,7 @@ function Workbench({
                       type="button"
                       className="button"
                       data-ev="loop-recap-remove"
-                      title="Send your next message without it. These runs are not offered again."
+                      title="Leave these runs out of the next message"
                       onClick={() => {
                         void window.dspatch
                           .discardPendingRecap('loop-recap')
@@ -3600,7 +3607,9 @@ function Workbench({
                       }}
                     >
                       Remove
-                    </button>
+                    </button>{' '}
+                    {/* DSP-209 S26 (R7): what Remove does, as text and not only on hover. */}
+                    <span className="muted">Removed, these runs are not offered again.</span>
                     <details>
                       <summary>{loopRecapSentLine(runState.pendingLoopRecap.text.length)}</summary>
                       <pre className="turn__answer">{runState.pendingLoopRecap.text}</pre>

@@ -97,3 +97,14 @@ describe('the handoff prompt in the chat (DSP-209 S5b)', () => {
     assert.equal(loopStaysTickedAfter({ kind: 'refused' }), true);
   });
 });
+
+describe('the handoff answers have short hovers and their full sentences beside them (DSP-209 S26, R7)', () => {
+  it('keeps each hint to a few words and its full title longer', () => {
+    const view = handoffPromptView(report(true));
+    assert.ok(view !== null);
+    for (const choice of view.choices) {
+      assert.ok(choice.hint.length <= 40, `${choice.choice}: "${choice.hint}"`);
+      assert.ok(choice.title.length > choice.hint.length, `${choice.choice} keeps its full sentence for the visible list`);
+    }
+  });
+});

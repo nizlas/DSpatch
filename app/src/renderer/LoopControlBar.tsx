@@ -91,7 +91,7 @@ export function HandoffPrompt({ report }: { readonly report: LoopControlReport }
             type="button"
             className="button"
             data-ev={`loop-handoff-${choice.choice}`}
-            title={choice.title}
+            title={choice.hint}
             disabled={sending}
             onClick={() => {
               setSending(true);
@@ -108,6 +108,14 @@ export function HandoffPrompt({ report }: { readonly report: LoopControlReport }
           </button>
         ))}
       </div>
+      {/* DSP-209 S26 (R7): what each answer does, in full, beside the buttons and not only on hover. */}
+      <ul className="loop-handoff__explain" data-ev="loop-handoff-explain">
+        {view.choices.map((choice) => (
+          <li key={choice.choice}>
+            <strong>{choice.label}:</strong> {choice.title}
+          </li>
+        ))}
+      </ul>
       {note === null ? null : (
         <p className="loop-handoff__note" data-ev="loop-handoff-note">
           {note}

@@ -132,7 +132,7 @@ import {
 } from '../shared/loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import { runningStep, stepStanding } from '../shared/loop-activity';
-import { BRIEF_EXCLUSIONS, briefParts, nodeHelpText, requiredForKind } from '../shared/loop-chat';
+import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind } from '../shared/loop-chat';
 import { successRoutesOf } from '../shared/loop-results';
 import {
   failureStandings,
@@ -2463,17 +2463,13 @@ export function LoopEditor(): React.JSX.Element {
             them landing on whatever node ids happened to match. The lock lifts by itself
             when the run ends (#5), so nothing has to be pressed to choose again.
           */}
-          <label className="editor-loop" title={describeLoopChooser()}>
+          <label className="editor-loop" title="The loop the next mandate walks">
             Loop
             <select
               data-ev="editor-loop-definition"
               value={chosenLoop?.key ?? ''}
               disabled={choosing || locked}
-              title={
-                locked
-                  ? 'A run is walking this loop. The choice unlocks by itself when it ends.'
-                  : undefined
-              }
+              title={locked ? 'Held while a run walks' : undefined}
               /*
                 The control is put back when the switch did not happen (DSP-88 #2).
 
@@ -2515,7 +2511,7 @@ export function LoopEditor(): React.JSX.Element {
                   key={choice.key}
                   value={choice.key}
                   disabled={!choice.usable}
-                  title={choice.display.error ?? choice.display.dependency ?? undefined}
+                  title={choice.display.error !== null ? 'Will not load: see Details' : choice.display.dependency !== null ? 'Reaches outside its folder: see Details' : undefined}
                 >
                   {choice.display.name} · {choice.display.origin}
                   {choice.display.variant === null ? '' : ` · ${choice.display.variant}`}
@@ -2534,11 +2530,7 @@ export function LoopEditor(): React.JSX.Element {
             type="button"
             data-ev="open-loop-definition"
             disabled={choosing || locked}
-            title={
-              locked
-                ? 'A run is walking. The choice unlocks by itself when it ends.'
-                : 'Choose a .loop.json from anywhere. It joins the list beside this button, is drawn here, and becomes the loop the next mandate walks. It starts nothing.'
-            }
+            title={locked ? 'Held while a run walks' : 'Choose a .loop.json from anywhere'}
             onClick={() => void chooseLoop(null)}
           >
             Open loop…
@@ -2546,11 +2538,7 @@ export function LoopEditor(): React.JSX.Element {
           <button
             type="button"
             disabled={graph === null || !dirty || locked}
-            title={
-              locked
-                ? 'A run is walking this drawing, and it keeps the version it started with. Saving unlocks by itself when the run ends.'
-                : undefined
-            }
+            title={locked ? 'Held while a run walks' : undefined}
             onClick={() => void save()}
           >
             Save
@@ -2598,15 +2586,7 @@ export function LoopEditor(): React.JSX.Element {
             type="button"
             className="editor-run"
             disabled={runBlocked}
-            title={
-              graph === null
-                ? 'Open a graph first.'
-                : locked
-                  ? 'A run is already walking this drawing. A second walk would put its own marks on the same nodes. This unlocks by itself when the run ends.'
-                  : index.errors > 0
-                    ? 'The graph has errors, so it is not the drawing that would run.'
-                    : 'Walk the graph on the canvas. No provider is reachable.'
-            }
+            title={graph === null ? 'Open a graph first' : locked ? 'Held while a run walks' : index.errors > 0 ? 'Fix the errors first' : 'Walk the canvas; no provider is used'}
             onClick={() => void dryRunCanvas()}
           >
             Dry-run
@@ -2615,7 +2595,7 @@ export function LoopEditor(): React.JSX.Element {
             type="button"
             className="editor-run"
             disabled={!liveRun.enabled}
-            title={liveRun.title}
+            title={liveRun.enabled ? 'Run this loop on the project' : 'Cannot run now: see Details'}
             onClick={() => void liveRunCanvas()}
           >
             Run
@@ -2644,7 +2624,7 @@ export function LoopEditor(): React.JSX.Element {
           <button
             type="button"
             data-ev="editor-open-review"
-            title="Opens a separate window to review a change between two commits. The editor and any run are unaffected."
+            title="Review a change, in its own window"
             onClick={() => {
               void window.dspatch.openReview().then(
                 (outcome) => {
@@ -2682,7 +2662,7 @@ export function LoopEditor(): React.JSX.Element {
             <span
               className="chip chip-live-off"
               data-ev="editor-choice-error"
-              title={choiceError}
+              title="Why: see Details"
               role="status"
             >
               Not chosen
@@ -2692,7 +2672,7 @@ export function LoopEditor(): React.JSX.Element {
             <span
               className="chip chip-live-off"
               data-ev="editor-unsaved-against-choice"
-              title={unsavedAgainstChoice}
+              title="See Details"
             >
               {/*
                 DSP-86 wrote `a run will ask first`. DSP-88 made three more gestures ask,
@@ -2720,7 +2700,7 @@ export function LoopEditor(): React.JSX.Element {
             <span
               className="chip chip-warning"
               data-ev="editor-pinned-drawing"
-              title={pinnedDrawing}
+              title="Why: see Details"
               role="status"
             >
               {pinCheck === 'unreadable'
@@ -2740,13 +2720,13 @@ export function LoopEditor(): React.JSX.Element {
           <Chip severity="warning" count={index.warnings} />
           <Chip severity="notice" count={index.notices} />
           {runBusy ? (
-            <span className="chip chip-live-ready" title="A run is walking the canvas. Cancel run stays available.">
+            <span className="chip chip-live-ready" title="Cancel run stays available">
               {runKind === 'live' ? 'Live running…' : 'Dry-run…'}
             </span>
           ) : liveBinding === null ? null : (
             <span
               className={`chip ${liveBinding.ready ? 'chip-live-ready' : 'chip-live-off'}`}
-              title={liveBinding.reason}
+              title="Why: see Details"
             >
               {liveBinding.ready ? 'Live ready' : 'Live: dry-run only'}
             </span>
@@ -2761,7 +2741,7 @@ export function LoopEditor(): React.JSX.Element {
           </label>
           <label
             className="editor-toggle"
-            title="Hover text: each object's purpose and what it requires. Off by default."
+            title="Short purpose hovers; full help in the panel"
           >
             <input
               type="checkbox"
@@ -2774,6 +2754,59 @@ export function LoopEditor(): React.JSX.Element {
             />
             Help
           </label>
+          {/*
+            DSP-209 S26 (R7): every full explanation the toolbar's and the run row's hovers
+            used to hold, in a view the person opens and closes and can read and select. The
+            hovers are a few words each; nothing a control or a status says is hover-only.
+          */}
+          <EditorDetails
+            entries={[
+              { label: 'Loop', text: describeLoopChooser() },
+              ...(loopChoices?.choices ?? [])
+                .filter((choice) => choice.display.error !== null || choice.display.dependency !== null)
+                .map((choice) => ({
+                  label: choice.display.name,
+                  text: [choice.display.error, choice.display.dependency].filter((part): part is string => part !== null).join(' '),
+                })),
+              {
+                label: 'Open loop…',
+                text: 'Choose a .loop.json from anywhere. It joins the list beside this button, is drawn here, and becomes the loop the next mandate walks. It starts nothing.',
+              },
+              ...(locked
+                ? [
+                    {
+                      label: 'While a run walks',
+                      text: 'The loop choice, Open loop…, Save, Dry-run and editing are held: a run keeps the version it started with, and a second walk would put its own marks on the same nodes. They unlock by themselves when the run ends.',
+                    },
+                  ]
+                : []),
+              {
+                label: 'Dry-run',
+                text:
+                  graph === null
+                    ? 'Open a graph first.'
+                    : index.errors > 0
+                      ? 'The graph has errors, so it is not the drawing that would run.'
+                      : 'Walk the graph on the canvas. No provider is reachable.',
+              },
+              { label: 'Run', text: liveRun.title },
+              { label: 'Review…', text: 'Opens a separate window to review a change between two commits. The editor and any run are unaffected.' },
+              ...(choiceError === null ? [] : [{ label: 'Not chosen', text: choiceError }]),
+              ...(unsavedAgainstChoice === null ? [] : [{ label: 'Unsaved', text: unsavedAgainstChoice }]),
+              ...(pinnedDrawing === null ? [] : [{ label: 'Pinned version', text: pinnedDrawing }]),
+              ...(runBusy
+                ? [{ label: runKind === 'live' ? 'Live running' : 'Dry-run', text: 'A run is walking the canvas. Cancel run stays available.' }]
+                : liveBinding === null
+                  ? []
+                  : [{ label: liveBinding.ready ? 'Live ready' : 'Live: dry-run only', text: liveBinding.reason }]),
+              ...(watchedStanding === null ? [] : [{ label: 'The step that is running', text: watchedStanding.text }]),
+              ...(watchNote === null ? [] : [{ label: 'About this run', text: watchNote }]),
+              {
+                label: 'Help',
+                text: 'When on, hovering a box shows its purpose in a few words, and the node panel opens "About this kind of step" with the whole of it: its purpose, what DSpatch does at that kind of step and what it requires. Off by default.',
+              },
+            ]}
+          />
           <span className="editor-zoom">
             <button type="button" onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}>
               −
@@ -2810,13 +2843,13 @@ export function LoopEditor(): React.JSX.Element {
             type="button"
             className={tool?.kind === 'place' && tool.nodeKind === kind ? 'chosen' : ''}
             title={
-              showHelp ? `${KIND_HINTS[kind]} Required: ${requiredForKind(kind)}` : KIND_HINTS[kind]
+              KIND_HINTS[kind]
             }
             disabled={graph === null || locked}
             onClick={() => {
               setTool({ kind: 'place', nodeKind: kind });
               setConnectFrom(null);
-              setNote(`${KIND_LABELS[kind]}: ${KIND_HINTS[kind]} Click the canvas to place it.`);
+              setNote(`${KIND_LABELS[kind]}: ${KIND_HINTS[kind]} Required: ${requiredForKind(kind)} Click the canvas to place it.`);
             }}
           >
             <span className={`swatch kind-${kind}`} />
@@ -2889,7 +2922,7 @@ export function LoopEditor(): React.JSX.Element {
               data-ev="watch-standing"
               data-standing={watchedStanding.standing}
               data-activity-known={String(watchedStanding.activityIsKnown)}
-              title={watchedStanding.text}
+              title="See Details"
               role="status"
             >
               {watchedStanding.standing === 'confirmed'
@@ -2900,7 +2933,7 @@ export function LoopEditor(): React.JSX.Element {
             </span>
           )}
           {watchNote === null ? null : (
-            <span className="chip chip-warning" data-ev="watch-note" title={watchNote}>
+            <span className="chip chip-warning" data-ev="watch-note" title="See Details">
               About this run
             </span>
           )}
@@ -2948,7 +2981,7 @@ export function LoopEditor(): React.JSX.Element {
               endingMarks={endingMarks}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}
               severityOfEdge={(id) => worstSeverity(index.byEdge.get(id) ?? [])}
-              helpTitleOf={showHelp ? nodeHelpText : undefined}
+              helpTitleOf={showHelp ? nodeHelpLabel : undefined}
               onSelectEdge={(id) => {
                 setSelection({ kind: 'edge', id });
               }}
@@ -3222,6 +3255,49 @@ function RunJournal({
   );
 }
 
+/**
+ * DSP-209 S26 (R7): the toolbar's full explanations, opened and closed by the person.
+ *
+ * Fixed below its button rather than in the row, so opening it never changes the toolbar's
+ * height and nothing that clips the row cuts it off (S25b did the same for the control bar).
+ */
+function EditorDetails({
+  entries,
+}: {
+  readonly entries: readonly { readonly label: string; readonly text: string }[];
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [top, setTop] = useState(56);
+  return (
+    <span className="editor-details">
+      <button
+        type="button"
+        data-ev="editor-details-toggle"
+        aria-expanded={open}
+        title="What each control and status means"
+        onClick={(event) => {
+          setTop(event.currentTarget.getBoundingClientRect().bottom + 4);
+          setOpen((now) => !now);
+        }}
+      >
+        {open ? 'Hide details' : 'Details'}
+      </button>
+      {open ? (
+        <div className="editor-details__panel" data-ev="editor-details" style={{ top: `${String(top)}px` }}>
+          <dl>
+            {entries.map((entry, index) => (
+              <div key={`${entry.label}-${String(index)}`}>
+                <dt>{entry.label}</dt>
+                <dd>{entry.text}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
 function Chip({ severity, count }: { readonly severity: Finding['severity']; readonly count: number }): React.JSX.Element {
   const label = severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'notice';
   return (
@@ -3306,9 +3382,11 @@ function Unhonoured({
   /** Set to the mechanism — or to its absence — where the thing holds only by instruction. */
   readonly stated?: string;
 }): React.JSX.Element | null {
+  // DSP-209 S26 (R7): the stated badge's full text is the setting's own detail line beside
+  // it, so its hover is a label. The other two open to their full text, which stays shown.
   if (stated !== undefined) {
     return (
-      <span className="support support-stated" title={stated}>
+      <span className="support support-stated" title="Held by instruction only">
         stated, not enforced
       </span>
     );
@@ -3319,18 +3397,22 @@ function Unhonoured({
   }
   if (!support.honoured) {
     return (
-      <span className="support support-inert" title={`Nothing acts on this yet. Waiting on: ${support.by}`}>
-        recorded, nothing acts on it
-      </span>
+      <details className="support support-inert support-details" data-ev="support-inert">
+        <summary title="Show why">recorded, nothing acts on it</summary>
+        <span className="support-full">Nothing acts on this yet. Waiting on: {support.by}</span>
+      </details>
     );
   }
   if (support.caveat === undefined) {
     return null;
   }
   return (
-    <span className="support support-limited" title={`${support.by} ${support.caveat}`}>
-      honoured, with limits
-    </span>
+    <details className="support support-limited support-details" data-ev="support-limited">
+      <summary title="Show the limits">honoured, with limits</summary>
+      <span className="support-full">
+        {support.by} {support.caveat}
+      </span>
+    </details>
   );
 }
 
@@ -3477,7 +3559,7 @@ function NodeInspector({
       {/* Errors stay where they are read. Only the notices moved into Advanced. */}
       <FindingList findings={findings.filter((finding) => finding.severity !== 'notice')} />
 
-            <label title={help ? nodeHelpText(node) : undefined}>
+            <label>
               What this step does
               {/*
                 Three rows, not five. The box scrolls and the same text is in the tooltip,
@@ -3500,6 +3582,15 @@ function NodeInspector({
       <p className="muted" data-ev="node-purpose-goes">
         {effect.purposeGoes}
       </p>
+      {/*
+        DSP-209 S26 (R7): the step's whole help — its purpose, what DSpatch does at this kind
+        of step, and what it requires — readable and selectable here, where it used to be the
+        canvas hover. The hover now holds a few words; with Help on this starts open.
+      */}
+      <details className="node-kind-help" data-ev="node-kind-help" open={help}>
+        <summary>About this kind of step</summary>
+        <p className="muted">{nodeHelpText(node)}</p>
+      </details>
       {/*
         Who runs a gate (DSP-139): DSpatch, not an agent, and with which command where the
         editor's Run binds one. Said here because a gate's requirements and the agent's

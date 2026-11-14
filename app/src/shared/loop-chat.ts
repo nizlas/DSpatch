@@ -2437,6 +2437,19 @@ export function requiredForKind(kind: NodeKind): string {
  * A missing purpose says so as a gap to fill rather than as a bare absence, because for
  * an agent step it is the whole of what that agent will be told its step is.
  */
+/** DSP-209 S26 (R7): the most a hover label on a node may hold. */
+export const NODE_HELP_LABEL_MAX = 60;
+
+/**
+ * DSP-209 S26 (R7): the node's hover — its purpose's first line in a few words, or that none
+ * is written. The full text, {@link nodeHelpText}, is in the node panel, which stays open.
+ */
+export function nodeHelpLabel(node: Pick<LoopNode, 'purpose' | 'label' | 'id'>): string {
+  const first = (node.purpose ?? '').trim().split(/\r?\n|(?<=\.)\s/)[0]?.trim() ?? '';
+  const text = first === '' ? `No purpose written for "${node.label ?? node.id}"` : first;
+  return text.length <= NODE_HELP_LABEL_MAX ? text : `${text.slice(0, NODE_HELP_LABEL_MAX - 1).trimEnd()}…`;
+}
+
 export function nodeHelpText(node: Pick<LoopNode, 'kind' | 'purpose' | 'label' | 'id'>): string {
   const written = node.purpose?.trim() ?? '';
   const opening =

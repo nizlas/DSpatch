@@ -366,12 +366,10 @@ function NodeShape({
           <title>{helpTitle}</title>
         )
       ) : (
+        // DSP-209 S26 (R7): a short label. The state's word, the ending's mark and the branch
+        // line are drawn on the node; the full help is in the node panel when it is selected.
         <title>{`${node.label ?? node.id}: ${mark.label}${
-          ending === null
-            ? ''
-            : ending === 'success'
-              ? ' — the run ended here, at the terminal this loop declares as the assignment being met'
-              : ' — the run ended here, and this loop does not declare arriving here as the assignment being met'
+          ending === null ? '' : ending === 'success' ? ' — ended here, assignment met' : ' — ended here, not declared met'
         }${branches === null ? '' : ` — ${branches}`}${helpTitle === undefined ? '' : ` — ${helpTitle}`}`}</title>
       )}
       {/*
