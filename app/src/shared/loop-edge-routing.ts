@@ -72,6 +72,12 @@ export interface EdgeRoute {
 export interface RouteOptions<E extends RoutingEdge = RoutingEdge> {
   /** The label each edge will show, so it can be placed where it fits. */
   readonly labelOf?: (edge: E) => string;
+  /**
+   * DSP-209 S18b: told how the routes were found, for tests. `narrowed` is the second pass at
+   * half the margin, taken when some route could not be found at full margin; `dogLegs` are
+   * the edges that even then fell back to a plain dog-leg. Changes no route.
+   */
+  readonly report?: (report: { readonly narrowed: boolean; readonly dogLegs: readonly string[] }) => void;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -813,7 +819,10 @@ export function routeLoopEdges<E extends RoutingEdge>(
   }
 
   // 3. The grid: box margins, ports, lanes and a frame, minus the grown boxes.
-  const routed = routeAll(plans, ports, allBoxes, MARGIN) ?? routeAll(plans, ports, allBoxes, MARGIN / 2, true);
+  const full = routeAll(plans, ports, allBoxes, MARGIN);
+  const dogLegs: string[] = [];
+  const routed = full ?? routeAll(plans, ports, allBoxes, MARGIN / 2, true, dogLegs);
+  options.report?.({ narrowed: full === null, dogLegs });
 
   // 4. Labels on free segments.
   const result = new Map<string, EdgeRoute>();
@@ -939,6 +948,8 @@ function routeAll(
   boxes: readonly Box[],
   margin: number,
   lastTry = false,
+  /** DSP-209 S18b: collects the edges that fell back to a dog-leg, for {@link RouteOptions.report}. */
+  dogLegs: string[] = [],
 ): Map<string, Point[]> | null {
   const grown = boxes.map((box) => ({
     x: box.x - margin,
@@ -1015,6 +1026,7 @@ function routeAll(
         return null;
       }
       middle = [start.stub, { x: end.stub.x, y: start.stub.y }, end.stub];
+      dogLegs.push(plan.edge.id);
     }
     const points = simplify([start.port, ...middle, end.port]);
     grid.markUsed(points);

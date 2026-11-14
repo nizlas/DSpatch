@@ -33,6 +33,8 @@ import type {
   RoleResolver,
 } from './loop-graph';
 import type { Finding } from './loop-graph-load';
+import { nodeSize } from './loop-edge-geometry';
+import { LAYER_GAP, layeredLayout } from './loop-layout';
 
 /**
  * How a role reference is indexed.
@@ -157,7 +159,8 @@ export const LAYOUT_STEP = { x: 224, y: 132 } as const;
 export const LAYOUT_MAX_COLUMNS = 6;
 
 /**
- * Give every node without a `view` a position on a grid.
+ * Give every node without a `view` a position (DSP-209 S18b: by the layered layout, which
+ * replaced the grid described below; the rest of this account still holds).
  *
  * `view` is optional in the format, so a graph written by hand is drawn entirely at
  * 0,0 — twenty nodes stacked on each other with thirty-one zero-length edges, which is
@@ -187,25 +190,42 @@ export function layOutMissingViews(graph: LoopGraph): {
   if (placed.length === 0) {
     return { graph, placed };
   }
-  const columns = Math.min(LAYOUT_MAX_COLUMNS, Math.max(1, Math.ceil(Math.sqrt(placed.length))));
-  const firstRow = graph.nodes.reduce<number>(
-    (lowest, node) => (node.view === undefined ? lowest : Math.max(lowest, node.view.y + LAYOUT_STEP.y)),
-    LAYOUT_ORIGIN.y,
+  // DSP-209 S18b: by the layered layout rather than a grid. Laid out with the whole drawing,
+  // so the missing nodes keep their layers and order; then moved, as one block, below every
+  // node the file did place, which therefore cannot be overlapped.
+  const layout = layeredLayout(graph).positions;
+  const missing = new Set(placed);
+  const lowestPlaced = graph.nodes.reduce<number | null>(
+    (lowest, node) => (node.view === undefined ? lowest : Math.max(lowest ?? 0, node.view.y + nodeSize(node).height)),
+    null,
   );
-  let position = 0;
+  const topOfMissing = Math.min(...placed.map((id) => layout.get(id)?.y ?? LAYOUT_ORIGIN.y));
+  const shift = lowestPlaced === null ? 0 : lowestPlaced + LAYER_GAP - topOfMissing;
   const nodes = graph.nodes.map((node) => {
-    if (node.view !== undefined) {
+    if (!missing.has(node.id) || node.view !== undefined) {
       return node;
     }
-    const column = position % columns;
-    const row = Math.floor(position / columns);
-    position += 1;
-    return {
-      ...node,
-      view: { x: LAYOUT_ORIGIN.x + column * LAYOUT_STEP.x, y: firstRow + row * LAYOUT_STEP.y },
-    };
+    const at = layout.get(node.id) ?? { x: LAYOUT_ORIGIN.x, y: LAYOUT_ORIGIN.y };
+    return { ...node, view: { x: at.x, y: at.y + shift } };
   });
   return { graph: { ...graph, nodes }, placed };
+}
+
+/**
+ * DSP-209 S18b: every node at its place in the layered layout, for **Arrange**.
+ *
+ * An ordinary edit: the caller applies it like any other change, so it is unsaved until the
+ * person saves and gone on Reload. Only `view` changes; the drawing means what it meant.
+ */
+export function arrangeGraph(graph: LoopGraph): LoopGraph {
+  const layout = layeredLayout(graph).positions;
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      const at = layout.get(node.id);
+      return at === undefined ? node : { ...node, view: { ...(node.view ?? {}), x: at.x, y: at.y } };
+    }),
+  };
 }
 
 /**

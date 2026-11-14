@@ -14,7 +14,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S18b (`implement`, decision 49), from call 37 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S19, S19b, S20, S21, S22, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** S23a (`implement`, decision 50), from call 40 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16, S17, S18a, S18b, S19, S19b, S20, S21, S22, S25 and S25b are reviewed and committed.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
 
@@ -150,13 +150,13 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S25 | The loop control bar keeps the old *Pause requested* note after the run is paused: `LoopControlBar.tsx` holds the note `requestPause` returned (`main/loop-control-runtime.ts`) in its own state and clears it only on another action, so "Pause requested … still running" stays beside "Paused · No work step is running". Replace the note when the phase changes, or mark it as what was said when the pause was asked for. Found by Niclas on 14 November 2026. Two more observations of his from the same pause, for the same sub-goal: (b) **Cancel run** was greyed out in the loop editor while the run was paused, while **Stop** in the chat could end it; every control that shows a run should offer the same way to end it. (c) The graph should show where the run is paused and which step comes next: a finished step keeps its done state, the next step shows as waiting, not active, and when the next step is not yet decided the graph says so. Not to be built during an engine transition | R3, R7 | — | **reviewed** (see its record; (b) for chat runs only, the rest in S25b) | 1 | `(DSP-209 S25)` after `9a0205c` |
 | S25b | S25's follow-up from its review. (N1, R7) the editor's compact control bar shows its phase explanation and its last note only in hover text, so they get a visible place and the mode hover is shortened. (N3) **Cancel run** for a `walk-loop` run the editor only watches. (N2) the chat marks a cancel from the editor as "stop requested" | R3, R7 | S25 | **reviewed** (see its record) | 1 | `(DSP-209 S25b)` after `3726249` |
 | S18a | Edge routing around nodes; back and rework edges styled; node size by kind (`shared/loop-edge-routing.ts`, `GraphCanvas.tsx`) | R2, R7 | — | **reviewed** (parallel, decision 41; see *S17 and S18a, parallel*) | 1 | `52bc9c4`, merged `88a49dc`, test line `d6b2a3b` |
-| S18b | Layered layout and an explicit **Arrange** action; places nodes that have no position (`shared/loop-layout.ts`) | R2, R7 | S18a (reviewed) | **in progress**: sent to `implement` on call 37 (decision 49) | 1 | — |
+| S18b | Layered layout and an explicit **Arrange** action; places nodes that have no position (`shared/loop-layout.ts`) | R2, R7 | S18a (reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S18b)` after `77d2d37` |
 | S19 | Per-step model selection: `fixed` honoured per step, `policy: "select"`, edge `selectsModel`, the choice recorded and shown | R6 | S16 | **reviewed** (parallel with S22, round 2; see *S19 and S22, parallel*) | 1 | `a9ea3dc`/`2798903`, `bcd8a8b`, `8323a90`, `fac761a`/`87b09ba`, `dbb2025` |
 | S19b | S19's open review points: (1) Cursor and Copilot are not checked against a model list before a run, so the "never fall back silently" rule is unverified for them: add the check where the adapter offers a list, or record that it cannot be checked and say so in the refusal or node help; (2) `entryFromQuery` in `project-host.ts` leaves a `select` entry step out of the "Runs with …" line; (3) **a red test from S19**, found by S20's implementer and confirmed by its reviewer by reading: `modelOfStep` (`main/loop-live.ts`, l.1721 at `a3c7813`) reads `context.graph.edges` whenever `arrivedBy !== null`, so `tests/loop-activity.test.ts` "reports what happens while the turn runs…" throws (18 pass, 1 fail). Real runs set `arrivedBy`. S19's check list did not include that file | R6 | S19 | **reviewed** (see its record) | 1 | `(DSP-209 S19b)` after `a63e6a6` |
 | S20 | Branches visible without hover: node summary, **Branches** panel, branch live output, a separate window | R3, R7 | S16, S18a, S19 (all reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S20)` after `a3c7813` |
 | S21 | Step-report cards in chat, branches grouped, integrator's combined report, opt-in `SUBGOAL:` line | R4, R7 | S16, S20 (both reviewed) | **reviewed** after one rework round (see its record) | 1 | `(DSP-209 S21)` after `2fb244d` |
 | S22 | Final run card owned by the runtime (`shared/loop-final-card.ts`); commits and upstream recorded in the ending; interrupted versus running | R5, R7 | S16 | **reviewed** (parallel with S19; see *S19 and S22, parallel*) | 1 | `4bce22c`/`a40d3b8`, `bcd8a8b` (test line), `151612c`/`0b0fb3d` |
-| S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b | pending | 0 | — |
+| S23a | Graph tools on chat sessions (list, read, building blocks, propose); proposals stored on the conversation; never written to graph files, never run | R1 | S17, S18b (both reviewed) | **in progress**: sent to `implement` on call 40 (decision 50) | 1 | — |
 | S23b | Proposal card with **Apply**, **Open in editor** and **Discard**; `expectedContentHash` on save; the editor reconciles with disk | R1 | S17, S23a | pending | 0 | — |
 
 The acceptance criteria and checks for each sub-goal are the planner's, from call 2. Each brief repeats the ones it needs. Section 3 of that result defines the R5 counters: sub-goal, agent step (node visit), branch invocation, rework round, calls, provider turns, tool calls, elapsed time and usage. S16 implements those definitions.
@@ -385,6 +385,43 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Checked:** `run-presentation.test.ts` 6 of 6, `loop-run-view.test.ts` 32 of 32 and `npm run typecheck` exit 0, all from call 7 of the earlier run. They were reused, not rerun: none of S16's imports changed in `63890bd..9fe95a9`, and neither the account nor the review changed any code. The reviewer reran nothing. No independent verification was asked for.
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
+- **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S18b — Layered layout and Arrange — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1:** run `chat-loop-2026-11-14T09-54-18-366Z`. Briefed on coordinator visit 9 (call 37, decision 49); implemented (call 38, `done`); review `accept` (call 39, round 1); recorded and committed on coordinator visit 10 (call 40). `git status` showed exactly the four modified and two new files the implementer named.
+- **What was done:**
+  - **New `shared/loop-layout.ts`, with `layeredLayout(graph)`.** Pure, deterministic, no dependency, laid out top to bottom like the bundled drawings.
+    - Back edges are set aside with S18a's `findBackEdges`.
+    - Layers come from the longest path. The entry is always layer 0, and all terminals share the last layer.
+    - Four barycentre sweeps run, with ties kept in file order.
+    - Row height is the tallest box plus 76 px. Boxes are 56 px apart, and each row is centred on the widest.
+  - **`loop-graph-editing.ts`.**
+    - `layOutMissingViews` places unpositioned nodes with the layout instead of the old grid.
+    - A fully placed graph is returned as the same object.
+    - In a partly placed graph, the new nodes are laid out with the whole drawing, then moved as one block below every placed node.
+    - The new `arrangeGraph` rewrites only `view`.
+  - **`LoopEditor.tsx`.**
+    - An **Arrange** button. It is an ordinary unsaved edit, never runs on its own, and is disabled while a run holds the drawing.
+    - A visible note: "Save to keep it, Reload to go back", which also says Reload drops every unsaved change.
+    - **The brief's premise was wrong:** the editor had no Reload. The implementer added one, through the existing `open`. It is shown after Arrange while the drawing has unsaved changes.
+    - Hovers are short labels (R7).
+  - **`loop-edge-routing.ts`.** A diagnostic `RouteOptions.report`, which changes no route.
+  - **Tests.** New `tests/loop-layout.test.ts` (6 tests), in the `loop` group.
+- **S18a suggestion 2, settled.** No arranged drawing (8 bundled plus a synthetic 25-node one) takes the narrowed second pass or a dog-leg.
+- **Review verdict: accept.** All six criteria met and tested. Open, not blocking:
+  - All terminals go in the bottom row rather than a band for early exits.
+  - Rows are centred, not aligned to their neighbours, so wide layers can leave long horizontal edges.
+  - Reload drops every unsaved change. Whether `open` asks first is not checked.
+  - The unused `LAYOUT_STEP` and `LAYOUT_MAX_COLUMNS` remain, with the grid still described in a comment.
+  - A node no edge reaches stays in the first row.
+- **Checked, by the implementer** (the reviewer reused these):
+  - `loop-layout` 6/6, `loop-edge-routing` 20/20, `loop-graph-write` 6/6, `loop-graph-open` 15/15;
+  - `npm run typecheck` exit 0.
+- **Untested:** how arranged drawings look and read, and the buttons in a real window. Automated checks never establish visual clarity.
+- **Niclas tries.** This is renderer and shared code only, so run it from the working copy with `npm run dev -- --isolated-profile <folder>`.
+  1. Open the mission loop, press **Arrange**, read the note and judge the layout. **Reload** should bring back the saved positions.
+  2. In a copy of a drawing, remove one node's `view`. It should be placed sensibly below the rest.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
 
 ### S21 — Step reports in the main chat — reviewed (agent review, not Niclas's approval)
@@ -910,6 +947,11 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 47. **S21 goes to the one implementer (`implement`)** (visit 8). The step-report card, branch grouping, the integrator's combined report, attention markers and the opt-in `SUBGOAL:` line all fold the same per-visit model, S16's `stepReportsFrom`, into one chat entry, and they share one design question: which step counts as the integrator. S16 review suggestion S1 is settled here. The plan's rule is structural: a step whose arriving edge delivers a fan-out node's result. S21 narrows it to the step that a fan-out's success edge leads to directly, and leaves the label off when that step's role is not the integrator, so a reviewer reached later is not mislabelled. Splitting the work would put that one question into every branch. Alternatives: `implement-parallel` with a pure card model in one slice and the window in another (they meet on the card type, which is not yet settled); S18b first (it is independent, but R4 is the more central requirement).
 48. **The integrator role is identified by the role id `project-integrate`** (S21, the implementer's choice, recorded at the review's request). Reason: decision 47 asks for a role test, not a name test. `project-integrate` is the one integrator role the bundled loops use, the Parallel loop and the mission loop. Alternatives: a role capability field (a format change for one use); any role whose id contains "integrat" (a name test by another route). A graph with its own integrator role gets ordinary step cards until its id is added.
 49. **S18b goes to the one implementer (`implement`)** (visit 9). It is one coherent layout algorithm (`shared/loop-layout.ts`) and one **Arrange** action in the editor, so there is nothing to split. It reuses S18a's `findBackEdges` and `nodeSize`. It also takes S18a's review suggestion 2, a test for the last-resort route, because arranged graphs are where that route could appear. Alternative: S23a first (it depends on S18b by the plan).
+50. **S23a goes to the one implementer (`implement`); a new loop's place is the planner's recommendation** (visit 10).
+    - **Why one implementer.** S23a is one coherent host feature: four chat-session app tools and one stored conversation field. It also holds a saved-format change, which suits one careful attempt.
+    - **Where a new loop lives.** `<first project folder>/.dspatch/loops/<id>.loop.json`, with `<id>.graph.json` beside it, and new role texts under `.dspatch/loops/roles/<id>-<role>.role.md`. This is an ordinary design choice within R1. It needs no definition-format change and keeps the loop inside the project.
+    - **What a provider receives.** The tools give the chat agent only project files it can already read with its own tools, plus DSpatch's own node help. No new category goes to the provider, so this is not a content-exclusion question for Niclas.
+    - **Alternatives.** `implement-parallel` with a tools slice and a storage slice: they meet on the proposal type, which S17 fixed, but the storage slice is small. Storing proposals in a separate file under `userData`: a second store to keep in step, against decisions 17, 19 and 33's pattern.
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -928,6 +970,17 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 10 (call 40).** S18b is reviewed and committed with this file. S23a went to `implement` (decision 50).
+
+**Next:**
+1. Record S23a's review and commit it.
+2. Then S23b. Fold in S21's S-a (restrict `SUBGOAL:` to declaring nodes) only if S23b touches `step-report-cards.ts`. Otherwise brief S-a alone.
+3. Then the whole assessment of R1–R7.
+
+Host code changes in S19, S19b, S20, S21, S22 and S23a, so the engine needs a rebuild and **Restart host** at the next transition.
+
+If this run ends first, the next run reconciles S23a from the uncommitted working copy.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 9 (call 37).** S21 is reviewed after one rework round, and committed with this file. S18b went to `implement` (decision 49).
 

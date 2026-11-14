@@ -55,6 +55,7 @@ import type { Finding } from '../shared/loop-graph-load';
 import {
   KIND_HINTS,
   KIND_LABELS,
+  arrangeGraph,
   connect,
   groupFindings,
   indexFindings,
@@ -445,6 +446,13 @@ export function LoopEditor(): React.JSX.Element {
     [graph, file],
   );
   const dirty = currentText !== null && savedText !== null && currentText !== savedText;
+  // DSP-209 S18b: Arrange was pressed and not yet saved or reloaded, so Reload is offered.
+  const [arrangePending, setArrangePending] = useState(false);
+  useEffect(() => {
+    if (!dirty) {
+      setArrangePending(false);
+    }
+  }, [dirty]);
 
   /**
    * Re-read the loops on offer and which one is chosen.
@@ -2474,6 +2482,45 @@ export function LoopEditor(): React.JSX.Element {
           >
             Save
           </button>
+          {/*
+            DSP-209 S18b: the layered layout, only when asked for. An ordinary unsaved edit:
+            Save keeps it, Reload goes back to the file. Never run on its own over positions
+            a drawing already has, and not while a run holds the drawing.
+          */}
+          <button
+            type="button"
+            data-ev="editor-arrange"
+            disabled={graph === null || locked}
+            title="Lay out the boxes in layers"
+            onClick={() => {
+              if (graph === null) {
+                return;
+              }
+              apply(
+                arrangeGraph(graph),
+                file === null
+                  ? 'Arranged in layers: every box has a new place. Save to keep it; this drawing has no saved file to go back to.'
+                  : 'Arranged in layers: every box has a new place. Save to keep it, Reload to go back — Reload returns to the saved file and drops every unsaved change.',
+              );
+              setArrangePending(true);
+            }}
+          >
+            Arrange
+          </button>
+          {arrangePending && dirty && file !== null ? (
+            <button
+              type="button"
+              data-ev="editor-reload"
+              disabled={locked}
+              title="Back to the saved file"
+              onClick={() => {
+                setArrangePending(false);
+                void open(file.definition === null ? { kind: 'path', path: file.path } : { kind: 'definition', path: file.definition.path });
+              }}
+            >
+              Reload
+            </button>
+          ) : null}
           <button
             type="button"
             className="editor-run"
