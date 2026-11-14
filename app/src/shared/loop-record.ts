@@ -81,6 +81,23 @@ export interface RunRecordIdentity {
   readonly provider?: 'cursor' | 'claude' | 'copilot';
   readonly appVersion: string;
   readonly startedAtUtc: string;
+  /**
+   * DSP-209 S2: the context snapshot DSpatch carried into this run from its conversation.
+   * Its text is saved beside the record as `<runId>/context.md`. Absent when the run was
+   * given none (no conversation, or an empty one) and in records written before S2.
+   */
+  readonly contextSnapshot?: RecordedContextSnapshot;
+}
+
+/** Which snapshot a run was given (DSP-209 S2): enough to find and compare it, not its text. */
+export interface RecordedContextSnapshot {
+  /** `ctx-<hash>`, as `buildContextSnapshot` made it. */
+  readonly id: string;
+  readonly conversationId: string;
+  /** The conversation's message numbers (1-based) that appear in it. */
+  readonly messageNumbers: readonly number[];
+  /** Whether a bound cut anything; the text says what. */
+  readonly cut: boolean;
 }
 
 export type CommandNotStartedKind =
@@ -651,7 +668,29 @@ function parseIdentity(value: unknown): RunRecordIdentity | null {
     ...(provider === 'cursor' || provider === 'claude' || provider === 'copilot' ? { provider } : {}),
     appVersion: asString(value['appVersion'], 'unknown'),
     startedAtUtc: asString(value['startedAtUtc'], ''),
+    ...contextSnapshotField(value['contextSnapshot']),
   };
+}
+
+/** The snapshot reference, only when it has the shape this build writes; otherwise nothing. */
+function contextSnapshotField(value: unknown): { readonly contextSnapshot?: RecordedContextSnapshot } {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const id = value['id'];
+  const conversationId = value['conversationId'];
+  const messageNumbers = value['messageNumbers'];
+  const cut = value['cut'];
+  if (
+    typeof id !== 'string' ||
+    typeof conversationId !== 'string' ||
+    !Array.isArray(messageNumbers) ||
+    !messageNumbers.every((entry) => typeof entry === 'number' && Number.isInteger(entry)) ||
+    typeof cut !== 'boolean'
+  ) {
+    return {};
+  }
+  return { contextSnapshot: { id, conversationId, messageNumbers: messageNumbers as number[], cut } };
 }
 
 function asString(value: unknown, fallback: string): string {

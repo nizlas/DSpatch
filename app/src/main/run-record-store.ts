@@ -144,6 +144,29 @@ export class RunRecordWriter {
     this.append({ line: 'header', formatVersion: LOOP_RUN_RECORD_VERSION, identity });
   }
 
+  /**
+   * DSP-209 S2: save the context snapshot the run was given, whole, as
+   * `<runId>/context.md` beside the record, where the run's results are filed too.
+   *
+   * Returns the path written, or `null` when it could not be (said in `failures()`), so the
+   * header's reference never points at a file that was not written without saying so.
+   */
+  writeContext(text: string): string | null {
+    const runId = path.basename(this.file, '.jsonl');
+    if (this.closed || !isUsableRunId(runId) || runId === 'unusable-run-id') {
+      return null;
+    }
+    const target = path.join(path.dirname(this.file), runId, 'context.md');
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, text, 'utf8');
+      return target;
+    } catch (error) {
+      this.problems.push(`the context this run was given could not be saved as ${target}: ${describe(error)}`);
+      return null;
+    }
+  }
+
   journal(entry: RunJournalEntry): void {
     this.append({ line: 'journal', entry });
   }

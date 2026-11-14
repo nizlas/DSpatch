@@ -1255,6 +1255,14 @@ export function chatPromptFor(
      * the brief then says so, and the entry step's node purpose is its task.
      */
     readonly mandateFrom?: 'person' | 'drawing';
+    /**
+     * DSP-209 S2: the context snapshot of the conversation the run was started from, as
+     * `buildContextSnapshot` made it. The entry step is sent `text`, the whole snapshot;
+     * a later step is sent `personWordsText`, the person's words only (mission decision 2).
+     * Placed after the role, the engine's preamble and the folders, and before the
+     * mandate. Absent leaves every prompt byte for byte what it was.
+     */
+    readonly context?: { readonly text: string; readonly personWordsText: string };
   },
 ): string {
   const fromDrawing = options.mandateFrom === 'drawing';
@@ -1269,12 +1277,18 @@ export function chatPromptFor(
   const folders = describeWorkingRootsForAgent(options.workingRoots ?? []);
   const identity =
     options.step === undefined ? [] : stepIdentityPreamble(node, options.step);
-  if (node.id === options.entryId) {
+  const isEntry = node.id === options.entryId;
+  const context =
+    options.context === undefined
+      ? []
+      : [isEntry ? options.context.text : options.context.personWordsText, ''];
+  if (isEntry) {
     const purpose = node.purpose?.trim() ?? '';
     return [
       ...preamble,
       ...identity,
       ...folders,
+      ...context,
       fromDrawing ? ENTRY_LINE_FROM_DRAWING : ENTRY_LINE_FROM_PERSON,
       '',
       'Mandate:',
@@ -1345,6 +1359,7 @@ export function chatPromptFor(
     ...preamble,
     ...identity,
     ...folders,
+    ...context,
     ...mandate,
     ...(mandate.length === 0 ? [] : ['Your step:']),
     task,
@@ -1381,6 +1396,7 @@ export interface BriefPart {
     | 'engine'
     | 'address'
     | 'folders'
+    | 'context'
     | 'mandate'
     | 'task'
     | 'precedence'
@@ -1680,6 +1696,26 @@ export function briefParts(
             : 'The one folder is named, with the note that it is an address rather than an ' +
               'instruction: whether the assignment needs anything read or changed there is decided ' +
               'by the task.',
+    },
+    {
+      // DSP-209 S2. Built when a chat run starts, so its text is not knowable here.
+      id: 'context',
+      heading: 'The conversation the run was started from',
+      carried: true,
+      present: !fromDrawing,
+      detail: fromDrawing
+        ? 'None: the editor’s Run starts from the drawing, not from a conversation.'
+        : isEntry
+        ? 'When the run is started from a chat with earlier messages or earlier runs, DSpatch ' +
+          'puts its own record of that conversation here, marked as supplied by DSpatch: the ' +
+          'person’s messages verbatim and in order, short excerpts of the agent’s answers labelled ' +
+          'as the agent’s words and not decisions, earlier runs in the conversation, the ' +
+          'repository’s HEAD, branch and uncommitted paths, and the names of the project ' +
+          'instruction files. No file contents. Every cut is named. Saved with the run as ' +
+          'context.md. Nothing is added for an empty conversation.'
+        : 'When the run is started from a chat with earlier messages, DSpatch puts the person’s ' +
+          'own messages here, verbatim and in order, marked as supplied by DSpatch. The agent’s ' +
+          'answers are given to the entry step only. Nothing is added for an empty conversation.',
     },
     {
       id: 'mandate',

@@ -4,11 +4,11 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 
 ## Where the mission stands
 
-- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 sent to the implementer (coordinator visit 3, call 6).
+- **Status:** in progress. Night run `chat-loop-2026-11-14T01-36-57-404Z` began 14 November 2026. Mapping and plan done (planner, call 2); S1 reviewed and committed (calls 4–6); S2 reviewed and committed (calls 7–9); S3 sent to the implementer (coordinator visit 4, call 9).
 - **Engine commit the runs use:** `c04536b`, from `C:\Users\nicla\development\DSpatch-engine` (prepared 13 November 2026; checked on 14 November 2026 at the start of run `chat-loop-2026-11-14T01-36-57-404Z`: unchanged). The engine checkout lags this working copy by the documentation commits that follow it; that is expected. Every run checks the engine commit and records a change here.
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
-- **Last recorded commit of mission work:** the S1 commit (`feat(loop): … context snapshot … (DSP-209 S1)`), made on coordinator visit 3; its hash is in `git log`, the first commit after `59bd24e`.
-- **Sub-goal in progress:** S2 (carry the snapshot into the chat loop run), sent to the implementer on coordinator visit 3.
+- **Last recorded commit of mission work:** `610fa1a` (S1), then the S2 commit made on coordinator visit 4 (`(DSP-209 S2)` in `git log`, the commit after `610fa1a`).
+- **Sub-goal in progress:** S3 (skipped as a visible state), sent to the implementer on coordinator visit 4.
 - **Waiting on Niclas:** nothing that stops work (Q1, Q2 below are recorded with recommendations).
 
 ## Mapping (planner, run `chat-loop-2026-11-14T01-36-57-404Z`, call 2)
@@ -27,9 +27,9 @@ Order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8, S9 (independent; may
 
 | Id | Sub-goal | Depends on | Status | Attempts | Commit |
 | --- | --- | --- | --- | --- | --- |
-| S1 | Context snapshot builder (pure shared code) | — | reviewed | 1 | see `git log` (DSP-209 S1) |
-| S2 | Carry the snapshot into the chat loop run | S1 | in progress | 1 | |
-| S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | pending | 0 | |
+| S1 | Context snapshot builder (pure shared code) | — | reviewed | 1 | `610fa1a` |
+| S2 | Carry the snapshot into the chat loop run | S1 | reviewed | 1 | S2 commit after `610fa1a` |
+| S3 | "Skipped" as a visible state (engine, graph format, run view, editor) | — | in progress | 1 | |
 | S4 | Adaptive route in the bundled chat loop (check skippable) | S3 | pending | 0 | |
 | S5 | Agent can recommend interactive work (handoff tool, `handed-over`) | — (S2 useful) | pending | 0 | |
 | S6 | Continue interactively without resubmitting | S5, S1 | pending | 0 | |
@@ -63,7 +63,7 @@ Statuses:
 
 **S6 — Continue interactively.** On `handed-over`, one chat turn into the conversation's session, idempotent by run id, with the mandate verbatim, snapshot reference, the run's decisions/results/questions/changed files and the reason; shown as DSpatch's handover, not the person's message; *Use loop* unticked; same tool policy. *Acceptance:* exactly one turn; contains mandate and account; nothing typed; no resend after restart; stored apart from person's text as `resentContext` is. *Checks:* `chat-service` test, `conversation-store` parse test, type check.
 
-**S7 — The chat knows what a loop did.** After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
+**S7 — The chat knows what a loop did.** Also carries S2's open review findings (i) and (ii): move `conversationMessages` off `mergedMessages`'s doc comment in `chat-service.ts`; make `chatLoopContextSnapshot` fall back to `null` with the failure recorded. After any loop run in a conversation, the next chat turn is prefixed once with a disclosed, removable run recap (S1 builder, DSP-121 mechanism). *Acceptance:* first turn carries it, second not; visible and discardable; no run → no change. *Checks:* `chat-service` tests, type check.
 
 **S8 — Reconcile parallelism.** Reconciliation section in `CONTROLLED_PARALLELISM_AND_DIALOGUE_BASED_GRAPH_DESIGN.md` saying which §9 open decisions the vision settles (2–3 agents, worktrees for writers, single integrator, mailbox, slicer as a role), naming the first increment (one-level fan-out of one node with one integration point); GRAPH_FORMAT spec for `fanOut`, the slice block and S5's capability. Documentation only.
 
@@ -88,24 +88,36 @@ Statuses:
 - **Niclas tries:** nothing yet; nothing in the product calls the builder until S2.
 - **Steps skipped:** research (code settled it); independent verification (not asked for by the reviewer).
 
-### S2 — Carry the snapshot into the chat loop run
+- **Correction found in S2 (14 November 2026):** S1's id hashed a template string of an object, so it covered "[object Object]" plus the message fingerprints and never the snapshot text. S1's tests passed by accident and S1's review missed it (the S2 reviewer says so). Criterion 4 was only partly met in `610fa1a`; fixed in the S2 commit.
 
-- **Attempt 1:** briefed on coordinator visit 3 (call 6). Not yet reviewed.
+### S2 — Carry the snapshot into the chat loop run — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1:** briefed on coordinator visit 3 (call 6); implemented (call 7, `done`); review `accept` (call 8); committed on coordinator visit 4 (call 9).
+- **What was done.** `context-snapshot.ts`: record fields put on one line (`withRecordFieldsOnOneLine`, all JavaScript line breaks); id covers every input (decision 11); `earlierRunFromRecord()` maps a run record (no ending gives "interrupted"); unknown git status says so. `loop-chat.ts`: `chatPromptFor` option `context` — entry step gets the whole snapshot, later steps `personWordsText`, after role, preamble and folders, before the mandate; absent gives byte-identical prompts; node panel part "The conversation the run was started from". `loop-record.ts`: optional header `contextSnapshot { id, conversationId, messageNumbers, cut }`, malformed ignored. `run-record-store.ts`: `writeContext(text)` to `loop-runs/<runId>/context.md`, a failed write recorded among failures. `chat-service.ts`: read-only `conversationMessages(conversationId)`. `project-host.ts`: `chatLoopContextSnapshot()` builds the snapshot before the run's record opens (own run filtered out), from the conversation's messages, `listForConversation`, `readGitWorkingCopyState`, and `fs.existsSync` for `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`; an empty conversation builds nothing and starts no git process.
+- **Review verdict: accept.** Criteria 1, 2, 4, 5 met and tested; 3 and 6 met by reading, untested end to end; 7 met by construction. S1 review points (a) and (b) settled. Non-blocking findings, **open and carried into S7** (same files): (i) `chat-service.ts:4786–4798` — `conversationMessages` sits between `mergedMessages` and its doc comment; (ii) `chatLoopContextSnapshot` runs synchronously at run start with a synchronous git call — a throw should fall back to `null` and be recorded, since the snapshot is optional; (iii) the mandate appears twice per prompt, as briefed; harmless.
+- **Checked, by the implementer only** (from `app/`, single files with `node --import ./scripts/ts-resolve.mjs --import ./scripts/test-offline-guard.mjs --test --test-timeout=30000`): `context-snapshot` 8/8, `loop-chat` 80/80 (existing unchanged), `run-record-store` 10/10, `loop-node-help` 28/28, `loop-record` 40/40; `npm run typecheck` exit 0. `chat-service` tests not run. The reviewer read the code and did not rerun. No independent verification requested.
+- **Untested:** the host path end to end; *prompt sent* showing the block (by reading: it is the saved `agent-reply.prompt`); limits on real conversations; skipped and handed-over steps in earlier runs (not in records until S3/S5).
+- **Niclas tries:** discuss a change in chat and reject one approach; tick **Use loop**, send "implement that"; open *prompt sent* for the first step (DSpatch context block with the rejection quoted) and a later step (only the person's words); check `context.md` in the run's folder under `loop-runs`; start a second run in the same conversation and check the first is listed.
+- **Steps skipped:** research (code settled it); independent verification (not asked for).
+
+### S3 — Skipped as a visible state
+
+- **Attempt 1:** briefed on coordinator visit 4 (call 9). Not yet reviewed.
 
 ## Requirements of the vision
 
 All **open** at the end of planning. Sub-goals carrying each in brackets.
 
-- Entry agent gets the conversation's relevant context [S1, S2] — open
-- Identifiable snapshot linked to the conversation [S1 reviewed: builder; S2: link] — open (builder done, not yet carried)
-- Decisions and exclusions included, not optional retrieval [S1] — open
-- Original reachable; cuts explicit [S1, S2] — open
-- Summaries separate instructions from guesses [S1] — open
-- Repository state and project instructions [S1; Q1] — open
-- Supplied context inspectable, apart from the provider's own [S2] — open
+- Entry agent gets the conversation's relevant context [S1, S2] — met by reviewed sub-goals (agent review; host path untested end to end; Niclas's trial)
+- Identifiable snapshot linked to the conversation [S1, S2] — met by reviewed sub-goals (record header `contextSnapshot`, `context.md`)
+- Decisions and exclusions included, not optional retrieval [S1, S2] — met by reviewed sub-goals
+- Original reachable; cuts explicit [S1, S2] — met by reviewed sub-goals
+- Summaries separate instructions from guesses [S1] — met by reviewed sub-goals (agent text labelled and quoted)
+- Repository state and project instructions [S1, S2; Q1] — met as references (names only); native loading waits on Q1
+- Supplied context inspectable, apart from the provider's own [S2] — met by reviewed sub-goal (in the saved prompt; untested in the window)
 - Exclusions apply to every recipient [S1, S2, S11] — open
 - Later user messages are changes to the task [sequential: works today; branches: S11] — open for branches
-- Works across a provider or model change [S1] — open
+- Works across a provider or model change [S1] — met by construction (DSpatch's own record); not exercised across providers
 - Steps may be skipped with a recorded reason [S3, S4] — open
 - Required steps stay required [S3] — open
 - Skipped shown as its own state; available and taken paths shown [S3] — open
@@ -140,7 +152,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 - Concepts reusable for future graph construction [node help in S3, S5, S10]; dialogue-based graph construction — proposed **skipped** (Q2), not met
 - Reconcile the parallelism document [S8] — open
 
-**Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — open; (2) small task continues in chat without resubmission [S4, S5, S6] — open; (3) branches exchange a finding before completion [S10, S11; scripted adapter only, live trial is Niclas's] — open; (4) combined result keeps scope and provenance [S10, S12] — open.
+**Success criteria (BRIEF §1.3):** (1) "implement that" preserves decisions [S1, S2] — implemented and agent-reviewed; awaits Niclas's trial; (2) small task continues in chat without resubmission [S4, S5, S6] — open; (3) branches exchange a finding before completion [S10, S11; scripted adapter only, live trial is Niclas's] — open; (4) combined result keeps scope and provenance [S10, S12] — open.
 
 ## Decisions taken by the mission
 
@@ -153,6 +165,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 7. **The integrator is a role and it merges** (S10). Reason: the vision makes it the owner; engine merging would decide conflicts. Alternative: engine applies patches.
 8. **One provider per run** (S2, S11). Reason: snapshot and messages never cross a provider/account boundary, so the content-exclusion contract is not crossed. Alternative: per-node provider (changes what a provider receives; would stop for Niclas).
 9. **No blocking wait tool for messages** (S11). Reason: mutual waiting impossible by construction. Alternative: wait with timeout (bounded, adds a failure mode).
+11. **The snapshot id covers every input, not only what the text shows** (S2). Reason: the record uses the id to say which state of the conversation a run started from; two different states must not share an id because a limit hid the difference. Alternative: id over the visible text only (recomputable from `context.md`); comparing the texts still answers that.
 10. **The planner's result accepted as the plan despite its undeclared `RESULT: planned`** (coordination). Reason: the content is complete and checked against code; re-planning would spend calls for nothing. Alternative: send back to `plan`.
 
 ## Decisions needed from Niclas
@@ -165,7 +178,7 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
 
-**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 3 (call 6).** S1 reviewed and committed. S2 sent to the implementer; research skipped (the planner's map names the code; nothing blocks). When the review returns: if accepted, record S2, commit its named files with this file, then brief S3 (no dependencies). If a run ends before S2's review is recorded, the next run reconciles S2's files (`app/src/host/project-host.ts`, `app/src/shared/loop-chat.ts`, `app/src/shared/loop-record.ts`, `app/src/main/run-record-store.ts`, `app/src/main/chat-service.ts`, `app/src/shared/context-snapshot.ts`, their tests) before briefing again.
+**14 November 2026, run `chat-loop-2026-11-14T01-36-57-404Z`, coordinator visit 4 (call 9).** S2 reviewed and committed. S3 sent to the implementer (no dependencies; research skipped, the planner's map names the code). When the review returns: if accepted, record and commit S3, then brief S4 (depends on S3). If a run ends before S3's review is recorded, the next run reconciles S3's files (`app/src/shared/loop-graph.ts`, `loop-graph-load.ts`, `loop-run.ts`, `loop-run-view.ts`, `loop-chat.ts`, `loop-node-help.ts`, `app/src/renderer/GraphCanvas.tsx` and its CSS, `docs/loop/GRAPH_FORMAT.md`, their tests) before briefing again.
 
 ## Run log
 

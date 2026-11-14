@@ -166,6 +166,8 @@ import {
   RunRecordStore,
   type RunRecordWriter,
 } from '../main/run-record-store';
+import { readGitWorkingCopyState } from '../main/git-state';
+import { buildContextSnapshot, earlierRunFromRecord, type ContextSnapshot } from '../shared/context-snapshot';
 import type { SampleProjectListing } from '../main/sample-projects';
 import { readDirectoryPage, readFileForViewing } from '../main/workspace-tree';
 import { ReviewHost } from './review-host';
@@ -1249,6 +1251,58 @@ function requireRunRecordStore(): RunRecordStore {
  */
 function runResultsDir(runId: string): string {
   return path.join(userDataDir(), 'loop-runs', runId, 'results');
+}
+
+/**
+ * The project instruction files whose presence a context snapshot names (DSP-209 S2).
+ * Checked for existence in the working folder only; never read.
+ */
+const INSTRUCTION_FILE_NAMES: readonly string[] = ['AGENTS.md', 'CLAUDE.md', '.cursor/rules'];
+
+/**
+ * DSP-209 S2: DSpatch's own snapshot of the conversation a chat loop run is started from,
+ * or `null` when the conversation has no saved message and no earlier run.
+ *
+ * Built from the conversation's saved messages, the earlier run records in the same
+ * conversation, the working folder's git state through the existing reader, and the names
+ * of instruction files present. Nothing is read from the project's files. Called before the
+ * run's own record is opened, so the run never lists itself as an earlier run.
+ */
+function chatLoopContextSnapshot(input: {
+  readonly runId: string;
+  readonly conversationId: string;
+  readonly workspacePath: string;
+  readonly mandate: string;
+}): ContextSnapshot | null {
+  const earlierRuns = requireRunRecordStore()
+    .listForConversation(input.conversationId)
+    .filter((entry) => entry.runId !== input.runId)
+    .map((entry) => earlierRunFromRecord(entry.runId, entry.record))
+    .filter((run) => run !== null);
+  const messages = chatService.conversationMessages(input.conversationId);
+  if (messages.length === 0 && earlierRuns.length === 0) {
+    // Nothing to carry, so no git process is started for it either.
+    return null;
+  }
+  const git = readGitWorkingCopyState(input.workspacePath);
+  return buildContextSnapshot({
+    conversationId: input.conversationId,
+    messages,
+    earlierRuns,
+    repository: git.isGitRepository
+      ? {
+          head: git.headRevision,
+          // `rev-parse --abbrev-ref HEAD` says `HEAD` when it is detached.
+          branch: git.branch === 'HEAD' ? null : git.branch,
+          uncommittedPaths: git.dirtyFiles.map((file) => file.relPath),
+          ...(git.error === null ? {} : { uncommittedKnown: false }),
+        }
+      : null,
+    instructionFiles: INSTRUCTION_FILE_NAMES.filter((name) =>
+      fs.existsSync(path.join(input.workspacePath, name)),
+    ),
+    mandate: input.mandate,
+  });
 }
 /**
  * The sample projects DSpatch generated, as the window shows them (DSP-61).
@@ -2937,6 +2991,15 @@ function registerLoopMethods(): void {
       // is in the file now. The same value the preview showed, because both come from
       // the same read of the same chosen definition.
       const graphVersionId = chosen.graphVersionId;
+      // DSP-209 S2: the conversation this run is started from, carried into its steps by
+      // DSpatch itself. Built before the record opens, so this run is not its own earlier run.
+      // It goes only to the provider and account this run already uses (mission decision 8).
+      const contextSnapshot = chatLoopContextSnapshot({
+        runId: request.runId,
+        conversationId: session.conversationId,
+        workspacePath,
+        mandate: request.mandate,
+      });
       const record = requireRunRecordStore().open({
         runId: request.runId,
         projectPath: workspacePath,
@@ -2949,7 +3012,20 @@ function registerLoopMethods(): void {
         provider: agent.provider,
         appVersion: config().appVersion,
         startedAtUtc: new Date().toISOString(),
+        ...(contextSnapshot === null
+          ? {}
+          : {
+              contextSnapshot: {
+                id: contextSnapshot.id,
+                conversationId: contextSnapshot.conversationId,
+                messageNumbers: contextSnapshot.messageNumbers,
+                cut: contextSnapshot.cut,
+              },
+            }),
       });
+      if (contextSnapshot !== null) {
+        record.writeContext(contextSnapshot.text);
+      }
       // Labels from the graph that is actually being walked, rather than the
       // window's own copy of them, so a reply is attributed to the node the run
       // entered even if the two ever drift apart.
@@ -3075,6 +3151,11 @@ function registerLoopMethods(): void {
               // makes the reference mean something at the provider rather than only at
               // the validator.
               role: chatRoleTextFor(node, resolveRole),
+              // DSP-209 S2. The whole snapshot to the entry step, the person's words to
+              // the rest; nothing at all when the conversation had nothing to carry.
+              ...(contextSnapshot === null
+                ? {}
+                : { context: { text: contextSnapshot.text, personWordsText: contextSnapshot.personWordsText } }),
             });
             // DSP-32. The one place a step's prompt is built is the one place a
             // waiting message can be handed over, and draining it here means the

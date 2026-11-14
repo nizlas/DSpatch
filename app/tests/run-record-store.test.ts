@@ -11,6 +11,7 @@ import { after, describe, it } from 'node:test';
 
 import { parseRunRecord, type RunRecordIdentity } from '../src/shared/loop-record';
 import { graphVersionIdFor, RunRecordStore } from '../src/main/run-record-store';
+import { buildContextSnapshot, earlierRunFromRecord } from '../src/shared/context-snapshot';
 import { loopTurnStatusText, loopTurnsFromRecords } from '../src/shared/loop-transcript';
 
 const roots: string[] = [];
@@ -220,5 +221,81 @@ describe('parsing what the store wrote', () => {
     assert.equal(parsed.identity?.runId, 'run-cut', 'and the run it belongs to survives');
     assert.equal(parsed.journal.length, 1, 'and so does every line that was written whole');
     assert.equal(parsed.unreadableLines, 0, 'the fragment is an unfinished write, not damage');
+  });
+});
+
+/** DSP-209 S2: the context snapshot a chat run was given, kept with its record. */
+describe('the context a run was given', () => {
+  const reference = { id: 'ctx-0123456789abcdef', conversationId: 'dsp-conv-1', messageNumbers: [1, 2], cut: false };
+
+  it('keeps the snapshot reference in the header and the text beside the record', () => {
+    const store = new RunRecordStore(path.join(scratch('context'), 'loop-runs'));
+    const writer = store.open(identity({ contextSnapshot: reference }));
+    const written = writer.writeContext('=== DSpatch: context ===\n| the person said this');
+    assert.equal(written, path.join(store.directoryPath(), identity().runId, 'context.md'));
+    assert.equal(fs.readFileSync(written ?? '', 'utf8'), '=== DSpatch: context ===\n| the person said this');
+    assert.deepEqual(writer.failures(), []);
+    assert.deepEqual(store.read(identity().runId).record?.identity?.contextSnapshot, reference);
+  });
+
+  it('reads a header without one exactly as before, and ignores a malformed one', () => {
+    const plain = new RunRecordStore(path.join(scratch('no-context'), 'loop-runs'));
+    plain.open(identity());
+    const parsed = plain.read(identity().runId).record?.identity;
+    assert.deepEqual(parsed, identity());
+    assert.equal(parsed !== undefined && parsed !== null && 'contextSnapshot' in parsed, false);
+
+    const odd = parseRunRecord(
+      `${JSON.stringify({ line: 'header', formatVersion: 1, identity: { ...identity(), contextSnapshot: { id: 7 } } })}\n`,
+    );
+    assert.equal(odd.identity?.contextSnapshot, undefined);
+    assert.equal(odd.identity?.mandate, 'Add the missing field.');
+  });
+
+  it('gives a second run in the conversation the first run\'s mandate and ending', () => {
+    const store = new RunRecordStore(path.join(scratch('second-run'), 'loop-runs'));
+    const first = store.open(identity({ runId: 'chat-loop-first', mandate: 'Fix the typo in README.' }));
+    first.finish({
+      endedAtUtc: '2026-09-17T21:32:00.000Z',
+      kind: 'finished',
+      status: 'completed',
+      terminalNodeId: 'done',
+      outcome: 'verification-not-performed',
+      outcomeText: 'No command was run.',
+      modelRequested: 'claude-haiku-4-5',
+      modelReported: null,
+      commands: [],
+      snapshots: {
+        beforeId: 'snap-a',
+        beforeFileCount: 3,
+        afterId: 'snap-b',
+        afterFileCount: 3,
+        changed: [],
+        added: [],
+        removed: [],
+        truncated: null,
+      },
+      note: '',
+      cancelled: false,
+      cost: 'unknown',
+    });
+    const earlierRuns = store
+      .listForConversation('dsp-conv-1')
+      .map((entry) => earlierRunFromRecord(entry.runId, entry.record))
+      .filter((run) => run !== null);
+    assert.deepEqual(earlierRuns, [
+      { runId: 'chat-loop-first', mandate: 'Fix the typo in README.', ending: 'completed', terminal: 'done' },
+    ]);
+    const snapshot = buildContextSnapshot({
+      conversationId: 'dsp-conv-1',
+      messages: [],
+      earlierRuns,
+      repository: null,
+      instructionFiles: [],
+      mandate: 'now the changelog',
+    });
+    assert.ok(snapshot !== null);
+    assert.match(snapshot.text, /Run chat-loop-first: ended as completed, at "done"\./);
+    assert.match(snapshot.text, /\| Fix the typo in README\./);
   });
 });

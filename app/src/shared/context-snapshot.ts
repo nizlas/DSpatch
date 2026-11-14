@@ -28,6 +28,7 @@
  */
 
 import type { StoredMessage } from './bridge';
+import type { ParsedRunRecord } from './loop-record';
 
 /** What the builder reads of a saved message. A `StoredMessage` is one. */
 export type SnapshotMessage = Pick<StoredMessage, 'ordinal' | 'prompt' | 'answer' | 'resentContext'>;
@@ -47,6 +48,28 @@ export interface EarlierRunSummary {
   readonly handedOverFrom?: string;
 }
 
+/**
+ * An earlier run's record, as the snapshot lists it (S2). `null` for a record with no
+ * readable header, which says nothing about a run.
+ *
+ * The ending is the runner's status word where the record has one, else how the call came
+ * back; a record with no ending line is `interrupted`, the same word the record view uses.
+ * Skipped and handed-over steps are not recorded by this build, so they are absent.
+ */
+export function earlierRunFromRecord(runId: string, record: ParsedRunRecord | null): EarlierRunSummary | null {
+  const identity = record?.identity ?? null;
+  if (record === null || identity === null) {
+    return null;
+  }
+  const ending = record.ending;
+  return {
+    runId,
+    mandate: identity.mandate,
+    ending: ending === null ? 'interrupted' : (ending.status ?? ending.kind),
+    terminal: ending?.terminalNodeId ?? null,
+  };
+}
+
 /** The repository as it stood when the run started. Names only, never contents. */
 export interface SnapshotRepositoryState {
   /** The commit HEAD points at, or `null` when there is none (an empty repository) or it is unknown. */
@@ -55,6 +78,11 @@ export interface SnapshotRepositoryState {
   readonly branch: string | null;
   /** Paths with uncommitted changes, relative to the repository root. */
   readonly uncommittedPaths: readonly string[];
+  /**
+   * `false` when `git status` could not be read, so the list is unknown rather than empty.
+   * Absent means known.
+   */
+  readonly uncommittedKnown?: boolean;
 }
 
 export interface ContextSnapshotLimits {
@@ -119,7 +147,17 @@ export interface SnapshotCut {
 }
 
 export interface ContextSnapshot {
-  /** `ctx-<hash>`, over the snapshot's text and the messages it was built from. */
+  /**
+   * `ctx-<hash>`, over the snapshot's text **and every input it was built from**: all the
+   * messages, all earlier runs in full, the whole repository state, the instruction file
+   * names, the mandate and the limits — including whatever the bounds then left out.
+   *
+   * So the same id means the same conversation state with the same bounds, not merely the
+   * same visible text. The id is what a run record keeps to say which state of the
+   * conversation a run was started from, and two runs started from different states must not
+   * share one because a bound happened to hide the difference. The text alone can still be
+   * compared directly where that is the question.
+   */
   readonly id: string;
   readonly conversationId: string;
   readonly parts: {
@@ -149,12 +187,13 @@ const AGENT_HEADING =
  * earlier run. A mandate, a repository or instruction files alone are not a conversation,
  * and the run already has its mandate.
  */
-export function buildContextSnapshot(input: ContextSnapshotInput): ContextSnapshot | null {
-  const limits: ContextSnapshotLimits = { ...CONTEXT_SNAPSHOT_LIMITS, ...input.limits };
-  const ordered = [...input.messages].sort((left, right) => left.ordinal - right.ordinal);
-  if (ordered.length === 0 && input.earlierRuns.length === 0) {
+export function buildContextSnapshot(given: ContextSnapshotInput): ContextSnapshot | null {
+  const limits: ContextSnapshotLimits = { ...CONTEXT_SNAPSHOT_LIMITS, ...given.limits };
+  const ordered = [...given.messages].sort((left, right) => left.ordinal - right.ordinal);
+  if (ordered.length === 0 && given.earlierRuns.length === 0) {
     return null;
   }
+  const input = withRecordFieldsOnOneLine(given);
   const where = `conversation ${input.conversationId}`;
   const cuts: SnapshotCut[] = [];
 
@@ -285,7 +324,7 @@ export function buildContextSnapshot(input: ContextSnapshotInput): ContextSnapsh
           '`git status` in the working copy lists them all.',
       });
     }
-    repository = { head: input.repository.head, branch: input.repository.branch, uncommittedPaths: kept };
+    repository = { ...input.repository, uncommittedPaths: kept };
   }
 
   const mandate = clipQuote(input.mandate, limits.maxMandateChars);
@@ -316,7 +355,7 @@ export function buildContextSnapshot(input: ContextSnapshotInput): ContextSnapsh
     cuts,
     totalMessages: ordered.length,
   });
-  const id = `ctx-${contentHash(`${body}\n${sourceFingerprint(input.conversationId, ordered)}`)}`;
+  const id = `ctx-${contentHash(`${[...body.full, ...body.personOnly].join('\n')}\n${inputFingerprint(given, limits)}`)}`;
   const text = [
     `=== DSpatch: context from the conversation this run was started from (${id}) ===`,
     '',
@@ -449,7 +488,9 @@ function renderBody(parts: {
     const r = parts.repository;
     repo.push(
       `HEAD: ${r.head ?? 'none'}. Branch: ${r.branch ?? 'none (detached or unknown)'}.`,
-      r.uncommittedPaths.length === 0
+      r.uncommittedKnown === false
+        ? 'Uncommitted changes: unknown, because git status could not be read.'
+        : r.uncommittedPaths.length === 0
         ? 'Uncommitted changes: none named.'
         : `Uncommitted changes in: ${r.uncommittedPaths.join(', ')}.`,
     );
@@ -499,11 +540,92 @@ function renderBody(parts: {
   return { full, personOnly };
 }
 
-/** What the snapshot was built from, so that a changed message changes the id even where it was cut. */
-function sourceFingerprint(conversationId: string, ordered: readonly SnapshotMessage[]): string {
+/**
+ * Every input the snapshot was built from, in a fixed order, so that the id changes when
+ * anything it was built from changes, including what the bounds then left out.
+ */
+function inputFingerprint(input: ContextSnapshotInput, limits: ContextSnapshotLimits): string {
+  const ordered = [...input.messages].sort((left, right) => left.ordinal - right.ordinal);
   return contentHash(
-    JSON.stringify([conversationId, ordered.map((message) => [message.ordinal, message.prompt, message.answer])]),
+    JSON.stringify([
+      input.conversationId,
+      input.mandate,
+      ordered.map((message) => [message.ordinal, message.prompt, message.answer, message.resentContext]),
+      input.earlierRuns.map((run) => [
+        run.runId,
+        run.mandate,
+        run.ending,
+        run.terminal,
+        (run.skippedSteps ?? []).map((step) => [step.step, step.reason]),
+        run.handedOverFrom ?? null,
+      ]),
+      input.repository === null
+        ? null
+        : [
+            input.repository.head,
+            input.repository.branch,
+            input.repository.uncommittedPaths,
+            input.repository.uncommittedKnown ?? true,
+          ],
+      input.instructionFiles,
+      [
+        limits.maxPersonMessageChars,
+        limits.maxPersonTotalChars,
+        limits.maxAgentExcerpts,
+        limits.maxAgentExcerptChars,
+        limits.maxEarlierRuns,
+        limits.maxEarlierMandateChars,
+        limits.maxUncommittedPaths,
+        limits.maxMandateChars,
+      ],
+    ]),
   );
+}
+
+/** A field from a record or the repository, on one line: it is written bare, not quoted. */
+function oneLine(value: string): string {
+  return value.split(LINE_TERMINATORS).map((part) => part.trim()).filter((part) => part !== '').join(' ');
+}
+
+/** CR, LF, U+2028 and U+2029: every line terminator JavaScript knows. Built from code points, so none sits raw in this file. */
+const LINE_TERMINATORS = new RegExp(`[${String.fromCharCode(13, 10, 0x2028, 0x2029)}]`);
+
+/**
+ * The input with every field that is written bare put on one line.
+ *
+ * Messages and mandates are quoted line by line behind a bar; the rest (run ids, endings,
+ * terminals, skip reasons, the repository's names and paths, instruction file names, the
+ * conversation id) are written inside DSpatch's own sentences. A line break in one of them
+ * followed by `--- …` would otherwise start a line that reads like one of the snapshot's
+ * headings, so a line break there becomes a space.
+ */
+function withRecordFieldsOnOneLine(input: ContextSnapshotInput): ContextSnapshotInput {
+  return {
+    ...input,
+    conversationId: oneLine(input.conversationId),
+    earlierRuns: input.earlierRuns.map((run) => ({
+      runId: oneLine(run.runId),
+      mandate: run.mandate,
+      ending: oneLine(run.ending),
+      terminal: run.terminal === null ? null : oneLine(run.terminal),
+      ...(run.skippedSteps === undefined
+        ? {}
+        : { skippedSteps: run.skippedSteps.map((step) => ({ step: oneLine(step.step), reason: oneLine(step.reason) })) }),
+      ...(run.handedOverFrom === undefined ? {} : { handedOverFrom: oneLine(run.handedOverFrom) }),
+    })),
+    repository:
+      input.repository === null
+        ? null
+        : {
+            head: input.repository.head === null ? null : oneLine(input.repository.head),
+            branch: input.repository.branch === null ? null : oneLine(input.repository.branch),
+            uncommittedPaths: input.repository.uncommittedPaths.map(oneLine),
+            ...(input.repository.uncommittedKnown === undefined
+              ? {}
+              : { uncommittedKnown: input.repository.uncommittedKnown }),
+          },
+    instructionFiles: input.instructionFiles.map(oneLine),
+  };
 }
 
 /** A short, stable hash of a string (two 32-bit FNV-1a lanes). An identity, not a secret. */

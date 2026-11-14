@@ -52,6 +52,7 @@ import {
   TASK_PRECEDENCE,
   undeclaredReadableOutcome,
 } from '../src/shared/loop-chat';
+import { buildContextSnapshot } from '../src/shared/context-snapshot';
 import { describeLiveBinding } from '../src/shared/loop-editor-run';
 import { INSTRUCTION_BLOCK_OPEN, instructionPreamble } from '../src/shared/loop-instruction';
 import { workingRootsFrom } from '../src/shared/working-roots';
@@ -2070,5 +2071,83 @@ describe('nodeHelpText', () => {
     });
     assert.match(text, /Do what the Mandate asks/);
     assert.match(text, /Required: A role description/);
+  });
+});
+
+/**
+ * DSP-209 S2: the conversation a chat run is started from, carried into its steps.
+ *
+ * The person discusses a change, rejects one approach, and then sends "implement that"
+ * through Use loop. Before S2 the entry step was given the three words and nothing else.
+ */
+describe('the context snapshot in a chat loop step\'s brief (DSP-209 S2)', () => {
+  const role = {
+    id: 'project-work',
+    sourcePath: 'docs/loop/roles/project/project-work.role.md',
+    instructions: 'Do the work the mandate asks for.',
+  };
+  const entry = { id: 'work', kind: 'agent' as const, purpose: 'Do what the mandate asks.' };
+  const later = { id: 'check', kind: 'agent' as const, purpose: 'Check the work.' };
+  const snapshot = buildContextSnapshot({
+    conversationId: 'conv-7',
+    messages: [
+      {
+        ordinal: 0,
+        prompt: 'Should the parser cache results in a global map?',
+        answer: 'A global cache would be the quickest way to do it.',
+        resentContext: null,
+      },
+      {
+        ordinal: 1,
+        prompt: 'No. I reject the global cache: pass the cache in explicitly instead.',
+        answer: 'Agreed, an explicit cache parameter then.',
+        resentContext: null,
+      },
+    ],
+    earlierRuns: [],
+    repository: { head: 'abc1234', branch: 'main', uncommittedPaths: [] },
+    instructionFiles: ['AGENTS.md'],
+    mandate: 'implement that',
+  });
+  assert.ok(snapshot !== null);
+  const context = { text: snapshot.text, personWordsText: snapshot.personWordsText };
+  const step = { runId: 'run-s2', occurrence: 1, callId: 2, freshSession: true };
+
+  it('gives the entry step the person\'s earlier decisions verbatim, marked as DSpatch\'s, before the mandate', () => {
+    const prompt = chatPromptFor(entry, { entryId: 'work', mandate: 'implement that', role, step: { ...step, callId: 1 }, context });
+    assert.ok(prompt.includes('| No. I reject the global cache: pass the cache in explicitly instead.'));
+    assert.ok(prompt.includes('| Should the parser cache results in a global map?'));
+    assert.ok(prompt.includes(`=== DSpatch: context from the conversation this run was started from (${snapshot.id}) ===`));
+    assert.ok(prompt.includes('A global cache would be the quickest way'), 'the entry step has the agent excerpts');
+    assert.ok(prompt.indexOf(ROLE_BLOCK_CLOSE) < prompt.indexOf('=== DSpatch: context'), 'after the role');
+    assert.ok(prompt.indexOf("=== end of DSpatch's context") < prompt.indexOf('Mandate:\nimplement that'), 'before the mandate');
+  });
+
+  it('gives a later step the person\'s words and not the agent\'s excerpts', () => {
+    const prompt = chatPromptFor(later, { entryId: 'work', mandate: 'implement that', role, step, context });
+    assert.ok(prompt.includes('| No. I reject the global cache: pass the cache in explicitly instead.'));
+    assert.ok(prompt.includes(`=== DSpatch: the person's words from the conversation this run was started from (${snapshot.id}) ===`));
+    assert.equal(prompt.includes('A global cache would be the quickest way'), false);
+    assert.equal(prompt.includes('Agreed, an explicit cache parameter'), false);
+  });
+
+  it('leaves every prompt byte for byte as it was when there is no context', () => {
+    for (const node of [entry, later]) {
+      const options = { entryId: 'work', mandate: 'implement that', role, step };
+      assert.equal(chatPromptFor(node, options), chatPromptFor(node, { ...options, context: undefined }));
+      assert.equal(chatPromptFor(node, options).includes('DSpatch: context'), false);
+    }
+    // And the snapshot for an empty conversation is nothing to pass at all.
+    assert.equal(
+      buildContextSnapshot({
+        conversationId: 'conv-empty',
+        messages: [],
+        earlierRuns: [],
+        repository: null,
+        instructionFiles: [],
+        mandate: 'implement that',
+      }),
+      null,
+    );
   });
 });

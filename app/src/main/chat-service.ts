@@ -4789,6 +4789,14 @@ export class ChatService {
    * The one rule for every reader — what the window is given, what is saved and what
    * a recap is built from — so the three cannot disagree (WS-1 #10).
    */
+  /**
+   * DSP-209 S2: a conversation's saved messages, by the same rule as every other reader,
+   * for the context snapshot a loop run is given. Read only; a copy.
+   */
+  conversationMessages(conversationId: string): readonly StoredMessage[] {
+    return this.mergedMessages(conversationId);
+  }
+
   private mergedMessages(conversationId: string): StoredMessage[] {
     return mergeConversationMessages(
       this.held.get(conversationId)?.carriedMessages ?? [],
