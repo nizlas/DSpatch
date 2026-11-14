@@ -1,10 +1,9 @@
 /**
- * Where a connection meets a node's box.
+ * Where a connection meets a node's box, and how big that box is.
  *
- * Side is decided by the geometry of the two centres (or a control point), not by
- * port ids in the file. The attach point sits on the box edge — not offset into
- * empty space. Routing stays a straight or bowed curve; nothing here turns a
- * connection into an orthogonal path.
+ * Side is decided by geometry, not by port ids in the file. The attach point sits on
+ * the box edge — not offset into empty space. The orthogonal routes the canvas draws
+ * are made in `loop-edge-routing.ts` (DSP-209 S18a), which takes its boxes from here.
  *
  * It also holds the node's drawn outline, because a run's liveness is drawn on that
  * outline and the shape has to be stated in one place to stay the same shape.
@@ -12,9 +11,33 @@
 
 import type { NodeKind } from './loop-graph';
 
+/** Every node's width, and the height of every node that is not a fan-out. */
 export const NODE_WIDTH = 168;
 export const NODE_HEIGHT = 54;
+/**
+ * DSP-209 S18a: a fan-out node is taller, leaving a line under its label and kind for the
+ * branch summary S20 draws there. Decided by the drawing alone — never by run state — so a
+ * node does not grow when its branches start.
+ */
+export const FAN_OUT_NODE_HEIGHT = 72;
 export const ANCHOR_DOT_RADIUS = 3.5;
+
+/**
+ * A node's drawn size, from what the drawing declares about it and nothing else.
+ *
+ * The parameter is deliberately narrow: the node's kind and whether it declares a fan-out.
+ * Run state is not something this can be given, which is what keeps sizes, and with them
+ * every edge route, the same while a run walks.
+ */
+export function nodeSize(node: { readonly kind: NodeKind; readonly fanOut?: unknown }): {
+  readonly width: number;
+  readonly height: number;
+} {
+  return {
+    width: NODE_WIDTH,
+    height: node.fanOut === undefined ? NODE_HEIGHT : FAN_OUT_NODE_HEIGHT,
+  };
+}
 
 export type NodeSide = 'top' | 'right' | 'bottom' | 'left';
 
@@ -265,10 +288,14 @@ function glintPiece(
  * working and shrink when it stopped. Nothing here is offset. The glow that does read as
  * outside the border is the body's own fill covering the inner half of a wide stroke,
  * which costs no geometry at all.
+ *
+ * `height` is the node's drawn height from {@link nodeSize}: `NODE_HEIGHT` for every node
+ * but a fan-out (DSP-209 S18a), so the glint traces the taller box exactly as it does the
+ * ordinary one.
  */
-export function nodeOutlinePath(kind: NodeKind): string {
+export function nodeOutlinePath(kind: NodeKind, height: number = NODE_HEIGHT): string {
   const w = NODE_WIDTH;
-  const h = NODE_HEIGHT;
+  const h = height;
   if (kind === 'router') {
     // The same four points as the `<polygon>`: top, right, bottom, left.
     return `M ${String(w / 2)} 0 L ${String(w)} ${String(h / 2)} L ${String(w / 2)} ${String(h)} L 0 ${String(h / 2)} Z`;

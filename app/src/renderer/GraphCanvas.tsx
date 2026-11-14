@@ -10,39 +10,57 @@
  * like while a run walks is in `shared/loop-run-view.ts` and `loop-editor.css`, unchanged.
  */
 
-import type { MouseEvent as ReactMouseEvent, RefObject } from 'react';
+import { useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from 'react';
 
 import type { LoopEdge, LoopGraph, LoopNode, ResolvedRole } from '../shared/loop-graph';
 import type { Finding } from '../shared/loop-graph-load';
-import { nodeById, roleKey } from '../shared/loop-graph-editing';
+import { roleKey } from '../shared/loop-graph-editing';
 import {
   ANCHOR_DOT_RADIUS,
   GLINT_PATH_LENGTH,
   glintSegments,
-  NODE_HEIGHT,
   NODE_WIDTH,
-  attachPoint,
-  boxCentre,
-  nodeBox,
   nodeCornerRadius,
   nodeOutlinePath,
+  nodeSize,
 } from '../shared/loop-edge-geometry';
+import { routeExtent, routeLoopEdges, type EdgeRoute } from '../shared/loop-edge-routing';
 import { NODE_RUN_STATE_MARKS, endingMarkFor, nodeRunStateFor, type EndingMark, type FinishedRunMarks, type NodeRunState } from '../shared/loop-run-view';
 
 export type GraphSelection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
 
-/** The drawing's extent, with room around it. */
-export function graphBounds(graph: LoopGraph | null): { readonly width: number; readonly height: number } {
+/**
+ * The drawing's extent, with room around it — and, given the routes, room for the outer
+ * lanes back edges run in.
+ */
+export function graphBounds(
+  graph: LoopGraph | null,
+  routes?: ReadonlyMap<string, EdgeRoute>,
+): { readonly width: number; readonly height: number } {
   if (graph === null) {
     return { width: 900, height: 600 };
   }
   let maxX = 0;
   let maxY = 0;
   for (const node of graph.nodes) {
-    maxX = Math.max(maxX, (node.view?.x ?? 0) + NODE_WIDTH);
-    maxY = Math.max(maxY, (node.view?.y ?? 0) + NODE_HEIGHT);
+    const size = nodeSize(node);
+    maxX = Math.max(maxX, (node.view?.x ?? 0) + size.width);
+    maxY = Math.max(maxY, (node.view?.y ?? 0) + size.height);
   }
-  return { width: maxX + 120, height: maxY + 120 };
+  const extent = routes === undefined ? { maxX: 0, maxY: 0 } : routeExtent(routes);
+  return { width: Math.max(maxX + 120, extent.maxX + 60), height: Math.max(maxY + 120, extent.maxY + 60) };
+}
+
+/** The words an edge is labelled with on the canvas. */
+function edgeText(edge: LoopEdge): string {
+  return (
+    edge.label ??
+    (edge.when.on === 'outcome'
+      ? edge.when.outcome
+      : edge.when.on === 'declared-failure'
+        ? edge.when.failure
+        : 'success')
+  );
 }
 
 export interface GraphCanvasProps {
@@ -76,7 +94,13 @@ export interface GraphCanvasProps {
 
 export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
   const { graph, selection } = props;
-  const bounds = graphBounds(graph);
+  /*
+    DSP-209 S18a: the routes are derived from the drawing alone — positions, kinds, fan-out
+    declarations and edge ends — so nothing a run changes can move one. Kept for as long as
+    the graph object is the same, which is every run update.
+  */
+  const routes = useMemo(() => routeLoopEdges(graph, { labelOf: edgeText }), [graph]);
+  const bounds = graphBounds(graph, routes);
   const classes = [props.mode === 'view' ? 'view' : '', props.armed === true && props.locked !== true ? 'armed' : '', props.locked === true || props.mode === 'view' ? 'locked' : '']
     .filter((entry) => entry !== '')
     .join(' ');
@@ -98,6 +122,17 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
         <marker id="arrow-failure" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-failure" />
         </marker>
+        {/*
+          DSP-209 S18a: a back edge's own arrowhead — an open chevron rather than a filled
+          triangle, so a rework or return path is told apart by shape as well as by colour
+          and dash.
+        */}
+        <marker id="arrow-back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 1 1 L 9 5 L 1 9" className="arrow-head-back" />
+        </marker>
+        <marker id="arrow-back-failure" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 1 1 L 9 5 L 1 9" className="arrow-head-back-failure" />
+        </marker>
       </defs>
 
       {/*
@@ -112,7 +147,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
         <EdgeShape
           key={edge.id}
           edge={edge}
-          graph={graph}
+          route={routes.get(edge.id) ?? null}
           selected={selection?.kind === 'edge' && selection.id === edge.id}
           highlighted={selection?.kind === 'node' && (edge.from === selection.id || edge.to === selection.id)}
           showLabel={props.showLabels}
@@ -145,13 +180,18 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
   );
 }
 
-function centreOf(node: LoopNode): { readonly x: number; readonly y: number } {
-  return boxCentre(nodeBox(node.view));
-}
-
+/**
+ * One edge, drawn along the route `loop-edge-routing.ts` found for it (DSP-209 S18a).
+ *
+ * The route is orthogonal with rounded corners, leaves and enters by ports on the nodes'
+ * sides, and keeps clear of every other node. Parallel edges between one pair are kept
+ * apart by their ports rather than by bowing. A back edge — rework or a return — runs in
+ * an outer lane, dashed, with its own arrowhead. The hit path follows the same route, so
+ * what can be clicked is what is drawn.
+ */
 function EdgeShape({
   edge,
-  graph,
+  route,
   selected,
   highlighted,
   showLabel,
@@ -160,7 +200,7 @@ function EdgeShape({
   onSelect,
 }: {
   readonly edge: LoopEdge;
-  readonly graph: LoopGraph;
+  readonly route: EdgeRoute | null;
   readonly selected: boolean;
   readonly highlighted: boolean;
   readonly showLabel: boolean;
@@ -168,42 +208,24 @@ function EdgeShape({
   readonly severity: Finding['severity'] | null;
   readonly onSelect: () => void;
 }): React.JSX.Element | null {
-  const source = nodeById(graph, edge.from);
-  const target = nodeById(graph, edge.to);
-  if (source === null || target === null) {
+  if (route === null || route.points.length < 2) {
     return null;
   }
-  const a = centreOf(source);
-  const b = centreOf(target);
-  const sourceBox = nodeBox(source.view);
-  const targetBox = nodeBox(target.view);
-
-  // Parallel edges are bowed apart so two arrows between the same pair stay two.
-  const siblings = graph.edges.filter(
-    (other) =>
-      (other.from === edge.from && other.to === edge.to) ||
-      (other.from === edge.to && other.to === edge.from),
-  );
-  const position = siblings.findIndex((other) => other.id === edge.id);
-  const spread = (position - (siblings.length - 1) / 2) * 30;
-  const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-  const normal = { x: -(b.y - a.y) / length, y: (b.x - a.x) / length };
-  const control = {
-    x: (a.x + b.x) / 2 + normal.x * spread,
-    y: (a.y + b.y) / 2 + normal.y * spread,
-  };
-
-  const start = attachPoint(control, sourceBox);
-  const end = attachPoint(control, targetBox);
+  const start = route.points[0] as { readonly x: number; readonly y: number };
+  const end = route.points[route.points.length - 1] as { readonly x: number; readonly y: number };
   const failure = edge.when.on === 'declared-failure';
-  const midpoint = {
-    x: 0.25 * start.x + 0.5 * control.x + 0.25 * end.x,
-    y: 0.25 * start.y + 0.5 * control.y + 0.25 * end.y,
-  };
+  const marker = route.back
+    ? failure
+      ? 'url(#arrow-back-failure)'
+      : 'url(#arrow-back)'
+    : failure
+      ? 'url(#arrow-failure)'
+      : 'url(#arrow)';
 
   const classes = [
     'edge',
     failure ? 'edge-failure' : edge.when.on === 'outcome' ? 'edge-outcome' : 'edge-success',
+    route.back ? 'edge-back' : '',
     selected ? 'edge-selected' : '',
     highlighted ? 'edge-highlighted' : '',
     taken ? 'edge-taken' : '',
@@ -212,35 +234,23 @@ function EdgeShape({
     .filter((entry) => entry !== '')
     .join(' ');
 
-  const text =
-    edge.label ??
-    (edge.when.on === 'outcome'
-      ? edge.when.outcome
-      : edge.when.on === 'declared-failure'
-        ? edge.when.failure
-        : 'success');
-
   return (
     <g
       className={classes}
+      data-edge-id={edge.id}
+      data-edge-back={route.back ? 'true' : 'false'}
       onClick={(event) => {
         event.stopPropagation();
         onSelect();
       }}
     >
-      <path
-        d={`M ${String(start.x)} ${String(start.y)} Q ${String(control.x)} ${String(control.y)} ${String(end.x)} ${String(end.y)}`}
-        markerEnd={failure ? 'url(#arrow-failure)' : 'url(#arrow)'}
-      />
-      <path
-        className="edge-hit"
-        d={`M ${String(start.x)} ${String(start.y)} Q ${String(control.x)} ${String(control.y)} ${String(end.x)} ${String(end.y)}`}
-      />
+      <path d={route.path} markerEnd={marker} />
+      <path className="edge-hit" d={route.path} />
       <circle className="edge-dot" cx={start.x} cy={start.y} r={ANCHOR_DOT_RADIUS} />
       <circle className="edge-dot" cx={end.x} cy={end.y} r={ANCHOR_DOT_RADIUS} />
       {showLabel || selected || highlighted ? (
-        <text x={midpoint.x} y={midpoint.y - 4} className="edge-label">
-          {text}
+        <text x={route.label.x} y={route.label.y} className="edge-label">
+          {edgeText(edge)}
         </text>
       ) : null}
     </g>
@@ -314,7 +324,9 @@ function NodeShape({
     `nodeOutlinePath` shares its corner radius with the `<rect>` below, so the glint
     traces the border rather than something near it.
   */
-  const outline = nodeOutlinePath(node.kind);
+  // DSP-209 S18a: the height comes from the drawing (a fan-out is taller), never the run.
+  const height = nodeSize(node).height;
+  const outline = nodeOutlinePath(node.kind, height);
 
   return (
     <g
@@ -376,13 +388,13 @@ function NodeShape({
       <path className="node-halo" d={outline} pathLength={GLINT_PATH_LENGTH} />
       {node.kind === 'router' ? (
         <polygon
-          points={`${String(NODE_WIDTH / 2)},0 ${String(NODE_WIDTH)},${String(NODE_HEIGHT / 2)} ${String(NODE_WIDTH / 2)},${String(NODE_HEIGHT)} 0,${String(NODE_HEIGHT / 2)}`}
+          points={`${String(NODE_WIDTH / 2)},0 ${String(NODE_WIDTH)},${String(height / 2)} ${String(NODE_WIDTH / 2)},${String(height)} 0,${String(height / 2)}`}
           className="node-body"
         />
       ) : (
         <rect
           width={NODE_WIDTH}
-          height={NODE_HEIGHT}
+          height={height}
           rx={nodeCornerRadius(node.kind)}
           className="node-body"
         />
@@ -433,7 +445,7 @@ function NodeShape({
         {node.role === undefined ? '' : broken ? ' · role broken' : ` · ${node.role.id}`}
       </text>
       {isEntry ? (
-        <text x={6} y={NODE_HEIGHT - 5} className="node-entry">
+        <text x={6} y={height - 5} className="node-entry">
           entry
         </text>
       ) : null}
@@ -443,7 +455,7 @@ function NodeShape({
         add emphasis to the active node and carries no meaning by itself.
       */}
       {mark.mark === '' ? null : (
-        <text x={NODE_WIDTH - 6} y={NODE_HEIGHT - 5} className="node-run-mark" textAnchor="end">
+        <text x={NODE_WIDTH - 6} y={height - 5} className="node-run-mark" textAnchor="end">
           {mark.mark}
         </text>
       )}
