@@ -793,9 +793,25 @@
 .edge-success path { stroke: #7f96b0; }
 .edge-outcome path { stroke: #6f8aa5; }
 
+/*
+ * DSP-209 S18a: a back edge — rework or a return to an earlier step — in the gate's violet,
+ * lightened to read on the canvas. A declared failure keeps its own colour below; the dash
+ * after it makes every back edge, failure or not, a short dash in an outer lane.
+ */
+.edge-back path { stroke: #9d8ac6; }
+
 .edge-failure path {
   stroke: #d98b6a;
   stroke-dasharray: 6 4;
+}
+
+.edge-back path {
+  stroke-dasharray: 3 4;
+}
+
+/* The hit path stays one continuous stroke, so a dashed back edge is as easy to click. */
+.edge-back .edge-hit {
+  stroke-dasharray: none;
 }
 
 .edge-selected path,
@@ -824,9 +840,25 @@
   fill: #d98b6a;
 }
 
+/* An open chevron, so a back edge's arrowhead differs by shape and not only by colour. */
+.arrow-head-back,
+.arrow-head-back-failure {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.arrow-head-back { stroke: #9d8ac6; }
+.arrow-head-back-failure { stroke: #d98b6a; }
+
 .edge .edge-dot {
   stroke: none;
   fill: #7f96b0;
+}
+
+.edge-back .edge-dot {
+  fill: #9d8ac6;
 }
 
 .edge-failure .edge-dot {
