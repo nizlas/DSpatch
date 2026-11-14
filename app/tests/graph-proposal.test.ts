@@ -25,6 +25,8 @@ import {
   manualEditsSince,
   reconcileDisk,
   supersedeWith,
+  summariseProposal,
+  firstSentence,
 } from '../src/shared/graph-proposal';
 import type { GraphEditProposal, ReferenceFollowed } from '../src/shared/graph-proposal';
 import { replaceNode } from '../src/shared/loop-graph-editing';
@@ -316,5 +318,45 @@ describe('manualEditsSince', () => {
     assert.equal(edits.change?.layoutOnly, true);
     assert.deepEqual(manualEditsSince(text, '{'), { edited: true, readable: false, change: null });
     assert.deepEqual(manualEditsSince(text, null), { edited: true, readable: false, change: null });
+  });
+});
+
+describe('the card opens with a readable summary (DSP-209 S23b, Niclas 14 November 2026)', () => {
+  it('names the loop, gives its first sentence whole, and says the change in one sentence', () => {
+    const { text, graph } = read('dspatch-chat-loop.graph.json');
+    const relabelled = serialiseLoopGraph(replaceNode(graph, graph.nodes[0]?.id ?? '', { ...(graph.nodes[0] as LoopNode), label: 'Renamed' }), { newline: '\n' });
+    const summary = summariseProposal(proposalFor(text, relabelled));
+    assert.equal(summary.loopName, graph.name);
+    assert.equal(summary.isNew, false);
+    assert.equal(summary.change, 'Changes: 1 step changed.');
+    assert.ok(summary.purpose !== null && graph.purpose?.startsWith(summary.purpose), summary.purpose ?? '');
+    assert.ok(summary.purpose?.endsWith('.') && !summary.purpose.includes('…'), 'a whole sentence, never cut');
+    assert.equal(summary.wholePurpose, graph.purpose?.trim() === summary.purpose ? null : graph.purpose?.trim());
+    assert.deepEqual(
+      [summary.errors.length, summary.warnings.length, summary.notices.length],
+      [0, ...['warning', 'notice'].map((severity) => proposalFor(text, relabelled).findings.filter((finding) => finding.severity === severity).length)],
+      'findings are split by severity, none lost',
+    );
+  });
+
+  it('counts a new loop in steps, endings, connections and roles', () => {
+    const { text, graph } = read('dspatch-chat-loop.graph.json');
+    const proposal = createProposal({
+      id: 'p-new',
+      conversationId: 'conv-1',
+      target: { newLoop: { definitionPath: 'x.loop.json', graphPath: 'x.graph.json', definitionText: '{}' } },
+      baseText: null,
+      graphText: text,
+      roleFiles: [{ path: 'r.role.md', text: 'x' }],
+      explanation: 'A new loop.',
+    });
+    const endings = graph.nodes.filter((node) => node.kind === 'terminal').length;
+    assert.equal(
+      summariseProposal(proposal).change,
+      `A new loop: ${String(graph.nodes.length - endings)} steps and ${String(endings)} endings, ${String(graph.edges.length)} connections, and 1 new role.`,
+    );
+    assert.equal(firstSentence('No sentence end here'), 'No sentence end here');
+    assert.equal(firstSentence('One. Two.'), 'One.');
+    assert.equal(firstSentence('Version 1.5 is out. Next.'), 'Version 1.5 is out.');
   });
 });

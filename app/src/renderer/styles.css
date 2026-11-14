@@ -1896,6 +1896,54 @@ textarea.grow-field:placeholder-shown {
   margin: 0.25rem 0 0;
 }
 
+/* What a person decides on, first: the loop, its purpose in a sentence, the change in one. */
+.graph-proposal__name {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.graph-proposal__purpose,
+.graph-proposal__change {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.graph-proposal__purpose {
+  color: var(--muted);
+}
+
+.graph-proposal__warnings {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #d9a441;
+}
+
+/* The rest, whole, one click away. */
+.graph-proposal__details > summary,
+.graph-proposals__history > summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.graph-proposal__details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.graph-proposal__purpose-whole {
+  margin: 0;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.graph-proposals__history[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 /* DSP-209 S20: a fan-out's branches, in the editor, the chat and the branch window. */
 .branch-list {
   display: flex;

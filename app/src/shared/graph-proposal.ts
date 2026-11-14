@@ -723,6 +723,76 @@ function count(n: number, noun: string): string {
 }
 
 // ---------------------------------------------------------------------------------------
+// What a person reads first on a proposal's card
+
+/** A proposal in a few readable lines, for the top of its card; the details stay in full below. */
+export interface ProposalSummary {
+  /** The loop's own name, from the proposed graph. */
+  readonly loopName: string;
+  readonly isNew: boolean;
+  /** The graph's purpose up to the end of its first sentence, whole; `null` when none is written. */
+  readonly purpose: string | null;
+  /** All of the graph's purpose, when {@link purpose} is not all of it; `null` otherwise. */
+  readonly wholePurpose: string | null;
+  /** One sentence on what Apply would change. */
+  readonly change: string;
+  readonly errors: readonly Finding[];
+  readonly warnings: readonly Finding[];
+  readonly notices: readonly Finding[];
+}
+
+/** The first sentence of a text, never cut inside one; the whole text when it has no sentence end. */
+export function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  const match = /^[\s\S]*?[.!?](?=\s|$)/.exec(trimmed);
+  return match === null ? trimmed : match[0];
+}
+
+/** DSP-209 S23b: the card's opening lines. Pure, so the window and a test read it alike. */
+export function summariseProposal(proposal: Pick<GraphEditProposal, 'target' | 'graphText' | 'roleFiles' | 'change' | 'findings'>): ProposalSummary {
+  const parsed = parseLoopGraph(proposal.graphText);
+  const graph = parsed.ok ? parsed.graph : null;
+  const isNew = isNewLoopTarget(proposal.target);
+  const fullPurpose = graph?.purpose?.trim() ?? '';
+  const purpose = fullPurpose === '' ? null : firstSentence(fullPurpose);
+  const roles = proposal.roleFiles.length === 0 ? '' : `, and ${count(proposal.roleFiles.length, 'new role')}`;
+  let change: string;
+  if (isNew && graph !== null) {
+    const endings = graph.nodes.filter((node) => node.kind === 'terminal').length;
+    change = `A new loop: ${count(graph.nodes.length - endings, 'step')} and ${count(endings, 'ending')}, ${count(graph.edges.length, 'connection')}${roles}.`;
+  } else if (proposal.change === null) {
+    change = 'The change could not be described; the details say why.';
+  } else if (proposal.change.unchanged) {
+    change = proposal.roleFiles.length === 0 ? 'No change to the loop.' : `No change to the graph${roles}.`;
+  } else if (proposal.change.layoutOnly) {
+    change = `Only the layout: ${count(proposal.change.moved.length, 'step')} moved.`;
+  } else {
+    const { nodes, edges } = proposal.change;
+    const parts = [
+      nodes.added.length === 0 ? '' : `${count(nodes.added.length, 'step')} added`,
+      nodes.removed.length === 0 ? '' : `${count(nodes.removed.length, 'step')} removed`,
+      proposal.change.renamed.length === 0 ? '' : `${count(proposal.change.renamed.length, 'step')} renamed`,
+      nodes.changed.length === 0 ? '' : `${count(nodes.changed.length, 'step')} changed`,
+      edges.added.length === 0 ? '' : `${count(edges.added.length, 'connection')} added`,
+      edges.removed.length === 0 ? '' : `${count(edges.removed.length, 'connection')} removed`,
+      edges.changed.length === 0 ? '' : `${count(edges.changed.length, 'connection')} changed`,
+      proposal.change.graph.length === 0 ? '' : 'the loop’s own settings changed',
+    ].filter((part) => part !== '');
+    change = parts.length === 0 ? `Changes the file's order only${roles}.` : `Changes: ${parts.join(', ')}${roles}.`;
+  }
+  return {
+    loopName: graph?.name ?? targetGraphPath(proposal.target),
+    isNew,
+    purpose,
+    wholePurpose: purpose === null || purpose === fullPurpose ? null : fullPurpose,
+    change,
+    errors: proposal.findings.filter((finding) => finding.severity === 'error'),
+    warnings: proposal.findings.filter((finding) => finding.severity === 'warning'),
+    notices: proposal.findings.filter((finding) => finding.severity === 'notice'),
+  };
+}
+
+// ---------------------------------------------------------------------------------------
 // Identity of a file's content
 
 /**
