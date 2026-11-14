@@ -294,6 +294,42 @@ describe('a scripted run records and runs the chosen model', () => {
     assert.deepEqual(record, { provider: 'cursor', model: 'model-f', policy: null, option: null, reason: 'fixed by the step', source: 'fixed' });
   });
 
+  it('runs and records an inherit step after a fixed entry with the person\'s model, not the entry\'s', async () => {
+    // As the host runs it: the preparation's `modelRequested` is the entry's fixed model, and
+    // `personModel` - what `runLiveGraph` hands the walk as `runModel` - the person's choice.
+    const adapter = new FakeAdapter('RESULT: large');
+    const workspace = scratch('person');
+    fs.writeFileSync(path.join(workspace, 'README.md'), 'scratch\n');
+    const result = await runLoopGraph(graph({ policy: 'inherit' }, { policy: 'fixed', model: 'model-entry' }), {
+      runId: 'model-run',
+      dryRun: false,
+      runModel: { provider: 'cursor', model: 'person-model' },
+      executor: createLiveExecutor({
+        workspacePath: workspace,
+        adapter,
+        provider: 'cursor',
+        modelRequested: 'model-entry',
+        personModel: 'person-model',
+        inspection: emptyInspection(workspace, 'model-entry'),
+      }),
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result.fault));
+    assert.deepEqual(
+      adapter.configs.map((config) => [config.dspatchSessionId, config.modelRequested]),
+      [
+        ['dsp-session-model-run--plan', 'model-entry'],
+        ['dsp-session-model-run--build', 'person-model'],
+      ],
+      'the entry keeps its fixed model; the inherit step opens with the person\'s',
+    );
+    const build = modelSelectionFromData(entered(result.journal, 'build').data);
+    assert.equal(build?.model, 'person-model', 'the record names the model the session ran');
+    assert.equal(build?.source, 'person');
+    const plan = modelSelectionFromData(entered(result.journal, 'plan').data);
+    assert.equal(plan?.model, 'model-entry');
+    assert.equal(plan?.source, 'fixed');
+  });
+
   it('changes no session and no prompt of an inherit graph', async () => {
     const withPolicy = new FakeAdapter('RESULT: small');
     const without = new FakeAdapter('RESULT: small');
@@ -391,5 +427,16 @@ describe('the check before a run starts', () => {
   it('accepts it when every model is listed, and keeps the entry-only check without the graph', () => {
     assert.equal(prepareLoopRun(request(graph(), ['model-s', 'model-l'])).ok, true);
     assert.equal(prepareLoopRun(request(undefined, ['model-l'])).ok, true);
+  });
+
+  it('keeps the entry\'s fixed model as modelRequested and gives the person\'s model separately', () => {
+    const entryNode = { id: 'plan', label: 'Plan', model: { policy: 'fixed', model: 'model-s' } } as const;
+    const prepared = prepareLoopRun({ ...request(undefined, ['model-s', 'model-l']), entryNode });
+    assert.ok(prepared.ok);
+    assert.equal(prepared.modelRequested, 'model-s');
+    assert.equal(prepared.personModel, 'model-l');
+    // The entry refusal is unchanged.
+    const refusedEntry = prepareLoopRun({ ...request(undefined, ['model-l']), entryNode });
+    assert.ok(!refusedEntry.ok && refusedEntry.reason.includes('first step'), !refusedEntry.ok ? refusedEntry.reason : '');
   });
 });

@@ -430,6 +430,11 @@ export interface LiveExecutorOptions {
    */
   readonly provider?: ProviderId;
   readonly modelRequested: string;
+  /**
+   * DSP-209 S19: the model a step naming no model of its own runs with - the person's choice
+   * for the provider, never the entry step's fixed model. Left out, `modelRequested`.
+   */
+  readonly personModel?: string;
   /** Cursor reports a used model separately from the request. Optional on the interface. */
   readonly modelReported?: (sessionId: DspatchSessionId) => string | null;
   readonly now?: () => number;
@@ -1669,7 +1674,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
   const sessionModels = new Map<string, string>();
   /**
    * DSP-209 S19: the model this visit runs with: its node's own fixed model or `select` option
-   * (by the arriving edge's `selectsModel`, else the default), else the run's model. The same
+   * (by the arriving edge's `selectsModel`, else the default), else the person's model for the provider. The same
    * rule the runner records on `node-entered`, so the journal and the session agree.
    */
   const modelOfStep = (context: StepContext): string => {
@@ -1677,7 +1682,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       context.arrivedBy === null
         ? null
         : (context.graph.edges.find((candidate) => candidate.id === context.arrivedBy?.edgeId) ?? null);
-    return stepModelChoice(context.node, edge).model ?? options.modelRequested;
+    return stepModelChoice(context.node, edge).model ?? options.personModel ?? options.modelRequested;
   };
   /**
    * Which code each gate visit's command ran against, keyed `node#visit` (DSP-139).

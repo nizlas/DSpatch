@@ -88,6 +88,12 @@ export type LoopRunPreparation =
       readonly ok: true;
       readonly provider: StoredSessionProvider;
       readonly modelRequested: string;
+      /**
+       * DSP-209 S19: the model a step naming no model of its own (`inherit`, or no `model`)
+       * runs with: the person's choice for the provider, never the entry step's fixed model.
+       * `modelRequested` keeps its meaning for the record and the "Runs with ..." line.
+       */
+      readonly personModel: string;
       /** Builds the run's adapter. `runLiveGraph` calls it once and disposes what it got. */
       readonly createAdapter: () => ChatAdapter;
     };
@@ -162,10 +168,17 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
       : provider === 'copilot'
         ? modelForChatNode(request.entryNode, request.copilotModel ?? '')
         : request.cursorModel;
+  const personModel =
+    provider === 'claude'
+      ? request.claudeModel
+      : provider === 'copilot'
+        ? (request.copilotModel ?? '')
+        : request.cursorModel;
   return {
     ok: true,
     provider,
     modelRequested,
+    personModel,
     createAdapter: () => request.adapters.createAdapter({ provider, purpose }),
   };
 }
