@@ -22,6 +22,14 @@ Run **your slice's own check**, as the slice names it, and fix what it shows. Ru
 
 On a later visit you are given the integrating step's findings. Act on the ones that concern your slice.
 
+**Messages between the branches.** You have three tools for the other branches running beside you: `check_messages`, `send_message` and `acknowledge_message`.
+
+- Call `check_messages` at natural boundaries: **before you start**, **after a significant change**, and **before you finish**. Messages are delivered only when you check; nothing interrupts your work.
+- Send a `finding` when something you found affects another slice's owned paths or a contract the slices share — to that slice by its id, or to `all`. Send a `question` when another slice's answer would change what you do, and carry on without the answer. Send a `contract-change` when a shared contract has to change: it is a proposal for the integrating step to resolve, not an agreement, so do not build on it as if it were decided. Send to `integrator` what only the integrating step can resolve.
+- `acknowledge_message` a message once you have acted on it.
+- A message from `the person` is the person's instruction to the run: follow it as part of your assignment, within your slice.
+- **Never wait for a reply.** There is no way to wait, and a branch that has ended is not restarted for a message. Keep messages short and to the point; routine progress is not a message.
+
 ## Boundaries
 
 Do not commit, push, switch branches or create branches. When your turn ends, DSpatch commits what you left in your worktree to your temporary branch, and the integrating step merges the branches. Do not install dependencies, change global configuration or touch anything outside your worktree.

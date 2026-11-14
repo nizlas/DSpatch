@@ -56,7 +56,7 @@ import {
 import { createFileRoleResolver } from './loop-graph-roles';
 import { createFileResultStore } from './loop-result-store';
 import { createWorktreeDriver } from './run-worktrees';
-import { FAN_OUT_ADAPTER_CAPS } from '../shared/loop-run';
+import { FAN_OUT_ADAPTER_CAPS, type RunOptions } from '../shared/loop-run';
 import {
   describeUnobservedOutside,
   workingRootsFrom,
@@ -134,6 +134,8 @@ export interface LiveCliOptions {
   readonly claimWorkingRoots?: (paths: readonly string[]) => WorkingCopyClaim;
   /** DSP-147: see {@link LiveExecutorOptions.onSteerableStep}. */
   readonly onSteerableStep?: (step: SteerableStep | null) => void;
+  /** DSP-209 S11: the person's instructions taken while a fan-out runs, for its mailbox. */
+  readonly takeInstructions?: RunOptions['takeInstructions'];
   /** DSP-173: may DSpatch's own command observations run now; see `LiveExecutorOptions`. */
   readonly resourceGovernor?: LiveExecutorOptions['resourceGovernor'];
   /**
@@ -388,6 +390,7 @@ async function driveLive(
         ? {}
         : { fanOutDriver: createWorktreeDriver({ repo: workspacePath, worktreesRoot: path.join(path.dirname(resultsDir), 'worktrees') }) }),
       fanOutAdapterCap: FAN_OUT_ADAPTER_CAPS[options.provider],
+      ...(options.takeInstructions === undefined ? {} : { takeInstructions: options.takeInstructions }),
       executor: createLiveExecutor({
         workspacePath,
         workingRoots: roots,

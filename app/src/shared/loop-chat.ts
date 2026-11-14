@@ -2250,6 +2250,30 @@ export function formatChatLiveLogLine(
       const kept = entry.data?.['worktreeKept'] === true ? ' Its worktree is kept: see the run record.' : '';
       return `Branch “${slice}” ${ending === 'finished' ? 'finished its turn' : `ended: ${ending}`}.${kept}`;
     }
+    // DSP-209 S11: the mailbox between branches, line by line. Who to whom and why; the body is
+    // quoted as the sender's words, and delivery is said to wait for the recipient's check.
+    case 'message-sent': {
+      const from = String(entry.data?.['from'] ?? 'a branch');
+      const to = String(entry.data?.['to'] ?? '');
+      const purpose = String(entry.data?.['purpose'] ?? 'message');
+      const body = String(entry.data?.['body'] ?? '').trim();
+      const recipient = to === 'all' ? 'every branch' : to === 'integrator' ? 'the integrator' : `“${to}”`;
+      return from === 'the person'
+        ? `Your instruction to the branches: “${body}” — delivered when each branch next checks its messages.`
+        : `Branch “${from}” sent a ${purpose} to ${recipient}: “${body}” (the branch's words; delivered when ${to === 'integrator' ? 'the integrator reads the branches\' result' : 'the recipient next checks its messages'}).`;
+    }
+    case 'message-delivered': {
+      const to = String(entry.data?.['to'] ?? 'a branch');
+      return `Branch “${to}” received ${String(entry.data?.['messageId'] ?? 'a message')} from ${String(entry.data?.['from'] ?? 'another branch')}.`;
+    }
+    case 'message-acknowledged':
+      return `Branch “${String(entry.data?.['by'] ?? 'a branch')}” acknowledged ${String(entry.data?.['messageId'] ?? 'a message')}.`;
+    case 'message-undelivered': {
+      const to = String(entry.data?.['to'] ?? 'a branch');
+      return entry.data?.['reason'] === 'recipient-ended'
+        ? `A message to “${to}” was not delivered: that branch had already ended, and it is not restarted for a message.`
+        : `Branch “${to}” ended without checking ${String(entry.data?.['messageId'] ?? 'a message')}; it was never delivered to it.`;
+    }
     case 'handoff-answered': {
       const choice = entry.data?.['choice'];
       return choice === 'interactive'

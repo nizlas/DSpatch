@@ -39,6 +39,7 @@
 import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
 import { BRANCH_FAILED } from './loop-graph';
 import { readSlices, type Slice } from './loop-slices';
+import { createRunMailbox, type MailboxMessage, type MailboxPort } from './run-mailbox';
 import { isWorkStep, stepWorkFor, type StepHold, type StepRef } from './loop-control';
 import {
   bodyBytes,
@@ -270,6 +271,11 @@ export interface FanOutInstance {
   readonly branch: string | null;
   /** The base commit every branch of this visit starts from, or `null` without worktrees. */
   readonly base: string | null;
+  /**
+   * DSP-209 S11: this branch's side of the visit's mailbox. Every call returns at once;
+   * delivery happens only when the branch checks.
+   */
+  readonly mailbox: MailboxPort;
 }
 
 /**
@@ -481,6 +487,14 @@ export const JOURNAL_KINDS = [
   'branch-started',
   /** That instance ended: how, its commit on its temporary branch or none, and whether its worktree was kept. */
   'branch-ended',
+  /** DSP-209 S11: a message between a fan-out's branches, or the person's instruction to them, was sent. */
+  'message-sent',
+  /** A branch checked its messages and this one was delivered to it. Separate from acknowledgement. */
+  'message-delivered',
+  /** A branch acknowledged a message it was delivered. */
+  'message-acknowledged',
+  /** A message never reached a branch: it ended without checking, or had ended when it was sent. */
+  'message-undelivered',
 ] as const;
 export type JournalKind = (typeof JOURNAL_KINDS)[number];
 
@@ -668,6 +682,15 @@ export interface RunOptions {
    * Left out — a dry run, a test — only the node's own `maxConcurrent` bounds it.
    */
   readonly fanOutAdapterCap?: number;
+  /**
+   * DSP-209 S11: the person's instructions to the run that have arrived since the last ask,
+   * taken while a fan-out runs. They reach every branch that has not ended as a mailbox message
+   * from the person, delivered when each next checks its messages. Left out, none.
+   */
+  readonly takeInstructions?: (at: { readonly nodeId: string; readonly occurrence: number }) => readonly {
+    readonly id: string;
+    readonly text: string;
+  }[];
   /**
    * Whether the operator has cancelled, read before every node the walk enters.
    *
@@ -1487,6 +1510,16 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     }
 
     const effective = Math.max(1, Math.min(fanOut.maxConcurrent, options.fanOutAdapterCap ?? fanOut.maxConcurrent));
+    // DSP-209 S11: one mailbox for this visit, recorded through the journal.
+    const takeInstructions = options.takeInstructions;
+    const mailbox = createRunMailbox({
+      visitId: `${node.id}#${String(occurrence)}`,
+      sliceIds: slices.map((slice) => slice.id),
+      post: (kind, detail, data) => {
+        record(kind, detail, { nodeId: node.id, data });
+      },
+      ...(takeInstructions === undefined ? {} : { takeInstructions: () => takeInstructions({ nodeId: node.id, occurrence }) }),
+    });
     interface BranchOutcome {
       readonly slice: Slice;
       readonly ending: string;
@@ -1505,6 +1538,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       const instanceId = `${node.id}#${String(occurrence)}/${slice.id}`;
       const sessionId = instanceSessionId(options.runId, node.id, occurrence, slice.id);
       const ended = (outcome: BranchOutcome, detail: string, data: Record<string, string | number | boolean> = {}): void => {
+        mailbox.branchEnded(slice.id);
         outcomes.push(outcome);
         record('branch-ended', detail, {
           nodeId: node.id,
@@ -1544,6 +1578,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         }
       }
       started += 1;
+      mailbox.branchStarted(slice.id);
       record(
         'branch-started',
         `Branch "${slice.id}" of "${node.id}" started in its own session` +
@@ -1579,7 +1614,17 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           note: (kind, detail, data) => {
             record(kind, detail, { nodeId: node.id, ...(data === undefined ? {} : { data }) });
           },
-          instance: { instanceId, sliceId: slice.id, slice, isolation: fanOut.isolation, sessionId, workspacePath, branch, base: base?.commit ?? null },
+          instance: {
+            instanceId,
+            sliceId: slice.id,
+            slice,
+            isolation: fanOut.isolation,
+            sessionId,
+            workspacePath,
+            branch,
+            base: base?.commit ?? null,
+            mailbox: mailbox.portFor(slice.id, { base: base?.commit ?? null, branch }),
+          },
         });
       } catch (error) {
         threw = messageOf(error);
@@ -1597,6 +1642,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
               : product.kind === 'declared-failure'
                 ? product.failure
                 : 'finished';
+      // DSP-209 S11: the branch's turn is over, so it receives nothing more from now on, and what
+      // it never checked is recorded undelivered. Before the commit, which can take a while.
+      mailbox.branchEnded(slice.id);
       // Leftovers first, then the worktree; kept when the commit is refused.
       let commit: string | null = null;
       let keptWorktree: string | null = null;
@@ -1665,6 +1713,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         '',
         clipReply(outcome.reply),
       ]),
+      ...mailboxSection(mailbox.messages(), mailbox.openProposals()),
     ].join('\n');
     if (options.signal?.aborted === true) {
       return {
@@ -2356,6 +2405,37 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   }
 }
 
+/**
+ * DSP-209 S11: the visit's messages in its stored result, and the proposals the integrator
+ * must resolve or reject. A contract change is a proposal, never binding because it was sent.
+ * Bodies are the agents' words, quoted; nothing here when no message was sent.
+ */
+function mailboxSection(messages: readonly MailboxMessage[], proposals: readonly MailboxMessage[]): readonly string[] {
+  if (messages.length === 0) {
+    return [];
+  }
+  const quote = (body: string): string[] => body.split(/\r?\n/).map((line) => `> ${line}`);
+  const describe = (message: MailboxMessage): string =>
+    `${message.id}: ${message.purpose} from ${message.from} to ${message.to}${message.critical ? ' (critical)' : ''}` +
+    (message.contractRef === null ? '' : `, about ${message.contractRef}`) +
+    (message.branch === null ? '' : `, sent from ${message.branch} at base ${message.base ?? 'unknown'}`);
+  return [
+    '',
+    '## Open proposals for the integrator',
+    '',
+    ...(proposals.length === 0
+      ? ['None.']
+      : [
+          'Each must be resolved or rejected, and named, by the integrating step. None is binding because it was sent.',
+          ...proposals.flatMap((message) => ['', `- ${describe(message)}`, ...quote(message.body)]),
+        ]),
+    '',
+    '## Messages between the branches',
+    '',
+    ...messages.flatMap((message) => [`- ${describe(message)}`, ...quote(message.body)]),
+  ];
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -2618,6 +2698,10 @@ const MARKERS: Readonly<Record<JournalKind, string>> = {
   'handoff-answered': '<~',
   'branch-started': '=>',
   'branch-ended': '<=',
+  'message-sent': '>m',
+  'message-delivered': 'm>',
+  'message-acknowledged': 'm+',
+  'message-undelivered': 'm!',
 };
 
 /**

@@ -99,6 +99,7 @@ import type {
   StepProduct,
 } from '../shared/loop-run';
 import { CONTINUED_IN_LOOP_LINE } from '../shared/loop-run';
+import type { MailboxPort } from '../shared/run-mailbox';
 import {
   DEFAULT_GATE_COMMAND_TIMEOUT_MS,
   finishCommand,
@@ -374,6 +375,8 @@ export interface LivePromptStep {
    *
    * See `ChatStepIdentity.attachments` in `loop-chat.ts` for DSP-91 #5 and the run it cost.
    */
+  /** DSP-209 S11: this prompt is a fan-out branch's; the person's instructions reach it by the mailbox. */
+  readonly branch?: boolean;
   readonly attachments: {
     readonly receivedResults: boolean;
     readonly requiredResult: boolean;
@@ -1040,6 +1043,84 @@ export function describeBranchAssignment(instance: FanOutInstance): string {
         `base commit ${instance.base ?? ''}. Do not commit, push, switch or create branches: when you end your turn, ` +
         'DSpatch commits what you leave in the worktree to your branch, and the integrating step combines the branches.',
   ].join('\n');
+}
+
+/**
+ * DSP-209 S11: the three mailbox tools a fan-out branch is offered, and the only DSpatch tools
+ * it gets. Each returns at once: there is no wait tool (mission decision 9), and a message is
+ * delivered only when its recipient calls `check_messages` (decision 23).
+ */
+export function createMailboxTools(port: MailboxPort): readonly AppTool[] {
+  const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+  return [
+    {
+      name: 'send_message',
+      description:
+        'Send a short message to another branch of this step, to every branch ("all"), or to the ' +
+        'integrating step ("integrator"). Use it when something you found changes another slice\'s ' +
+        'owned paths or a shared contract. It is delivered when the recipient next checks its ' +
+        'messages; do not wait for a reply. A "contract-change" is a proposal the integrator ' +
+        'resolves, not an agreement.',
+      parameters: {
+        to: { type: 'string', description: 'A slice id, "all" or "integrator".' },
+        purpose: { type: 'string', description: 'finding, question, contract-change or instruction.' },
+        body: { type: 'string', description: 'What the recipient needs to know, in a few sentences.' },
+        contractRef: { type: 'string', description: 'The contract it is about, by file and version.', optional: true },
+        critical: { type: 'string', description: '"true" when the recipient must act on it before finishing.', optional: true },
+      },
+      readOnly: true,
+      execute: (args) => {
+        const sent = port.send({
+          to: text(args['to']),
+          purpose: text(args['purpose']),
+          body: text(args['body']),
+          contractRef: text(args['contractRef']) || null,
+          critical: text(args['critical']).toLowerCase() === 'true' || args['critical'] === true,
+        });
+        return Promise.resolve(
+          sent.ok
+            ? { text: `Sent as ${sent.id}. It is delivered when the recipient next checks its messages.`, isError: false }
+            : { text: `Not sent: ${sent.reason}`, isError: true },
+        );
+      },
+    },
+    {
+      name: 'check_messages',
+      description:
+        'Read the messages sent to you since you last checked, from other branches and from the ' +
+        'person. Call it before you start, after a significant change and before you finish. It ' +
+        'returns at once; it never waits.',
+      parameters: {},
+      readOnly: true,
+      execute: () => {
+        const messages = port.check();
+        return Promise.resolve({
+          text:
+            messages.length === 0
+              ? 'No new messages.'
+              : messages
+                  .map(
+                    (message) =>
+                      `${message.id} — ${message.purpose} from ${message.from}${message.critical ? ' (critical)' : ''}` +
+                      `${message.contractRef === null ? '' : `, about ${message.contractRef}`}` +
+                      `${message.branch === null ? '' : `, sent from ${message.branch} at base ${message.base ?? 'unknown'}`}:\n${message.body}`,
+                  )
+                  .join('\n\n'),
+          isError: false,
+        });
+      },
+    },
+    {
+      name: 'acknowledge_message',
+      description: 'Say that you have read a message and acted on it, by its id. Returns at once.',
+      parameters: { id: { type: 'string', description: 'The message id check_messages gave.' } },
+      readOnly: true,
+      execute: (args) => {
+        const result = port.acknowledge(text(args['id']));
+        return Promise.resolve(result.ok ? { text: 'Acknowledged.', isError: false } : { text: `Not acknowledged: ${result.reason}`, isError: true });
+      },
+    },
+  ];
 }
 
 /** DSP-209 S5a: the DSpatch tool a step uses to recommend continuing interactively. */
@@ -1763,6 +1844,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       modelRequested: options.modelRequested,
       workspacePath: instance.workspacePath ?? options.workspacePath,
       workspacePaths: instance.workspacePath === null ? providerRootPathsFor(rootsOfRun) : [instance.workspacePath],
+      // DSP-209 S11: the mailbox tools, and no other DSpatch tool.
+      appTools: createMailboxTools(instance.mailbox),
     });
     if (runProvider !== undefined && session.provider !== runProvider) {
       throw new Error(`The adapter opened branch "${instance.sliceId}" for ${session.provider}, but this run is bound to ${runProvider}.`);
@@ -1788,6 +1871,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         freshSession: true,
         arrivedBy: null,
         attachments: { receivedResults: receivedText !== '', requiredResult: false, runChange: false },
+        // DSP-209 S11: a branch's brief does not take the person's queued instructions; they reach
+        // every branch through the mailbox instead, so no one branch takes them all.
+        branch: true,
       }) +
       receivedText +
       describeBranchAssignment(instance);

@@ -18,6 +18,8 @@ You are given the implementing step's result. It lists every slice: how its bran
 
 Merge the branches **in the order the slices are listed**, one at a time, into the working copy's current branch, with git's own merge. After each, look at what conflicted and resolve it in the way the slices' contracts say; where they say nothing, choose the resolution that keeps both slices' results and say what you chose.
 
+**Open proposals.** The implementing step's result may list *Open proposals for the integrator*: contract changes a branch proposed, and messages sent to you. None of them is binding because it was sent. **Resolve or reject each one, and name it** by its id in your reply: what you decided and why, and which branch's work it affects. A branch that built on a proposal you reject is sent back with rework.
+
 Check that each branch stayed inside the paths its slice owned and that the branches respect the contracts the slices named. Then run the checks **the combination** needs: the tests that reach the places where the slices meet, and the checks the slices named. Not a full suite per branch.
 
 If a branch has to be redone, declare `rework` and give, for each slice concerned, the concrete finding: what is wrong, where, and what has to change. The branches then run again, as a new visit, on new branches (`…/v2/…`) beside the ones you have.

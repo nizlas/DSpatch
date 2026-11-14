@@ -7,5 +7,5 @@
   "resourceRoot": "../..",
   "resourceRootNote": "The DSpatch working copy this file is filed in, two levels up from .dspatch/loops. Its graph and its role files live there.",
   "graph": "docs/loop/graphs/dspatch-parallel-loop.graph.json",
-  "notes": "DSP-209 S10c. DSpatch's first bundled loop that runs work in parallel, declared like the others and found here because this folder is a folder DSpatch looks in. It is chosen for and run against whatever project is open in chat, which must be a git repository with a commit for its branches to be made."
+  "notes": "DSP-209 S10c and S11. DSpatch's first bundled loop that runs work in parallel, declared like the others and found here because this folder is a folder DSpatch looks in. It is chosen for and run against whatever project is open in chat, which must be a git repository with a commit for its branches to be made. Use it on a clean working copy: with uncommitted changes to tracked files, every branch's base holds them, git merge will refuse, and the integrating step stops BLOCKED rather than move your work aside. Untracked files alone do not block it. Branches can send each other messages, delivered when the recipient next checks; your instructions during the fan-out reach every branch the same way."
 }

@@ -85,6 +85,8 @@ const AREAS = {
       'handover-turn.test.ts',
       'loop-recap.test.ts',
       'loop-fan-out.test.ts',
+      'loop-mailbox-run.test.ts',
+      'run-mailbox.test.ts',
       { file: 'loop-parallel-loop.test.ts', heavy: true },
       { file: 'loop-fan-out-run.test.ts', heavy: true },
       'loop-handoff.test.ts',

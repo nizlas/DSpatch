@@ -107,6 +107,8 @@ import {
   describePinnedDrawing,
   branchInstanceStates,
   describeBranchInstances,
+  describeMessageCounts,
+  messageCountsIn,
   edgesTakenIn,
   finishedMarksBelongTo,
   finishedRunMarksFrom,
@@ -2194,10 +2196,13 @@ export function LoopEditor(): React.JSX.Element {
     if (pinCheck === 'different') {
       return summaries;
     }
+    const counts = messageCountsIn(watch);
     for (const [nodeId, instances] of branchInstanceStates(watch)) {
       const summary = describeBranchInstances(instances);
+      // DSP-209 S11: the visit's mailbox, counted, beside its branches.
+      const messages = describeMessageCounts(counts.get(nodeId));
       if (summary !== null) {
-        summaries.set(nodeId, `${summary} (${instances.map((item) => `${item.sliceId}: ${item.ending ?? item.state}`).join('; ')})`);
+        summaries.set(nodeId, `${summary} (${instances.map((item) => `${item.sliceId}: ${item.ending ?? item.state}`).join('; ')})${messages === null ? '' : `; ${messages}`}`);
       }
     }
     return summaries;

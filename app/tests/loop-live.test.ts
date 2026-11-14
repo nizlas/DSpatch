@@ -3398,7 +3398,16 @@ describe('createLiveExecutor — fan-out branches (DSP-209 S10b)', () => {
     assert.ok(ids.includes(instanceSessionId('live-fan', 'read', 1, 'a')));
     assert.ok(ids.includes(instanceSessionId('live-fan', 'read', 1, 'b')));
     const branchConfigs = adapter.configs.filter((config) => String(config.dspatchSessionId).includes('+'));
-    assert.ok(branchConfigs.every((config) => config.appTools === undefined && config.workspacePath === workspace));
+    // DSP-209 S11: a branch is offered the three mailbox tools and no other DSpatch tool; the
+    // slicer, an ordinary step, still gets none.
+    assert.ok(
+      branchConfigs.every(
+        (config) =>
+          JSON.stringify((config.appTools ?? []).map((tool) => tool.name)) ===
+            JSON.stringify(['send_message', 'check_messages', 'acknowledge_message']) && config.workspacePath === workspace,
+      ),
+    );
+    assert.equal(adapter.configs.find((config) => !String(config.dspatchSessionId).includes('+'))?.appTools, undefined);
     assert.ok(adapter.sends.some((prompt) => prompt.includes('## Your slice: a') && prompt.includes('only read: write no file')));
     assert.deepEqual(replies.filter((reply) => reply.sliceId !== undefined).map((reply) => reply.sliceId).sort(), ['a', 'b']);
     assert.equal(steerable.filter((step) => step !== null).length, 1, 'only the slicer was steerable; no branch was');

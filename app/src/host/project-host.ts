@@ -3204,6 +3204,11 @@ function registerLoopMethods(): void {
             // DSP-147: what earlier steps were given, before anything new, so this step
             // works and judges against the assignment as it now stands.
             const earlier = earlierInstructionsContext(chatLoopGiven);
+            // DSP-209 S11: a fan-out branch takes nothing from the queue; the person's
+            // instructions reach every branch through the mailbox (`takeInstructions` below).
+            if (step.branch === true) {
+              return `${earlier}${prompt}`;
+            }
             const taken = chatLoopInstructions.takeFor(request.runId);
             if (taken.length === 0) {
               return `${earlier}${prompt}`;
@@ -3237,6 +3242,28 @@ function registerLoopMethods(): void {
             noteRunMessageEvent(chatLoopMessages, payload);
             sendToSender(LOOP_INSTRUCTION_EVENT, payload);
             return `${earlier}${instructionPreamble(taken.map((entry) => entry.text))}${prompt}`;
+          },
+          // DSP-209 S11: the person's instructions while a fan-out runs reach every branch as a
+          // mailbox message, taken from the same queue a step's prompt takes them from, and said
+          // in the conversation as delivered when each branch next checks its messages.
+          takeInstructions: ({ nodeId, occurrence }) => {
+            const taken = chatLoopInstructions.takeFor(request.runId);
+            if (taken.length === 0) {
+              return [];
+            }
+            chatLoopGiven = [...chatLoopGiven, ...taken.map((entry) => entry.text)];
+            const payload: LoopInstructionEventPayload = {
+              kind: 'delivered',
+              runId: request.runId,
+              instructionIds: taken.map((entry) => entry.id),
+              nodeId,
+              nodeLabel: `${lookup.node(nodeId)?.label ?? nodeId} (its branches, when each next checks its messages)`,
+              occurrence,
+              atUtc: new Date().toISOString(),
+            };
+            noteRunMessageEvent(chatLoopMessages, payload);
+            sendToSender(LOOP_INSTRUCTION_EVENT, payload);
+            return taken.map((entry) => ({ id: entry.id, text: entry.text }));
           },
           // DSP-147: the step that is working, for steering from the conversation.
           onSteerableStep: (step) => {

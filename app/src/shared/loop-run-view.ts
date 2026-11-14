@@ -524,6 +524,56 @@ export function branchInstanceStates(view: RunView | null): ReadonlyMap<string, 
   return byNode;
 }
 
+/** DSP-209 S11: a fan-out visit's mailbox, counted. */
+export interface MessageCounts {
+  readonly sent: number;
+  readonly delivered: number;
+  readonly acknowledged: number;
+  readonly undelivered: number;
+}
+
+/** DSP-209 S11: each fan-out node's message counts, latest visit only, from the journal. */
+export function messageCountsIn(view: RunView | null): ReadonlyMap<string, MessageCounts> {
+  const byNode = new Map<string, MessageCounts>();
+  if (view === null) {
+    return byNode;
+  }
+  for (const entry of view.entries) {
+    const nodeId = entry.nodeId;
+    if (nodeId === undefined) {
+      continue;
+    }
+    if (entry.kind === 'node-entered' && byNode.has(nodeId)) {
+      byNode.set(nodeId, { sent: 0, delivered: 0, acknowledged: 0, undelivered: 0 });
+      continue;
+    }
+    const field =
+      entry.kind === 'message-sent'
+        ? 'sent'
+        : entry.kind === 'message-delivered'
+          ? 'delivered'
+          : entry.kind === 'message-acknowledged'
+            ? 'acknowledged'
+            : entry.kind === 'message-undelivered'
+              ? 'undelivered'
+              : null;
+    if (field === null) {
+      continue;
+    }
+    const counts = byNode.get(nodeId) ?? { sent: 0, delivered: 0, acknowledged: 0, undelivered: 0 };
+    byNode.set(nodeId, { ...counts, [field]: counts[field] + 1 });
+  }
+  return byNode;
+}
+
+/** DSP-209 S11: message counts in a few words, or `null` when no message was sent. */
+export function describeMessageCounts(counts: MessageCounts | undefined): string | null {
+  if (counts === undefined || counts.sent + counts.undelivered === 0) {
+    return null;
+  }
+  return `messages: ${String(counts.sent)} sent, ${String(counts.delivered)} delivered, ${String(counts.acknowledged)} acknowledged, ${String(counts.undelivered)} undelivered`;
+}
+
 /** DSP-209 S10b: a fan-out node's branches in a few words, e.g. "branches: 1 running, 2 finished". */
 export function describeBranchInstances(instances: readonly BranchInstanceState[]): string | null {
   if (instances.length === 0) {
