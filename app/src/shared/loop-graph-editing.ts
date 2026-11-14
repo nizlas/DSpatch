@@ -213,6 +213,28 @@ export function layOutMissingViews(graph: LoopGraph): {
   return { graph: { ...graph, nodes }, placed };
 }
 
+/**
+ * A proposed graph with only the positions the person saved (Niclas, 14 November 2026): a node
+ * the saved graph `base` has keeps that node's saved `view`, or none if it had none, and every
+ * other node loses whatever `view` the proposal gave it. {@link layOutMissingViews} then places
+ * the rest by the layered layout, so a graph proposal cannot bypass the layout with positions
+ * of its own, and never moves what the person placed. With no base, a new loop, nothing is kept.
+ */
+export function withSavedPositionsOnly(proposed: LoopGraph, base: LoopGraph | null): LoopGraph {
+  const saved = new Map((base?.nodes ?? []).map((node) => [node.id, node.view]));
+  return {
+    ...proposed,
+    nodes: proposed.nodes.map((node) => {
+      const view = saved.get(node.id);
+      if (view !== undefined) {
+        return { ...node, view };
+      }
+      const { view: _ignored, ...rest } = node;
+      return rest;
+    }),
+  };
+}
+
 type Positions = ReadonlyMap<string, { readonly x: number; readonly y: number }>;
 
 function placedAt(graph: LoopGraph, layout: Positions): LoopGraph {

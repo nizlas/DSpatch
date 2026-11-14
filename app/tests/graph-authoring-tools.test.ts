@@ -21,7 +21,7 @@ import { openChosenLoop, rowForKey } from '../src/main/loop-definition-choice';
 import { openedFromDefinition } from '../src/main/loop-graph-open';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { editorOpenFor, graphContentHash, isNewLoopTarget, supersedeWith, type GraphEditProposal } from '../src/shared/graph-proposal';
-import { resolverFromEntries } from '../src/shared/loop-graph-editing';
+import { arrangeGraph, resolverFromEntries } from '../src/shared/loop-graph-editing';
 import { parseLoopDefinition } from '../src/shared/loop-definition';
 import { hasErrors, loadLoopGraph, parseLoopGraph } from '../src/shared/loop-graph-load';
 
@@ -192,6 +192,51 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
     // A new loop whose id is taken is refused.
     const taken = await tool(host, 'propose_loop_graph')({ target: 'new:tiny', graphText: draft, explanation: 'Again.' });
     assert.equal(taken.isError, true);
+  });
+
+  it('places a proposal’s nodes by the layout, keeping only positions the person saved (Niclas, 14 November 2026)', async () => {
+    const { root } = project();
+    const { host, kept } = hostFor(root);
+    // A new loop whose author wrote positions of its own: they are not used.
+    const nodes = [
+      { id: 'start', kind: 'human', label: 'Gather', view: { x: 360, y: 40 } },
+      { id: 'sort', kind: 'human', label: 'Sort', view: { x: 160, y: 200 } },
+      { id: 'done', kind: 'terminal', label: 'Filed', view: { x: 800, y: 640 } },
+    ];
+    const edges = [
+      { id: 'e1', from: 'start', to: 'sort', when: { on: 'success' } },
+      { id: 'e2', from: 'sort', to: 'done', when: { on: 'success' } },
+    ];
+    await tool(host, 'propose_loop_graph')({ target: 'new:filing', graphText: graph('filing', nodes, edges), explanation: 'Positions of my own.' });
+    const fresh = parseLoopGraph(kept()[0]?.graphText ?? '');
+    const unplaced = parseLoopGraph(graph('filing', nodes.map(({ view: _view, ...rest }) => rest), edges));
+    assert.ok(fresh.ok && unplaced.ok);
+    assert.deepEqual(
+      fresh.graph.nodes.map((node) => node.view),
+      arrangeGraph(unplaced.graph).nodes.map((node) => node.view),
+      'the layout’s positions, not the proposal’s',
+    );
+    // A change to an existing loop: its saved node keeps the saved place whatever the proposal
+    // says, and a node it adds is placed by the layout, below what the person placed.
+    const changed = graph(
+      'tiny',
+      [
+        { id: 'start', kind: 'human', label: 'Start', view: { x: 500, y: 500 } },
+        { id: 'check', kind: 'human', label: 'Check', view: { x: 0, y: 0 } },
+        { id: 'done', kind: 'terminal', label: 'Done', view: { x: 48, y: 200 } },
+      ],
+      [
+        { id: 'e1', from: 'start', to: 'check', when: { on: 'success' } },
+        { id: 'e2', from: 'check', to: 'done', when: { on: 'success' } },
+      ],
+    );
+    await tool(host, 'propose_loop_graph')({ target: 'tiny', graphText: changed, explanation: 'A check step.' });
+    const proposal = parseLoopGraph(kept()[1]?.graphText ?? '');
+    assert.ok(proposal.ok);
+    const at = new Map(proposal.graph.nodes.map((node) => [node.id, node.view]));
+    assert.deepEqual(at.get('start'), { x: 48, y: 40 }, 'the saved place, not the proposal’s');
+    assert.deepEqual(at.get('done'), { x: 48, y: 200 });
+    assert.ok((at.get('check')?.y ?? 0) > 200, 'the added node is laid out below the saved ones');
   });
 
   it('gives a project without roles a loop from what the tools say alone, its roles in the same proposal, written only by Apply', async () => {

@@ -50,10 +50,11 @@ import {
   NODE_KINDS,
   REQUIREMENTS,
   RUN_PROVIDER_CAPABILITIES,
+  type LoopGraph,
   type RoleResolver,
   type RunProvider,
 } from '../shared/loop-graph';
-import { layOutMissingViews } from '../shared/loop-graph-editing';
+import { layOutMissingViews, withSavedPositionsOnly } from '../shared/loop-graph-editing';
 import { hasErrors, parseLoopGraph, type Finding } from '../shared/loop-graph-load';
 import { serialiseLoopGraph } from '../shared/loop-graph-write';
 import { LOOP_DEFINITION_FORMAT, LOOP_DEFINITION_FORMAT_VERSION } from '../shared/loop-definition';
@@ -406,13 +407,17 @@ function propose(
       `A role path is read from ${resourceRoot}; a role outside it, such as one of DSpatch's own, cannot be used here.`,
     ].join('\n');
 
-  // Nodes without a position are placed by the layered layout (S18b), so the drawing is readable.
+  // Positions are DSpatch's (Niclas, 14 November 2026): a node the loop already has keeps the
+  // place saved on disk, and every other node is placed by the layered layout, with room for the
+  // labels. Positions the agent wrote are not kept, or a proposal would bypass the layout.
   let graphText = graphArg;
   const parsed = parseLoopGraph(graphArg);
   if (parsed.ok) {
-    const laidOut = layOutMissingViews(parsed.graph);
-    if (laidOut.placed.length > 0) {
-      graphText = serialiseLoopGraph(laidOut.graph, { newline: '\n' });
+    const base = baseText === null ? null : parseLoopGraph(baseText);
+    const placed = layOutMissingViews(withSavedPositionsOnly(parsed.graph, base?.ok === true ? base.graph : null));
+    const views = (graph: LoopGraph): string => JSON.stringify(graph.nodes.map((node) => node.view ?? null));
+    if (views(placed.graph) !== views(parsed.graph)) {
+      graphText = serialiseLoopGraph(placed.graph, { newline: '\n' });
     }
   }
 
@@ -491,7 +496,9 @@ function buildingBlocks(): string {
       `role R of loop L is placed at .dspatch/loops/roles/L-R.role.md, and nothing is written until the person applies the proposal. A role source: ${ROLE_SOURCE_RULES}`,
     'What a person reads. Hovering a node shows its purpose when that is one line of at most ' +
       `${String(NODE_HELP_LABEL_MAX)} characters, otherwise its role's summary, never a purpose cut short. So put a step's whole instruction in its ` +
-      "purpose, and give each role a summary that says in one sentence what its step does; an ending's purpose can say in a sentence or two how the run ended.",
+      "purpose, and give each role a summary that says in one sentence what its step does; an ending's purpose can say in a sentence or two how the run ended. " +
+      "Leave out each node's view: DSpatch places the nodes, with room for every edge's label. A node the loop already has keeps the place the person " +
+      'saved; positions written in a proposal are not used.',
     `Node kinds:\n${kinds.join('\n')}`,
     `Settings on a node or edge:\n${settings.join('\n')}`,
     `What DSpatch honours, attribute by attribute:\n${attributes.join('\n')}`,
