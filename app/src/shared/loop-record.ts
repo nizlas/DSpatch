@@ -352,6 +352,139 @@ export interface RecordedRunEnding {
    * with the reason. Absent for every other ending and in records written before it.
    */
   readonly handover?: { readonly turn: 'queued' | 'refused'; readonly note: string | null };
+  /**
+   * DSP-209 S22: what the run's project folder gained in Git between the run's start and its
+   * end, as the host read it with `git` at those two moments. For the final run card. Absent
+   * in records written before it, which read "not recorded" — never "no commits".
+   */
+  readonly commits?: RecordedRunCommits;
+  /**
+   * DSP-209 S22: the `purpose` of the terminal the run reached, quoted from the drawing the
+   * run loaded, for the final card's next action. `null` when that terminal has no purpose.
+   * Absent when the run reached no terminal, and in records written before it (not recorded).
+   */
+  readonly terminalPurpose?: string | null;
+  /**
+   * DSP-209 S22: the runtime fault that ended the run, as the runner stated it, with its
+   * reconcile guidance kept apart from the detail. Absent for every other ending and in
+   * records written before it (the journal's `runtime-fault` line still holds both, joined).
+   */
+  readonly fault?: RecordedRunFault;
+}
+
+/** DSP-209 S22: the fault that ended a run, in the runner's own words. */
+export interface RecordedRunFault {
+  /** The runner's `RuntimeFaultKind`. */
+  readonly kind: string;
+  readonly detail: string;
+  /** What a person does about it, as the runner wrote it for this graph. */
+  readonly reconcile: string;
+}
+
+/** DSP-209 S22: one commit the run's folder gained, as `git log` named it. */
+export interface RecordedRunCommit {
+  readonly sha: string;
+  readonly subject: string;
+  /**
+   * Whether the upstream branch already held it when the run ended: `false` is local only,
+   * `true` is pushed, `null` is not known (no upstream, or git could not say).
+   */
+  readonly onUpstream: boolean | null;
+}
+
+/**
+ * DSP-209 S22: the run's commits, read by the host from the open project folder at the run's
+ * start and at its end. A snapshot of those two moments: a push after the run is not in it.
+ */
+export interface RecordedRunCommits {
+  /** The folder git was read in: the open project's own folder. */
+  readonly folder: string;
+  /** HEAD when the run started, or `null` when it could not be read (no repository, no commit). */
+  readonly startHead: string | null;
+  /** HEAD when the run ended, or `null`. */
+  readonly endHead: string | null;
+  /** The branch checked out at the end, or `null` when detached or unknown. */
+  readonly branch: string | null;
+  /** `startHead..endHead`, newest first, bounded. */
+  readonly commits: readonly RecordedRunCommit[];
+  /** How many further commits there were beyond `commits`. Never silently dropped. */
+  readonly notListed: number;
+  /** The branch's upstream at the end and how far HEAD was from it, or `null` with none. */
+  readonly upstream: { readonly name: string; readonly ahead: number; readonly behind: number } | null;
+  /** What git could not establish, in a sentence, or `null`. */
+  readonly note: string | null;
+}
+
+/**
+ * DSP-209 S22: the ending's `commits`, only when it has the shape this build writes. The
+ * ending is read from disk as raw JSON, so a damaged or older value is "not recorded" (`null`),
+ * never a crash and never "no commits".
+ */
+export function recordedRunCommitsFrom(value: unknown): RecordedRunCommits | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const head = (key: string): string | null | undefined => {
+    const field = value[key];
+    return field === null ? null : typeof field === 'string' ? field : undefined;
+  };
+  const startHead = head('startHead');
+  const endHead = head('endHead');
+  const branch = head('branch');
+  const note = head('note');
+  const folder = value['folder'];
+  const rawCommits = value['commits'];
+  const notListed = value['notListed'];
+  if (
+    startHead === undefined ||
+    endHead === undefined ||
+    branch === undefined ||
+    note === undefined ||
+    typeof folder !== 'string' ||
+    !Array.isArray(rawCommits) ||
+    typeof notListed !== 'number'
+  ) {
+    return null;
+  }
+  const commits: RecordedRunCommit[] = [];
+  for (const entry of rawCommits as unknown[]) {
+    if (!isRecord(entry) || typeof entry['sha'] !== 'string' || typeof entry['subject'] !== 'string') {
+      return null;
+    }
+    const onUpstream = entry['onUpstream'];
+    commits.push({
+      sha: entry['sha'],
+      subject: entry['subject'],
+      onUpstream: typeof onUpstream === 'boolean' ? onUpstream : null,
+    });
+  }
+  const rawUpstream = value['upstream'];
+  let upstream: RecordedRunCommits['upstream'] = null;
+  if (rawUpstream !== null) {
+    if (
+      !isRecord(rawUpstream) ||
+      typeof rawUpstream['name'] !== 'string' ||
+      typeof rawUpstream['ahead'] !== 'number' ||
+      typeof rawUpstream['behind'] !== 'number'
+    ) {
+      return null;
+    }
+    upstream = { name: rawUpstream['name'], ahead: rawUpstream['ahead'], behind: rawUpstream['behind'] };
+  }
+  return { folder, startHead, endHead, branch, commits, notListed, upstream, note };
+}
+
+/** DSP-209 S22: the ending's `fault`, only when it has the shape this build writes. */
+export function recordedRunFaultFrom(value: unknown): RecordedRunFault | null {
+  if (
+    !isRecord(value) ||
+    typeof value['kind'] !== 'string' ||
+    typeof value['detail'] !== 'string' ||
+    typeof value['reconcile'] !== 'string'
+  ) {
+    return null;
+  }
+  return { kind: value['kind'], detail: value['detail'], reconcile: value['reconcile'] };
 }
 
 /** DSP-209 S12: one provider session of a run, as its ending records it. */

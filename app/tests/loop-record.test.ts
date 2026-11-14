@@ -25,6 +25,8 @@ import {
   NOT_MET_TERMINAL,
   NOTHING_CHANGED_TERMINAL,
   parseRunRecord,
+  recordedRunCommitsFrom,
+  recordedRunFaultFrom,
   RUN_OUTCOME_BADGE_TEXT,
   runOutcomeFrom,
   serialiseRecordLine,
@@ -1323,5 +1325,33 @@ describe('the badge over a restored run', () => {
     )[0];
     assert.equal(loopTurnBadgeText(turn ?? ({} as never)), 'reached “Assignment met”');
     assert.notEqual(loopTurnBadge(turn ?? ({} as never)), 'supported');
+  });
+});
+
+describe('DSP-209 S22: the ending’s commits and fault, read for shape', () => {
+  const commits = {
+    folder: 'C:/repo',
+    startHead: 'a'.repeat(40),
+    endHead: 'b'.repeat(40),
+    branch: 'main',
+    commits: [{ sha: 'b'.repeat(40), subject: 'Add the card', onUpstream: false }],
+    notListed: 0,
+    upstream: { name: 'origin/main', ahead: 1, behind: 0 },
+    note: null,
+  };
+
+  it('reads back what this build writes, through a record’s ending line', () => {
+    const line = JSON.parse(
+      serialiseRecordLine({ line: 'ending', ending: { commits } as unknown as RecordedRunEnding }),
+    ) as { ending: { commits: unknown } };
+    assert.deepEqual(recordedRunCommitsFrom(line.ending.commits), commits);
+  });
+
+  it('reads an absent or damaged value as not recorded, never as no commits', () => {
+    assert.equal(recordedRunCommitsFrom(undefined), null);
+    assert.equal(recordedRunCommitsFrom({ ...commits, commits: 'none' }), null);
+    assert.equal(recordedRunCommitsFrom({ ...commits, upstream: { name: 'origin/main' } }), null);
+    assert.equal(recordedRunFaultFrom({ kind: 'step-timed-out', detail: 'x' }), null);
+    assert.deepEqual(recordedRunFaultFrom({ kind: 'k', detail: 'd', reconcile: 'r' }), { kind: 'k', detail: 'd', reconcile: 'r' });
   });
 });

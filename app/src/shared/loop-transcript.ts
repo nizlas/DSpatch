@@ -52,6 +52,7 @@ import {
 } from './loop-record';
 import type { RunJournalEntry, RunResult, RunStatus } from './loop-run';
 import { buildRunReport, checkSkippedCorroboration, type RunReport } from './loop-run-report';
+import { buildFinalRunCard, type FinalRunCard } from './loop-final-card';
 import type { TerminalEnding } from './loop-graph';
 import { ordinal } from './ordinal';
 
@@ -295,6 +296,12 @@ export interface LoopTurn {
    * going, for a run that never started, and where no journal came back.
    */
   readonly report?: RunReport;
+  /**
+   * DSP-209 S22: the run's final card, derived from its record and journal and never stored, so
+   * a run read back again gets the same one card. Absent while a watched run is going (a pause
+   * included); on a run read back that the host still runs, its status is `running`.
+   */
+  readonly finalCard?: FinalRunCard;
 }
 
 export type LoopTurnEvent =
@@ -504,7 +511,37 @@ export function loopTurnsAfter(
               drawnSteps: outcome.recorded?.drawnSteps ?? null,
             })
           : null;
-      return replaced({ ...turn, ending: describeLoopEnding(outcome, turn), ...(report === null ? {} : { report }) });
+      // DSP-209 S22: the final card, from the same recorded ending and journal.
+      const finalCard =
+        outcome.kind === 'refused' || outcome.kind === 'failed'
+          ? buildFinalRunCard(
+              {
+                runId: turn.runId,
+                mandate: turn.mandate,
+                ending: null,
+                beforeRecord: { status: outcome.kind, text: outcome.kind === 'refused' ? outcome.reason : outcome.note },
+              },
+              [],
+              null,
+            )
+          : outcome.recorded === undefined
+            ? null
+            : buildFinalRunCard(
+                {
+                  runId: turn.runId,
+                  mandate: turn.mandate,
+                  ending: outcome.recorded.ending,
+                  drawnSteps: outcome.recorded.drawnSteps ?? null,
+                },
+                outcome.result.journal,
+                null,
+              );
+      return replaced({
+        ...turn,
+        ending: describeLoopEnding(outcome, turn),
+        ...(report === null ? {} : { report }),
+        ...(finalCard === null ? {} : { finalCard }),
+      });
     }
     case 'send-threw': {
       if (turn.ending !== null) {
@@ -1345,14 +1382,21 @@ export function conversationStanding(input: StandingInput): ConversationStanding
  */
 export function loopTurnsFromRecords(
   records: readonly { readonly record: ParsedRunRecord | null; readonly error: string | null }[],
+  /**
+   * DSP-209 S22: the run the host reports as walking now, or `null`. A record without an ending
+   * for that run is still running: it reads as such, not as interrupted.
+   */
+  options: { readonly liveRunId?: string | null } = {},
 ): readonly LoopTurn[] {
   const turns: LoopTurn[] = [];
+  const liveRunId = options.liveRunId ?? null;
   for (const entry of records) {
     const record = entry.record;
     const identity = record?.identity ?? null;
     if (record === null || identity === null) {
       continue;
     }
+    const stillRunning = record.ending === null && liveRunId !== null && identity.runId === liveRunId;
     // Split on disk exactly as it is split live, by the same rule, so a run reads
     // the same after a restart as it did while it was happening. A recorded reply
     // with no text is a step that went silent, and the record has always held that
@@ -1386,15 +1430,26 @@ export function loopTurnsFromRecords(
       loop: { name: null, id: identity.graphId },
       cancelRequested: record.ending?.cancelled ?? false,
       abandoned: false,
-      ending: endingFromRecord(record, entry.error),
+      // DSP-209 S22: a run the host still runs has no ending yet, so it is not drawn as interrupted.
+      ending: stillRunning ? null : endingFromRecord(record, entry.error),
       restoredFrom: 'record',
       // DSP-209 S12: the same report the run had when it was watched, from its record.
-      report: buildRunReport({
-        journal: record.journal,
-        replies: record.replies,
-        ending: record.ending,
-        drawnSteps: identity.drawnSteps ?? null,
-      }),
+      ...(stillRunning
+        ? {}
+        : {
+            report: buildRunReport({
+              journal: record.journal,
+              replies: record.replies,
+              ending: record.ending,
+              drawnSteps: identity.drawnSteps ?? null,
+            }),
+          }),
+      // DSP-209 S22: derived again on every read, never stored: one card per run.
+      finalCard: buildFinalRunCard(
+        { runId: identity.runId, mandate: identity.mandate, ending: record.ending, drawnSteps: identity.drawnSteps ?? null },
+        record.journal,
+        liveRunId,
+      ),
       ...((): { messages?: readonly LoopInstruction[] } => {
         const messages = messagesFromEnding(identity.runId, record.ending?.messages);
         return messages.length === 0 ? {} : { messages };

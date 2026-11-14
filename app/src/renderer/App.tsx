@@ -48,6 +48,7 @@ import type {
   UiAgentEvent,
 } from '../shared/bridge';
 import { ActivityLine } from './DiscussionAnswer';
+import { FinalRunCard } from './FinalRunCard';
 import {
   clampSidebarWidth,
   describeDirectoryCap,
@@ -1341,7 +1342,10 @@ function Workbench({
       }
       try {
         const records = await window.dspatch.listRunRecords(conversationId);
-        const restored = loopTurnsFromRecords(records);
+        // DSP-209 S22: which run the host is walking now, so its record reads as running and not
+        // as interrupted. A read; if it fails, no run is taken to be live.
+        const live = await window.dspatch.currentLoopRun().catch(() => null);
+        const restored = loopTurnsFromRecords(records, { liveRunId: live?.runId ?? null });
         if (restored.length > 0) {
           applyLoopTurnEvent({ kind: 'records-restored', turns: restored });
         }
@@ -6890,8 +6894,21 @@ function LoopTurnEntry({
         </details>
       )}
       {/* DSP-209 S12: the run report, from what DSpatch recorded. Folded; nothing opens by itself. */}
-      {turn.report === undefined ? null : <RunReportView report={turn.report} testId={`${at}-report`} />}
+      {/* DSP-209 S22: with a final card, the report sits behind the card's expansion instead. */}
+      {turn.report === undefined || turn.finalCard !== undefined ? null : (
+        <RunReportView report={turn.report} testId={`${at}-report`} />
+      )}
       <RunStanding standing={standing} />
+      {/* DSP-209 S22 (R5): the run's one final card, last in its entry, derived and never stored. */}
+      {turn.finalCard === undefined ? null : (
+        <FinalRunCard
+          card={turn.finalCard}
+          testId={`${at}-final-card`}
+          {...(turn.report === undefined
+            ? {}
+            : { report: <RunReportView report={turn.report} testId={`${at}-report`} /> })}
+        />
+      )}
     </article>
   );
 }
