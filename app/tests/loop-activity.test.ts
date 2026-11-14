@@ -450,6 +450,8 @@ describe('the events a step forwards', () => {
         node: { id: 'work', kind: 'agent' } as never,
         occurrence: 1,
         callId: 1,
+        // The entry step: no arriving edge. Required by `StepContext`, and read for the model (S19).
+        arrivedBy: null,
         limits: {},
         deadlineAt: null,
         archive: null,

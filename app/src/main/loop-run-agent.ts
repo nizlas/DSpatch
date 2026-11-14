@@ -25,7 +25,7 @@
  */
 
 import type { StoredSessionProvider } from '../shared/bridge';
-import { modelsNamedBy, type LoopGraph, type LoopNode, type LoopTarget } from '../shared/loop-graph';
+import { modelsNamedBy, stepModelChoice, type LoopGraph, type LoopNode, type LoopTarget } from '../shared/loop-graph';
 import {
   describeLoopRunAgent,
   describeLoopRunRefused,
@@ -73,6 +73,13 @@ export interface LoopRunAgentRequest {
   readonly claudeModels?: readonly string[] | null;
   /** DSP-148: the model chosen for Copilot, or the runtime's default. */
   readonly copilotModel?: string;
+  /**
+   * DSP-209 S19b: the model ids Cursor and Copilot listed for this account in this launch
+   * (`Cursor.models.list()`, Copilot's `listModels`), or absent when none has been read.
+   * Read only to refuse a step's model the account does not have before the run starts.
+   */
+  readonly cursorModels?: readonly string[] | null;
+  readonly copilotModels?: readonly string[] | null;
   readonly adapters: LoopRunAdapterSource;
 }
 
@@ -94,6 +101,11 @@ export type LoopRunPreparation =
        * `modelRequested` keeps its meaning for the record and the "Runs with ..." line.
        */
       readonly personModel: string;
+      /**
+       * DSP-209 S19b: said when steps name models that could not be checked before the run
+       * (no list read for this provider in this launch), so the provider decides; else `null`.
+       */
+      readonly modelCheck: string | null;
       /** Builds the run's adapter. `runLiveGraph` calls it once and disposes what it got. */
       readonly createAdapter: () => ChatAdapter;
     };
@@ -162,6 +174,37 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
       );
     }
   }
+  // DSP-209 S19b: Cursor and Copilot by the same rule, against their own lists. Where no list
+  // has been read in this launch, nothing is invented: the run is not refused, and what the
+  // window shows says plainly that these models were not checked and the provider decides.
+  let modelCheck: string | null = null;
+  if (provider !== 'claude') {
+    const name = provider === 'copilot' ? 'Copilot' : 'Cursor';
+    const listed = provider === 'copilot' ? request.copilotModels : request.cursorModels;
+    const named =
+      request.graph !== undefined
+        ? modelsNamedBy(request.graph)
+        : fixed?.policy === 'fixed' && fixed.model !== undefined && fixed.model !== ''
+          ? [{ nodeId: request.entryNode?.id ?? '', label: request.entryNode?.label ?? request.entryNode?.id ?? 'the first step', model: fixed.model, option: null }]
+          : [];
+    if (listed != null) {
+      const missing = named.find((item) => !listed.includes(item.model));
+      if (missing !== undefined) {
+        return refused(
+          `The step "${missing.label}" ${
+            missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
+          } the model ${missing.model}, which ${name} does not offer this account. Change that ` +
+            "step's model, or run the loop with the agent that offers it.",
+        );
+      }
+    } else if (named.length > 0) {
+      const models = [...new Set(named.map((item) => item.model))].join(', ');
+      modelCheck =
+        `The model${named.length === 1 ? '' : 's'} the steps name (${models}) could not be checked: ` +
+        `${name}'s model list has not been read in this launch, so ${name} decides whether it runs them. ` +
+        `Opening ${name}'s model chooser reads the list.`;
+    }
+  }
   const modelRequested =
     provider === 'claude'
       ? modelForChatNode(request.entryNode, request.claudeModel)
@@ -179,6 +222,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     provider,
     modelRequested,
     personModel,
+    modelCheck,
     createAdapter: () => request.adapters.createAdapter({ provider, purpose }),
   };
 }
@@ -195,12 +239,16 @@ export function loopRunAgentInfo(
   if (!prepared.ok) {
     return { provider: null, line: describeLoopRunRefused(prepared.why) };
   }
+  // DSP-209 S19b: a `select` entry runs its default option unless the arriving edge selects
+  // another; the line names that model and says so. The run's `modelRequested` is unchanged.
+  const entryChoice = request.entryNode === undefined ? null : stepModelChoice(request.entryNode, null);
+  const shown =
+    entryChoice?.policy === 'select' && entryChoice.model !== null
+      ? `${entryChoice.model === '' ? 'the provider’s default' : entryChoice.model}, option “${entryChoice.option ?? ''}” by default; an edge may select another`
+      : prepared.modelRequested;
+  const line = describeLoopRunAgent({ provider: prepared.provider, modelRequested: shown, drawnFor });
   return {
     provider: prepared.provider,
-    line: describeLoopRunAgent({
-      provider: prepared.provider,
-      modelRequested: prepared.modelRequested,
-      drawnFor,
-    }),
+    line: prepared.modelCheck === null ? line : `${line} ${prepared.modelCheck}`,
   };
 }

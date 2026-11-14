@@ -495,6 +495,9 @@ function loopRunRequest(input: {
     // DSP-149: Claude's model is the person's choice, as in the chat.
     claudeModel: chatService.modelFor('claude'),
     claudeModels: chatService.knownModelIds('claude'),
+    // DSP-209 S19b: the lists Cursor and Copilot gave this launch, read the same way.
+    cursorModels: chatService.knownModelIds('cursor'),
+    copilotModels: chatService.knownModelIds('copilot'),
     copilotModel: chatService.modelFor('copilot'),
     sessionProvider: chatService.openSession()?.provider ?? null,
     chosenAgent: chatService.chosenAgent(),
@@ -536,7 +539,18 @@ function entryFromQuery(value: unknown): Pick<LoopNode, 'id' | 'label' | 'model'
   if (typeof entry.id !== 'string') {
     return undefined;
   }
-  const model = entry.model as { policy?: unknown; model?: unknown } | undefined;
+  const model = entry.model as { policy?: unknown; model?: unknown; options?: unknown; default?: unknown } | undefined;
+  // DSP-209 S19b: a `select` entry keeps its options and default, each checked, so the line
+  // can name the model it runs by default. Options that are not `{ id, model }` strings are dropped.
+  const options =
+    model?.policy === 'select' && Array.isArray(model.options)
+      ? model.options.flatMap((option: unknown) => {
+          const item = option as { id?: unknown; model?: unknown } | null;
+          return item !== null && typeof item === 'object' && typeof item.id === 'string' && typeof item.model === 'string'
+            ? [{ id: item.id, model: item.model }]
+            : [];
+        })
+      : [];
   const policy: LoopNode['model'] =
     model !== undefined &&
     model !== null &&
@@ -545,7 +559,9 @@ function entryFromQuery(value: unknown): Pick<LoopNode, 'id' | 'label' | 'model'
           policy: model.policy,
           ...(typeof model.model === 'string' ? { model: model.model } : {}),
         }
-      : undefined;
+      : model?.policy === 'select' && options.length > 0
+        ? { policy: 'select', options, ...(typeof model.default === 'string' ? { default: model.default } : {}) }
+        : undefined;
   return {
     id: entry.id,
     ...(typeof entry.label === 'string' ? { label: entry.label } : {}),

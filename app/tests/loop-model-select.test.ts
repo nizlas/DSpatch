@@ -27,7 +27,7 @@ import type {
   UsageReading,
 } from '../src/adapter/types';
 import { createLiveExecutor, emptyInspection } from '../src/main/loop-live';
-import { prepareLoopRun, type LoopRunAgentRequest } from '../src/main/loop-run-agent';
+import { loopRunAgentInfo, prepareLoopRun, type LoopRunAgentRequest } from '../src/main/loop-run-agent';
 import {
   LOOP_GRAPH_FORMAT,
   LOOP_GRAPH_FORMAT_VERSION,
@@ -438,5 +438,37 @@ describe('the check before a run starts', () => {
     // The entry refusal is unchanged.
     const refusedEntry = prepareLoopRun({ ...request(undefined, ['model-l']), entryNode });
     assert.ok(!refusedEntry.ok && refusedEntry.reason.includes('first step'), !refusedEntry.ok ? refusedEntry.reason : '');
+  });
+
+  // DSP-209 S19b: Cursor and Copilot by the same rule, against their own lists.
+  it('refuses a Cursor run whose option names a model Cursor does not list', () => {
+    const prepared = prepareLoopRun({ ...request(graph(), []), sessionProvider: 'cursor', cursorModels: ['model-l'] });
+    assert.ok(!prepared.ok && prepared.reason.includes('model-s') && prepared.reason.includes('which Cursor does not offer'), !prepared.ok ? prepared.reason : '');
+    assert.ok(!prepared.ok && prepared.reason.endsWith('Nothing was started.'));
+  });
+
+  it('says plainly that a Copilot run’s models could not be checked when no list was read, and lets Copilot decide', () => {
+    const unread = prepareLoopRun({ ...request(graph(), []), sessionProvider: 'copilot', copilotModel: 'gpt-x', copilotModels: null });
+    assert.ok(unread.ok);
+    assert.match(unread.modelCheck ?? '', /model-s, model-l\) could not be checked: Copilot's model list has not been read in this launch, so Copilot decides/);
+    const info = loopRunAgentInfo({ ...request(graph(), []), sessionProvider: 'copilot', copilotModel: 'gpt-x', copilotModels: null }, null);
+    assert.ok(info.line.includes('could not be checked'), info.line);
+    // Listed: checked, and nothing more is said.
+    const listed = prepareLoopRun({ ...request(graph(), []), sessionProvider: 'copilot', copilotModels: ['model-s', 'model-l'] });
+    assert.ok(listed.ok && listed.modelCheck === null);
+  });
+
+  it('leaves Claude’s check as it was: it says nothing extra when its list is read', () => {
+    const prepared = prepareLoopRun(request(graph(), ['model-s', 'model-l']));
+    assert.ok(prepared.ok && prepared.modelCheck === null);
+  });
+
+  it('names a select entry step’s default model on the "Runs with" line, and leaves a fixed entry’s line as it was', () => {
+    const selectEntry = { id: 'build', label: 'Build', model: SELECT };
+    const info = loopRunAgentInfo({ ...request(undefined, ['model-s', 'model-l']), entryNode: selectEntry }, null);
+    assert.ok(info.line.startsWith('Runs with Claude (model-l, option “large” by default; an edge may select another)'), info.line);
+    const fixedEntry = { id: 'plan', label: 'Plan', model: { policy: 'fixed', model: 'model-s' } } as const;
+    const fixedInfo = loopRunAgentInfo({ ...request(undefined, ['model-s', 'model-l']), entryNode: fixedEntry }, null);
+    assert.ok(fixedInfo.line.startsWith('Runs with Claude (model-s):'), fixedInfo.line);
   });
 });
