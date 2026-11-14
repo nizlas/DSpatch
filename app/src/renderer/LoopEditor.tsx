@@ -2993,7 +2993,7 @@ export function LoopEditor(): React.JSX.Element {
               endingMarks={endingMarks}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}
               severityOfEdge={(id) => worstSeverity(index.byEdge.get(id) ?? [])}
-              helpTitleOf={showHelp ? nodeHelpLabel : undefined}
+              helpTitleOf={showHelp ? (node, role) => nodeHelpLabel(node, role?.summary) : undefined}
               onSelectEdge={(id) => {
                 setSelection({ kind: 'edge', id });
               }}
@@ -3574,12 +3574,14 @@ function NodeInspector({
             <label>
               What this step does
               {/*
-                Three rows, not five. The box scrolls and the same text is in the tooltip,
-                so the two extra rows bought nothing and cost two lines of the role text
-                below — which is the thing this panel exists to show.
+                DSP-209 S26 (R7): the step's whole instruction, here and not in the hover, which
+                shows a short description. One line when short, growing with the text to 40% of
+                the window and scrolling inside past that, as the chat's field does; it can be
+                selected and copied whole.
               */}
               <textarea
-                rows={3}
+                rows={1}
+                className="grow-field node-purpose-field"
                 data-ev="node-purpose"
           value={node.purpose ?? ''}
           onChange={(event) => onChange({ ...node, purpose: event.target.value || undefined })}

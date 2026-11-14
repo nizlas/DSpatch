@@ -109,6 +109,12 @@
   width: 100%;
 }
 
+/* DSP-209 S26 (R7): a node's instruction grows with its text (`.grow-field` in styles.css);
+   one line is its own line plus this padding and border. */
+.editor textarea.node-purpose-field {
+  --grow-field-edges: calc(8px + 2px);
+}
+
 .editor-target {
   display: flex;
   align-items: center;

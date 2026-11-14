@@ -89,7 +89,8 @@ export interface GraphCanvasProps {
   readonly endingMarks: FinishedRunMarks | null;
   readonly severityOfNode?: (nodeId: string) => Finding['severity'] | null;
   readonly severityOfEdge?: (edgeId: string) => Finding['severity'] | null;
-  readonly helpTitleOf?: (node: LoopNode) => string;
+  /** The node's hover, given its resolved role (DSP-209 S26: a short description, whole). */
+  readonly helpTitleOf?: (node: LoopNode, role: ResolvedRole | null) => string;
   readonly onSelectEdge: (edgeId: string) => void;
   readonly onNodeMouseDown: (event: ReactMouseEvent, node: LoopNode) => void;
 }
@@ -173,7 +174,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           working={props.workingNodes.has(node.id)}
           ending={endingMarkFor(props.endingMarks, node.id)}
           severity={props.severityOfNode?.(node.id) ?? null}
-          helpTitle={props.helpTitleOf?.(node)}
+          helpTitle={props.helpTitleOf?.(node, node.role ? (props.roles.get(roleKey(node.role)) ?? null) : null)}
           branches={props.branchSummaries?.get(node.id) ?? null}
           {...(props.onOpenBranches === undefined ? {} : { onOpenBranches: () => props.onOpenBranches?.(node.id) })}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}

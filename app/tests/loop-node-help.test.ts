@@ -901,12 +901,20 @@ describe('the brief panel for a drawing whose purpose is the mandate (DSP-139)',
   });
 });
 
-describe('the canvas hover is a short label, and the full help stays in the panel (DSP-209 S26, R7)', () => {
-  it('keeps nodeHelpLabel within NODE_HELP_LABEL_MAX, and the full text whole', () => {
-    const long = { id: 'work', kind: 'agent' as const, label: 'Work', purpose: `${'Do the careful work the mandate asks for '.repeat(5)}.` };
-    assert.ok(nodeHelpLabel(long).length <= NODE_HELP_LABEL_MAX, nodeHelpLabel(long));
-    assert.ok(nodeHelpText(long).length > NODE_HELP_LABEL_MAX, 'the full help is not cut');
-    assert.equal(nodeHelpLabel({ id: 'work', label: 'Work', purpose: 'Write it. Then test it.' }), 'Write it.');
-    assert.equal(nodeHelpLabel({ id: 'work', label: 'Work' }), 'No purpose written for "Work"');
+describe('the canvas hover is a short, whole description, and the full help stays in the panel (DSP-209 S26, R7)', () => {
+  it('shows a short purpose whole, else the role summary, else says where the description is, and never cuts', () => {
+    const long = { id: 'assess', kind: 'agent' as const, label: 'Assess', purpose: 'Read the mandate and the parts of the project it touches, and change nothing. '.repeat(3) };
+    assert.equal(
+      nodeHelpLabel({ id: 'done', kind: 'terminal', label: 'Done', purpose: 'The review found the assignment met. Branches are kept.' }),
+      'The review found the assignment met. Branches are kept.',
+    );
+    assert.equal(nodeHelpLabel(long, 'Assesses the task and chooses one implementer or parallel branches.'), 'Assesses the task and chooses one implementer or parallel branches.');
+    assert.equal(nodeHelpLabel(long), 'An agent step, "Assess". What it does is written in the node panel.');
+    assert.equal(nodeHelpLabel({ id: 'work', kind: 'agent', label: 'Work' }), 'An agent step, "Work", with no description written.');
+    for (const label of [nodeHelpLabel(long), nodeHelpLabel(long, 'A summary.')]) {
+      assert.ok(!label.includes('…'), label);
+    }
+    assert.ok(nodeHelpText(long).includes(long.purpose.trim()), 'the full purpose is in the panel text');
+    assert.ok(long.purpose.length > NODE_HELP_LABEL_MAX);
   });
 });

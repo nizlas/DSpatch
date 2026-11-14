@@ -2446,15 +2446,38 @@ export function nodeHelpText(node: Pick<LoopNode, 'kind' | 'purpose' | 'label' |
   return `${opening} ${kindEffect(node.kind).whatTheRunnerDoes} Required: ${requiredForKind(node.kind)}`;
 }
 
-/** DSP-209 S26 (R7): the most a hover label on a node may hold. */
-export const NODE_HELP_LABEL_MAX = 60;
+/** DSP-209 S26 (R7): the longest purpose a node's hover shows as it is. */
+export const NODE_HELP_LABEL_MAX = 160;
+
+/** What a node of each kind is, for a hover that has no description of its own to show. */
+const KIND_IN_A_SENTENCE: Readonly<Record<LoopNode['kind'], string>> = {
+  agent: 'An agent step',
+  gate: 'A check DSpatch runs',
+  router: 'A routing step',
+  human: 'A step for a person',
+  external: 'An external step',
+  terminal: 'An ending',
+};
 
 /**
- * DSP-209 S26 (R7): the node's hover — its purpose's first line in a few words, or that none
- * is written. The full text, {@link nodeHelpText}, is in the node panel, which stays open.
+ * DSP-209 S26 (R7): the node's hover, a short description that is always whole — never a
+ * purpose cut off in the middle. The node's purpose when it is short; otherwise its role's
+ * summary, the one sentence a role source keeps for saying what it does; otherwise a sentence
+ * saying what kind of step it is and where its description is. The full text, the purpose and
+ * {@link nodeHelpText}, is in the node panel, which stays open and can be selected and copied.
  */
-export function nodeHelpLabel(node: Pick<LoopNode, 'purpose' | 'label' | 'id'>): string {
-  const first = (node.purpose ?? '').trim().split(/\r?\n|(?<=\.)\s/)[0]?.trim() ?? '';
-  const text = first === '' ? `No purpose written for "${node.label ?? node.id}"` : first;
-  return text.length <= NODE_HELP_LABEL_MAX ? text : `${text.slice(0, NODE_HELP_LABEL_MAX - 1).trimEnd()}…`;
+export function nodeHelpLabel(node: Pick<LoopNode, 'kind' | 'purpose' | 'label' | 'id'>, roleSummary?: string | null): string {
+  const short = (text: string): boolean => text !== '' && !/\r?\n/.test(text) && text.length <= NODE_HELP_LABEL_MAX;
+  const purpose = (node.purpose ?? '').trim();
+  if (short(purpose)) {
+    return purpose;
+  }
+  const summary = (roleSummary ?? '').trim();
+  if (summary !== '' && !/\r?\n/.test(summary)) {
+    return summary;
+  }
+  const name = `"${node.label ?? node.id}"`;
+  return purpose === ''
+    ? `${KIND_IN_A_SENTENCE[node.kind]}, ${name}, with no description written.`
+    : `${KIND_IN_A_SENTENCE[node.kind]}, ${name}. What it does is written in the node panel.`;
 }

@@ -34,6 +34,7 @@ import type { AppTool, AppToolResult } from '../adapter/types';
 import { discoverLoopDefinitions, type LoopDefinitionRow } from '../main/loop-definition-files';
 import { createFileRoleResolver, resolveRoleText } from '../main/loop-graph-roles';
 import { parseRoleSource, ROLE_SECTIONS } from '../main/role-source';
+import { NODE_HELP_LABEL_MAX } from '../shared/loop-chat';
 import {
   createProposal,
   describeChangeLines,
@@ -107,7 +108,8 @@ const ROLE_SOURCE_EXAMPLE = [
 
 /** The rules of a role source, as `parseRoleSource` holds them. */
 const ROLE_SOURCE_RULES =
-  '`role` is its id (lower case, digits, hyphens) and is the id a node references; `title` and `summary` are required; ' +
+  '`role` is its id (lower case, digits, hyphens) and is the id a node references; `title` is required, and so is `summary`: ' +
+  'one complete sentence on what the step does, which is what a person reads when hovering a node that uses the role; ' +
   `\`targets\` lists the frameworks it supports (${LOOP_TARGETS.join(', ')}) and must include the graph's own target; ` +
   `\`requires\` is optional (${REQUIREMENTS.join(', ')}). The prose goes under the headings ` +
   `${ROLE_SECTIONS.map((section) => `## ${section[0]?.toUpperCase() ?? ''}${section.slice(1)}`).join(', ')}, in that order, ` +
@@ -493,6 +495,9 @@ function buildingBlocks(): string {
     `Roles. Every agent node references one role, as {"id", "source": {"kind": "role-source", "path"}}. The path is read from the loop's resource root, ` +
       'which for a new loop is the project folder; a role outside it cannot be used. A role the project does not have goes in the proposal\'s roleFiles: ' +
       `role R of loop L is placed at .dspatch/loops/roles/L-R.role.md, and nothing is written until the person applies the proposal. A role source: ${ROLE_SOURCE_RULES}`,
+    'What a person reads. Hovering a node shows its purpose when that is one line of at most ' +
+      `${String(NODE_HELP_LABEL_MAX)} characters, otherwise its role's summary, never a purpose cut short. So put a step's whole instruction in its ` +
+      "purpose, and give each role a summary that says in one sentence what its step does; an ending's purpose can say in a sentence or two how the run ended.",
     `Node kinds:\n${kinds.join('\n')}`,
     `Settings on a node or edge:\n${settings.join('\n')}`,
     `What DSpatch honours, attribute by attribute:\n${attributes.join('\n')}`,
