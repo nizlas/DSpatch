@@ -6,7 +6,7 @@
  * run report and the journal — are behind disclosures that stay open and can be selected.
  */
 
-import type { ReactNode } from 'react';
+import type { JSX, ReactNode } from 'react';
 
 import type { FinalRunCard as FinalRunCardModel, FinalRunStatus } from '../shared/loop-final-card';
 
