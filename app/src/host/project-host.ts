@@ -118,6 +118,7 @@ import { ChatService, type ChatAdapter } from '../main/chat-service';
 import { ConversationStore } from '../main/conversation-store';
 import { inRecent, ProjectStore, type WorkspaceRecord } from '../main/project-store';
 import { workspaceTools } from './workspace-tools';
+import { graphAuthoringTools } from './graph-authoring-tools';
 import { locateExampleReview } from '../main/example-review';
 import { InstructionQueue } from '../main/instruction-queue';
 import { chatRunHold, chatRunMode, chatRunScenario, presentationMode } from '../main/launch-mode';
@@ -1138,8 +1139,32 @@ function openPendingWorkspace(): void {
   );
 }
 
-/** What the chat's workspace tools reach: the same functions as the menus (DSP-149). */
+/**
+ * What the chat's workspace tools reach: the same functions as the menus (DSP-149). DSP-209
+ * S23a adds the four graph tools, on chat sessions only: a loop step is never given these.
+ */
 function chatWorkspaceTools(): readonly AppTool[] {
+  return [...chatWorkspaceToolsOnly(), ...chatGraphTools()];
+}
+
+/** DSP-209 S23a: list, read, describe and propose loop graphs; none writes a graph or runs one. */
+function chatGraphTools(): readonly AppTool[] {
+  return graphAuthoringTools({
+    folders: () => openWorkspaceFolders(),
+    ownRoot: () => ownRepoRoot,
+    conversationId: () => chatService.workingConversationId(),
+    proposals: (conversationId) => chatService.graphProposals(conversationId),
+    record: (proposal) => {
+      const kept = chatService.recordGraphProposal(proposal);
+      if (kept.ok) {
+        log(`[graph] the chat proposed ${proposal.id} for ${proposal.conversationId}; nothing was written`);
+      }
+      return kept;
+    },
+  });
+}
+
+function chatWorkspaceToolsOnly(): readonly AppTool[] {
   return workspaceTools({
     recent: () =>
       requireProjectStore()

@@ -707,6 +707,69 @@ test('a handover round-trips, an older file reads without one, and a damaged one
   assert.equal('handover' in (damaged[0] ?? {}), false);
 });
 
+// DSP-209 S23a: the graphs the agent proposed are kept on the message, in this build's shape only.
+test('graph proposals round-trip, an older file reads without them, and damaged ones are dropped', () => {
+  const { store, directory } = storeIn('graph-proposals');
+  const message = {
+    ordinal: 0,
+    dspatchRunId: 'run-1',
+    prompt: 'make me a loop',
+    answer: 'Proposed.',
+    deltaCount: 1,
+    toolEvents: 1,
+    terminalStatus: 'finished',
+    errorMessage: null,
+    totalTokens: null,
+    startedAtUtc: '2026-11-14T11:40:00.000Z',
+    finishedAtUtc: '2026-11-14T11:40:05.000Z',
+    resentContext: null,
+  };
+  const proposal = {
+    id: 'proposal-1',
+    conversationId: 'conv-1',
+    target: { newLoop: { definitionPath: 'C:/p/.dspatch/loops/x.loop.json', graphPath: 'C:/p/.dspatch/loops/x.graph.json', definitionText: '{}\n' } },
+    baseContentHash: null,
+    graphText: '{"format":"dspatch-loop-graph"}',
+    roleFiles: [{ path: 'C:/p/.dspatch/loops/roles/x-a.role.md', text: 'Role.\n' }],
+    explanation: { source: 'agent' as const, text: 'Because.' },
+    findings: [{ severity: 'notice' as const, code: 'n', message: 'A notice.', pointer: '' }],
+    change: {
+      unchanged: false,
+      layoutOnly: false,
+      graph: [],
+      renamed: [],
+      nodes: { added: ['a'], removed: [], changed: [] },
+      edges: { added: [], removed: [], changed: [] },
+      moved: [],
+      reordered: { nodes: false, edges: false },
+    },
+    status: 'superseded' as const,
+  };
+  const existing = { ...proposal, id: 'proposal-2', target: { definitionPath: 'C:/p/d.loop.json', graphPath: 'C:/p/g.graph.json' }, baseContentHash: 'abc', change: null, status: 'proposed' as const };
+  const original = conversation({
+    messages: [{ ...message, graphProposals: [proposal, existing] }, { ...message, ordinal: 1, dspatchRunId: 'run-2', prompt: 'thanks' }],
+  });
+  store.write(original);
+  const back = store.read(original.conversationId).conversation?.messages ?? [];
+  assert.deepEqual(back[0]?.graphProposals, [proposal, existing]);
+  assert.equal('graphProposals' in (back[1] ?? {}), false, 'a message that proposed nothing has none');
+
+  const file = path.join(directory, `${original.conversationId}.json`);
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { messages: Record<string, unknown>[] };
+  const kept = saved.messages[0]!['graphProposals'] as Record<string, unknown>[];
+  saved.messages[0]!['graphProposals'] = [
+    { ...kept[0], status: 'maybe' },
+    { ...kept[1], explanation: { source: 'dspatch', text: 'not the agent' } },
+    { ...kept[0], id: 'proposal-3', change: { unchanged: true } },
+    { ...kept[0], id: 'proposal-4', findings: [{ severity: 'error' }, kept[0]!['findings'] instanceof Array ? (kept[0]!['findings'] as unknown[])[0] : null] },
+  ];
+  fs.writeFileSync(file, JSON.stringify(saved), 'utf8');
+  const damaged = store.read(original.conversationId).conversation?.messages ?? [];
+  assert.equal(damaged.length, 2, 'a damaged proposal never costs the message');
+  assert.deepEqual(damaged[0]?.graphProposals?.map((each) => each.id), ['proposal-4'], 'only the proposal whose core is intact is kept');
+  assert.deepEqual(damaged[0]?.graphProposals?.[0]?.findings, proposal.findings, 'a malformed finding is dropped on its own');
+});
+
 // DSP-209 S7: a loop recap, sent or removed, is kept apart from the person's prompt.
 test('a loop recap round-trips sent and removed, and a damaged one is dropped', () => {
   const { store, directory } = storeIn('loop-recap');

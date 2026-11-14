@@ -21,6 +21,7 @@ import type {
 } from '../adapter/types';
 import type { StepActivity } from './loop-activity';
 import type { LiveOutputAddress } from './run-presentation';
+import type { GraphEditProposal } from './graph-proposal';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
 import type { ResolvedRole, RoleReference } from './loop-graph';
@@ -1486,6 +1487,16 @@ export interface StoredMessage {
    * written before S7 and on every message with no run to recap.
    */
   readonly loopRecap?: StoredLoopRecap;
+  /**
+   * DSP-209 S23a: the loop graphs the agent proposed in this turn with `propose_loop_graph`,
+   * in the order it proposed them, each with its status. A later proposal for the same graph
+   * file marks an earlier open one `superseded`, in this message or an earlier one. Nothing in
+   * a proposal has been written to disk: applying one is S23b's, and only on the person's
+   * action. Absent in files written before S23a and in turns that proposed nothing; a list
+   * rather than one field, because an agent told its draft has errors proposes again in the
+   * same turn.
+   */
+  readonly graphProposals?: readonly GraphEditProposal[];
   /**
    * DSP-145, DSP-146: the commands the agent ran in this turn, as DSpatch recorded them
    * (`requestedBy` says whether DSpatch started them). Absent in files written before

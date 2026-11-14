@@ -1,6 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  PROPOSAL_STATUSES,
+  type GraphChange,
+  type GraphEditProposal,
+  type ProposalStatus,
+  type ProposalTarget,
+} from '../shared/graph-proposal';
+import type { Finding } from '../shared/loop-graph-load';
+
 import type {
   AgentCommandEnding,
   AgentCommandRecord,
@@ -816,6 +825,121 @@ function storedLoopRecapField(value: unknown): { readonly loopRecap?: StoredLoop
     : {};
 }
 
+/**
+ * DSP-209 S23a: the proposals a message kept, read back. A proposal whose core fields are not
+ * in the shape this build writes is dropped rather than repaired: it is a record of what the
+ * agent proposed, and a guessed field would be a proposal nobody made. A findings entry that is
+ * not a finding is dropped on its own; a `change` that is not a change's shape drops the
+ * proposal, because the change is what the person is shown. An absent or empty list reads as none.
+ */
+function graphProposalsOf(value: unknown): { readonly graphProposals?: readonly GraphEditProposal[] } {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const kept = value.flatMap((entry): GraphEditProposal[] => {
+    const proposal = storedGraphProposal(entry);
+    return proposal === null ? [] : [proposal];
+  });
+  return kept.length === 0 ? {} : { graphProposals: kept };
+}
+
+function storedGraphProposal(value: unknown): GraphEditProposal | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const text = (key: string): string | null => (typeof value[key] === 'string' ? (value[key] as string) : null);
+  const id = text('id');
+  const conversationId = text('conversationId');
+  const graphText = text('graphText');
+  const status = value['status'];
+  const base = value['baseContentHash'];
+  const explanation = value['explanation'];
+  const target = storedProposalTarget(value['target']);
+  if (
+    id === null ||
+    id === '' ||
+    conversationId === null ||
+    graphText === null ||
+    target === null ||
+    !(PROPOSAL_STATUSES as readonly unknown[]).includes(status) ||
+    !(base === null || typeof base === 'string') ||
+    !isRecord(explanation) ||
+    explanation['source'] !== 'agent' ||
+    typeof explanation['text'] !== 'string' ||
+    !Array.isArray(value['roleFiles']) ||
+    !Array.isArray(value['findings'])
+  ) {
+    return null;
+  }
+  const roleFiles = (value['roleFiles'] as unknown[]).map((file) =>
+    isRecord(file) && typeof file['path'] === 'string' && typeof file['text'] === 'string' ? { path: file['path'], text: file['text'] } : null,
+  );
+  if (roleFiles.some((file) => file === null)) {
+    return null;
+  }
+  const change = value['change'];
+  if (!(change === null || isGraphChangeShape(change))) {
+    return null;
+  }
+  const findings = (value['findings'] as unknown[]).flatMap((finding): Finding[] =>
+    isRecord(finding) &&
+    (finding['severity'] === 'error' || finding['severity'] === 'warning' || finding['severity'] === 'notice') &&
+    typeof finding['code'] === 'string' &&
+    typeof finding['message'] === 'string' &&
+    typeof finding['pointer'] === 'string'
+      ? [finding as unknown as Finding]
+      : [],
+  );
+  return {
+    id,
+    conversationId,
+    target,
+    baseContentHash: base as string | null,
+    graphText,
+    roleFiles: roleFiles as { path: string; text: string }[],
+    explanation: { source: 'agent', text: explanation['text'] as string },
+    findings,
+    change: change as GraphChange | null,
+    status: status as ProposalStatus,
+  };
+}
+
+function storedProposalTarget(value: unknown): ProposalTarget | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const newLoop = value['newLoop'];
+  if (newLoop !== undefined) {
+    return isRecord(newLoop) &&
+      typeof newLoop['definitionPath'] === 'string' &&
+      typeof newLoop['graphPath'] === 'string' &&
+      typeof newLoop['definitionText'] === 'string'
+      ? { newLoop: { definitionPath: newLoop['definitionPath'], graphPath: newLoop['graphPath'], definitionText: newLoop['definitionText'] } }
+      : null;
+  }
+  return typeof value['definitionPath'] === 'string' && typeof value['graphPath'] === 'string'
+    ? { definitionPath: value['definitionPath'], graphPath: value['graphPath'] }
+    : null;
+}
+
+/** The top level of a {@link GraphChange}, which is all a reader needs to trust it is one. */
+function isGraphChangeShape(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const lists = (record: unknown, keys: readonly string[]): boolean => isRecord(record) && keys.every((key) => Array.isArray(record[key]));
+  return (
+    typeof value['unchanged'] === 'boolean' &&
+    typeof value['layoutOnly'] === 'boolean' &&
+    Array.isArray(value['graph']) &&
+    Array.isArray(value['renamed']) &&
+    Array.isArray(value['moved']) &&
+    lists(value['nodes'], ['added', 'removed', 'changed']) &&
+    lists(value['edges'], ['added', 'removed', 'changed']) &&
+    isRecord(value['reordered'])
+  );
+}
+
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
@@ -869,6 +993,8 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
         typeof entry['finishedAtUtc'] === 'string' ? entry['finishedAtUtc'] : null,
       ...commandsOf(entry['commands']),
       ...steeringOf(entry['steering']),
+      // DSP-209 S23a: the graphs the agent proposed, each only in the shape this build writes.
+      ...graphProposalsOf(entry['graphProposals']),
     }));
   return messages.sort((left, right) => left.ordinal - right.ordinal);
 }

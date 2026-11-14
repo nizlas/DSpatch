@@ -91,6 +91,7 @@ import type {
   WorkspaceChange,
   WorkspaceReport,
 } from '../shared/bridge';
+import { supersedeWith, type GraphEditProposal } from '../shared/graph-proposal';
 import { WORKING_COPY_LOCK, type WorkingCopyLock } from './working-copy-lock';
 import { UncertainWorkStore } from './uncertain-work-store';
 import { saysSessionAlreadyHasARun } from '../shared/session-run-block';
@@ -870,6 +871,8 @@ interface TurnRecord {
   readonly commands: AgentCommandRecord[];
   /** DSP-147: steering messages sent into this turn while it worked. */
   readonly steering: SteeringRecord[];
+  /** DSP-209 S23a: the graphs proposed in this turn with `propose_loop_graph`, statuses kept current. */
+  graphProposals: GraphEditProposal[];
 }
 
 /** DSP-147: a steering message as this window holds it; written down as a {@link StoredSteering}. */
@@ -1210,8 +1213,11 @@ interface HeldConversation {
   readonly createdAtUtc: string;
   /** This conversation's attempts, and no other's. */
   readonly ledger: AttemptLedger;
-  /** The messages its file held when it was first read in this run. */
-  readonly carriedMessages: readonly StoredMessage[];
+  /**
+   * The messages its file held when it was first read in this run. Replaced, never edited in
+   * place, when a newer graph proposal supersedes one of theirs (DSP-209 S23a).
+   */
+  carriedMessages: readonly StoredMessage[];
   /** Every command result, the file's and this run's, in the order they ran. */
   readonly testRuns: TestOutcome[];
   /** The result shown for this conversation last, by its own commands only. */
@@ -4961,6 +4967,48 @@ export class ChatService {
   }
 
   /**
+   * DSP-209 S23a: the conversation the turn now working belongs to, for a tool that stores a
+   * proposal on it. `null` when no turn is working or it belongs to no saved conversation.
+   */
+  workingConversationId(): string | null {
+    return this.currentTurn?.conversationId ?? null;
+  }
+
+  /** DSP-209 S23a: every graph proposal in a conversation, oldest first, as saved and as made now. */
+  graphProposals(conversationId: string): readonly GraphEditProposal[] {
+    return this.mergedMessages(conversationId).flatMap((message) => message.graphProposals ?? []);
+  }
+
+  /**
+   * DSP-209 S23a: keep a proposal the working turn's agent made, and mark every earlier open
+   * proposal for the same graph file in this conversation `superseded`. Saved at once, as a
+   * steering message is. Writes nothing but the conversation file: the proposal's graph, its
+   * definition and its role files are not written here or anywhere until the person applies it.
+   */
+  recordGraphProposal(proposal: GraphEditProposal): { readonly ok: true } | { readonly ok: false; readonly problem: string } {
+    const turn = this.currentTurn;
+    if (turn === null || turn.conversationId === null || turn.conversationId !== proposal.conversationId) {
+      return { ok: false, problem: 'No turn of this conversation is working, so the proposal has nowhere to be kept.' };
+    }
+    const supersede = (list: readonly GraphEditProposal[]): readonly GraphEditProposal[] =>
+      supersedeWith(list, proposal).filter((each) => each.id !== proposal.id);
+    for (const other of this.turns) {
+      if (other.conversationId === proposal.conversationId && other.graphProposals.length > 0) {
+        other.graphProposals = [...supersede(other.graphProposals)];
+      }
+    }
+    const held = this.held.get(proposal.conversationId);
+    if (held !== undefined) {
+      held.carriedMessages = held.carriedMessages.map((message) =>
+        message.graphProposals === undefined ? message : { ...message, graphProposals: supersede(message.graphProposals) },
+      );
+    }
+    turn.graphProposals.push(proposal);
+    this.saveConversation(proposal.conversationId);
+    return { ok: true };
+  }
+
+  /**
    * DSP-209 S2: a conversation's saved messages, by the same rule as every other reader,
    * for the context snapshot a loop run is given. Read only; a copy.
    */
@@ -6174,6 +6222,7 @@ export class ChatService {
         rawEventTypes: {},
         commands: [],
         steering: [],
+        graphProposals: [],
       };
       this.turns.push(turn);
       this.currentTurn = turn;
@@ -6515,6 +6564,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     startedAtUtc: turn.startedAtUtc,
     finishedAtUtc: turn.finishedAtUtc,
     ...(turn.commands.length === 0 ? {} : { commands: [...turn.commands] }),
+    ...(turn.graphProposals.length === 0 ? {} : { graphProposals: [...turn.graphProposals] }),
     ...(turn.steering.length === 0
       ? {}
       : {
