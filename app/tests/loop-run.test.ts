@@ -1238,3 +1238,28 @@ describe('a run that could not report on accepted work says that and nothing mor
     });
   }
 });
+
+// DSP-209 S27: `node-entered` carries what the drawing asks the step to declare, and only then.
+describe('node-entered names a declaring step (DSP-209 S27)', () => {
+  it('adds `declares` for a node that declares, and leaves every other entry unchanged', async () => {
+    const plain = loadDevelopmentLoop();
+    const target = plain.nodes.find((node) => node.kind === 'agent');
+    assert.ok(target !== undefined);
+    const declaring: LoopGraph = {
+      ...plain,
+      nodes: plain.nodes.map((node) => (node.id === target.id ? { ...node, declares: ['subgoal'] } : node)),
+    };
+    const run = async (graph: LoopGraph): Promise<readonly RunJournalEntry[]> =>
+      (await runLoopGraph(graph, { runId: 'test-declares', dryRun: true, executor: createDryRunExecutor({ decisions: HAPPY_PATH }) })).journal;
+    const before = await run(plain);
+    const after = await run(declaring);
+    const enteredOf = (journal: readonly RunJournalEntry[]) => journal.filter((entry) => entry.kind === 'node-entered');
+    const withDeclares = enteredOf(after).filter((entry) => entry.data?.['declares'] !== undefined);
+    assert.ok(withDeclares.length > 0 && withDeclares.every((entry) => entry.nodeId === target.id && entry.data?.['declares'] === 'subgoal'));
+    // Every node-entered of another node is as it was without the field.
+    const others = (journal: readonly RunJournalEntry[]) =>
+      enteredOf(journal).filter((entry) => entry.nodeId !== target.id).map((entry) => ({ nodeId: entry.nodeId, data: entry.data }));
+    assert.deepEqual(others(after), others(before));
+    assert.ok(enteredOf(before).every((entry) => !('declares' in (entry.data ?? {}))));
+  });
+});

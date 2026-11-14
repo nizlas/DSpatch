@@ -420,6 +420,24 @@ export function subGoalClaimFrom(text: string): { readonly id: string; readonly 
 }
 
 /**
+ * DSP-209 S27: the nodes whose `node-entered` says they declare `subgoal` (data `declares`,
+ * comma-joined). A value that is not a string is ignored; a journal written before S27 gives
+ * none, so a run read back from it shows no claims, as before.
+ */
+export function subGoalNodesFromJournal(journal: readonly RunJournalEntry[]): ReadonlySet<string> {
+  const nodes = new Set<string>();
+  for (const entry of journal) {
+    const declares = entry.data?.['declares'];
+    if (entry.kind === 'node-entered' && entry.nodeId !== undefined && typeof declares === 'string') {
+      if (declares.split(',').some((name) => name.trim() === 'subgoal')) {
+        nodes.add(entry.nodeId);
+      }
+    }
+  }
+  return nodes;
+}
+
+/**
  * DSP-209 S21 (decision 47): the role ids that make a step the integrator. Read from the
  * drawing's `role` as the run journalled it on `node-entered`, never from a node's name.
  */

@@ -1979,6 +1979,10 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           label: current.label ?? current.id,
           spendsACall: spendsACall(current),
           ...(current.role ? { role: current.role.id, roleSource: current.role.source.path } : {}),
+          // DSP-209 S27: what the drawing asks this step to declare (`subgoal`), comma-joined
+          // because journal data is flat, so a run read back knows which replies' SUBGOAL:
+          // lines to show. Only when the node declares something; other entries are unchanged.
+          ...(current.declares !== undefined && current.declares.length > 0 ? { declares: current.declares.join(', ') } : {}),
           // Which arrival this was, because what the step is given now depends on it
           // (DSP-100). A run record that named only the node could not explain why two
           // visits to one node were handed different material.

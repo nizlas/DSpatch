@@ -37,6 +37,7 @@ import {
   type RunWalkEnding,
 } from '../src/shared/loop-record';
 import { handoffTrail, type TrailReply } from '../src/shared/chat-workspace';
+import { stepCardHeading } from '../src/shared/step-report-cards';
 import type { RunJournalEntry } from '../src/shared/loop-run';
 import {
   loopTurnBadge,
@@ -1353,5 +1354,60 @@ describe('DSP-209 S22: the ending’s commits and fault, read for shape', () => 
     assert.equal(recordedRunCommitsFrom({ ...commits, upstream: { name: 'origin/main' } }), null);
     assert.equal(recordedRunFaultFrom({ kind: 'step-timed-out', detail: 'x' }), null);
     assert.deepEqual(recordedRunFaultFrom({ kind: 'k', detail: 'd', reconcile: 'r' }), { kind: 'k', detail: 'd', reconcile: 'r' });
+  });
+});
+
+// DSP-209 S27: a run read back knows which steps declare `subgoal` from its own journal.
+describe('a restored run shows sub-goal claims only for declaring steps (DSP-209 S27)', () => {
+  const entered = (seq: number, nodeId: string, data: Record<string, string | number | boolean>): RunJournalEntry => ({
+    seq,
+    atIso: '2026-09-17T21:00:05.000Z',
+    sinceStartMs: seq * 1000,
+    kind: 'node-entered',
+    detail: `Entered "${nodeId}".`,
+    nodeId,
+    data: { kind: 'agent', occurrence: 1, label: nodeId, ...data },
+  });
+  const reply = (nodeId: string): string =>
+    serialiseRecordLine({
+      line: 'agent-reply',
+      reply: {
+        atUtc: '2026-09-17T21:00:40.000Z',
+        nodeId,
+        nodeLabel: nodeId,
+        occurrence: 1,
+        text: `Done.\nSUBGOAL: S27 — Restored claims\n\nRESULT: done`,
+        terminalStatus: 'completed',
+      },
+    });
+  const text = (plan: Record<string, string | number | boolean>, work: Record<string, string | number | boolean>): string =>
+    [
+      serialiseRecordLine({ line: 'header', formatVersion: LOOP_RUN_RECORD_VERSION, identity }),
+      serialiseRecordLine({ line: 'journal', entry: journalEntry(1, 'run-started', 'Run.') }),
+      serialiseRecordLine({ line: 'journal', entry: entered(2, 'plan', plan) }),
+      reply('plan'),
+      serialiseRecordLine({ line: 'journal', entry: entered(3, 'work', work) }),
+      reply('work'),
+      serialiseRecordLine({ line: 'ending', ending: ending() }),
+    ].join('\n');
+
+  it('keeps `declares` through a round-trip, and shows the declaring step’s claim and no other', () => {
+    const written = text({}, { declares: 'subgoal' });
+    const parsed = parseRunRecord(written);
+    assert.equal(parsed.journal.find((entry) => entry.nodeId === 'work')?.data?.['declares'], 'subgoal');
+    assert.equal('declares' in (parsed.journal.find((entry) => entry.nodeId === 'plan')?.data ?? {}), false);
+    const turn = loopTurnsFromRecordText(written)[0];
+    const claims = Object.fromEntries((turn?.stepReports ?? []).map((report) => [report.visit.nodeId, report.subGoal]));
+    assert.deepEqual(claims['work'], { id: 'S27', title: 'Restored claims' });
+    const workReport = (turn?.stepReports ?? []).find((report) => report.visit.nodeId === 'work') ?? null;
+    assert.equal(stepCardHeading('work', workReport, { occurrence: 1 }), 'work · sub-goal S27 — Restored claims (the agent’s claim) · visit 1');
+    assert.equal(claims['plan'], null, 'a step that does not declare it never shows one');
+  });
+
+  it('reads an older record, and a malformed `declares`, as showing no claims', () => {
+    for (const work of [{}, { declares: 7 }, { declares: 'verdict' }]) {
+      const turn = loopTurnsFromRecordText(text({}, work))[0];
+      assert.ok((turn?.stepReports ?? []).every((report) => report.subGoal === null), JSON.stringify(work));
+    }
   });
 });

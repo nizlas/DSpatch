@@ -51,7 +51,7 @@ import {
   type RunOutcomeKind,
 } from './loop-record';
 import type { RunJournalEntry, RunResult, RunStatus } from './loop-run';
-import { stepReportsFrom, type StepReport } from './run-presentation';
+import { stepReportsFrom, subGoalNodesFromJournal, type StepReport } from './run-presentation';
 import { buildRunReport, checkSkippedCorroboration, type RunReport } from './loop-run-report';
 import { buildFinalRunCard, type FinalRunCard } from './loop-final-card';
 import type { TerminalEnding } from './loop-graph';
@@ -101,7 +101,8 @@ export interface LoopAgentReply {
   /**
    * DSP-209 S21b: the drawing this run walked declares `subgoal` on the reply's node (for a
    * branch, its fan-out node), so its `SUBGOAL:` line is read for display. Set by the host on
-   * a live reply; a reply read back from a record does not know it, and reads no claim.
+   * a live reply. A run read back learns the same from its journal's `node-entered` `declares`
+   * (S27); a record written before S27 has neither, and reads no claim.
    */
   readonly declaresSubGoal?: true;
 }
@@ -119,7 +120,12 @@ export function stepReportsForTurn(
   return stepReportsFrom({
     runId,
     journal,
-    subGoalNodes: new Set(replies.filter((reply) => reply.declaresSubGoal === true).map((reply) => reply.nodeId)),
+    // DSP-209 S27: from the journal's `node-entered` (a run read back, or one that has ended),
+    // and from the live flag the host puts on a reply, whichever reaches the window first.
+    subGoalNodes: new Set([
+      ...subGoalNodesFromJournal(journal),
+      ...replies.filter((reply) => reply.declaresSubGoal === true).map((reply) => reply.nodeId),
+    ]),
     replies: replies.map((reply) => ({
       nodeId: reply.nodeId,
       ...(reply.occurrence === undefined ? {} : { occurrence: reply.occurrence }),
