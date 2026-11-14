@@ -31,6 +31,7 @@ import {
   explainRunView,
   nodeRunStateFor,
   nodeRunStates,
+  pausedNextStep,
   runViewFor,
   runViewState,
   viewIsLocked,
@@ -610,5 +611,39 @@ describe('the title line says held when the control says held', () => {
     const view = runViewFor(announcement());
     assert.equal(runViewState(view), 'running now');
     assert.ok(describeRunView(view).endsWith(runViewState(view)));
+  });
+});
+
+describe('a paused run shows where it stands (DSP-209 S25)', () => {
+  const held = (nodeId: string, hold: string): RunJournalEntry => ({ ...entry('run-held', nodeId), data: { hold } });
+
+  it('keeps the finished step done, marks the held next step waiting, and names it', () => {
+    const run = announcement();
+    const before = feed(
+      runViewFor(run),
+      journal(run, entry('run-started')),
+      journal(run, entry('node-entered', 'implementer')),
+      journal(run, entry('node-produced', 'implementer')),
+      journal(run, entry('edge-taken', undefined, 'e01')),
+    );
+    assert.ok(before !== null);
+    // Paused before the run has chosen its next step: said, not guessed.
+    assert.equal(pausedNextStep(before), 'next step not decided yet');
+
+    const paused = feed(before, journal(run, held('verifier', 'pause')));
+    assert.ok(paused !== null);
+    const states = nodeRunStates(paused);
+    assert.equal(nodeRunStateFor(states, 'implementer'), 'finished');
+    assert.equal(nodeRunStateFor(states, 'verifier'), 'waiting');
+    assert.equal(pausedNextStep(paused, () => 'Verifier'), 'next: "Verifier" waits for you');
+
+    // Continued: entered and running. Cancelled while held instead: back to not reached.
+    const continued = feed(paused, journal(run, entry('run-released', 'verifier')), journal(run, entry('node-entered', 'verifier')));
+    assert.equal(nodeRunStateFor(nodeRunStates(continued), 'verifier'), 'active');
+    const cancelled = feed(paused, journal(run, entry('run-released', 'verifier')), ended(run, 'cancelled'));
+    assert.equal(nodeRunStateFor(nodeRunStates(cancelled), 'verifier'), 'not-reached');
+    // A resource hold is the machine's, not the person's, and keeps its earlier mark.
+    const resources = feed(before, journal(run, held('verifier', 'resources')));
+    assert.equal(nodeRunStateFor(nodeRunStates(resources), 'verifier'), 'not-reached');
   });
 });

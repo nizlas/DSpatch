@@ -531,6 +531,31 @@ export interface LoopControlOutcome {
   readonly report: LoopControlReport;
 }
 
+/**
+ * DSP-209 S25: a note from pressing a control button, with the moment it was true for.
+ *
+ * `requestPause` says "Pause requested … still running" while a step is in flight, and that
+ * sentence was kept beside *Paused* after the step ended. The note now remembers the run and
+ * the phase it was said in, and {@link currentControlNote} drops it once either has moved on.
+ */
+export interface ControlNote {
+  readonly text: string;
+  readonly runId: string | null;
+  readonly phase: ControlPhase;
+}
+
+export function controlNoteFrom(outcome: LoopControlOutcome): ControlNote {
+  return { text: outcome.note, runId: outcome.report.runId, phase: controlPhase(outcome.report.state) };
+}
+
+/** The note's text while the run and the phase it was said in still hold, else `null`. */
+export function currentControlNote(note: ControlNote | null, report: LoopControlReport): string | null {
+  if (note === null || note.runId !== report.runId || note.phase !== controlPhase(report.state)) {
+    return null;
+  }
+  return note.text;
+}
+
 export interface ControlActionOffer {
   readonly id: 'pause' | 'continue';
   readonly label: string;

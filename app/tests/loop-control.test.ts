@@ -27,6 +27,8 @@ import {
   applyControlAction,
   controlActionsFor,
   controlForNewRun,
+  controlNoteFrom,
+  currentControlNote,
   controlPhase,
   decideNextStep,
   describeControl,
@@ -476,5 +478,27 @@ describe('the words and the buttons', () => {
     assert.equal(DEFAULT_LOOP_MODE, 'autonomous');
     assert.equal(initialControlState().mode, 'autonomous');
     assert.equal(controlPhase(initialControlState()), 'ready');
+  });
+});
+
+describe('the note from pressing Pause follows the phase (DSP-209 S25)', () => {
+  it('shows "Pause requested" while the step runs, and drops it once the run is paused', () => {
+    const requested = drive(initialControlState(), [
+      { kind: 'step-started', step: agentStep },
+      { kind: 'request-pause' },
+    ]);
+    const note = controlNoteFrom({
+      accepted: true,
+      note: 'Pause requested. "Implementer" is still running.',
+      report: { runId: 'run-1', state: requested },
+    });
+    // Still running with the pause asked for: the request stands.
+    assert.equal(currentControlNote(note, { runId: 'run-1', state: requested }), note.text);
+    // The step ended: paused, and the old sentence is no longer shown as current.
+    const paused = applyControlAction(requested, { kind: 'step-ended', step: agentStep });
+    assert.equal(controlPhase(paused), 'paused');
+    assert.equal(currentControlNote(note, { runId: 'run-1', state: paused }), null);
+    // Another run's report never shows this run's note.
+    assert.equal(currentControlNote(note, { runId: 'run-2', state: requested }), null);
   });
 });

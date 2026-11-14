@@ -114,6 +114,7 @@ import {
   finishedRunMarksFrom,
   markedNodes,
   nodeIsWorking,
+  pausedNextStep,
   runViewFor,
   runViewState,
   viewIsLocked,
@@ -1089,6 +1090,13 @@ export function LoopEditor(): React.JSX.Element {
     }
   }, [graph, currentText, index.errors, runBusy, liveBinding, showRun]);
 
+  /**
+   * DSP-209 S25: a chat-loop run this window watches, still going, which Cancel run can end.
+   * Paused included: the chat's Stop ends a paused run, so this control does too, the same way.
+   */
+  const watchedChatRun =
+    watch !== null && !watch.ended && !viewIsReady(watch) && watch.run.binding === 'chat-loop';
+
   const cancelRun = useCallback(async () => {
     abortRef.current?.abort();
     if (runKind === 'live') {
@@ -1096,8 +1104,16 @@ export function LoopEditor(): React.JSX.Element {
       setNote(outcome.note);
     } else if (runBusy) {
       setNote('Cancel requested. Completed steps are not replayed; the graph stays as it is.');
+    } else if (watchedChatRun) {
+      // The chat's own cancel, the one its Stop uses: no second path to the run.
+      try {
+        const outcome = await window.dspatch.cancelChatLoopRun();
+        setNote(outcome.note);
+      } catch (error) {
+        setNote(`The cancel did not reach the run, which is still going: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
-  }, [runBusy, runKind]);
+  }, [runBusy, runKind, watchedChatRun]);
 
   /**
    * The roles a watched run announced, over this window's own.
@@ -2302,7 +2318,15 @@ export function LoopEditor(): React.JSX.Element {
                     loopControl.runId === watch.run.runId
                       ? controlPhase(loopControl.state)
                       : null,
-                  )}`
+                  )}${
+                    // DSP-209 S25: where the paused run stands, in words, not only in marks.
+                    !watch.ended && loopControl.runId === watch.run.runId && controlPhase(loopControl.state) === 'paused'
+                      ? ` · ${pausedNextStep(watch, (id) => {
+                          const node = graph === null ? null : nodeById(graph, id);
+                          return node?.label ?? id;
+                        })}`
+                      : ''
+                  }`
             }`}
           </p>
         </div>
@@ -2467,7 +2491,7 @@ export function LoopEditor(): React.JSX.Element {
           >
             Run
           </button>
-          <button type="button" disabled={!runBusy} onClick={() => void cancelRun()}>
+          <button type="button" disabled={!runBusy && !watchedChatRun} onClick={() => void cancelRun()}>
             Cancel run
           </button>
           <label className="editor-target">

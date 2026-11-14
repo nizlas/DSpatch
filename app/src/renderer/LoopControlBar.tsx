@@ -17,7 +17,10 @@ import type { JSX } from 'react';
 
 import {
   controlActionsFor,
+  controlNoteFrom,
+  currentControlNote,
   describeControl,
+  type ControlNote,
   initialControlState,
   LOOP_MODE_CHOICES,
   type LoopControlReport,
@@ -149,7 +152,9 @@ export function LoopControlBar({
    */
   readonly compact?: boolean;
 }): JSX.Element | null {
-  const [note, setNote] = useState<string | null>(null);
+  // DSP-209 S25: kept with the phase it was said in, and shown only while that phase holds.
+  const [pressed, setPressed] = useState<ControlNote | null>(null);
+  const note = currentControlNote(pressed, report);
   const runActive = report.runId !== null;
   const described = describeControl(report.state, {
     runActive,
@@ -163,7 +168,7 @@ export function LoopControlBar({
       which === 'pause'
         ? await window.dspatch.requestLoopPause()
         : await window.dspatch.continueLoop();
-    setNote(outcome.note);
+    setPressed(controlNoteFrom(outcome));
   }, []);
 
   // After the hooks, deliberately: a component that returns early above them would
@@ -213,7 +218,7 @@ export function LoopControlBar({
             onChange={(event) => {
               const mode = event.target.value as LoopMode;
               void window.dspatch.setLoopMode(mode).then((outcome) => {
-                setNote(outcome.note);
+                setPressed(controlNoteFrom(outcome));
               });
             }}
           >

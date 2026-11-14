@@ -417,6 +417,20 @@ export function nodeRunStates(
     }
     return states;
   }
+  // DSP-209 S25: a step held by a pause or by interactive mode, and what it read before it.
+  const heldFrom = new Map<string, NodeRunState | null>();
+  const unhold = (nodeId: string): void => {
+    if (!heldFrom.has(nodeId)) {
+      return;
+    }
+    const before = heldFrom.get(nodeId) ?? null;
+    heldFrom.delete(nodeId);
+    if (before === null) {
+      states.delete(nodeId);
+    } else {
+      states.set(nodeId, before);
+    }
+  };
   for (const entry of view.entries) {
     const nodeId = entry.nodeId;
     if (nodeId === undefined) {
@@ -424,7 +438,23 @@ export function nodeRunStates(
     }
     switch (entry.kind) {
       case 'node-entered':
+        heldFrom.delete(nodeId);
         states.set(nodeId, 'active');
+        break;
+      // DSP-209 S25: the run's next step, not started, waiting for the person to continue
+      // or let it through. Not `active`: it has not been entered. A resource hold is the
+      // machine's, not the person's, so it keeps its mark as before.
+      case 'run-held': {
+        const hold = entry.data?.['hold'];
+        if ((hold === 'pause' || hold === 'interactive-mode') && !heldFrom.has(nodeId)) {
+          heldFrom.set(nodeId, states.get(nodeId) ?? null);
+          states.set(nodeId, 'waiting');
+        }
+        break;
+      }
+      // Released: back to what it read, and `node-entered` follows if it started.
+      case 'run-released':
+        unhold(nodeId);
         break;
       case 'node-produced':
         states.set(nodeId, 'finished');
@@ -462,6 +492,10 @@ export function nodeRunStates(
   }
   if (!view.ended) {
     return states;
+  }
+  // A hold the record never released (the process stopped) is not waiting any more.
+  for (const nodeId of [...heldFrom.keys()]) {
+    unhold(nodeId);
   }
   // Nothing is running once the run has ended. A terminal is entered and never
   // produces, so on a completed run it reads as finished; anything else still
@@ -873,6 +907,22 @@ export function runViewState(view: RunView, control: ControlPhase | null = null)
     default:
       return 'running now';
   }
+}
+
+/**
+ * DSP-209 S25: what comes next in a paused run, for the line beside *paused*.
+ *
+ * The next step is the one {@link nodeRunStates} marks `waiting` — held by the pause, or a
+ * person step waiting for its answer. With none, the run has not yet chosen it, and the line
+ * says so rather than guessing from the drawing. `labelOf` names a node from the drawing on
+ * screen; without it, the id is used.
+ */
+export function pausedNextStep(view: RunView, labelOf: (nodeId: string) => string = (id) => id): string {
+  const waiting = [...nodeRunStates(view)].filter(([, state]) => state === 'waiting').map(([nodeId]) => nodeId);
+  if (waiting.length === 0) {
+    return 'next step not decided yet';
+  }
+  return `next: ${waiting.map((nodeId) => `"${labelOf(nodeId)}"`).join(', ')} waits for you`;
 }
 
 /**
