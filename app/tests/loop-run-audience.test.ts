@@ -385,8 +385,9 @@ describe('a closed window is taken out of the audience without being asked anyth
 
     assert.equal(
       handlers.length,
-      2,
-      'the chat window and the loop editor window both have one, and both are the defect',
+      3,
+      'the chat window, the loop editor window and (DSP-209 S20) the branch output window each have one, ' +
+        'and each is where the defect would return',
     );
 
     for (const body of handlers) {

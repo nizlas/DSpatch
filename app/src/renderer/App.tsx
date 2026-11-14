@@ -3609,7 +3609,7 @@ function Workbench({
                       Remove
                     </button>{' '}
                     {/* DSP-209 S26 (R7): what Remove does, as text and not only on hover. */}
-                    <span className="muted">Removed, these runs are not offered again.</span>
+                    <span className="muted">Once removed, these runs are not offered again.</span>
                     <details>
                       <summary>{loopRecapSentLine(runState.pendingLoopRecap.text.length)}</summary>
                       <pre className="turn__answer">{runState.pendingLoopRecap.text}</pre>

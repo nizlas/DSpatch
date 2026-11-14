@@ -14,7 +14,7 @@ The mission's working memory ([BRIEF.md](BRIEF.md), section 6). The mission coor
 - **Working copy at the start of the first run:** HEAD `59bd24e` (DSP-208's last preparation commit). No mission commits. Untracked and **not mission work, leave alone and never commit with a sub-goal**: `_all.txt`, `_groups.csv`, `_live.txt`, `_loop.txt`, `_pack.txt`, `_status.txt`, `_tree.csv`, `_vision.diff` (dated 30 September 2026) and `docs/research/agent-framework-comparison/` (dated 1–15 October 2026). Sub-goal commits stage named paths only.
 - **Last recorded commit of mission work:** `610fa1a` (S1), `5c3c1ae` (S2), `3fb6574` (S3), `b07ce40` (S4), `7797e94` (S5a), `7724c35` (S5b), `3fc547e` (S6), `0cc65a5` (S7), `3ec3639` (S9 record), `d516ceb` (S8), `af09a3f` (S10a), `812a42c` (S10b), `a8e49a9` (S10c), `6de7fd6` (S11), `0b50fd3` (S12), `bb7dba1` (S13), then the S14 commit made on coordinator visit 20 (`9ba0d86`), and S15 `9ec6902` (run `chat-loop-2026-11-14T08-41-01-671Z`), followed by this file's own commit at that run's end.
 - **Reconciled on run `chat-loop-2026-11-14T08-41-01-671Z`, visit 1:** HEAD `3af3975` on `main`. After `9ba0d86` (S14): `e1d8ce2` (STATE, end of the night run), `b5e4185` (between-run fixes, run log line 2; it also fixed both wording nits — "a agent step" and the BACKLOG "(then)" line — so they are no longer open), `2e22eb2` (the mission loop's parallel path, run log line 3), `3af3975` (BRIEF and STATE: engine at `2e22eb2`). All are recorded in the run log; nothing unrecorded. Working copy: only the untracked non-mission files named above; no tracked change. No `dspatch/*` branches, empty stash, worktrees only main and `DSpatch-engine` (detached at `2e22eb2`, matching the recorded engine commit).
-- **Sub-goal in progress:** S28 (`implement`, decision 56), from call 59 of run `chat-loop-2026-11-14T09-54-18-366Z`. S26 and S27 are reviewed and committed. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
+- **Sub-goal in progress:** none. The fifth whole assessment was asked for on call 62 of run `chat-loop-2026-11-14T09-54-18-366Z`. S16 through S28 are reviewed and committed, including S18a/b, S19b, S21b, S25 and S25b. S16, S17, S18a, S18b, S19, S19b, S20, S21, S21b, S22, S23a, S23b, S25 and S25b are reviewed and committed.
 - **For Niclas's next engine transition:** host code changed in S19, S19b, S20, S21, S21b, S22, S23a and S23b. Rebuild `DSpatch-engine` at the commit this run ends on, then use **Restart host**. No host method was added, so the host contract is unchanged. Never do this during a run.
 - **Engine transition of 14 November 2026:** the host contract changed (S5a's `answerLoopHandoff`), so the old client was closed and the old host ended the way End host does (after checking that no loop run was active), and the new build was started through `start-engine.ps1`.
 - **Waiting on Niclas:** nothing blocks work. Q2 was answered on 14 November 2026: it is in scope. Q1, Q3, Q4, Q5 and Q6 have recommendations and block nothing; Q4's condition is met. Decision 30 (manual continuation) is his to correct if he meant otherwise. His trials are listed per sub-goal.
@@ -162,7 +162,7 @@ Order: S16 ‖ S17 → S18a → S19, S22 → S20 → S21 → S18b → S23a → S
 | S21b | S21's open S-a: read a `SUBGOAL:` line only from nodes that declare `subgoal`, as the S21 brief said. The reader is `subGoalClaimFrom` in `shared/run-presentation.ts` (l.412, used at l.554 and l.571), not `step-report-cards.ts` as first written here | R4 | S21 | **reviewed** (see its record) | 1 | `(DSP-209 S21b)` after `976df7d` |
 | S26 | R7 sweep. Every hover text in the loop editor, the canvas, the run view and the chat's loop surfaces becomes a short label, with the full text in a persistent, readable detail view. Known cases are in R7 under *Requirements of the vision*. From the whole assessment (call 52) | R7 | — | **reviewed** (see its record) | 1 | `(DSP-209 S26)` after `7ba31bf` |
 | S27 | A run read back from its record shows sub-goal claims again. This needs an additive `declares` data field on `node-entered`, read by `stepReportsForTurn` for restored turns. From the whole assessment | R4 | S21b | **reviewed** (see its record) | 1 | `(DSP-209 S27)` after `3c20675` |
-| S28 | One integrated run of the `loop` test group and the type check on the final commit, fixing any failure. This follows decision 31's precedent and the concrete risk the assessment named: single-file checks missed failing tests twice. From the whole assessment | all | S26, S27 (both reviewed) | **in progress**: sent to `implement` on call 59 (decision 56) | 1 | — |
+| S28 | One integrated run of the `loop` test group and the type check on the final commit, fixing any failure. This follows decision 31's precedent and the concrete risk the assessment named: single-file checks missed failing tests twice. From the whole assessment | all | S26, S27 (both reviewed) | **reviewed** (see its record) | 1 | `(DSP-209 S28)` after `ce156bb` |
 
 The acceptance criteria and checks for each sub-goal are the planner's, from call 2. Each brief repeats the ones it needs. Section 3 of that result defines the R5 counters: sub-goal, agent step (node visit), branch invocation, rework round, calls, provider turns, tool calls, elapsed time and usage. S16 implements those definitions.
 
@@ -391,6 +391,25 @@ S10 split into S10a (format, slice validation, worktree manager — pure and uni
 - **Untested:** S16 has never run on a real runtime journal (the field names were matched by reading); overlapping visits; a fan-out that wrote no branch lines (`fanOutBound`).
 - **Niclas tries:** nothing. S16 has no UI until S20–S22.
 - **Steps skipped:** research (the code settled it); independent verification (not asked for).
+
+### S28 — One integrated `loop` group run — reviewed (agent review, not Niclas's approval)
+
+- **Attempt 1:** run `chat-loop-2026-11-14T09-54-18-366Z`. Decided on coordinator visit 16 (call 59, decision 56); implemented (call 60, `done`); review `accept` (call 61, round 1); recorded and committed on coordinator visit 17 (call 62). `git status` showed exactly the three files the implementer named.
+- **Fault in the coordinator's own record.** Visit 16's reply to the engine ended "No response requested." It had no implementer brief and no `RESULT:` line, although STATE.md had already been written and committed with S28's row, decision 56 and the next action. The implementer worked from STATE.md and did what decision 56 set. The coordinator did not establish how the engine routed that reply to `implement`; the run record holds it. Nothing was lost, but that reply was not a proper brief.
+- **The group runs** (`node scripts/run-tests.mjs loop`, from `app/`):
+
+| Run | Files | Tests | Passed | Failed | Cancelled | Skipped | Exit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 (base `ce156bb`) | 52 | 928 | 927 | 1 | 0 | 0 | 1 |
+| 2 (after the fix) | 52 | 928 | 928 | 0 | 0 | 0 | 0 |
+
+  `npm run typecheck` exited 0 before both runs.
+- **The failure: test, not product.** `tests/loop-run-audience.test.ts` fixed the number of `closed` handlers in `main.ts` at two. S20 deliberately added a third, for the branch-output window. That handler keeps DSP-62's rule: it reads no property of the destroyed window, which the reviewer confirmed by reading in S20. The expected count is now 3, and the check on each handler still runs. **A finding against S20:** its targeted checks did not include this file, the third time single-file checks have missed a failing test.
+- **S26's two points, fixed:**
+  - the **Remove** note in `App.tsx` reads "Once removed, these runs are not offered again.";
+  - in `loop-chat.ts`, the `nodeHelpLabel` block now follows `nodeHelpText`, so each doc comment sits over its own code.
+- **Review verdict: accept.** No product code changed. Prompts, formats, journal kinds and the host contract are untouched. Only the `loop` group ran; other groups and the whole suite did not.
+- **Niclas tries:** nothing on its own.
 
 ### S27 — Restored runs show sub-goal claims — reviewed (agent review, not Niclas's approval)
 
@@ -1221,6 +1240,14 @@ All **open** at the end of planning. Sub-goals carrying each in brackets.
 ## Next action
 
 What the coordinator will do next, rewritten on every visit, so that a run that ends between two steps leaves it here.
+
+**14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 17 (call 62).** S28 is reviewed and committed with this file. All three gaps from the fourth assessment are closed: S26, S27 and S28. The whole goes to assessment again (`assess-whole`, the fifth).
+
+**Next:** record the verdict.
+- **If it names concrete gaps,** brief them.
+- **If only Niclas's items remain,** end `needs-decision` with this run's run-log line and DSP-209's dated note. Those items are his trials, Q1, Q3, Q4, Q5 and Q6, the engine transition with **Restart host**, A1 and the temporary branches.
+
+If this run ends first, the next run reconciles from the S28 commit.
 
 **14 November 2026, run `chat-loop-2026-11-14T09-54-18-366Z`, coordinator visit 16 (call 59).** S27 is reviewed and committed with this file. S28 went to `implement` (decision 56). **Next:** record S28's group-run result and its review, commit it, then send the whole to assessment again (`assess-whole`). If this run ends first, the next run reconciles S28 from the uncommitted working copy and reruns only what is unknown.
 
