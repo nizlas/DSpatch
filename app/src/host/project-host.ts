@@ -487,6 +487,7 @@ function createChatAdapter(provider: StoredSessionProvider): ChatAdapter {
 function loopRunRequest(input: {
   readonly rootCount: number;
   readonly entryNode?: Pick<LoopNode, 'id' | 'label' | 'model'>;
+  readonly graph?: LoopRunAgentRequest['graph'];
   readonly cursorModel: string;
 }): LoopRunAgentRequest {
   return {
@@ -513,12 +514,15 @@ function loopRunRequest(input: {
 /** The editor's Run: one generated folder, Cursor's live model, no node model read. */
 function editorLoopRunRequest(
   entryNode: Pick<LoopNode, 'id' | 'label' | 'model'> | undefined,
+  // DSP-209 S19: the drawing the run walks, so every step's model is checked first.
+  graph?: LoopRunAgentRequest['graph'],
 ): LoopRunAgentRequest {
   // The entry step goes in so the Claude model rule applies here as in *Use loop*
   // (DSP-138 review B2). A Cursor run is unchanged: it asks for `defaultLiveModel()`.
   return loopRunRequest({
     rootCount: 1,
     ...(entryNode === undefined ? {} : { entryNode }),
+    ...(graph === undefined ? {} : { graph }),
     cursorModel: defaultLiveModel(),
   });
 }
@@ -557,10 +561,13 @@ function chatLoopRunRequest(
   rootCount: number,
   entryNode: LoopNode | undefined,
   sessionModel: string,
+  // DSP-209 S19: the drawing the run walks, so every step's model is checked first.
+  graph?: LoopRunAgentRequest['graph'],
 ): LoopRunAgentRequest {
   return loopRunRequest({
     rootCount,
     ...(entryNode === undefined ? {} : { entryNode }),
+    ...(graph === undefined ? {} : { graph }),
     cursorModel: modelForChatNode(entryNode, sessionModel),
   });
 }
@@ -2617,10 +2624,9 @@ function registerLoopMethods(): void {
       // DSP-138: which agent, decided before the control is claimed. A refusal starts
       // nothing, claims nothing and constructs nothing.
       // DSP-209 S19: with the graph, every step's model is checked before the run starts.
-      const agent = prepareLoopRun({
-        ...editorLoopRunRequest(loaded.graph.nodes.find((node) => node.id === loaded.graph.entry)),
-        graph: loaded.graph,
-      });
+      const agent = prepareLoopRun(
+        editorLoopRunRequest(loaded.graph.nodes.find((node) => node.id === loaded.graph.entry), loaded.graph),
+      );
       if (!agent.ok) {
         return { kind: 'refused', reason: agent.reason };
       }
@@ -2982,10 +2988,9 @@ function registerLoopMethods(): void {
       // control is claimed. A refusal opens no record, claims nothing and constructs
       // nothing. The session's provider first, as the shown line resolves it.
       // DSP-209 S19: with the graph, every step's model is checked before the run starts.
-      const agent = prepareLoopRun({
-        ...chatLoopRunRequest(workingRoots.length, entryNode, session.modelRequested),
-        graph: loaded.graph,
-      });
+      const agent = prepareLoopRun(
+        chatLoopRunRequest(workingRoots.length, entryNode, session.modelRequested, loaded.graph),
+      );
       if (!agent.ok) {
         return { kind: 'refused', reason: agent.reason };
       }
