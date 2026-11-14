@@ -74,6 +74,12 @@ export interface LiveCliOptions {
   readonly repoRoot: string;
   readonly outDir: string | null;
   readonly modelRequested: string;
+  /**
+   * DSP-209 S19: what a step naming no model of its own runs with and is recorded as: the
+   * person's choice for the provider (`prepareLoopRun`'s `personModel`). Left out, it is
+   * `modelRequested`, as for the CLI, where the two are the same.
+   */
+  readonly personModel?: string;
   readonly workspacePath?: string;
   /**
    * Every folder this run works with, the working directory first (DSP-72).
@@ -397,7 +403,7 @@ async function driveLive(
           }),
       fanOutAdapterCap: FAN_OUT_ADAPTER_CAPS[options.provider],
       // DSP-209 S19: what a step naming no model runs with, for its `node-entered` record.
-      runModel: { provider: options.provider, model: options.modelRequested },
+      runModel: { provider: options.provider, model: options.personModel ?? options.modelRequested },
       ...(options.takeInstructions === undefined ? {} : { takeInstructions: options.takeInstructions }),
       executor: createLiveExecutor({
         workspacePath,
@@ -405,6 +411,7 @@ async function driveLive(
         adapter,
         provider: options.provider,
         modelRequested: options.modelRequested,
+        ...(options.personModel === undefined ? {} : { personModel: options.personModel }),
         modelReported: modelReportedBy,
         abortSignal: options.abortSignal,
         inspection,
