@@ -3,7 +3,7 @@ id: DSP-211
 title: >-
   Send the host package to Windows over SFTP, and let Cancel stop a Remote
   Session connect
-status: In Progress
+status: Review
 assignee: []
 created_date: '2026-11-15 22:10'
 updated_date: '2026-11-15 22:10'
@@ -34,8 +34,8 @@ Change: send the package to Windows over SFTP on the same SSH connection, config
 - [x] #1 The Windows package transfer uses SFTP; no step reads the package from PowerShell's standard input; checksum check, `.part` handling and atomic install unchanged
 - [x] #2 SSH config, keys, askpass and the POSIX client's shared connection apply to the transfer as to the other steps
 - [x] #3 Cancel stops a connect in progress and ends its own ssh/sftp processes; a transfer failure says so plainly
-- [ ] #4 Targeted tests pass; the real transfer of the Windows host package from this Linux client to the Windows machine is verified
-- [ ] #5 A Linux .deb with matching host packages is prepared without publishing; INSTALL.md says what was verified and what remains
+- [x] #4 Targeted tests pass; the real transfer of the Windows host package from this Linux client to the Windows machine is verified
+- [x] #5 A Linux .deb with matching host packages is prepared without publishing; INSTALL.md says what was verified and what remains
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -53,6 +53,8 @@ Verified:
 - The real transfer, with the built product code (`SshConnection`: shared master, identify, `receiveOnWindows`, `sendToWindows`) from this Linux client to nicla@192.168.50.174: the 1.0.0-7c2e2376d8a7 win32 host package, 112 514 185 bytes, sent in 4.5 s and again in 4.3 s, under test names; on Windows the file had that size and SHA-256 d4a8ccd39042ecdca576d1bdb386f9c5981398113a8ed3797b2083dc694c5c41, and was then removed. The second run was made while the stuck attempt's file was still held. No install and no start were done; `versions` stayed empty.
 
 Clean-up of the investigation's own processes: twelve Windows PowerShell processes started by the read-only stdin tests (identified by their exact command line and a start time between 21:33 and 21:40) were stopped; no other process was touched.
+
+Prepared, not published (local build of 08de9ac, same contract e79215b20268b2ba as the Windows client at 7c2e237): `~/dspatch-08de9ac/` on the Linux client with `dspatch_1.0.0_amd64.deb` (sha256 3b8de477b09edf955a9f9005f5c376edbaaf34bf673df25b7fe4ef90c3b05738; its bundled manifest equals the host packages' and it carries both), `host/dspatch-host-1.0.0-08de9ace6b68-linux-x64.tar.gz` (a92daf72…) and `-win32-x64.tar.gz` (5f6bfc2b…), `host/host-manifest.json` and `SHA256SUMS`; build identity 08de9ac, no dirty files.
 
 Not shown: the install, start and tunnel of an ordinary Connect to Windows with the corrected client; that the host outlives the SSH connection there; Cancel in a real window; a Windows client sending to Windows.
 <!-- SECTION:NOTES:END -->
