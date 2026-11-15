@@ -69,7 +69,8 @@ import type {
   TestRunRequest,
   BranchOutputWindowOutcome,
 } from '../shared/bridge';
-import { stepOutputFromQuery, stepOutputQuery } from '../shared/step-output';
+import { RunViewCache, stepOutputFromQuery, stepOutputQuery } from '../shared/step-output';
+import { LOOP_RUN_EVENT_CHANNEL } from './loop-run-audience';
 import { drawingSaveRequest } from '../shared/graph-proposal';
 import {
   HOST_CONFIG_ENV,
@@ -81,7 +82,7 @@ import {
 } from '../shared/host-protocol';
 import type { LoopRunAgentInfo } from '../shared/loop-run-agent-text';
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
-import type { LiveRunAnnouncement } from '../shared/loop-run-view';
+import type { LiveRunAnnouncement, LoopRunEvent, RunView } from '../shared/loop-run-view';
 import type { RoleReference } from '../shared/loop-graph';
 import { REVIEW_HOST_METHODS, type ReviewHostApi, type ReviewHostError } from '../shared/review-host-contract';
 import {
@@ -163,6 +164,8 @@ const START_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:start-editor-loop-run';
 const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
 const CURRENT_LOOP_RUN_VIEW: BridgeChannel = 'dspatch:current-loop-run-view';
+/** A run as a step output window reads it: kept here after the host has moved on (Niclas, 15 November 2026). */
+const STEP_OUTPUT_RUN_VIEW: BridgeChannel = 'dspatch:step-output-run-view';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
@@ -1158,6 +1161,10 @@ function deliverHostEvent(to: HostEventTarget, channel: string, payload: unknown
       sendToEveryWindow(channel as BridgeChannel, payload);
       return;
     case 'run-audience':
+      // Kept folded here too, so a step output window opened after its step still has it all.
+      if (channel === LOOP_RUN_EVENT_CHANNEL) {
+        stepOutputRuns.receive(payload as LoopRunEvent);
+      }
       for (const contents of runAudience) {
         if (contents.isDestroyed()) {
           runAudience.delete(contents);
@@ -2823,6 +2830,9 @@ function createWindow(): BrowserWindow {
 
   return window;
 }
+
+/** The last few runs, folded from the run events relayed above, for step output windows. */
+const stepOutputRuns = new RunViewCache();
 
 /** DSP-209 S20: the open step- and branch-output windows, one per step visit or branch. */
 const branchOutputWindows = new Map<string, BrowserWindow>();
@@ -5157,6 +5167,22 @@ function registerLoopGraphIpc(): void {
    */
   ipcMain.handle(CURRENT_LOOP_RUN, (): Promise<LiveRunAnnouncement | null> => hostCall('loop.currentRun', NO_SENDER));
   ipcMain.handle(CURRENT_LOOP_RUN_VIEW, () => hostCall('loop.currentRunView', NO_SENDER));
+  // A read, answered from the runs kept here, else from the run the host is showing now.
+  ipcMain.handle(STEP_OUTPUT_RUN_VIEW, async (_event, runId: unknown): Promise<RunView | null> => {
+    if (typeof runId !== 'string' || runId === '') {
+      return null;
+    }
+    const kept = stepOutputRuns.get(runId);
+    if (kept !== null) {
+      return kept;
+    }
+    const now = (await hostCall('loop.currentRunView', NO_SENDER)) as RunView | null;
+    if (now === null || now.run.runId !== runId) {
+      return null;
+    }
+    stepOutputRuns.adopt(now);
+    return stepOutputRuns.get(runId) ?? now;
+  });
   ipcMain.handle(READ_LOOP_RUN_AGENT, (_event, query: unknown): Promise<LoopRunAgentInfo> =>
     hostCall('loop.readRunAgent', NO_SENDER, query),
   );

@@ -1523,3 +1523,20 @@
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+/*
+ * Niclas, 15 November 2026: while the graph shows a run, a click on an agent node opens its
+ * output; this control on the node opens its settings instead.
+ */
+.node-settings {
+  font-size: 9px;
+  fill: #8b96a5;
+  text-anchor: end;
+  cursor: pointer;
+}
+
+.node-settings:hover,
+.node-settings:focus {
+  fill: #e6e9ee;
+  outline: none;
+}

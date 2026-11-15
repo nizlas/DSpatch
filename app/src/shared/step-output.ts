@@ -18,6 +18,7 @@
 import type { StepActivityState } from './loop-activity';
 import type { ParsedRunRecord, RecordedAgentReply, RecordedCommand } from './loop-record';
 import type { RunJournalEntry } from './loop-run';
+import { addressOf, applyRunEvent, runViewFor, type LoopRunEvent, type RunView } from './loop-run-view';
 import { visitsFromJournal, type LiveOutputAddress, type VisitIdentity } from './run-presentation';
 
 /** A step visit, or one branch of it, and the conversation whose records keep its run. */
@@ -68,25 +69,6 @@ export function describeStepOutput(address: StepOutputAddress, nodeLabel: string
   const which = visit === null ? `visit ${String(address.occurrence)}` : visitWords(visit);
   const step = address.sliceId === undefined ? `“${nodeLabel}”` : `Branch “${address.sliceId}” of “${nodeLabel}”`;
   return `${step}, ${which} — run ${address.runId}`;
-}
-
-/**
- * A step's or branch's live output as lines: its tool calls, then its reply as written so
- * far. Says plainly when nothing was observed, rather than showing an empty box.
- */
-export function liveOutputLines(state: StepActivityState | null, what: 'step' | 'branch'): readonly string[] {
-  if (state === null) {
-    return [`No live output has been observed for this ${what}.`];
-  }
-  const lines = state.tools.map((tool) => `${tool.status === null ? '…' : tool.status === 'ok' ? '✓' : '✗'} ${tool.summary}`);
-  if (state.awaitingApproval !== null) {
-    lines.push(`Waiting: ${state.awaitingApproval}`);
-  }
-  lines.push(state.text === '' ? (state.finished ? `The ${what} wrote no reply text here.` : 'No reply text yet.') : state.text);
-  if (state.finished) {
-    lines.push(`— the ${what} has ended —`);
-  }
-  return lines;
 }
 
 /** The live activity for one step visit (no slice) or one branch, or `null` when none was observed. */
@@ -191,4 +173,91 @@ export function stepOutputFromQuery(search: string): StepOutputAddress | null {
     ...(sliceId === null || sliceId === '' ? {} : { sliceId }),
     ...(conversationId === null || conversationId === '' ? {} : { conversationId }),
   };
+}
+
+/**
+ * The runs the main process has seen, each folded from the events it relays to the windows
+ * (Niclas, 15 November 2026). The host keeps only the run on screen now, and replaces it with
+ * the Ready offer when a run ends; this keeps the last few, so a step output window opened or
+ * reopened after its step, or after the run, still shows everything that step streamed, once.
+ * A run is kept from its `started`; one already running when the main process began is adopted
+ * from the host's view when a window first asks for it.
+ */
+export class RunViewCache {
+  private readonly views = new Map<string, RunView>();
+  private readonly limit: number;
+
+  constructor(limit = 3) {
+    this.limit = limit;
+  }
+
+  receive(event: LoopRunEvent): void {
+    if (event.kind === 'stood-down') {
+      return;
+    }
+    if (event.kind === 'started') {
+      if ((event.run.phase ?? 'running') !== 'ready' && !this.views.has(event.run.runId)) {
+        this.keep(runViewFor(event.run));
+      }
+      return;
+    }
+    const runId = addressOf(event).runId;
+    const view = this.views.get(runId);
+    if (view !== undefined) {
+      const next = applyRunEvent(view, event);
+      if (next !== null && next !== view) {
+        this.views.set(runId, next);
+      }
+    }
+  }
+
+  get(runId: string): RunView | null {
+    return this.views.get(runId) ?? null;
+  }
+
+  /** A run the host is showing that this cache did not see start. */
+  adopt(view: RunView): void {
+    if (!this.views.has(view.run.runId) && view.run.phase !== 'ready') {
+      this.keep(view);
+    }
+  }
+
+  private keep(view: RunView): void {
+    this.views.set(view.run.runId, view);
+    while (this.views.size > this.limit) {
+      const oldest = this.views.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.views.delete(oldest);
+    }
+  }
+}
+
+/**
+ * A step output window's view of its run: events folded as they come, after one read of the
+ * run as it stood. Events that arrive while that read is out are held and dropped when it
+ * answers, because the answer already holds them (it and the events travel one ordered
+ * path); applied again, a text fragment would appear twice. Without an answer, the held
+ * events are all the window has, and they stay unapplied: a view cannot be built from the
+ * middle of a run.
+ */
+export interface StepOutputFeed {
+  readonly view: RunView | null;
+  /** Events received before the opening read answered; `null` once it has. */
+  readonly held: readonly LoopRunEvent[] | null;
+}
+
+export const OPENING_FEED: StepOutputFeed = { view: null, held: [] };
+
+export function feedEvent(feed: StepOutputFeed, event: LoopRunEvent): StepOutputFeed {
+  if (feed.held !== null) {
+    return { ...feed, held: [...feed.held, event] };
+  }
+  const view = applyRunEvent(feed.view, event);
+  return view === feed.view ? feed : { ...feed, view };
+}
+
+export function feedSeed(feed: StepOutputFeed, seed: RunView | null): StepOutputFeed {
+  return { view: feed.view ?? seed, held: null };
 }

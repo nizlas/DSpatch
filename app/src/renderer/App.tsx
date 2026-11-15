@@ -112,6 +112,7 @@ import { loopRecapPendingLine, loopRecapSentLine } from './loop-recap-view';
 import { onLoopStopRequestedElsewhere } from './loop-stop-signal';
 import { handoverLabel } from '../shared/handover-turn';
 import { Markdown } from './Markdown';
+import { LiveToolCalls } from './LiveStepParts';
 import {
   decideScroll,
   followAfterScrollEvent,
@@ -7321,19 +7322,8 @@ function LiveStep({
         >
           <summary className="step-card__toggle">Show live output</summary>
           {step.text === '' ? null : <AnswerWithMessages text={step.text} messages={messages} testId={`${testId}-text`} />}
-          {step.tools.length === 0 ? null : (
-            <ul className="tool-calls__list tool-calls__list--live" data-ev={`${testId}-tools`}>
-              {step.tools.map((call) => (
-                <li
-                  key={call.callId}
-                  className={`tool-call tool-call--${call.status ?? 'running'}`}
-                  data-ev={`${testId}-tool-${call.callId}`}
-                >
-                  <span className="tool-call__summary">{call.summary}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* The same list the step output window draws (LiveStepParts). */}
+          <LiveToolCalls tools={step.tools} testId={testId} />
         </details>
       )}
     </div>

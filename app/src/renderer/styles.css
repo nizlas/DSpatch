@@ -2088,6 +2088,43 @@ textarea.grow-field:placeholder-shown {
   max-height: none;
 }
 
+/* Niclas, 15 November 2026: the step output window streams like the chat's live step. */
+.step-stream {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+}
+
+.step-stream__finished {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ok);
+}
+
+.step-stream__end {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.step-stream__back {
+  align-self: center;
+}
+
+.step-branches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.step-branches .button[aria-pressed='true'] {
+  border-color: var(--ok);
+}
+
 .branch-window__section {
   margin: 0.25rem 0 0;
   font-size: 0.8125rem;

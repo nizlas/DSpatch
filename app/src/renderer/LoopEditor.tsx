@@ -109,7 +109,9 @@ import { announceLoopStopRequested } from './loop-stop-signal';
 import { BranchList } from './BranchList';
 import { StepOutputActions } from './StepOutputActions';
 import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
-import { branchViewsFromJournal } from '../shared/run-presentation';
+import { branchViewsFromJournal, liveOutputAddressFor } from '../shared/run-presentation';
+import { nodeVisitRows } from '../shared/step-output';
+
 import { controlPhase } from '../shared/loop-control';
 import {
   UNVERSIONED_CANVAS,
@@ -154,6 +156,9 @@ import {
 import { GraphCanvas } from './GraphCanvas';
 import { Markdown } from './Markdown';
 import { GLINT_PATH_LENGTH, GLINT_TOTAL_LENGTH, NODE_HEIGHT, NODE_WIDTH } from '../shared/loop-edge-geometry';
+
+/** How far the pointer may move between press and release and still be a click on a node, not a drag. */
+const CLICK_SLOP_PX = 4;
 
 const EDITOR_HELP_KEY = 'dspatch.editor.help';
 
@@ -285,6 +290,10 @@ export function LoopEditor(): React.JSX.Element {
    * beginning clears it, as it clears the ending marks.
    */
   const [lastEndedRun, setLastEndedRun] = useState<RunView | null>(null);
+  /** The run the node panel and a node click open output from, for the mouse handlers. */
+  const outputRunRef = useRef<RunView | null>(null);
+  /** Where an agent node was pressed while a run is shown, until the mouse comes up. */
+  const pressRef = useRef<{ readonly nodeId: string; readonly x: number; readonly y: number } | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
   /**
    * Where the last run got to, kept after the run itself has gone (DSP-36).
@@ -1400,6 +1409,11 @@ export function LoopEditor(): React.JSX.Element {
   const onNodeMouseDown = useCallback(
     (event: React.MouseEvent, node: LoopNode) => {
       event.stopPropagation();
+      // Niclas, 15 November 2026: while the graph shows a run, a click on an agent node opens
+      // its output (on mouse-up, if the pointer did not move: a drag still moves the node), and
+      // its Settings control opens its settings. Without a run, a click selects as it always did.
+      const opensOutput = outputRunRef.current !== null && node.kind === 'agent' && tool?.kind !== 'connect';
+      pressRef.current = opensOutput ? { nodeId: node.id, x: event.clientX, y: event.clientY } : null;
       if (graph === null || locked) {
         return;
       }
@@ -1416,7 +1430,9 @@ export function LoopEditor(): React.JSX.Element {
         setTool(null);
         return;
       }
-      setSelection({ kind: 'node', id: node.id });
+      if (!opensOutput) {
+        setSelection({ kind: 'node', id: node.id });
+      }
       if (previewing) {
         return;
       }
@@ -2354,6 +2370,29 @@ export function LoopEditor(): React.JSX.Element {
     () => (outputRun === null ? [] : outputRun === watch ? branchViews : branchViewsFromJournal(outputRun.run.runId, outputRun.entries)),
     [outputRun, watch, branchViews],
   );
+  outputRunRef.current = outputRun;
+  /** Open (or bring forward) the output window of a node's latest visit in the run shown. */
+  const openNodeOutput = (nodeId: string): void => {
+    const run = outputRunRef.current;
+    if (run === null) {
+      return;
+    }
+    const latest = nodeVisitRows(run.run.runId, run.entries, nodeId, run.ended).at(-1);
+    const label = (graph === null ? null : nodeById(graph, nodeId))?.label ?? nodeId;
+    if (latest === undefined) {
+      setNote(`"${label}" has not run in the run shown, so it has no output yet.`);
+      return;
+    }
+    const conversationId = run.run.conversationId;
+    void window.dspatch.openStepOutput({ ...liveOutputAddressFor(latest.visit), ...(conversationId === undefined ? {} : { conversationId }) }).then(
+      (outcome) => {
+        if (!outcome.opened) {
+          setNote(outcome.note);
+        }
+      },
+      (error: unknown) => setNote(`The output window could not be opened: ${error instanceof Error ? error.message : String(error)}`),
+    );
+  };
   // Each fan-out node's line, e.g. "3 branches · 1 working · 2 finished", drawn on the node.
   const branchSummaries = useMemo(() => {
     const summaries = new Map<string, string>();
@@ -2427,7 +2466,14 @@ export function LoopEditor(): React.JSX.Element {
     */
     <div
       className={`editor${journalOpen ? ' has-journal' : ''}`}
-      onMouseUp={() => setDrag(null)}
+      onMouseUp={(event) => {
+        setDrag(null);
+        const press = pressRef.current;
+        pressRef.current = null;
+        if (press !== null && Math.hypot(event.clientX - press.x, event.clientY - press.y) <= CLICK_SLOP_PX) {
+          openNodeOutput(press.nodeId);
+        }
+      }}
     >
       <header className="editor-bar">
         {/*
@@ -3037,6 +3083,7 @@ export function LoopEditor(): React.JSX.Element {
                 setSelection({ kind: 'node', id: nodeId });
                 setBranchesOpenFor(nodeId);
               }}
+              {...(outputRun === null ? {} : { onOpenNodeSettings: (nodeId: string) => setSelection({ kind: 'node', id: nodeId }) })}
               workingNodes={workingNodes}
               endingMarks={endingMarks}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}
@@ -3061,6 +3108,11 @@ export function LoopEditor(): React.JSX.Element {
           and its collapsed **Advanced**, and works during a run with its fields disabled.
         */}
         <aside className="editor-inspector">
+          {/*
+            Niclas, 15 November 2026: the selected agent step's output, at the top of the panel
+            and outside the lock. A click on the node opens the same window directly.
+          */}
+          {selectedNode !== null ? <StepOutputActions node={selectedNode} watch={outputRun} /> : null}
           {/*
             The lock, as one element rather than as a `disabled` on forty fields.
 
@@ -3130,11 +3182,6 @@ export function LoopEditor(): React.JSX.Element {
             branch is not editing the drawing. The button is the node panel's control; the
             line on the node opens the same list. It stays open until closed.
           */}
-          {/*
-            Niclas, 15 November 2026: the selected agent step's output, live or saved, one
-            visible button away, outside the lock like the Branches below.
-          */}
-          {selectedNode !== null ? <StepOutputActions node={selectedNode} watch={outputRun} /> : null}
           {selectedNode !== null && branchSummaryLine(outputBranchViews, selectedNode.id) !== null ? (
             <div className="editor-branches" data-ev="editor-branches">
               <button

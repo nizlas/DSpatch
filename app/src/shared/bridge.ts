@@ -2700,6 +2700,12 @@ export interface DspatchBridge {
    */
   currentLoopRunView(): Promise<RunView | null>;
   /**
+   * One run as a step output window reads it (Niclas, 15 November 2026): everything its steps
+   * streamed, kept by the main process after the host has moved on to the next run or the
+   * Ready offer. `null` when neither has it, e.g. after DSpatch restarted. A read; it starts nothing.
+   */
+  stepOutputRunView(runId: string): Promise<RunView | null>;
+  /**
    * Which agent the graph editor's Run would use now, as one line, or why no run would
    * start (DSP-138). **A read**: it starts, records and constructs nothing. `target` is
    * the drawing's label, named in the line when it differs from the agent; `entry` is the
@@ -3598,6 +3604,7 @@ export type BridgeChannel =
   | 'dspatch:loop-run-event'
   | 'dspatch:current-loop-run'
   | 'dspatch:current-loop-run-view'
+  | 'dspatch:step-output-run-view'
   | 'dspatch:read-loop-run-agent'
   | 'dspatch:start-chat-loop-run'
   | 'dspatch:cancel-chat-loop-run'

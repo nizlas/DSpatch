@@ -157,6 +157,7 @@ const CANCEL_EDITOR_LOOP_RUN: BridgeChannel = 'dspatch:cancel-editor-loop-run';
 const LOOP_RUN_EVENT: BridgeChannel = 'dspatch:loop-run-event';
 const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
 const CURRENT_LOOP_RUN_VIEW: BridgeChannel = 'dspatch:current-loop-run-view';
+const STEP_OUTPUT_RUN_VIEW: BridgeChannel = 'dspatch:step-output-run-view';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
@@ -354,6 +355,8 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(CURRENT_LOOP_RUN) as Promise<LiveRunAnnouncement | null>,
   currentLoopRunView: () =>
     ipcRenderer.invoke(CURRENT_LOOP_RUN_VIEW) as Promise<RunView | null>,
+  stepOutputRunView: (runId: string) =>
+    ipcRenderer.invoke(STEP_OUTPUT_RUN_VIEW, runId) as Promise<RunView | null>,
   startChatLoopRun: (request: ChatLoopRunRequest) =>
     ipcRenderer.invoke(START_CHAT_LOOP_RUN, request) as Promise<ChatLoopRunOutcome>,
   cancelChatLoopRun: () =>

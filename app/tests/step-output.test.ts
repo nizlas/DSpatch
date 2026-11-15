@@ -10,13 +10,19 @@ import { describe, it } from 'node:test';
 import type { ParsedRunRecord, RecordedAgentReply, RecordedCommand } from '../src/shared/loop-record';
 import type { RunJournalEntry } from '../src/shared/loop-run';
 import {
+  OPENING_FEED,
+  RunViewCache,
+  feedEvent,
+  feedSeed,
   liveStateFor,
   nodeVisitRows,
   savedOutputLines,
   savedStepOutput,
   stepOutputFromQuery,
   stepOutputQuery,
+  type StepOutputFeed,
 } from '../src/shared/step-output';
+import type { LiveRunAnnouncement, LoopRunEvent } from '../src/shared/loop-run-view';
 
 let seq = 0;
 const line = (kind: string, fields: Partial<RunJournalEntry> = {}): RunJournalEntry =>
@@ -128,5 +134,56 @@ describe('the window’s address and live state', () => {
     assert.equal(liveStateFor(steps, branches, { runId: 'run-1', nodeId: 'review', occurrence: 1 }), null);
     assert.equal(liveStateFor(steps, branches, { runId: 'run-1', nodeId: 'work', occurrence: 1, sliceId: 's2' })?.text, 'two');
     assert.equal(liveStateFor(steps, branches, { runId: 'run-2', nodeId: 'work', occurrence: 1, sliceId: 's2' }), null);
+  });
+});
+
+describe('the step output window follows a run it opened on (Niclas, 15 November 2026)', () => {
+  const run = { runId: 'run-7', graphVersionId: 'graph-v1', graphId: 'g', graphName: 'G', binding: 'chat-loop', graphText: '{}', startedAtUtc: '', phase: 'running', conversationId: 'conv-1' } as LiveRunAnnouncement;
+  const at = (n: number): string => `2026-11-15T08:55:${String(10 + n).padStart(2, '0')}.000Z`;
+  const activity = (occurrence: number, n: number, body: Record<string, unknown>): LoopRunEvent =>
+    ({ kind: 'activity', runId: 'run-7', graphVersionId: 'graph-v1', activity: { runId: 'run-7', nodeId: 'review', occurrence, atUtc: at(n), ...body } }) as LoopRunEvent;
+  const started = (occurrence: number, n: number): LoopRunEvent => activity(occurrence, n, { kind: 'step-started', roleId: 'review', roleSourcePath: null });
+  const text = (occurrence: number, n: number, fragment: string): LoopRunEvent => activity(occurrence, n, { kind: 'reply-text', text: fragment });
+  const step = (feed: StepOutputFeed, occurrence: number) =>
+    liveStateFor(feed.view?.steps, feed.view?.branchSteps, { runId: 'run-7', nodeId: 'review', occurrence });
+
+  it('keeps every run it relays, also once the Ready offer has replaced it on the host', () => {
+    const cache = new RunViewCache(2);
+    cache.receive({ kind: 'started', run });
+    cache.receive(started(1, 0));
+    cache.receive(text(1, 1, 'Checking '));
+    cache.receive(text(1, 2, 'the diff.'));
+    cache.receive({ kind: 'ended', runId: 'run-7', graphVersionId: 'graph-v1', status: null, note: '', terminalNodeId: 'done' } as LoopRunEvent);
+    cache.receive({ kind: 'started', run: { ...run, runId: 'ready-1', phase: 'ready' } });
+    const kept = cache.get('run-7');
+    assert.equal(kept?.ended, true);
+    assert.equal(liveStateFor(kept?.steps, kept?.branchSteps, { runId: 'run-7', nodeId: 'review', occurrence: 1 })?.text, 'Checking the diff.');
+    assert.equal(cache.get('ready-1'), null, 'a Ready offer is not a run');
+  });
+
+  it('shows what came before it opened once, then every new fragment, for the visit it names', () => {
+    const cache = new RunViewCache();
+    cache.receive({ kind: 'started', run });
+    for (const event of [started(1, 0), text(1, 1, 'First pass.'), started(2, 2), text(2, 3, 'Second ')]) {
+      cache.receive(event);
+    }
+    // The window opens: one event reaches it while its read is out, and the read already has it.
+    let feed = feedEvent(OPENING_FEED, text(2, 4, 'pass '));
+    cache.receive(text(2, 4, 'pass '));
+    feed = feedSeed(feed, cache.get('run-7'));
+    assert.equal(step(feed, 2)?.text, 'Second pass ', 'nothing twice');
+    // New events reach the open window as they come.
+    feed = feedEvent(feed, text(2, 5, 'is fine.'));
+    feed = feedEvent(feed, activity(2, 6, { kind: 'tool-started', callId: 'c1', name: 'shell', summary: 'git diff' }));
+    assert.equal(step(feed, 2)?.text, 'Second pass is fine.');
+    assert.deepEqual(step(feed, 2)?.tools.map((tool) => [tool.summary, tool.status]), [['git diff', null]]);
+    // The visit it names, not the node's other one; and an event for another run changes nothing.
+    assert.equal(step(feed, 1)?.text, 'First pass.');
+    const other = feedEvent(feed, { ...text(2, 7, 'not mine'), runId: 'run-8' } as LoopRunEvent);
+    assert.equal(other, feed);
+    // The step closes: its live state is kept, marked finished.
+    feed = feedEvent(feed, { kind: 'journal', runId: 'run-7', graphVersionId: 'graph-v1', entry: { seq: 9, atIso: at(8), sinceStartMs: 9, kind: 'node-produced', nodeId: 'review', detail: '' } } as LoopRunEvent);
+    assert.equal(step(feed, 2)?.finished, true);
+    assert.equal(step(feed, 2)?.text, 'Second pass is fine.');
   });
 });

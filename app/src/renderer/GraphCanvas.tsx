@@ -74,6 +74,12 @@ export interface GraphCanvasProps {
   readonly branchSummaries?: ReadonlyMap<string, string>;
   /** DSP-209 S20: the node's branch line was pressed; open its Branches list. */
   readonly onOpenBranches?: (nodeId: string) => void;
+  /**
+   * Given while the graph shows a run (Niclas, 15 November 2026): a click on an agent node
+   * then opens its output, so each agent node carries a visible **Settings** control that
+   * opens its settings in the panel instead.
+   */
+  readonly onOpenNodeSettings?: (nodeId: string) => void;
   readonly workingNodes: ReadonlySet<string>;
   readonly endingMarks: FinishedRunMarks | null;
   readonly severityOfNode?: (nodeId: string) => Finding['severity'] | null;
@@ -175,6 +181,9 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           helpTitle={props.helpTitleOf?.(node, node.role ? (props.roles.get(roleKey(node.role)) ?? null) : null)}
           branches={props.branchSummaries?.get(node.id) ?? null}
           {...(props.onOpenBranches === undefined ? {} : { onOpenBranches: () => props.onOpenBranches?.(node.id) })}
+          {...(props.onOpenNodeSettings === undefined || node.kind !== 'agent'
+            ? {}
+            : { onOpenSettings: () => props.onOpenNodeSettings?.(node.id) })}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}
         />
       ))}
@@ -285,6 +294,7 @@ function NodeShape({
   helpTitle,
   branches,
   onOpenBranches,
+  onOpenSettings,
   onMouseDown,
 }: {
   readonly node: LoopNode;
@@ -308,6 +318,8 @@ function NodeShape({
   readonly branches: string | null;
   /** DSP-209 S20: opens the node's Branches list; the branch line is its control. */
   readonly onOpenBranches?: () => void;
+  /** Opens the node's settings while a click on it opens its output. */
+  readonly onOpenSettings?: () => void;
   readonly onMouseDown: (event: ReactMouseEvent) => void;
 }): React.JSX.Element {
   const x = node.view?.x ?? 0;
@@ -492,6 +504,29 @@ function NodeShape({
               })}
         >
           {branches}
+        </text>
+      )}
+      {onOpenSettings === undefined ? null : (
+        <text
+          x={NODE_WIDTH - 6}
+          y={height - 5}
+          className="node-settings"
+          data-ev="node-settings"
+          role="button"
+          tabIndex={0}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenSettings();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              onOpenSettings();
+            }
+          }}
+        >
+          ⚙ Settings
         </text>
       )}
       {isEntry ? (
