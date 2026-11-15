@@ -204,6 +204,8 @@ const AREAS = {
       'electron-version.test.ts',
       'provider-setup.test.ts',
       'provider-ready.test.ts',
+      'remote-setup-scripts.test.ts',
+      { file: 'remote-setup-linux.test.ts', heavy: true },
     ],
   },
   project: {

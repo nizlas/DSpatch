@@ -1,7 +1,7 @@
 /**
  * Gather what the installed client carries beside its code (DSP-153), into `build/bundled/`:
- * the loops and their graphs and roles, provider support's pinned lists, and the validated host
- * packages of this build. Run by `npm run package:client`, after `npm run package:host`.
+ * the loops and their graphs and roles, provider support's pinned lists, the remote-setup scripts,
+ * and the validated host packages of this build. Run by `npm run package:client`, after `npm run package:host`.
  */
 
 import { createHash } from 'node:crypto';
@@ -69,6 +69,8 @@ export function prepareBundled(appDir) {
       fs.copyFileSync(path.join(appDir, support, file), path.join(bundled, support, file));
     }
   }
+  // The scripts that prepare a Windows host and a Linux client (DSP-214); Help saves them from here.
+  fs.cpSync(path.join(appDir, 'remote-setup'), path.join(bundled, 'remote-setup'), { recursive: true });
   fs.mkdirSync(path.join(bundled, 'host-packages'));
   for (const file of files) {
     fs.copyFileSync(path.join(hostDir, file), path.join(bundled, 'host-packages', file));

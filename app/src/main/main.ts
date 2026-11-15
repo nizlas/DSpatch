@@ -1,6 +1,7 @@
 import childProcess from 'node:child_process';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
+import { REMOTE_SETUP_SCRIPTS, SAVE_REMOTE_SETUP_CHANNEL } from '../shared/remote-setup';
 import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
 import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
 import { WINDOW_LAYOUT_FILE, WindowLayoutStore } from './window-layout';
@@ -1565,13 +1566,57 @@ function openHelpGuide(topic: string, title: string): void {
       helpWindows.delete(topic);
     }
   });
-  const search = `window=help&topic=${encodeURIComponent(topic)}`;
+  // The version lets a guide name this release's downloads (DSP-214).
+  const search = `window=help&topic=${encodeURIComponent(topic)}&version=${encodeURIComponent(app.getVersion())}`;
   if (rendererUrl === undefined) {
     void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { search });
   } else {
     const base = rendererUrl.split('#')[0] ?? rendererUrl;
     void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}${search}`);
   }
+}
+
+/** The remote-setup scripts beside this build: the installed `bundled/`, or the checkout's own. */
+function remoteSetupFolder(): string {
+  const bundled = bundledRoot();
+  return bundled === null ? path.join(app.getAppPath(), 'remote-setup') : path.join(bundled, 'remote-setup');
+}
+
+/**
+ * Help → *Save Windows script…* and *Save Linux helper…* (DSP-214): a copy of one of the two
+ * remote-setup scripts where the person chooses, for a USB stick or to share. Only a Help window
+ * may ask, and only for those two files.
+ */
+function registerHelpIpc(): void {
+  ipcMain.handle(SAVE_REMOTE_SETUP_CHANNEL, async (event, which: unknown): Promise<string> => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window === null || ![...helpWindows.values()].includes(window)) {
+      return 'Only a Help window can save these scripts.';
+    }
+    if (which !== 'windows' && which !== 'linux') {
+      return 'Unknown script.';
+    }
+    const name = REMOTE_SETUP_SCRIPTS[which];
+    const source = path.join(remoteSetupFolder(), name);
+    if (!fs.existsSync(source)) {
+      return `${name} is not part of this installation.`;
+    }
+    const { canceled, filePath } = await dialog.showSaveDialog(window, {
+      title: which === 'windows' ? 'Save the Windows host script' : 'Save the Linux client helper',
+      defaultPath: path.join(app.getPath('downloads'), name),
+      filters: [which === 'windows' ? { name: 'PowerShell script', extensions: ['ps1'] } : { name: 'Shell script', extensions: ['sh'] }],
+    });
+    if (canceled || filePath === undefined || filePath === '') {
+      return '';
+    }
+    try {
+      await fs.promises.copyFile(source, filePath);
+    } catch (error) {
+      return `Could not save ${name}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    log(`help: saved ${name} to ${filePath}`);
+    return `Saved ${filePath}.`;
+  });
 }
 
 /** DSP-200: About DSpatch, over the window it was asked from, with the versions to copy. */
@@ -5561,6 +5606,7 @@ function main(): void {
     );
     registerIpc();
     registerHostLinkIpc();
+    registerHelpIpc();
     if (reviewAskedAtStart && !directReviewMode) {
       log(
         'DSPATCH_REVIEW_DEFINITION or #review was set and is ignored: this launch is a ' +

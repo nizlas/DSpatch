@@ -1,5 +1,6 @@
 import type { HostBrowsePage, HostLinkBridge, HostLinkState, SetupBridge, SshQuestion } from '../shared/host-link';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
+import type { HelpBridge, RemoteSetupScript } from '../shared/remote-setup';
 
 import type {
   AbandonOutcome,
@@ -536,3 +537,7 @@ contextBridge.exposeInMainWorld('dspatchHost', {
   },
 } satisfies HostLinkBridge);
 
+// A sandboxed preload loads no module of DSpatch's: SAVE_REMOTE_SETUP_CHANNEL in shared/remote-setup.ts.
+contextBridge.exposeInMainWorld('dspatchHelp', {
+  saveRemoteSetupScript: (which: RemoteSetupScript) => ipcRenderer.invoke('dspatch:help-save-remote-setup', which) as Promise<string>,
+} satisfies HelpBridge);

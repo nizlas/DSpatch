@@ -13,7 +13,7 @@ function fixture() {
   const hostId = `0.1.3-${revision.slice(0, 12)}`;
   const hostDir = path.join(app, 'release', 'host');
   const bundled = path.join(app, 'build', 'bundled');
-  for (const folder of ['docs/loop', '.dspatch/loops', 'app/dist', 'app/release/host', 'app/claude-support', 'app/copilot-support']) {
+  for (const folder of ['docs/loop', '.dspatch/loops', 'app/dist', 'app/release/host', 'app/claude-support', 'app/copilot-support', 'app/remote-setup']) {
     fs.mkdirSync(path.join(root, folder), { recursive: true });
   }
   fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ version: '0.1.3' }));
@@ -23,6 +23,7 @@ function fixture() {
       fs.writeFileSync(path.join(app, support, file), '{}');
     }
   }
+  fs.writeFileSync(path.join(app, 'remote-setup', 'setup-script.ps1'), 'synthetic script');
   const bytes = Buffer.from('synthetic host archive');
   const packages = ['linux', 'win32'].map((platform) => ({
     platform, arch: 'x64', file: `dspatch-host-${hostId}-${platform}-x64.tar.gz`,
@@ -49,6 +50,7 @@ for (const both of [false, true]) {
     for (const entry of setup.manifest.packages) {
       assert.deepEqual(fs.readFileSync(path.join(setup.bundled, 'host-packages', entry.file)), setup.bytes);
     }
+    assert.equal(fs.readFileSync(path.join(setup.bundled, 'remote-setup', 'setup-script.ps1'), 'utf8'), 'synthetic script');
   });
 }
 

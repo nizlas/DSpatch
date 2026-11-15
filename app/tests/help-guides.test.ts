@@ -29,6 +29,19 @@ test('the Windows-host guide parses into copyable commands, each in a named shel
   assert.ok(code.some((block) => block.text.includes('-RemoteAddress') && block.text.includes('-InterfaceAlias')));
 });
 
+test('the guide starts with the scripts, and its manual part checks by SID (DSP-214)', () => {
+  const code = codeBlocks(parseMarkdown(guide));
+  assert.ok(guide.indexOf('## The short way') < guide.indexOf('## Manual setup (reference)'), 'the short way comes first');
+  assert.ok(guide.indexOf('## Manual setup (reference)') < guide.indexOf('## Troubleshooting'));
+  assert.ok(code.some((block) => block.language === 'bash' && block.text.includes('/opt/DSpatch/resources/bundled/remote-setup/dspatch-prepare-linux-client.sh')));
+  assert.ok(code.some((block) => block.text.includes('https://github.com/nizlas/DSpatch/releases/download/v{{version}}/dspatch-prepare-windows-host.ps1')));
+  assert.ok(code.some((block) => block.text.includes('releases/download/v{{version}}/SHA256SUMS') && block.text.includes('Get-FileHash')));
+  assert.ok(code.some((block) => block.text.includes('Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass')));
+  assert.ok(code.some((block) => block.text.includes('whoami /groups') && block.text.includes('S-1-5-32-544')));
+  assert.doesNotMatch(code.map((block) => block.text).join('\n'), /IsInRole/, 'no IsInRole as an administrator check');
+  assert.ok(code.some((block) => block.text.includes('/inheritance:r /grant:r "*S-1-5-32-544:F" "*S-1-5-18:F"')));
+});
+
 test('the guide carries placeholders, not anyone\'s address, account or key', () => {
   assert.doesNotMatch(guide.replaceAll('~~~~0.0.1.0', ''), /\b(?:\d{1,3}\.){3}\d{1,3}\b/, 'no IPv4 address (the capability names end in 0.0.1.0)');
   assert.doesNotMatch(guide, /ssh-(?:ed25519|rsa) AAAA/, 'no public key');

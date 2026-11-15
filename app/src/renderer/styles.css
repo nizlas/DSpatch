@@ -2391,6 +2391,29 @@ html.panel-window body {
   box-sizing: border-box;
 }
 
+/* DSP-214: Save Windows script… and Save Linux helper…, above the guide. */
+.help-window__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.help-window__actions button {
+  padding: 0.25rem 0.75rem;
+  background: var(--panel);
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.help-window__status {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .markdown__code-box {
   position: relative;
 }

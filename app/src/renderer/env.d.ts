@@ -1,5 +1,6 @@
 import type { HostLinkBridge, SetupBridge } from '../shared/host-link';
 import type { DspatchBridge, LoopGraphOpenRequest } from '../shared/bridge';
+import type { HelpBridge } from '../shared/remote-setup';
 import type { EditorRunSummary } from '../shared/loop-editor-run';
 
 /**
@@ -139,6 +140,8 @@ declare global {
     readonly dspatchHost?: HostLinkBridge;
     /** Connecting over SSH and setting up a provider (DSP-153). Set by the main preload only. */
     readonly dspatchSetup?: SetupBridge;
+    /** Help's own actions, such as saving the remote-setup scripts (DSP-214). Set by the main preload only. */
+    readonly dspatchHelp?: HelpBridge;
     /** Present only while a graph is open; used by DSPATCH_EDITOR_AUTORUN. */
     __dspatchEditorCheck?: {
       dryRunCurrent: () => Promise<EditorRunSummary | null>;
