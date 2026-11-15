@@ -2891,6 +2891,8 @@ function openBranchOutputWindow(request: unknown): BranchOutputWindowOutcome {
       },
     });
     branchOutputWindows.set(key, window);
+    // The same zoom as every other window: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0, kept per kind.
+    windowZoom?.adopt(window, 'step-output');
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     const contents = window.webContents;
     runAudience.add(contents);

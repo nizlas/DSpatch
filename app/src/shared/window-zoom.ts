@@ -55,6 +55,8 @@ export const WINDOW_ZOOM_KINDS = [
   'review-diff',
   /** The review's panel, Step and Discussion, in a window of its own. Docked, it has none. */
   'review-panel',
+  /** A step's or a fan-out branch's output, opened from the graph (Niclas, 15 November 2026). */
+  'step-output',
 ] as const;
 
 export type WindowZoomKind = (typeof WINDOW_ZOOM_KINDS)[number];

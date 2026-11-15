@@ -151,12 +151,30 @@ export function StepOutputWindow(): JSX.Element {
       metrics: { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight },
       appliedScrollTop: appliedTop.current,
     });
-    appliedTop.current = null;
+    // Kept while the position is still the one this window set, so a zoom, which changes the
+    // content's height and not the position, is not read as the reader scrolling away.
+    if (appliedTop.current !== null && Math.abs(element.scrollTop - appliedTop.current) > 1) {
+      appliedTop.current = null;
+    }
     if (next !== following.current) {
       following.current = next;
       setAtFoot(next);
     }
   };
+  // Zooming resizes the window in page units: a reader at the foot stays at the foot, and one
+  // reading further up is left where they are. Nothing is reloaded and the stream goes on.
+  useEffect(() => {
+    const onResize = (): void => {
+      const element = stream.current;
+      if (element === null || !following.current) {
+        return;
+      }
+      element.scrollTop = element.scrollHeight;
+      appliedTop.current = element.scrollTop;
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const backToFoot = (): void => {
     const element = stream.current;
     following.current = true;
