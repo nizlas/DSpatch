@@ -71,6 +71,8 @@ import type {
 } from '../shared/bridge';
 import { RunViewCache, stepOutputFromQuery, stepOutputQuery } from '../shared/step-output';
 import { LOOP_RUN_EVENT_CHANNEL } from './loop-run-audience';
+import { latestRecordedRun } from './run-record-lookup';
+import type { RecordedRunLookup } from '../shared/run-inspection';
 import { drawingSaveRequest } from '../shared/graph-proposal';
 import {
   HOST_CONFIG_ENV,
@@ -166,6 +168,8 @@ const CURRENT_LOOP_RUN: BridgeChannel = 'dspatch:current-loop-run';
 const CURRENT_LOOP_RUN_VIEW: BridgeChannel = 'dspatch:current-loop-run-view';
 /** A run as a step output window reads it: kept here after the host has moved on (Niclas, 15 November 2026). */
 const STEP_OUTPUT_RUN_VIEW: BridgeChannel = 'dspatch:step-output-run-view';
+/** The latest recorded run of a loop, for the editor's Run mode after a restart. */
+const LATEST_RECORDED_RUN: BridgeChannel = 'dspatch:latest-recorded-run';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
@@ -5167,6 +5171,10 @@ function registerLoopGraphIpc(): void {
    */
   ipcMain.handle(CURRENT_LOOP_RUN, (): Promise<LiveRunAnnouncement | null> => hostCall('loop.currentRun', NO_SENDER));
   ipcMain.handle(CURRENT_LOOP_RUN_VIEW, () => hostCall('loop.currentRunView', NO_SENDER));
+  // A read of the run records on disk; it writes nothing and starts nothing.
+  ipcMain.handle(LATEST_RECORDED_RUN, (_event, graphPath: unknown): RecordedRunLookup =>
+    typeof graphPath === 'string' && graphPath !== '' ? latestRecordedRun(path.join(app.getPath('userData'), 'loop-runs'), graphPath) : { kind: 'none' },
+  );
   // A read, answered from the runs kept here, else from the run the host is showing now.
   ipcMain.handle(STEP_OUTPUT_RUN_VIEW, async (_event, runId: unknown): Promise<RunView | null> => {
     if (typeof runId !== 'string' || runId === '') {

@@ -22,6 +22,7 @@ import type {
 import type { StepActivity } from './loop-activity';
 import type { LiveOutputAddress } from './run-presentation';
 import type { StepOutputAddress } from './step-output';
+import type { RecordedRunLookup } from './run-inspection';
 import type { GraphEditProposal, ProposalStatus } from './graph-proposal';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
@@ -2706,6 +2707,12 @@ export interface DspatchBridge {
    */
   stepOutputRunView(runId: string): Promise<RunView | null>;
   /**
+   * The latest recorded run of the loop whose graph file is `graphPath`, on the graph it walked,
+   * for the loop editor's Run mode when no run is held in memory (Niclas, 15 November 2026).
+   * Reads the run records; writes nothing and starts nothing.
+   */
+  latestRecordedRun(graphPath: string): Promise<RecordedRunLookup>;
+  /**
    * Which agent the graph editor's Run would use now, as one line, or why no run would
    * start (DSP-138). **A read**: it starts, records and constructs nothing. `target` is
    * the drawing's label, named in the line when it differs from the agent; `entry` is the
@@ -3605,6 +3612,7 @@ export type BridgeChannel =
   | 'dspatch:current-loop-run'
   | 'dspatch:current-loop-run-view'
   | 'dspatch:step-output-run-view'
+  | 'dspatch:latest-recorded-run'
   | 'dspatch:read-loop-run-agent'
   | 'dspatch:start-chat-loop-run'
   | 'dspatch:cancel-chat-loop-run'

@@ -106,11 +106,12 @@ import { formatJournalEntry, latestModelSelection, type RunJournalEntry, type Ru
 import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
-import { BranchList } from './BranchList';
-import { StepOutputActions } from './StepOutputActions';
-import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
+import { RunInspector } from './RunInspector';
+import { branchSummaryLine, fanOutNodesIn } from '../shared/branch-presentation';
 import { branchViewsFromJournal, liveOutputAddressFor } from '../shared/run-presentation';
 import { nodeVisitRows } from '../shared/step-output';
+import { parseLoopGraph } from '../shared/loop-graph-load';
+import { editorModeAfter, type EditorMode, type RecordedRunLookup } from '../shared/run-inspection';
 
 import { controlPhase } from '../shared/loop-control';
 import {
@@ -118,16 +119,14 @@ import {
   applyRunEvent,
   describePinnedDrawing,
   edgesTakenIn,
-  finishedMarksBelongTo,
   finishedRunMarksFrom,
-  markedNodes,
   nodeIsWorking,
+  nodeRunStates,
   pausedNextStep,
   runViewFor,
   runViewState,
   viewIsLocked,
   viewIsReady,
-  type FinishedRunMarks,
   type LiveRunAnnouncement,
   type LoopRunEvent,
   type NodeRunState,
@@ -159,6 +158,8 @@ import { GLINT_PATH_LENGTH, GLINT_TOTAL_LENGTH, NODE_HEIGHT, NODE_WIDTH } from '
 
 /** How far the pointer may move between press and release and still be a click on a node, not a drag. */
 const CLICK_SLOP_PX = 4;
+const NO_EDGES: ReadonlySet<string> = new Set();
+const NO_NODES: ReadonlySet<string> = new Set();
 
 const EDITOR_HELP_KEY = 'dspatch.editor.help';
 
@@ -290,27 +291,22 @@ export function LoopEditor(): React.JSX.Element {
    * beginning clears it, as it clears the ending marks.
    */
   const [lastEndedRun, setLastEndedRun] = useState<RunView | null>(null);
-  /** The run the node panel and a node click open output from, for the mouse handlers. */
+  /**
+   * Edit or Run (Niclas, 15 November 2026). **Run** shows one run on the drawing it walked,
+   * with its states and step output; **Edit** is the drawing being changed, which Run never
+   * touches, so unsaved changes survive every switch. A run starting switches to Run; leaving
+   * it is the person's choice. Switching starts, stops and repeats nothing and deletes nothing.
+   */
+  const [mode, setMode] = useState<EditorMode>('edit');
+  /** What is selected in Run mode, apart from the editing selection. */
+  const [runSelection, setRunSelection] = useState<Selection>(null);
+  /** The latest recorded run of the open loop, for Run mode after a restart. */
+  const [recordedRun, setRecordedRun] = useState<RecordedRunLookup>({ kind: 'none' });
+  /** The run Run mode shows, for the mouse handlers. */
   const outputRunRef = useRef<RunView | null>(null);
   /** Where an agent node was pressed while a run is shown, until the mouse comes up. */
   const pressRef = useRef<{ readonly nodeId: string; readonly x: number; readonly y: number } | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
-  /**
-   * Where the last run got to, kept after the run itself has gone (DSP-36).
-   *
-   * The second piece of run state in this file, and the reason there has to be one is a
-   * thing report 024 left open: the stand-by offer that puts the Ready pulse back
-   * *replaces* `watch` the instant a run ends, and a ready view marks the entry step and
-   * nothing else — so the run's ending was on screen for as long as it took the main
-   * process to answer. Niclas asked to see both at once, a finished run and a loop ready
-   * for the next assignment, and both being true at once is what needs two values.
-   *
-   * It is not a second opinion about the run. It is the *same* fold, taken once at the
-   * moment the run ended and then held: `finishedRunMarksFrom` calls `nodeRunStates` and
-   * adds nothing. Set when an `ended` event arrives, replaced when the next run starts,
-   * and withheld at render time when the drawing on screen is not the one it belongs to.
-   */
-  const [finishedMarks, setFinishedMarks] = useState<FinishedRunMarks | null>(null);
   /**
    * The clock, for the one line that has to say how long a step has been quiet.
    *
@@ -340,8 +336,6 @@ export function LoopEditor(): React.JSX.Element {
    * happened to land, which is a worse thing to depend on than a lock the product already
    * guarantees and a trial already measures.
    */
-  const graphRef = useRef<LoopGraph | null>(null);
-  const pinnedTextRef = useRef<string | null>(null);
   /**
    * The run fold itself, beside the state that renders it.
    *
@@ -381,8 +375,9 @@ export function LoopEditor(): React.JSX.Element {
   const receiveRunEvent = useCallback((event: LoopRunEvent): void => {
     if (event.kind === 'started') {
       if ((event.run.phase ?? 'running') !== 'ready') {
-        setFinishedMarks(null);
         setLastEndedRun(null);
+        setMode((current) => editorModeAfter(current, 'run-started'));
+        setRunSelection(null);
       } else if (runFoldRef.current !== null && runFoldRef.current.ended && !viewIsReady(runFoldRef.current)) {
         setLastEndedRun(runFoldRef.current);
       }
@@ -401,12 +396,6 @@ export function LoopEditor(): React.JSX.Element {
     }
     runFoldRef.current = next;
     setWatch(next);
-    if (event.kind === 'ended' && next !== null) {
-      const marks = finishedRunMarksFrom(next, graphRef.current, pinnedTextRef.current);
-      if (marks !== null) {
-        setFinishedMarks(marks);
-      }
-    }
   }, []);
 
   const resolveRole = useMemo(() => resolverFromEntries(roles), [roles]);
@@ -1068,6 +1057,9 @@ export function LoopEditor(): React.JSX.Element {
         // finished and only the step working now moves.
         runFoldRef.current = view;
         setWatch(view);
+        if (!viewIsReady(view) && !view.ended) {
+          setMode((current) => editorModeAfter(current, 'run-started'));
+        }
       },
       () => {
         // Nothing to watch is the ordinary case and not an error. Without an answer the
@@ -1339,26 +1331,6 @@ export function LoopEditor(): React.JSX.Element {
 
   const pinnedDrawing = describePinnedDrawing(watch, pinCheck);
 
-  useEffect(() => {
-    graphRef.current = graph;
-    pinnedTextRef.current = pinnedText;
-  }, [graph, pinnedText]);
-
-  /**
-   * The last run's ending mark, shown only on the drawing it belongs to (#8).
-   *
-   * Switching loop must not carry a mark across, and this is where that is guaranteed:
-   * not by remembering which gestures change a drawing — DSP-85 and DSP-88 own those, and
-   * a list of them here would be wrong the first time a new one was added — but by asking
-   * whether the drawing in front of the person is the one the run walked. Withheld rather
-   * than forgotten, so choosing the loop back brings its ending mark back with it: the
-   * mark belongs to the run and its graph, and it has not stopped being true because
-   * something else was on screen for a moment.
-   */
-  const endingMarks = useMemo(
-    () => (finishedMarksBelongTo(finishedMarks, drawingOnScreen) ? finishedMarks : null),
-    [finishedMarks, drawingOnScreen],
-  );
 
   const selectedNode = graph !== null && selection?.kind === 'node' ? nodeById(graph, selection.id) : null;
   const selectedEdge =
@@ -1409,11 +1381,6 @@ export function LoopEditor(): React.JSX.Element {
   const onNodeMouseDown = useCallback(
     (event: React.MouseEvent, node: LoopNode) => {
       event.stopPropagation();
-      // Niclas, 15 November 2026: while the graph shows a run, a click on an agent node opens
-      // its output (on mouse-up, if the pointer did not move: a drag still moves the node), and
-      // its Settings control opens its settings. Without a run, a click selects as it always did.
-      const opensOutput = outputRunRef.current !== null && node.kind === 'agent' && tool?.kind !== 'connect';
-      pressRef.current = opensOutput ? { nodeId: node.id, x: event.clientX, y: event.clientY } : null;
       if (graph === null || locked) {
         return;
       }
@@ -1430,9 +1397,7 @@ export function LoopEditor(): React.JSX.Element {
         setTool(null);
         return;
       }
-      if (!opensOutput) {
-        setSelection({ kind: 'node', id: node.id });
-      }
+      setSelection({ kind: 'node', id: node.id });
       if (previewing) {
         return;
       }
@@ -1441,6 +1406,17 @@ export function LoopEditor(): React.JSX.Element {
     },
     [graph, locked, previewing, tool, connectFrom, pointIn, apply],
   );
+
+  /**
+   * Run mode: a click on any step selects it and lights its connections, whether or not the
+   * run reached it; on an agent step the run reached, it also opens or brings forward that
+   * step's output window (on mouse-up, if the pointer did not move). Nothing is dragged.
+   */
+  const onRunNodeMouseDown = useCallback((event: React.MouseEvent, node: LoopNode) => {
+    event.stopPropagation();
+    setRunSelection({ kind: 'node', id: node.id });
+    pressRef.current = node.kind === 'agent' ? { nodeId: node.id, x: event.clientX, y: event.clientY } : null;
+  }, []);
 
   const onCanvasMouseMove = useCallback(
     (event: React.MouseEvent) => {
@@ -2330,44 +2306,61 @@ export function LoopEditor(): React.JSX.Element {
     };
   }, [graph, index.errors, apply, showRun, open, chooseLoop, locked, selection, zoom]);
 
-  /**
-   * Which box is lit, on the one drawing there is.
-   *
-   * `graph.entry` is read for the ready state alone: a chosen loop marks its entry step
-   * and nothing else, and the view holds graph *text* rather than a loaded graph to find
-   * that id in. This is where the Ready pulse comes from, and it needs no button —
-   * `Use loop` announcing the chosen loop is the whole of it.
-   *
-   * **Nothing is marked when the drawing on screen is not the version that ran.** The
-   * marks are node ids from the run's own journal, and painting them onto a different
-   * graph would be the class of untruth this whole module is written against: the ids
-   * that happened to match would light and the rest would silently not. `unreadable` is
-   * deliberately not treated the same way — failing to load the pinned bytes says
-   * nothing about whether the ids are right, and dropping every mark on a walking run
-   * for it would hide the run rather than qualify it. The sentence beside them says
-   * which of the two it is.
-   */
-  const runStates = useMemo(
-    () =>
-      pinCheck === 'different'
-        ? new Map<string, NodeRunState>()
-        : markedNodes(watch, endingMarks, graph?.entry),
-    [watch, endingMarks, graph?.entry, pinCheck],
-  );
-  const edgeSet = useMemo(
-    () => (pinCheck === 'different' ? new Set<string>() : edgesTakenIn(watch)),
-    [watch, pinCheck],
-  );
   // DSP-209 S20: the run's branches, from S16's model, for the node line and the Branches list.
   const branchViews = useMemo(
     () => (watch === null || pinCheck === 'different' ? [] : branchViewsFromJournal(watch.run.runId, watch.entries)),
     [watch, pinCheck],
   );
-  // The run whose steps the node panel opens: the one walking or just ended, else the last
-  // one that ended before the Ready offer replaced it (Niclas, 15 November 2026).
-  const outputRun = watch !== null && !viewIsReady(watch) ? watch : lastEndedRun;
+  // The run Run mode shows: the one walking or just ended, else the last one that ended before
+  // the Ready offer replaced it, else the latest one recorded for this loop (after a restart).
+  const memoryRun = watch !== null && !viewIsReady(watch) ? watch : lastEndedRun;
+  const outputRun = memoryRun ?? (recordedRun.kind === 'found' ? recordedRun.view : null);
+  const runAvailable = memoryRun !== null || recordedRun.kind === 'found';
+  // The drawing the run walked, from the text it loaded: never the one being edited since.
+  const runGraph = useMemo(() => {
+    if (outputRun === null) {
+      return null;
+    }
+    const parsed = parseLoopGraph(outputRun.run.graphText);
+    return parsed.ok ? layOutMissingViews(parsed.graph).graph : null;
+  }, [outputRun?.run]);
+  const runRoles = useMemo(() => {
+    const merged = new Map<string, ResolvedRole | null>(roles);
+    for (const entry of outputRun?.run.roles ?? []) {
+      merged.set(entry.key, entry.role);
+    }
+    return merged;
+  }, [outputRun?.run, roles]);
+  const runModeStates = useMemo(
+    () => (outputRun === null ? new Map<string, NodeRunState>() : nodeRunStates(outputRun, runGraph?.entry)),
+    [outputRun, runGraph],
+  );
+  const runModeMarks = useMemo(
+    () => (outputRun === null || runGraph === null ? null : finishedRunMarksFrom(outputRun, runGraph, null)),
+    [outputRun, runGraph],
+  );
+  const runModeEdges = useMemo(() => edgesTakenIn(outputRun), [outputRun]);
+  // DSP-80: which node is working, from the run's journal and this run's own control phase.
+  const runModeWorking = useMemo(() => {
+    const working = new Set<string>();
+    if (outputRun === null || outputRun !== watch || outputRun.ended) {
+      return working;
+    }
+    const phase = loopControl.runId === outputRun.run.runId ? controlPhase(loopControl.state) : null;
+    for (const [nodeId, state] of runModeStates) {
+      if (nodeIsWorking(state, phase)) {
+        working.add(nodeId);
+      }
+    }
+    return working;
+  }, [outputRun, watch, runModeStates, loopControl]);
+  // Edit mode shows the drawing as it is before a run: only the Ready pulse of a chosen loop.
+  const editStates = useMemo(
+    () => (watch !== null && viewIsReady(watch) ? nodeRunStates(watch, graph?.entry) : new Map<string, NodeRunState>()),
+    [watch, graph?.entry],
+  );
   const outputBranchViews = useMemo(
-    () => (outputRun === null ? [] : outputRun === watch ? branchViews : branchViewsFromJournal(outputRun.run.runId, outputRun.entries)),
+    () => (outputRun === null ? [] : branchViewsFromJournal(outputRun.run.runId, outputRun.entries)),
     [outputRun, watch, branchViews],
   );
   outputRunRef.current = outputRun;
@@ -2378,9 +2371,8 @@ export function LoopEditor(): React.JSX.Element {
       return;
     }
     const latest = nodeVisitRows(run.run.runId, run.entries, nodeId, run.ended).at(-1);
-    const label = (graph === null ? null : nodeById(graph, nodeId))?.label ?? nodeId;
     if (latest === undefined) {
-      setNote(`"${label}" has not run in the run shown, so it has no output yet.`);
+      // A step the run did not reach: selected, with its state in the panel; nothing to open.
       return;
     }
     const conversationId = run.run.conversationId;
@@ -2393,43 +2385,43 @@ export function LoopEditor(): React.JSX.Element {
       (error: unknown) => setNote(`The output window could not be opened: ${error instanceof Error ? error.message : String(error)}`),
     );
   };
-  // Each fan-out node's line, e.g. "3 branches · 1 working · 2 finished", drawn on the node.
-  const branchSummaries = useMemo(() => {
+  // The latest recorded run of the open loop, read again when another loop opens or a run ends.
+  const graphFilePath = file?.preview === null ? file.path : null;
+  useEffect(() => {
+    if (graphFilePath === null) {
+      setRecordedRun({ kind: 'none' });
+      return;
+    }
+    let current = true;
+    void window.dspatch.latestRecordedRun(graphFilePath).then(
+      (found) => {
+        if (current) {
+          setRecordedRun(found);
+        }
+      },
+      () => {
+        if (current) {
+          setRecordedRun({ kind: 'none' });
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [graphFilePath, lastEndedRun]);
+  const runBranchSummaries = useMemo(() => {
     const summaries = new Map<string, string>();
-    for (const nodeId of fanOutNodesIn(branchViews)) {
-      const line = branchSummaryLine(branchViews, nodeId);
+    for (const nodeId of fanOutNodesIn(outputBranchViews)) {
+      const line = branchSummaryLine(outputBranchViews, nodeId);
       if (line !== null) {
         summaries.set(nodeId, line);
       }
     }
     return summaries;
-  }, [branchViews]);
-  // Which node's Branches list is open; it stays open until closed or another node is chosen.
-  const [branchesOpenFor, setBranchesOpenFor] = useState<string | null>(null);
-
-  /**
-   * Which node is working, which is not the same question as which node is active.
-   *
-   * DSP-80's four constraints are all in this one line. The state comes from the run's
-   * journal; the phase comes from the loop control, and only when the control's report is
-   * about *this* run — a phase left over from a previous one would pause an animation
-   * belonging to a run nobody paused, which is DSP-87's mistake one level down. Nothing
-   * here reads `watch.steps`, so a step whose agent is thinking in silence goes on
-   * showing that it is working.
-   */
-  const workingNodes = useMemo(() => {
-    const phase =
-      watch !== null && loopControl.runId === watch.run.runId
-        ? controlPhase(loopControl.state)
-        : null;
-    const working = new Set<string>();
-    for (const [nodeId, state] of runStates) {
-      if (nodeIsWorking(state, phase)) {
-        working.add(nodeId);
-      }
-    }
-    return working;
-  }, [runStates, watch, loopControl]);
+  }, [outputBranchViews]);
+  const inRun = mode === 'run';
+  // Run mode holds every editing control: the drawing on screen is the run's, not the one edited.
+  const editingOff = held || inRun;
 
   /**
    * What the step that is running is doing, in one line, for this window.
@@ -2521,6 +2513,36 @@ export function LoopEditor(): React.JSX.Element {
                   }`
             }`}
           </p>
+        </div>
+
+        {/*
+          Niclas, 15 November 2026: which mode the window is in, and the way to the other one,
+          at the top where it is seen. Neither button starts, stops or deletes anything.
+        */}
+        <div className={`editor-mode editor-mode--${mode}`} data-ev="editor-mode" data-mode={mode}>
+          {inRun ? (
+            <>
+              <span className="editor-mode__label" data-ev="editor-mode-label">
+                Run view{outputRun === null ? '' : ` · ${outputRun.ended ? 'ended' : 'running'} · ${outputRun.run.runId}`}
+                {outputRun === null && recordedRun.kind === 'found' ? ` · ${recordedRun.runId}` : ''}
+              </span>
+              <button type="button" className="button" data-ev="editor-mode-edit" onClick={() => setMode((current) => editorModeAfter(current, 'back-to-editing'))}>
+                Back to editing
+              </button>
+            </>
+          ) : runAvailable ? (
+            <button
+              type="button"
+              className="button"
+              data-ev="editor-mode-run"
+              onClick={() => {
+                setMode((current) => editorModeAfter(current, 'show-latest-run'));
+                setRunSelection(null);
+              }}
+            >
+              Show latest run
+            </button>
+          ) : null}
         </div>
 
         <div className="editor-actions">
@@ -2653,7 +2675,7 @@ export function LoopEditor(): React.JSX.Element {
           <button
             type="button"
             data-ev="editor-arrange"
-            disabled={graph === null || held}
+            disabled={graph === null || editingOff}
             title="Lay out the boxes in layers"
             onClick={() => {
               if (graph === null) {
@@ -2709,7 +2731,7 @@ export function LoopEditor(): React.JSX.Element {
             Target framework
             <select
               value={graph?.target ?? 'cursor'}
-              disabled={graph === null || held}
+              disabled={graph === null || editingOff}
               onChange={(event) => changeTarget(event.target.value as LoopTarget)}
             >
               {LOOP_TARGETS.map((target) => (
@@ -2934,9 +2956,11 @@ export function LoopEditor(): React.JSX.Element {
           height-fixed now, so the choice is between showing the run's controls and
           showing dead buttons with the controls scrolled off the end.
         */}
-        {held ? (
-          <span className={`editor-palette-title${previewing && !locked ? ' editor-preview-note' : ''}`} data-ev="editor-held">
-            {locked
+        {editingOff ? (
+          <span className={`editor-palette-title${previewing && !locked && !inRun ? ' editor-preview-note' : ''}`} data-ev="editor-held">
+            {inRun
+              ? 'Run view: the drawing is the one this run walked. Back to editing changes the loop.'
+              : locked
               ? 'Editing is held while this run walks'
               : 'Proposal preview, not applied: nothing here is saved or run. Apply it in the chat to write it.'}
           </span>
@@ -3060,7 +3084,45 @@ export function LoopEditor(): React.JSX.Element {
 
       <main className="editor-main">
         <div className="editor-canvas">
-          {graph === null ? (
+          {inRun ? (
+            runGraph === null || outputRun === null ? (
+              <div className="run-missing" data-ev="run-missing">
+                <p>
+                  {recordedRun.kind === 'found' && recordedRun.problem !== null
+                    ? recordedRun.problem
+                    : 'There is no run to show here: this loop has no run in memory or on record, or its graph could not be read.'}
+                </p>
+                <button type="button" className="button" onClick={() => setMode((current) => editorModeAfter(current, 'back-to-editing'))}>
+                  Back to editing
+                </button>
+              </div>
+            ) : (
+              <GraphCanvas
+                graph={runGraph}
+                roles={runRoles}
+                rolesMayBeUnknown
+                zoom={zoom}
+                mode="edit"
+                armed={false}
+                locked
+                svgRef={svgRef}
+                onCanvasClick={() => setRunSelection(null)}
+                onCanvasMouseMove={() => undefined}
+                selection={runSelection}
+                connectingFrom={null}
+                showLabels={showLabels}
+                edgesTaken={runModeEdges}
+                runStates={runModeStates}
+                branchSummaries={runBranchSummaries}
+                onOpenBranches={(nodeId) => setRunSelection({ kind: 'node', id: nodeId })}
+                workingNodes={runModeWorking}
+                endingMarks={runModeMarks}
+                helpTitleOf={showHelp ? (node, role) => nodeHelpLabel(node, role?.summary) : undefined}
+                onSelectEdge={(id) => setRunSelection({ kind: 'edge', id })}
+                onNodeMouseDown={onRunNodeMouseDown}
+              />
+            )
+          ) : graph === null ? (
             <RefusalPanel findings={refusal} />
           ) : (
             <GraphCanvas
@@ -3076,16 +3138,10 @@ export function LoopEditor(): React.JSX.Element {
               selection={selection}
               connectingFrom={connectFrom}
               showLabels={showLabels}
-              edgesTaken={edgeSet}
-              runStates={runStates}
-              branchSummaries={branchSummaries}
-              onOpenBranches={(nodeId) => {
-                setSelection({ kind: 'node', id: nodeId });
-                setBranchesOpenFor(nodeId);
-              }}
-              {...(outputRun === null ? {} : { onOpenNodeSettings: (nodeId: string) => setSelection({ kind: 'node', id: nodeId }) })}
-              workingNodes={workingNodes}
-              endingMarks={endingMarks}
+              edgesTaken={NO_EDGES}
+              runStates={editStates}
+              workingNodes={NO_NODES}
+              endingMarks={null}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}
               severityOfEdge={(id) => worstSeverity(index.byEdge.get(id) ?? [])}
               helpTitleOf={showHelp ? (node, role) => nodeHelpLabel(node, role?.summary) : undefined}
@@ -3108,11 +3164,25 @@ export function LoopEditor(): React.JSX.Element {
           and its collapsed **Advanced**, and works during a run with its fields disabled.
         */}
         <aside className="editor-inspector">
-          {/*
-            Niclas, 15 November 2026: the selected agent step's output, at the top of the panel
-            and outside the lock. A click on the node opens the same window directly.
-          */}
-          {selectedNode !== null ? <StepOutputActions node={selectedNode} watch={outputRun} /> : null}
+          {inRun ? (
+            outputRun === null || runGraph === null ? null : (
+              <RunInspector
+                run={outputRun}
+                graph={runGraph}
+                selection={runSelection}
+                states={runModeStates}
+                marks={runModeMarks}
+                edgesTaken={runModeEdges}
+                branches={outputBranchViews}
+                canEdit={(nodeId) => graph !== null && nodeById(graph, nodeId) !== null}
+                onEdit={(nodeId) => {
+                  setMode((current) => editorModeAfter(current, 'back-to-editing'));
+                  setSelection({ kind: 'node', id: nodeId });
+                }}
+              />
+            )
+          ) : (
+          <>
           {/*
             The lock, as one element rather than as a `disabled` on forty fields.
 
@@ -3177,32 +3247,8 @@ export function LoopEditor(): React.JSX.Element {
             />
           )}
           </fieldset>
-          {/*
-            DSP-209 S20: the selected fan-out node's Branches, outside the lock: reading a
-            branch is not editing the drawing. The button is the node panel's control; the
-            line on the node opens the same list. It stays open until closed.
-          */}
-          {selectedNode !== null && branchSummaryLine(outputBranchViews, selectedNode.id) !== null ? (
-            <div className="editor-branches" data-ev="editor-branches">
-              <button
-                type="button"
-                className="button"
-                data-ev="editor-branches-toggle"
-                aria-expanded={branchesOpenFor === selectedNode.id}
-                onClick={() => setBranchesOpenFor((open) => (open === selectedNode.id ? null : selectedNode.id))}
-              >
-                {branchesOpenFor === selectedNode.id ? 'Hide branches' : 'Branches'} — {branchSummaryLine(outputBranchViews, selectedNode.id)}
-              </button>
-              {branchesOpenFor === selectedNode.id ? (
-                <BranchList
-                  rows={branchRows(outputBranchViews, selectedNode.id)}
-                  activity={outputRun?.branchSteps}
-                  heading={selectedNode.label ?? selectedNode.id}
-                  conversationId={outputRun?.run.conversationId}
-                />
-              ) : null}
-            </div>
-          ) : null}
+          </>
+          )}
         </aside>
       </main>
 

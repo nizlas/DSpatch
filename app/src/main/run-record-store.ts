@@ -59,6 +59,9 @@ import type { RunJournalEntry } from '../shared/loop-run';
  * editor exists to make. Prefixed the way `snapshotIdFor` prefixes a snapshot, so a
  * reader can tell the two kinds of identity apart at a glance.
  */
+/** The file beside a run record that holds the graph the run walked (see `writeGraph`). */
+export const RUN_GRAPH_SNAPSHOT_FILE = 'graph.json';
+
 export function graphVersionIdFor(graphText: string): string {
   return `graph-${createHash('sha256').update(graphText, 'utf8').digest('hex').slice(0, 16)}`;
 }
@@ -162,17 +165,30 @@ export class RunRecordWriter {
   }
 
   writeContext(text: string): string | null {
+    return this.writeBeside('context.md', text, 'the context this run was given');
+  }
+
+  /**
+   * The graph text this run loaded, byte for byte, as `<runId>/graph.json` beside the record
+   * (Niclas, 15 November 2026), so the run can be shown on its own drawing after a restart and
+   * after the loop has been edited. Its `graphVersionIdFor` is the header's `graphVersionId`.
+   */
+  writeGraph(text: string): string | null {
+    return this.writeBeside(RUN_GRAPH_SNAPSHOT_FILE, text, 'the graph this run walked');
+  }
+
+  private writeBeside(name: string, text: string, what: string): string | null {
     const runId = path.basename(this.file, '.jsonl');
     if (this.closed || !isUsableRunId(runId) || runId === 'unusable-run-id') {
       return null;
     }
-    const target = path.join(path.dirname(this.file), runId, 'context.md');
+    const target = path.join(path.dirname(this.file), runId, name);
     try {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, text, 'utf8');
       return target;
     } catch (error) {
-      this.problems.push(`the context this run was given could not be saved as ${target}: ${describe(error)}`);
+      this.problems.push(`${what} could not be saved as ${target}: ${describe(error)}`);
       return null;
     }
   }

@@ -90,6 +90,7 @@ const AREAS = {
       'run-presentation.test.ts',
       'branch-presentation.test.ts',
       'step-output.test.ts',
+      'run-inspection.test.ts',
       'step-report-cards.test.ts',
       'loop-layout.test.ts',
       'graph-authoring-tools.test.ts',

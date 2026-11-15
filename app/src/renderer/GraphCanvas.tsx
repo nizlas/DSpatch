@@ -75,11 +75,11 @@ export interface GraphCanvasProps {
   /** DSP-209 S20: the node's branch line was pressed; open its Branches list. */
   readonly onOpenBranches?: (nodeId: string) => void;
   /**
-   * Given while the graph shows a run (Niclas, 15 November 2026): a click on an agent node
-   * then opens its output, so each agent node carries a visible **Settings** control that
-   * opens its settings in the panel instead.
+   * The roles map may lack a reference the drawing makes (Niclas, 15 November 2026: a run's
+   * own drawing, whose roles the window never resolved). A missing entry then reads as not
+   * known rather than broken; `null` still means broken.
    */
-  readonly onOpenNodeSettings?: (nodeId: string) => void;
+  readonly rolesMayBeUnknown?: boolean;
   readonly workingNodes: ReadonlySet<string>;
   readonly endingMarks: FinishedRunMarks | null;
   readonly severityOfNode?: (nodeId: string) => Finding['severity'] | null;
@@ -181,9 +181,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           helpTitle={props.helpTitleOf?.(node, node.role ? (props.roles.get(roleKey(node.role)) ?? null) : null)}
           branches={props.branchSummaries?.get(node.id) ?? null}
           {...(props.onOpenBranches === undefined ? {} : { onOpenBranches: () => props.onOpenBranches?.(node.id) })}
-          {...(props.onOpenNodeSettings === undefined || node.kind !== 'agent'
-            ? {}
-            : { onOpenSettings: () => props.onOpenNodeSettings?.(node.id) })}
+          roleUnknown={props.rolesMayBeUnknown === true && node.role !== undefined && !props.roles.has(roleKey(node.role))}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}
         />
       ))}
@@ -294,7 +292,7 @@ function NodeShape({
   helpTitle,
   branches,
   onOpenBranches,
-  onOpenSettings,
+  roleUnknown,
   onMouseDown,
 }: {
   readonly node: LoopNode;
@@ -318,8 +316,8 @@ function NodeShape({
   readonly branches: string | null;
   /** DSP-209 S20: opens the node's Branches list; the branch line is its control. */
   readonly onOpenBranches?: () => void;
-  /** Opens the node's settings while a click on it opens its output. */
-  readonly onOpenSettings?: () => void;
+  /** The role was never resolved here, so it is neither shown as resolved nor as broken. */
+  readonly roleUnknown?: boolean;
   readonly onMouseDown: (event: ReactMouseEvent) => void;
 }): React.JSX.Element {
   const x = node.view?.x ?? 0;
@@ -340,7 +338,7 @@ function NodeShape({
     .filter((entry) => entry !== '')
     .join(' ');
 
-  const broken = node.role !== undefined && role === null;
+  const broken = node.role !== undefined && role === null && roleUnknown !== true;
   /*
     The node's own outline, as a path, for the halo and the glint (DSP-80).
 
@@ -504,29 +502,6 @@ function NodeShape({
               })}
         >
           {branches}
-        </text>
-      )}
-      {onOpenSettings === undefined ? null : (
-        <text
-          x={NODE_WIDTH - 6}
-          y={height - 5}
-          className="node-settings"
-          data-ev="node-settings"
-          role="button"
-          tabIndex={0}
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenSettings();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              onOpenSettings();
-            }
-          }}
-        >
-          ⚙ Settings
         </text>
       )}
       {isEntry ? (

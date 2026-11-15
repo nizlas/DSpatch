@@ -3139,6 +3139,8 @@ function registerLoopMethods(): void {
       if (contextSnapshot !== null) {
         record.writeContext(contextSnapshot.text);
       }
+      // The drawing this run walks, so it can be shown on it after a restart or later edits.
+      record.writeGraph(graphText);
       if (built.failure !== null) {
         record.noteFailure(built.failure);
       }
