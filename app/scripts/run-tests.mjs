@@ -51,6 +51,7 @@ const AREAS = {
     what: 'Markdown, scrolling, diffs, plain errors and what the window reads like',
     files: [
       'markdown.test.ts',
+      'help-guides.test.ts',
       'plain-error.test.ts',
       'scroll-follow.test.ts',
       'walk-activation.test.ts',

@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { HelpWindow } from './HelpWindow';
 import { HostBrowser, HostLinkLine, SshQuestions } from './HostLink';
 import { LoopEditor } from './LoopEditor';
 import { StepOutputWindow } from './StepOutputWindow';
@@ -48,6 +49,9 @@ const isReviewWindow = new URLSearchParams(window.location.search).get('window')
 
 /** DSP-209 S20: the window that shows one step visit's output, or one fan-out branch's. */
 const isBranchWindow = new URLSearchParams(window.location.search).get('window') === 'branch';
+
+/** A Help guide (DSP-211): text only, no host and no session. */
+const isHelpWindow = new URLSearchParams(window.location.search).get('window') === 'help';
 
 /** A review window over a chosen revision pair (DSP-150): the diff review, not a walk. */
 const isDiffReview = isReviewWindow && new URLSearchParams(window.location.search).get('view') === 'diff';
@@ -116,5 +120,5 @@ if (new URLSearchParams(window.location.search).get('view') === 'panel') {
 }
 
 createRoot(host).render(
-  <StrictMode>{isBrowseWindow ? <HostBrowser /> : isBranchWindow ? <StepOutputWindow /> : <><HostLinkLine /><SshQuestions />{isFollowView ? <WalkLoopFollow /> : isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
+  <StrictMode>{isHelpWindow ? <HelpWindow /> : isBrowseWindow ? <HostBrowser /> : isBranchWindow ? <StepOutputWindow /> : <><HostLinkLine /><SshQuestions />{isFollowView ? <WalkLoopFollow /> : isDiffReview ? <PairReview /> : isReviewWindow ? <ReviewView /> : <Surfaces />}</>}</StrictMode>,
 );

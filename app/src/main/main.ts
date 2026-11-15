@@ -1512,6 +1512,68 @@ function logIfFailed(what: string, work: Promise<unknown>): void {
   });
 }
 
+/** The Help guides that are open, one window per guide (DSP-211). */
+const helpWindows = new Map<string, BrowserWindow>();
+
+/**
+ * Help → a guide in a window of its own: text built into the renderer, no host and no session.
+ * A link in it opens in the person's browser when it is https; nothing else opens or navigates.
+ */
+function openHelpGuide(topic: string, title: string): void {
+  const open = helpWindows.get(topic);
+  if (open !== undefined && !open.isDestroyed()) {
+    open.show();
+    open.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 900,
+    height: 900,
+    minWidth: 520,
+    minHeight: 420,
+    show: false,
+    backgroundColor: '#101317',
+    ...windowIcon(),
+    title,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  helpWindows.set(topic, window);
+  window.setMenuBarVisibility(false);
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+  window.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+  window.on('page-title-updated', (event) => {
+    event.preventDefault();
+  });
+  windowZoom?.adopt(window, 'help');
+  window.once('ready-to-show', () => {
+    window.show();
+  });
+  window.on('closed', () => {
+    if (helpWindows.get(topic) === window) {
+      helpWindows.delete(topic);
+    }
+  });
+  const search = `window=help&topic=${encodeURIComponent(topic)}`;
+  if (rendererUrl === undefined) {
+    void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { search });
+  } else {
+    const base = rendererUrl.split('#')[0] ?? rendererUrl;
+    void window.loadURL(`${base}${base.includes('?') ? '&' : '?'}${search}`);
+  }
+}
+
 /** DSP-200: About DSpatch, over the window it was asked from, with the versions to copy. */
 async function showAbout(): Promise<void> {
   const text = aboutText(app.getVersion(), remoteBuild(app.getAppPath()).commit, remoteLink?.build() ?? null);
@@ -2676,6 +2738,15 @@ function installApplicationMenu(): void {
       {
         label: '&Help',
         submenu: [
+          {
+            // DSP-211: the guide for the ordinary remote case, a Linux client and a Windows host.
+            id: 'dspatch-help-remote-windows',
+            label: 'Connect to a Windows Host over SSH…',
+            click: () => {
+              openHelpGuide('remote-windows-host', 'DSpatch — Connect to a Windows host over SSH');
+            },
+          },
+          { type: 'separator' },
           {
             // DSP-200: which DSpatch this is, and which host it is talking to.
             id: 'dspatch-about',

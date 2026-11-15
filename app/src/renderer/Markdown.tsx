@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import { useState, type JSX } from 'react';
 
 import {
   parseMarkdown,
@@ -25,9 +25,12 @@ import {
 export function Markdown({
   text,
   testId,
+  copyCode = false,
 }: {
   readonly text: string;
   readonly testId?: string;
+  /** A Copy button on each code block, for text meant to be run (the Help guides). */
+  readonly copyCode?: boolean;
 }): JSX.Element {
   const blocks = parseMarkdown(text);
   return (
@@ -35,22 +38,54 @@ export function Markdown({
       className="markdown"
       {...(testId === undefined ? {} : { 'data-ev': testId })}
     >
-      <Blocks blocks={blocks} />
+      <Blocks blocks={blocks} copyCode={copyCode} />
     </div>
   );
 }
 
-function Blocks({ blocks }: { readonly blocks: readonly MarkdownBlock[] }): JSX.Element {
+function Blocks({ blocks, copyCode = false }: { readonly blocks: readonly MarkdownBlock[]; readonly copyCode?: boolean }): JSX.Element {
   return (
     <>
       {blocks.map((block, index) => (
-        <Block key={index} block={block} />
+        <Block key={index} block={block} copyCode={copyCode} />
       ))}
     </>
   );
 }
 
-function Block({ block }: { readonly block: MarkdownBlock }): JSX.Element {
+function CodeBlock({ language, text }: { readonly language: string | null; readonly text: string }): JSX.Element {
+  return (
+    // The one place a horizontal scroll is wanted: §9.1 allows it for code and
+    // rules it out for the conversation.
+    <pre className="markdown__pre">
+      <code className="markdown__code-block" {...(language === null ? {} : { 'data-language': language })}>
+        {text}
+      </code>
+    </pre>
+  );
+}
+
+/** Copies one code block's text, and says so for a moment. */
+function CopyCode({ text }: { readonly text: string }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="markdown__copy"
+      data-ev="markdown-copy"
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }).catch(() => undefined);
+      }}
+    >
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
+function Block({ block, copyCode = false }: { readonly block: MarkdownBlock; readonly copyCode?: boolean }): JSX.Element {
   switch (block.kind) {
     case 'paragraph':
       return (
@@ -68,23 +103,22 @@ function Block({ block }: { readonly block: MarkdownBlock }): JSX.Element {
     }
     case 'code':
       return (
-        // The one place a horizontal scroll is wanted: §9.1 allows it for code and
-        // rules it out for the conversation.
-        <pre className="markdown__pre">
-          <code
-            className="markdown__code-block"
-            {...(block.language === null ? {} : { 'data-language': block.language })}
-          >
-            {block.text}
-          </code>
-        </pre>
+        // Only the Help guides wrap a code block, so every other view keeps its markup.
+        copyCode ? (
+          <div className="markdown__code-box">
+            <CopyCode text={block.text} />
+            <CodeBlock language={block.language} text={block.text} />
+          </div>
+        ) : (
+          <CodeBlock language={block.language} text={block.text} />
+        )
       );
     case 'list':
       return block.ordered ? (
         <ol className="markdown__list" start={block.start}>
           {block.items.map((item, index) => (
             <li key={index}>
-              <Blocks blocks={item.blocks} />
+              <Blocks blocks={item.blocks} copyCode={copyCode} />
             </li>
           ))}
         </ol>
@@ -92,7 +126,7 @@ function Block({ block }: { readonly block: MarkdownBlock }): JSX.Element {
         <ul className="markdown__list">
           {block.items.map((item, index) => (
             <li key={index}>
-              <Blocks blocks={item.blocks} />
+              <Blocks blocks={item.blocks} copyCode={copyCode} />
             </li>
           ))}
         </ul>
@@ -100,7 +134,7 @@ function Block({ block }: { readonly block: MarkdownBlock }): JSX.Element {
     case 'quote':
       return (
         <blockquote className="markdown__quote">
-          <Blocks blocks={block.blocks} />
+          <Blocks blocks={block.blocks} copyCode={copyCode} />
         </blockquote>
       );
     case 'rule':
