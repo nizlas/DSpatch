@@ -133,27 +133,48 @@ for tool in tar sha256sum; do command -v "$tool" >/dev/null 2>&1 || echo "missin
 `);
 }
 
-/** Receive the package on stdin, under a name no version folder uses. */
-export function receive(os: RemoteOs, file: string): RemoteStep {
-  if (os === 'windows') {
-    return windows(`
-New-Item -ItemType Directory -Force "$root\\incoming" | Out-Null
-$in = [Console]::OpenStandardInput(); $out = [IO.File]::Create("$root\\incoming\\${file}.part"); $in.CopyTo($out); $out.Close()
-`);
-  }
+/** Receive the package on stdin, under a name no version folder uses. A POSIX machine only. */
+export function receive(file: string): RemoteStep {
   return {
     command: `sh -c ${shQuote(`${POSIX_PATHS}mkdir -p "$root/incoming" && exec cat > "$root/incoming/${file}.part"`)}`,
   };
 }
 
 /**
+ * Where a Windows machine receives the package, said as an SFTP path (`incoming=/C:/…`). The package
+ * itself then goes over SFTP (DSP-211): Windows PowerShell 5.1 over SSH stopped reading its standard
+ * input after about 4 KB, so a package sent that way never arrived, and the PowerShell waiting for it
+ * outlived the connection and kept its file open. So each attempt has a file of its own
+ * (`attempt`), and what earlier attempts left is removed where nothing holds it any more.
+ */
+export function receiveOnWindows(file: string, attempt: string): RemoteStep {
+  return windows(`
+New-Item -ItemType Directory -Force "$root\\incoming" | Out-Null
+Get-ChildItem "$root\\incoming" -Filter '*.part' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+$part = "$root\\incoming\\${windowsPartName(file, attempt)}"
+Write-Output ("incoming=/" + ($part -replace '\\\\', '/'))
+`);
+}
+
+/** The name an attempt's package has on a Windows machine until `install` takes it. */
+export function windowsPartName(file: string, attempt: string): string {
+  return `${file}.${attempt}.part`;
+}
+
+/** The SFTP batch that puts a local file at a path `receiveOnWindows` named. */
+export function sftpPut(local: string, remote: string): string {
+  const quoted = (text: string): string => `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+  return `put ${quoted(local)} ${quoted(remote)}\n`;
+}
+
+/**
  * Check what arrived, unpack it beside the versions and rename it into place. Whatever stops this
  * leaves the versions as they were, and the next attempt clears the leftovers first.
  */
-export function install(os: RemoteOs, file: string, sha256: string, hostId: string): RemoteStep {
+export function install(os: RemoteOs, file: string, sha256: string, hostId: string, attempt = ''): RemoteStep {
   if (os === 'windows') {
     return windows(`
-$part = "$root\\incoming\\${file}.part"
+$part = "$root\\incoming\\${attempt === '' ? `${file}.part` : windowsPartName(file, attempt)}"
 if ((Get-FileHash $part -Algorithm SHA256).Hash.ToLower() -ne '${sha256}') { Remove-Item $part; Write-Output 'failed=checksum'; exit 0 }
 New-Item -ItemType Directory -Force "$root\\versions" | Out-Null
 Get-ChildItem "$root\\versions" -Directory -Filter '.tmp-*' | Remove-Item -Recurse -Force

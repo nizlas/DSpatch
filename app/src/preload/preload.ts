@@ -496,6 +496,7 @@ function listen<T>(channel: string): (listener: (value: T) => void) => () => voi
 
 contextBridge.exposeInMainWorld('dspatchSetup', {
   sshConnect: (target: string) => ipcRenderer.invoke('dspatch:ssh-connect', target) as Promise<string>,
+  sshCancel: () => ipcRenderer.invoke('dspatch:ssh-cancel') as Promise<void>,
   sshRecent: () => ipcRenderer.invoke('dspatch:ssh-recent') as Promise<readonly string[]>,
   takeRemoteFormRequest: () => ipcRenderer.invoke('dspatch:take-remote-form') as Promise<boolean>,
   sshAnswer: (id: number, answer: string | null) => {

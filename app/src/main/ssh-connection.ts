@@ -15,6 +15,8 @@ import {
   probe,
   readLines,
   receive,
+  receiveOnWindows,
+  sftpPut,
   start,
   stop,
   type HostRunning,
@@ -61,6 +63,8 @@ export interface SshConnectionOptions {
   /** For tests in an isolated environment: `ssh -F`. */
   readonly configFile?: string;
   readonly sshProgram?: string;
+  /** OpenSSH's `sftp`, which sends the host package to a Windows machine (DSP-211). */
+  readonly sftpProgram?: string;
   /** The tunnel fell and could not be raised again, for a reason retrying will not change. */
   readonly onBroken?: (message: string) => void;
 }
@@ -94,6 +98,14 @@ export function validTarget(text: string): boolean {
 }
 
 const POSIX_CLIENT = process.platform !== 'win32';
+
+/** What a step ended by Cancel or close says. */
+export const CANCELLED = 'Connect was cancelled.';
+
+function notSent(target: string, stderr: string): string {
+  const last = stderr.trim().split(/\r?\n/).at(-1) ?? '';
+  return `The host package could not be sent to ${target}${last === '' ? '' : `: ${last}`}. Nothing was installed there; try again.`;
+}
 
 export function installedHostToStart(
   build: RemoteBuild,
@@ -150,6 +162,7 @@ export class SshConnection {
   private remembered = new Map<string, string>();
 
   private master: ChildProcess | null = null;
+  private readonly children = new Set<ChildProcess>();
 
   private tunnel: ChildProcess | null = null;
 
@@ -274,9 +287,21 @@ export class SshConnection {
     return this.options.sshProgram ?? 'ssh';
   }
 
-  private spawnSsh(args: readonly string[]): ChildProcess {
+  private spawnSsh(args: readonly string[], program = this.program()): ChildProcess {
+    if (this.closed) {
+      throw new Error(CANCELLED);
+    }
     // Detached: no controlling terminal, so ssh can only ask through askpass.
-    return spawn(this.program(), [...args], { env: this.environment(), stdio: ['pipe', 'pipe', 'pipe'], detached: POSIX_CLIENT, windowsHide: true });
+    const child = spawn(program, [...args], { env: this.environment(), stdio: ['pipe', 'pipe', 'pipe'], detached: POSIX_CLIENT, windowsHide: true });
+    // Every ssh and sftp of this connection, so that Cancel and close end them all (DSP-211).
+    this.children.add(child);
+    child.on('exit', () => {
+      this.children.delete(child);
+    });
+    child.on('error', () => {
+      this.children.delete(child);
+    });
+    return child;
   }
 
   /** Run one step on the machine. */
@@ -304,6 +329,10 @@ export class SshConnection {
         child.stdin?.end(step.stdin ?? '');
       }
       child.on('close', (code) => {
+        if (this.closed) {
+          reject(new Error(CANCELLED));
+          return;
+        }
         resolve({ code, stdout, stderr });
       });
     });
@@ -343,7 +372,7 @@ export class SshConnection {
         }
       });
       const check = (): void => {
-        if (this.master !== child) {
+        if (this.master !== child || this.closed) {
           return;
         }
         const checking = this.spawnSsh(this.args(['-O', 'check', '--', this.options.target]));
@@ -464,22 +493,15 @@ export class SshConnection {
       throw new Error(found);
     }
     this.options.status('Installing host…');
-    const size = fs.statSync(found.path).size;
-    let sent = 0;
-    let shown = -1;
-    const stream = fs.createReadStream(found.path);
-    const received = await this.exec(receive(this.remoteOs, found.file), stream, (bytes) => {
-      sent += bytes;
-      const percent = Math.floor((sent / size) * 10) * 10;
-      if (percent !== shown) {
-        shown = percent;
-        this.options.status(`Installing host… ${String(percent)} %`);
-      }
-    });
-    if (received.code !== 0) {
-      throw new Error(`The host package could not be sent to ${this.options.target}: ${received.stderr.trim().split('\n').at(-1) ?? 'the connection ended'}. Nothing was changed there; try again.`);
+    // A Windows attempt has a file of its own, so one an earlier attempt still holds cannot stop it.
+    const attempt = this.remoteOs === 'windows' ? randomBytes(6).toString('hex') : '';
+    if (this.remoteOs === 'windows') {
+      await this.sendToWindows(found.path, found.file, attempt);
+    } else {
+      await this.sendOnStdin(found.path, found.file);
     }
-    const done = await this.must(install(this.remoteOs, found.file, found.sha256, found.hostId));
+    this.options.status('Installing host: checking and unpacking it…');
+    const done = await this.must(install(this.remoteOs, found.file, found.sha256, found.hostId, attempt));
     const failed = done.get('failed')?.[0];
     if (failed !== undefined || done.get('installed') === undefined) {
       const words: Record<string, string> = {
@@ -490,6 +512,72 @@ export class SshConnection {
       throw new Error(`${words[failed ?? ''] ?? 'The host could not be installed'}. A working version there was left as it was; try again.`);
     }
     this.options.log(`host ${found.hostId} installed on ${this.options.target}`);
+  }
+
+  /** A POSIX machine takes the package on the standard input of `cat`. */
+  private async sendOnStdin(local: string, file: string): Promise<void> {
+    const size = fs.statSync(local).size;
+    let sent = 0;
+    let shown = -1;
+    const stream = fs.createReadStream(local);
+    const received = await this.exec(receive(file), stream, (bytes) => {
+      sent += bytes;
+      const percent = Math.floor((sent / size) * 10) * 10;
+      if (percent !== shown) {
+        shown = percent;
+        this.options.status(`Installing host… ${String(percent)} %`);
+      }
+    });
+    if (received.code !== 0) {
+      throw new Error(notSent(this.options.target, received.stderr));
+    }
+  }
+
+  /**
+   * A Windows machine takes the package over SFTP, on the same connection, config and sign-in as
+   * every other step (DSP-211). PowerShell only names the place and clears an earlier leftover.
+   */
+  private async sendToWindows(local: string, file: string, attempt: string): Promise<void> {
+    const remote = (await this.must(receiveOnWindows(file, attempt))).get('incoming')?.[0];
+    if (remote === undefined || !/^\/[A-Za-z]:\//.test(remote)) {
+      throw new Error(`${this.options.target} did not say where to put the host package. Nothing was changed there; try again.`);
+    }
+    const megabytes = Math.max(1, Math.round(fs.statSync(local).size / 1_048_576));
+    this.options.status(`Installing host: sending ${String(megabytes)} MB…`);
+    const sent = await new Promise<{ readonly code: number | null; readonly stderr: string }>((resolve, reject) => {
+      // `-b -` reads the batch from stdin and stops at the first failed command; `BatchMode=no`
+      // comes first, so askpass may still answer as for ssh (sftp would otherwise turn it on).
+      const child = this.spawnSsh(
+        [
+          '-o', 'BatchMode=no',
+          // The same options as every ssh of this connection; `-T` is ssh's alone.
+          ...this.args([]).filter((argument) => argument !== '-T'),
+          ...(POSIX_CLIENT ? ['-o', 'ControlMaster=no'] : []),
+          '-b', '-',
+          '--', this.options.target,
+        ],
+        this.options.sftpProgram ?? 'sftp',
+      );
+      let stderr = '';
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
+      });
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        reject(new Error(error.code === 'ENOENT' ? 'No SFTP client was found on this computer. Install OpenSSH and try again.' : error.message));
+      });
+      child.stdin?.on('error', () => undefined);
+      child.stdin?.end(sftpPut(local, remote));
+      child.on('close', (code) => {
+        if (this.closed) {
+          reject(new Error(CANCELLED));
+          return;
+        }
+        resolve({ code, stderr });
+      });
+    });
+    if (sent.code !== 0) {
+      throw new Error(notSent(this.options.target, sent.stderr));
+    }
   }
 
   /** Make sure a host we can use runs there, and return where. */
@@ -697,6 +785,10 @@ export class SshConnection {
   close(): void {
     this.closed = true;
     this.remembered.clear();
+    for (const child of this.children) {
+      child.kill();
+    }
+    this.children.clear();
     this.master?.kill();
     this.tunnel?.kill();
     this.askServer?.close();

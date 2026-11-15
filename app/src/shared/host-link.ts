@@ -80,6 +80,8 @@ export interface SshQuestion {
 /** On `window.dspatchSetup`, in the main window (DSP-153). */
 export interface SetupBridge {
   sshConnect(target: string): Promise<string>;
+  /** Stop a Connect in progress and end its ssh processes; its own answer then says so (DSP-211). */
+  sshCancel(): Promise<void>;
   sshRecent(): Promise<readonly string[]>;
   sshAnswer(id: number, answer: string | null): void;
   /** Whether a window should open the connection form, once: a saved tunnel that no longer answers. */

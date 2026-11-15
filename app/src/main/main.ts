@@ -823,6 +823,12 @@ function registerHostLinkIpc(): void {
     );
   });
   ipcMain.handle('dspatch:ssh-connect', (_event, target: unknown) => (typeof target === 'string' ? connectOverSsh(target) : 'Give a machine.'));
+  ipcMain.handle('dspatch:ssh-cancel', () => {
+    if (sshConnecting !== null) {
+      log('[ssh] Connect cancelled by the person');
+      sshConnecting.close();
+    }
+  });
   ipcMain.handle('dspatch:ssh-recent', () => sshRecent());
   ipcMain.on('dspatch:ssh-answer', (_event, id: unknown, answer: unknown) => {
     const waiting = typeof id === 'number' ? sshQuestions.get(id) : undefined;

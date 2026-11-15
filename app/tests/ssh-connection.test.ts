@@ -15,9 +15,9 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { releaseUrl, findHostPackage, readHostManifest, type HostManifest } from '../src/main/host-packages.ts';
-import { installedHostToStart, SshConnection, sshProblem, validTarget } from '../src/main/ssh-connection.ts';
+import { CANCELLED, installedHostToStart, SshConnection, sshProblem, validTarget } from '../src/main/ssh-connection.ts';
 import { processIdentity } from '../src/main/host-data.ts';
-import { credentials, handover, install, packagePlatform, probe, readLines, receive, start, stop } from '../src/shared/host-bootstrap.ts';
+import { credentials, handover, install, packagePlatform, probe, readLines, receive, receiveOnWindows, sftpPut, start, stop } from '../src/shared/host-bootstrap.ts';
 
 /**
  * The steps a Linux or macOS host runs, run here by a real `sh` with its `tar`, `sleep` and `/proc`.
@@ -196,7 +196,7 @@ describe('the steps on the machine, run by a real sh', { skip: POSIX_STEPS_HERE 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-steps-'));
     const made = packageIn(fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-package-')));
     assert.equal(readLines(run(home, probe('posix'))).get('version'), undefined);
-    run(home, receive('posix', made.file), made.bytes);
+    run(home, receive(made.file), made.bytes);
     assert.equal(readLines(run(home, install('posix', made.file, made.sha256, '1.0-abc'))).get('installed')?.[0], 'yes');
     assert.deepEqual(readLines(run(home, probe('posix'))).get('version'), ['1.0-abc']);
     assert.equal(readLines(run(home, start('posix', '1.0-abc'))).get('started')?.[0], 'yes');
@@ -214,7 +214,7 @@ describe('the steps on the machine, run by a real sh', { skip: POSIX_STEPS_HERE 
   it('refuses a package that does not match, and leaves the versions alone', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-steps-'));
     const made = packageIn(fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-package-')));
-    run(home, receive('posix', made.file), made.bytes);
+    run(home, receive(made.file), made.bytes);
     assert.equal(readLines(run(home, install('posix', made.file, '0'.repeat(64), '1.0-abc'))).get('failed')?.[0], 'checksum');
     assert.equal(readLines(run(home, probe('posix'))).get('version'), undefined);
   });
@@ -226,7 +226,7 @@ describe('the steps on the machine, run by a real sh', { skip: POSIX_STEPS_HERE 
     fs.mkdirSync(path.join(versions, '0.9-old', 'dspatch-host'), { recursive: true });
     fs.writeFileSync(path.join(versions, '0.9-old', 'dspatch-host', 'manifest.json'), '{}');
     const made = packageIn(fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-package-')));
-    run(home, receive('posix', made.file), made.bytes);
+    run(home, receive(made.file), made.bytes);
     run(home, install('posix', made.file, made.sha256, '1.0-abc'));
     assert.deepEqual(fs.readdirSync(versions).sort(), ['0.9-old', '1.0-abc']);
   });
@@ -488,5 +488,94 @@ describe('where a host package comes from', () => {
 
   it('reads no manifest as none', () => {
     assert.equal(readHostManifest('/no/such/file'), null);
+  });
+});
+
+/**
+ * DSP-211: Windows PowerShell 5.1 over SSH stopped reading its standard input after about 4 KB, so
+ * the package goes to a Windows machine over SFTP. A fake `sftp` here records what it was given.
+ */
+describe('sending the host package to a Windows machine', { skip: POSIX_STEPS_HERE }, () => {
+  const decoded = (command: string): string => Buffer.from(command.split(' ').at(-1) ?? '', 'base64').toString('utf16le');
+
+  it('never reads the package from PowerShell\'s standard input, and names an SFTP path', () => {
+    const script = decoded(receiveOnWindows('dspatch-host-1-a-win32-x64.tar.gz', 'abc123').command);
+    assert.doesNotMatch(script, /OpenStandardInput|\$input/);
+    assert.match(script, /dspatch-host-1-a-win32-x64\.tar\.gz\.abc123\.part/, 'each attempt has a file of its own');
+    assert.match(script, /-Filter '\*\.part'.*SilentlyContinue/, 'leftovers are removed where nothing holds them');
+    assert.match(script, /incoming=/);
+    assert.match(decoded(install('windows', 'p.tar.gz', '0'.repeat(64), '1-a', 'abc123').command), /incoming\\p\.tar\.gz\.abc123\.part/, 'install takes that file');
+  });
+
+  it('quotes both paths of the SFTP batch', () => {
+    assert.equal(sftpPut('/opt/a b/p.tar.gz', '/C:/Users/x/p.part'), 'put "/opt/a b/p.tar.gz" "/C:/Users/x/p.part"\n');
+    assert.equal(sftpPut('/a"b\\c', '/C:/d'), 'put "/a\\"b\\\\c" "/C:/d"\n');
+  });
+
+  const fakeSftp = (folder: string, body: string): string => {
+    const file = path.join(folder, 'sftp');
+    fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "$@" > '${folder}/args.txt'\ncat > '${folder}/batch.txt'\n${body}\n`, { mode: 0o755 });
+    return file;
+  };
+  const connectionWith = (sftpProgram: string, statuses: string[]) => {
+    const connection = new SshConnection({
+      target: 'nicla@windows.example', build: { appVersion: '1', commit: 'a', protocol: 1, contract: 'c' }, log: () => undefined,
+      status: (text) => statuses.push(text), ask: async () => null, packageFor: async () => 'unused',
+      askpassScript: '', nodeRunner: process.execPath, configFile: '/tmp/test-ssh-config', sftpProgram,
+    });
+    const internal = connection as unknown as { remoteOs: string; must(step: { command: string }): Promise<ReadonlyMap<string, readonly string[]>>; sendToWindows(local: string, file: string, attempt: string): Promise<void> };
+    internal.remoteOs = 'windows';
+    internal.must = async () => new Map([['incoming', ['/C:/Users/x/AppData/Local/DSpatch/host/incoming/p.tar.gz.part']]]);
+    return { connection, internal };
+  };
+
+  it('puts the package with the connection\'s own ssh options, askpass allowed', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'sftp-'));
+    const local = path.join(folder, 'p.tar.gz');
+    fs.writeFileSync(local, 'package');
+    const statuses: string[] = [];
+    const { connection, internal } = connectionWith(fakeSftp(folder, 'exit 0'), statuses);
+    try {
+      await internal.sendToWindows(local, 'p.tar.gz', 'abc123');
+      const args = fs.readFileSync(path.join(folder, 'args.txt'), 'utf8').trim().split('\n');
+      assert.deepEqual(args.slice(0, 2), ['-o', 'BatchMode=no'], 'BatchMode=no comes before -b, so askpass may still answer');
+      assert.ok(args.includes('-F') && args.includes('/tmp/test-ssh-config'));
+      assert.ok(args.includes('StrictHostKeyChecking=ask'));
+      assert.ok(!args.includes('-T'));
+      assert.deepEqual(args.slice(-4), ['-b', '-', '--', 'nicla@windows.example']);
+      assert.equal(fs.readFileSync(path.join(folder, 'batch.txt'), 'utf8'), `put "${local}" "/C:/Users/x/AppData/Local/DSpatch/host/incoming/p.tar.gz.part"\n`);
+      assert.ok(statuses.some((text) => /sending 1 MB/.test(text)));
+    } finally {
+      connection.close();
+    }
+  });
+
+  it('says plainly when the transfer fails', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'sftp-'));
+    fs.writeFileSync(path.join(folder, 'p.tar.gz'), 'package');
+    const { connection, internal } = connectionWith(fakeSftp(folder, "echo 'remote open: No such file' >&2; exit 1"), []);
+    try {
+      await assert.rejects(internal.sendToWindows(path.join(folder, 'p.tar.gz'), 'p.tar.gz', 'abc123'), /could not be sent to nicla@windows\.example: remote open: No such file\. Nothing was installed there/);
+    } finally {
+      connection.close();
+    }
+  });
+
+  it('ends a transfer in progress on Cancel, and leaves no process of its own', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'sftp-'));
+    fs.writeFileSync(path.join(folder, 'p.tar.gz'), 'package');
+    const { connection, internal } = connectionWith(fakeSftp(folder, `echo $$ > '${folder}/pid'; exec sleep 60`), []);
+    const sending = internal.sendToWindows(path.join(folder, 'p.tar.gz'), 'p.tar.gz', 'abc123');
+    for (let i = 0; i < 100 && !fs.existsSync(path.join(folder, 'pid')); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const pid = Number(fs.readFileSync(path.join(folder, 'pid'), 'utf8'));
+    connection.close();
+    await assert.rejects(sending, new RegExp(CANCELLED));
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i += 1) {
+      try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 20)); } catch { alive = false; }
+    }
+    assert.equal(alive, false, 'the sftp of this connection is gone');
   });
 });

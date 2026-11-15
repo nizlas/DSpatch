@@ -70,7 +70,21 @@ function RemoteSessionForm({ onClose }: { readonly onClose: () => void }): JSX.E
       {note !== '' && <p className="start__remote-note" data-ev="ssh-status" role="status">{note}</p>}
       <div className="start__remote-buttons">
         <button type="submit" data-ev="ssh-connect" disabled={busy || target.trim() === ''}>Connect</button>
-        <button type="button" data-ev="remote-cancel" onClick={onClose}>Cancel</button>
+        {/* While connecting, Cancel stops the connect and says so here; otherwise it closes (DSP-211). */}
+        <button
+          type="button"
+          data-ev="remote-cancel"
+          onClick={() => {
+            if (busy) {
+              setNote('Cancelling…');
+              void window.dspatchSetup?.sshCancel();
+            } else {
+              onClose();
+            }
+          }}
+        >
+          Cancel
+        </button>
       </div>
       <details className="start__remote-advanced" data-ev="remote-advanced">
         <summary>Advanced</summary>
