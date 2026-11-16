@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ import test from 'node:test';
 const HELPER = path.join(import.meta.dirname, '..', 'remote-setup', 'dspatch-prepare-linux-client.sh');
 const skip = process.platform === 'win32' ? 'bash and ssh-keygen are Linux tools here' : false;
 
-function workspace(context: test.TestContext): { home: string; ssh: string; run: (...args: string[]) => { stdout: string; stderr: string; status: number | null } } {
+function workspace(context: test.TestContext, helper = HELPER): { root: string; home: string; ssh: string; run: (...args: string[]) => { stdout: string; stderr: string; status: number | null } } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-linux-helper-'));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, 'home');
@@ -35,10 +36,11 @@ function workspace(context: test.TestContext): { home: string; ssh: string; run:
   );
   const env = { PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`, HOME: home, USER: 'tester', LANG: 'C' };
   return {
+    root,
     home,
     ssh: path.join(home, '.ssh'),
     run: (...args) => {
-      const result = spawnSync('bash', [HELPER, ...args], { env, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      const result = spawnSync('bash', [helper, ...args], { env, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
       return { stdout: result.stdout, stderr: result.stderr, status: result.status };
     },
   };
@@ -60,9 +62,14 @@ test('with no key it creates id_ed25519, prints only the public key and the Wind
   assert.equal(first.status, 0, first.stderr);
   const pub = fs.readFileSync(path.join(ssh, 'id_ed25519.pub'), 'utf8').trim();
   assert.match(pub, /^ssh-ed25519 [A-Za-z0-9+/]+=* tester@/);
-  assert.ok(first.stdout.includes(`  ${pub}\n`), 'the public key line is printed');
-  assert.ok(first.stdout.includes(`.\\dspatch-prepare-windows-host.ps1 -PublicKey '${pub}' -AllowFrom 192.0.2.55 -User 'winuser'`));
-  assert.ok(first.stdout.includes('ssh winuser@192.0.2.10'));
+  // Run from the checkout, beside no VERSION: the command for a script saved by hand, ready to paste.
+  const command = `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & .\\dspatch-prepare-windows-host.ps1 -PublicKey '${pub}' -AllowFrom 192.0.2.55 -User 'winuser'`;
+  assert.ok(first.stdout.includes(`\n${command}\n`), first.stdout);
+  assert.equal(fs.readFileSync(path.join(path.dirname(ssh), 'dspatch-windows-command.txt'), 'utf8'), `${command}\r\n`);
+  assert.ok(first.stdout.includes('=== Next: on the Windows computer ==='));
+  assert.ok(first.stdout.includes('Save Windows script'));
+  assert.ok(first.stdout.includes('  ssh winuser@192.0.2.10\n'));
+  assert.ok(first.stdout.includes('In DSpatch: Remote Session, enter winuser@192.0.2.10, Connect.'));
   const output = first.stdout + first.stderr;
   for (const line of privateBody(path.join(ssh, 'id_ed25519'))) {
     assert.ok(!output.includes(line), 'no part of the private key is printed');
@@ -74,7 +81,7 @@ test('with no key it creates id_ed25519, prints only the public key and the Wind
   const again = run('winuser@192.0.2.10');
   assert.equal(again.status, 0, again.stderr);
   assert.deepEqual(fs.readFileSync(path.join(ssh, 'id_ed25519')), before);
-  assert.ok(again.stdout.includes(`  ${pub}\n`));
+  assert.ok(again.stdout.includes(`-PublicKey '${pub}'`));
   assert.deepEqual(fs.readdirSync(ssh).sort(), ['id_ed25519', 'id_ed25519.pub']);
 });
 
@@ -93,7 +100,8 @@ test('an existing id_ed25519 is used as it is, never overwritten', { skip }, (co
   }
   // Without a host: the addresses are listed and the command keeps its placeholders.
   assert.match(result.stdout, /eth0 UP 192\.0\.2\.55\/24/);
-  assert.ok(result.stdout.includes("-AllowFrom <this-computer-ip> -User '<windows-user>'"));
+  assert.ok(result.stdout.includes("-AllowFrom <this-computer-ip>\n"), result.stdout);
+  assert.ok(result.stdout.includes("add -User '<windows-user>'"));
 });
 
 test('a private key without its .pub gets the .pub derived, the private key unchanged', { skip }, (context) => {
@@ -120,4 +128,26 @@ test('an id_rsa.pub is used, and no new key is made beside it', { skip }, (conte
   assert.equal(result.status, 0, result.stderr);
   assert.ok(!fs.existsSync(path.join(ssh, 'id_ed25519')));
   assert.ok(result.stdout.includes(fs.readFileSync(path.join(ssh, 'id_rsa.pub'), 'utf8').trim()));
+});
+
+test('installed with DSpatch, the command downloads this release\'s Windows script and checks its SHA-256 (DSP-215)', { skip }, (context) => {
+  const bundled = fs.mkdtempSync(path.join(os.tmpdir(), 'dspatch-bundled-remote-setup-'));
+  context.after(() => fs.rmSync(bundled, { recursive: true, force: true }));
+  const windowsScript = path.join(import.meta.dirname, '..', 'remote-setup', 'dspatch-prepare-windows-host.ps1');
+  fs.copyFileSync(HELPER, path.join(bundled, 'dspatch-prepare-linux-client.sh'));
+  fs.copyFileSync(windowsScript, path.join(bundled, 'dspatch-prepare-windows-host.ps1'));
+  fs.writeFileSync(path.join(bundled, 'VERSION'), '9.8.7\n');
+  const sha = createHash('sha256').update(fs.readFileSync(windowsScript)).digest('hex').toUpperCase();
+  const { home, ssh, run } = workspace(context, path.join(bundled, 'dspatch-prepare-linux-client.sh'));
+  const result = run('winuser@192.0.2.10');
+  assert.equal(result.status, 0, result.stderr);
+  const pub = fs.readFileSync(path.join(ssh, 'id_ed25519.pub'), 'utf8').trim();
+  const command = fs.readFileSync(path.join(home, 'dspatch-windows-command.txt'), 'utf8').replace(/\r\n$/, '');
+  assert.ok(result.stdout.includes(`\n${command}\n`), 'the saved command is the printed one');
+  assert.ok(command.includes("-Uri 'https://github.com/nizlas/DSpatch/releases/download/v9.8.7/dspatch-prepare-windows-host.ps1'"));
+  assert.ok(command.includes(`.Hash -ne '${sha}') { throw `), 'it refuses a script with another SHA-256');
+  assert.ok(command.indexOf('Get-FileHash') < command.indexOf('& $f'), 'the check comes before the run');
+  assert.ok(command.endsWith(`& $f -PublicKey '${pub}' -AllowFrom 192.0.2.55 -User 'winuser'`));
+  assert.ok(!command.includes('<'), 'nothing is left to fill in');
+  assert.ok(!result.stdout.includes('Save Windows script'), 'no file to carry over');
 });

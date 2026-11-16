@@ -2409,6 +2409,36 @@ html.panel-window body {
   cursor: pointer;
 }
 
+.help-window__back {
+  margin-bottom: 0.5rem;
+}
+
+.help-window__more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  margin-top: 1.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.help-window__more-title {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+
+/* The links between a guide's views: buttons, since a view is state and the window never navigates. */
+.help-window__link {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .help-window__status {
   color: var(--muted);
   overflow-wrap: anywhere;
@@ -2416,6 +2446,18 @@ html.panel-window body {
 
 .markdown__code-box {
   position: relative;
+}
+
+/* A Help command wraps instead of scrolling, and never runs under its Copy button (DSP-215):
+   the commands there are one line each, so wrapping hides no indentation. */
+.markdown__code-box .markdown__pre {
+  padding-right: 4rem;
+  white-space: pre-wrap;
+}
+
+.markdown__code-box .markdown__code-block {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .markdown__copy {

@@ -71,6 +71,8 @@ export function prepareBundled(appDir) {
   }
   // The scripts that prepare a Windows host and a Linux client (DSP-214); Help saves them from here.
   fs.cpSync(path.join(appDir, 'remote-setup'), path.join(bundled, 'remote-setup'), { recursive: true });
+  // The release the scripts belong to: the Linux helper names its download URL by it (DSP-215).
+  fs.writeFileSync(path.join(bundled, 'remote-setup', 'VERSION'), `${pkg.version}\n`);
   fs.mkdirSync(path.join(bundled, 'host-packages'));
   for (const file of files) {
     fs.copyFileSync(path.join(hostDir, file), path.join(bundled, 'host-packages', file));

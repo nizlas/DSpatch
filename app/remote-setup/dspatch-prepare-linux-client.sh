@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# DSpatch: get this Linux computer ready to sign in to a Windows host over SSH (DSP-214).
+# DSpatch: get this Linux computer ready to sign in to a Windows host over SSH (DSP-214, DSP-215).
 #
-#     dspatch-prepare-linux-client.sh [<windows-host>]
+#     dspatch-prepare-linux-client.sh <windows-user>@<windows-host>
 #
 # Finds your SSH public key, or creates a new ed25519 key if you have none, and prints the one
-# command to run on Windows (dspatch-prepare-windows-host.ps1) with that key and this computer's
-# address filled in. It never overwrites a key, and never prints or copies a private key: only the
-# public key (.pub) leaves this computer. Safe to run again: it only reads what is already there.
+# command to run on Windows in PowerShell as administrator, with that key, this computer's address
+# and the Windows user filled in. It also saves that command in ~/dspatch-windows-command.txt.
+# It never overwrites a key, and never prints or copies a private key: only the public key (.pub)
+# leaves this computer. Safe to run again.
 #
-# <windows-host> may be the Windows computer's address or name, or <windows-user>@<windows-host>.
-# With it, the address this computer uses to reach Windows is shown; without it, every IPv4
-# address of this computer is listed.
+# Installed with DSpatch, the command downloads DSpatch's Windows script of this version from its
+# release page and runs it only if its SHA-256 is that of the script installed beside this helper.
+# A copy saved elsewhere prints the command for a Windows script saved by hand instead.
+#
+# <windows-host> may be the Windows computer's address or name; the user part may be left out.
 
 set -euo pipefail
 
 ssh_dir="${HOME}/.ssh"
 target="${1:-}"
 if [[ "${target}" == "-h" || "${target}" == "--help" ]]; then
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
@@ -135,34 +138,68 @@ ps_key="${key//\'/\'\'}"
 user_arg=""
 if [[ -n "${win_user}" ]]; then
   user_arg=" -User '${win_user//\'/\'\'}'"
-else
-  user_arg=" -User '<windows-user>'"
+fi
+script_args="-PublicKey '${ps_key}' -AllowFrom ${allow_from}${user_arg}"
+
+# Installed with DSpatch: the Windows script and this release's version lie beside this helper.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+version=""
+script_sha=""
+if [[ -f "${here}/VERSION" && -f "${here}/dspatch-prepare-windows-host.ps1" ]] && command -v sha256sum >/dev/null 2>&1; then
+  version="$(tr -d '[:space:]' <"${here}/VERSION")"
+  [[ "${version}" =~ ^[0-9A-Za-z.+-]+$ ]] || version=""
+  script_sha="$(sha256sum "${here}/dspatch-prepare-windows-host.ps1" | awk '{ print toupper($1) }')"
 fi
 
-say ''
-say 'Your public key (only this line goes to Windows; the private key stays here):'
-say ''
-say "  ${key}"
-say ''
-say 'On Windows, in PowerShell as administrator, in the folder with dspatch-prepare-windows-host.ps1, run:'
-say ''
-say "  .\\dspatch-prepare-windows-host.ps1 -PublicKey '${ps_key}' -AllowFrom ${allow_from}${user_arg}"
-say ''
-if [[ -z "${win_user}" ]]; then
-  say "Replace <windows-user> with the Windows account DSpatch should sign in as, or leave -User out to use the account that runs the script."
+if [[ -n "${version}" ]]; then
+  url="https://github.com/nizlas/DSpatch/releases/download/v${version}/dspatch-prepare-windows-host.ps1"
+  command="[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; \$f = \"\$env:TEMP\\dspatch-prepare-windows-host-${version}.ps1\"; Invoke-WebRequest -UseBasicParsing -Uri '${url}' -OutFile \$f; if ((Get-FileHash -LiteralPath \$f -Algorithm SHA256).Hash -ne '${script_sha}') { throw 'The downloaded script is not the one this DSpatch expects; it was not run.' }; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & \$f ${script_args}"
+else
+  command="Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & .\\dspatch-prepare-windows-host.ps1 ${script_args}"
 fi
-if [[ -z "${local_address}" ]]; then
-  say "Replace <this-computer-ip> with this computer's address from the list above."
+
+saved="${HOME}/dspatch-windows-command.txt"
+if printf '%s\r\n' "${command}" >"${saved}" 2>/dev/null; then
+  saved_note="It is also saved in ${saved}."
+else
+  saved_note=""
 fi
-say 'If this computer'"'"'s address changes from day to day, give its network instead, for example -AllowFrom <network>/24.'
-say 'Add -DryRun first to see the plan without changing anything.'
-say ''
-say 'Then, back here, sign in once and compare the fingerprint ssh shows with the ones the script printed on Windows:'
-say ''
+
 ssh_user="${win_user:-<windows-user>}"
 if [[ "${ssh_user}" == *\\* ]]; then
   ssh_user="'${ssh_user}'"
 fi
-say "  ssh ${ssh_user}@${win_host:-<windows-host>}"
+ssh_target="${ssh_user}@${win_host:-<windows-host>}"
+
 say ''
-say 'Answer yes only if the fingerprint is one of those. Then use Remote Session in DSpatch with the same user@host.'
+say '=== Next: on the Windows computer ==='
+say ''
+say '1. Get the command below to the Windows computer: mail or chat it to yourself, or copy the file'
+say '   on a USB stick. It holds only your public key, which is not secret.'
+[[ -z "${saved_note}" ]] || say "   ${saved_note}"
+if [[ -z "${version}" ]]; then
+  say '   Put dspatch-prepare-windows-host.ps1 (DSpatch Help: Save Windows script...) in a folder there.'
+fi
+say '2. Open PowerShell as administrator: Start, type PowerShell, right-click Windows PowerShell,'
+say '   Run as administrator.'
+if [[ -z "${version}" ]]; then
+  say '   Go to the script'"'"'s folder with cd.'
+fi
+say '3. Paste the command and press Enter. It shows what it will change and asks Proceed? [y/N]:'
+say '   answer y. Leave the window open: at the end it shows the fingerprints for the last step.'
+say ''
+say "${command}"
+say ''
+if [[ -z "${win_user}" ]]; then
+  say "The Windows script sets up the account that runs it. For another account, add -User '<windows-user>'."
+fi
+if [[ -z "${local_address}" ]]; then
+  say "Replace <this-computer-ip> with this computer's address from the list above, in the command and in ${saved}."
+fi
+say ''
+say '=== Then, back on this computer ==='
+say ''
+say "  ssh ${ssh_target}"
+say ''
+say 'Answer yes only if the fingerprint ssh shows is one of those in the Windows window; then type exit.'
+say "In DSpatch: Remote Session, enter ${ssh_target}, Connect."

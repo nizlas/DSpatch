@@ -120,5 +120,7 @@ test('both scripts are bundled, staged with SHA256SUMS and saved from Help under
     }
   }
   assert.match(fs.readFileSync(path.join(APP, 'scripts', 'prepare-bundled.mjs'), 'utf8'), /path\.join\(appDir, 'remote-setup'\), path\.join\(bundled, 'remote-setup'\)/);
+  // The Linux helper names its release's download by the version written beside it (DSP-215).
+  assert.match(fs.readFileSync(path.join(APP, 'scripts', 'prepare-bundled.mjs'), 'utf8'), /path\.join\(bundled, 'remote-setup', 'VERSION'\), `\$\{pkg\.version\}\\n`/);
   assert.ok(fs.readFileSync(path.join(APP, 'src', 'preload', 'preload.ts'), 'utf8').includes(`ipcRenderer.invoke('${SAVE_REMOTE_SETUP_CHANNEL}', which)`), 'the preload uses the same channel');
 });
