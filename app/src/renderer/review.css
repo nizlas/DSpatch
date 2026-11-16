@@ -452,6 +452,33 @@
   white-space: nowrap;
 }
 
+/* Max width beside Wrap lines (DSP-216): a few digits, as compact as the toggle. */
+.rv-max-width {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.rv-max-width.rv-disabled {
+  color: var(--muted);
+}
+
+.rv .rv-max-width-input {
+  width: 4.5ch;
+  padding: 0.05rem 0.25rem;
+  text-align: right;
+  font: inherit;
+}
+
+.rv .rv-max-width-input:disabled {
+  opacity: 0.55;
+}
+
+.rv .rv-max-width-input[aria-invalid='true'] {
+  border-color: var(--no);
+}
+
 .rv .rv-check input[type='checkbox'] {
   margin: 0;
   padding: 0;
@@ -901,6 +928,30 @@
   width: var(--rv-longest, 0px);
 }
 
+/* Measures the code font's column width for the map's pane widths (DSP-216); never seen. */
+.rv-width-probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  padding: 0;
+  overflow: hidden;
+  white-space: pre;
+}
+
+.rv-width-probe > .rv-width-probe-text {
+  display: inline-block;
+}
+
+/* A pane's scroller, to measure its vertical scrollbar. */
+.rv-width-probe > .rv-width-probe-scroll {
+  position: absolute;
+  width: 100px;
+  height: 50px;
+  padding: 0;
+  overflow-y: scroll;
+}
+
 .rv-old {
   background: var(--rv-old);
 }
@@ -1257,6 +1308,34 @@
    names the active place in full: repository, side and commit, file, lines. */
 .rv-pane-active .rv-focus-active {
   box-shadow: inset 4px 0 0 var(--rv-amber);
+}
+
+/* DSP-217: the lines the active step explains when its place has no change at all: a frame in
+   the active place's amber and a faint amber tint that is neither the diff's red nor its green.
+   A place with any change keeps only the diff's marking. The left edge is the row's own shadow,
+   so the sticky gutter carries it while a long line is scrolled sideways; the top, right and
+   bottom are drawn over the row and take no clicks. */
+.rv-pane-active .rv-anchor {
+  position: relative;
+  box-shadow: inset 3px 0 0 var(--rv-amber);
+  background: color-mix(in srgb, var(--rv-amber) 10%, var(--bg));
+}
+
+.rv-pane-active .rv-anchor::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-right: 2px solid var(--rv-amber);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.rv-pane-active .rv-anchor-top::after {
+  border-top: 2px solid var(--rv-amber);
+}
+
+.rv-pane-active .rv-anchor-bottom::after {
+  border-bottom: 2px solid var(--rv-amber);
 }
 
 .rv-pane-focus {

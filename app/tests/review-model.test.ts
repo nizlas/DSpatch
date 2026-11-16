@@ -34,6 +34,7 @@ import {
   placeKey,
   referenceRows,
   carryStepMarks,
+  unchangedPlace,
   staleOpenedMarks,
   stepContentHash,
   stepHashesOf,
@@ -623,6 +624,29 @@ test('marks follow a step\'s content when the walks change: unchanged steps keep
   assert.deepEqual(rewritten.state.shownSteps, {});
   assert.equal(rewritten.moved, 2);
 
+  // DSP-217: an earlier step was removed and this one moved up from W1.2 to its id: its marks and
+  // the reading position follow it; the removed step's marks go to history.
+  const placeId = step.places[0]?.id ?? 'p';
+  const renumbered = carryStepMarks(
+    definition,
+    {
+      ...base,
+      shownSteps: { 'W1.2': 't1', [step.id]: 't0' },
+      walkedSteps: { 'W1.2': 't3' },
+      shownRefs: { [placeKey('W1.2', placeId)]: 't1' },
+      stepHashes: { [step.id]: 'the-removed-step', 'W1.2': hashes[step.id] as string },
+      position: { ...base.position, walkId: definition.walks[0]?.id ?? null, stepId: 'W1.2' },
+    },
+    'new',
+    'moved',
+  );
+  assert.notEqual(step.id, 'W1.2');
+  assert.deepEqual(renumbered.state.shownSteps, { [step.id]: 't1' });
+  assert.deepEqual(renumbered.state.walkedSteps, { [step.id]: 't3' });
+  assert.deepEqual(renumbered.state.shownRefs, { [placeKey(step.id, placeId)]: 't1' });
+  assert.equal(renumbered.state.position.stepId, step.id);
+  assert.deepEqual(renumbered.state.markHistory[0]?.shownSteps, { [step.id]: 't0' });
+
   // Every text and reference of a step is content: a changed why, evidence, link label or context moves the marks too.
   const vary = (patch: Partial<typeof step>): string => stepContentHash({ ...step, ...patch });
   const place = step.places[0];
@@ -881,3 +905,15 @@ test('points worth checking asked for on their own are kept beside the walks, un
   assert.equal(checksFileOf('C:\\r\\generated\\k\\job-1.review.json'), 'C:\\r\\generated\\k\\job-1.checks.json');
   assert.equal(checksFileOf('/r/job-1.REVIEW.json'), '/r/job-1.checks.json');
 });
+
+test('DSP-217: only a place with no added or removed row is framed; changes elsewhere in the file decide nothing', () => {
+  const base = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  const target = ['a', 'b', 'c', 'd', 'e', 'F', 'g', 'h'];
+  const rows = buildDiffRows(base, target, [hunk({ baseStart: 6, baseCount: 1, targetStart: 6, targetCount: 1 })]);
+  assert.equal(unchangedPlace(rows, { side: 'target', start: 1, end: 4 }), true, 'unchanged lines, with a change further down the file');
+  assert.equal(unchangedPlace(rows, { side: 'target', start: 6, end: 6 }), false, 'the changed line');
+  assert.equal(unchangedPlace(rows, { side: 'target', start: 4, end: 7 }), false, 'mixed: unchanged lines around a change');
+  assert.equal(unchangedPlace(rows, { side: 'base', start: 5, end: 6 }), false, 'the removed side of the change');
+  assert.equal(unchangedPlace(rows, { side: 'target', start: 7, end: 8 }), true, 'unchanged lines after the change');
+});
+

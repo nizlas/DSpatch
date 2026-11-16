@@ -18,7 +18,7 @@ Keep the whole walk in view while you write one step. Say how the step is reache
 
 Write for the reader the profile names, selecting from what you read rather than retelling all of it: for Essentials the main picture in about two natural sentences, correct but not comprehensive, with depth after the marker; for Standard the mechanism made understandable; for Teacher the understanding the reasoning presupposes, built where this step needs it and recalled with a reminder where the walk already established it. The scope follows the code and the reader: a simple step takes a few words in every profile; in Standard and Teacher a step where several mechanisms interact takes the room the chosen help needs, while Essentials keeps its first part to about two sentences. The first part stands on its own; what goes after the marker continues it for the same reader and does not repeat it or inventory what it left out.
 
-On a later visit you are given a reviewer's findings about particular steps, or a changed plan. Write again only the steps named, acting on each finding; keep what was right.
+On a later visit you are given a reviewer's findings about particular steps, or a changed plan. Write again only the steps named, acting on each finding; keep what was right. Check a finding against the code yourself before you act on it. The new text replaces the old one for a reader who never saw the old one: write one coherent, finished explanation, with no word about the earlier text, the finding, the reviewer or what you changed (no "I rewrote", "Corrected:", "Updated to"). When a claim is withdrawn, explain what the code does show; do not keep the step's old framing alive with reservations.
 
 ## Boundaries
 

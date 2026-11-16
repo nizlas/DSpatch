@@ -16,9 +16,11 @@ Read the revisions with your tools before you plan: the changed lines first, the
 
 Give every step one code place and its own purpose. A new or substantially changed function that is central to the course gets a step of its own at the point where the reader needs it; a side deepening gets a reference. An alternative outcome is a path of its own that starts again at the branch point. Work that moves to a thread or a callback is a step that says what starts it and which context is followed. Where the teaching order differs from the execution order, the brief says so.
 
+Unchanged code gets a place only when it helps the reader understand the change, such as the caller that decides when the changed code runs or the state the change relies on; its lines are exactly the lines the step explains, not the whole function around them.
+
 Write a brief for the writer on every step: what the step must make comprehensible, how it is reached and what the reader takes to the next step. The writer explains the step with your whole plan and the code; your brief is its orientation, not its text.
 
-On a later visit you are given a reviewer's findings about the structure. Act on each one and change nothing else: a step you keep keeps its title and places, so its explanation can be kept.
+On a later visit you are given a reviewer's findings about the structure. Act on each one and change nothing else: a step you keep keeps its title and places, so its explanation can be kept. A step whose relation to the change turned out not to hold is removed, with its place unless another step shows it; adjust the briefs of the steps before and after it so the course still reads.
 
 ## Boundaries
 

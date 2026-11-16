@@ -241,6 +241,10 @@ export interface ReviewWords {
   /** Long source lines wrap within the code pane. */
   readonly wrapLines: string;
   readonly wrapLinesTitle: string;
+  /** The widest a code pane is made for its lines, beside Wrap lines (DSP-216). */
+  readonly maxWidth: string;
+  readonly maxWidthUnit: string;
+  readonly maxWidthTitle: string;
   /** The left column's divider, for screen readers. */
   readonly navigationWidth: string;
   /** Choosing among several preparations over the same change. */
@@ -576,6 +580,9 @@ const sv: ReviewWords = {
   attentionTitle: 'Värt att granska',
   wrapLines: 'Radbryt',
   wrapLinesTitle: 'Bryt långa rader inom kodpanelen. Radnumren är filens egna.',
+  maxWidth: 'Maxbredd:',
+  maxWidthUnit: 'tecken',
+  maxWidthTitle: 'Varje kodpanel blir så bred som sin längsta rad, högst så här många tecken; längre rader scrollas i sidled. Tomt: ingen gräns. Gäller när Radbryt är av.',
   navigationWidth: 'Vänsterspaltens bredd',
   preparedWalks: 'Förberedda walks',
   purpose: 'Syfte',
@@ -929,6 +936,9 @@ const en: ReviewWords = {
   attentionTitle: 'Worth checking',
   wrapLines: 'Wrap lines',
   wrapLinesTitle: "Wrap long lines within the code pane. The line numbers stay the file's own.",
+  maxWidth: 'Max width:',
+  maxWidthUnit: 'chars',
+  maxWidthTitle: 'Each code pane is as wide as its longest line, at most this many characters; longer lines scroll sideways. Empty: no limit. Applies while Wrap lines is off.',
   navigationWidth: 'Width of the left column',
   preparedWalks: 'Prepared walks',
   purpose: 'Purpose',

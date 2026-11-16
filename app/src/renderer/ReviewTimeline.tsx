@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, JSX } from 'react';
 
-import { Inline, LineGutter, TokensView, fileName, lineDigits, rangeText, rowsOf, useRows, type Files } from './review-code';
+import { Inline, LineGutter, TokensView, contentOf, fileName, lineDigits, loadRows, rangeText, rowsOf, useRows, type Files } from './review-code';
+import { codeColumns, paneWidthFor, shownColumns, textColumns, type CodeMetrics } from './walk-pane-width';
 import { pick, type ReviewWords } from './review-i18n';
 import { activationLine } from './walk-activation';
 import { placeStructures, structureLines } from './code-structure';
@@ -9,6 +10,7 @@ import { focusIdentity, paneOfStation, panesOf, shownStation, type FocusRevision
 import {
   isProsePath,
   markedChangedRows,
+  unchangedPlace,
   type CodeLevel,
   type CodeLocation,
   type DiffFile,
@@ -80,6 +82,8 @@ const STEP_DISTANCE = 120;
 /** Space between panes, in pixels. */
 const PANE_GAP = 6;
 const MIN_PANE_WIDTH = 260;
+/** The characters the map measures its code font's width on. */
+const PROBE_COLUMNS = 100;
 /** Room the viewport keeps beside a pane that widened for its change. */
 const AUTO_WIDTH_MARGIN = 120;
 /** A pointer must travel this far before a press becomes a drag. */
@@ -314,6 +318,7 @@ export function WalkTimeline({
   view,
   wrapProse,
   wrapCode,
+  maxChars,
   entry,
   selection,
   onSelect,
@@ -341,6 +346,8 @@ export function WalkTimeline({
   /** Whether long lines wrap in Markdown panes and in code panes. */
   readonly wrapProse: boolean;
   readonly wrapCode: boolean;
+  /** The most columns of code a pane makes room for; null for no limit (DSP-216). */
+  readonly maxChars: number | null;
   readonly words: ReviewWords;
   readonly lang: Lang;
   /** Opens code outside the walk (a source no pane of the walk shows). */
@@ -383,6 +390,66 @@ export function WalkTimeline({
   const activePane = paneAt(active);
   const paneMembers = useMemo(() => panes.map((pane) => pane.stations.flatMap((index) => stations[index] ?? [])), [panes, stations]);
 
+  // DSP-216: a code pane is as wide as the longest line it shows by default at this level and in
+  // this view, at most Max width columns, plus its gutter (walk-pane-width.ts). The map reads every
+  // pane's rows, drawn or not, so a pane panned into view already has its width and nothing moves
+  // while the map is panned or a pane is scrolled. Rows opened by hand later do not count.
+  const probe = useRef<HTMLDivElement>(null);
+  const [metrics, setMetrics] = useState<CodeMetrics | null>(null);
+  useLayoutEffect(() => {
+    let live = true;
+    const read = (): void => {
+      const sample = probe.current?.querySelector<HTMLElement>('.rv-width-probe-text');
+      const scroller = probe.current?.querySelector<HTMLElement>('.rv-width-probe-scroll');
+      const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+      if (!live || sample === null || sample === undefined || sample.offsetWidth === 0 || !Number.isFinite(rem)) {
+        return;
+      }
+      const ch = sample.getBoundingClientRect().width / PROBE_COLUMNS;
+      const scrollbar = scroller === null || scroller === undefined ? 0 : scroller.offsetWidth - scroller.clientWidth;
+      setMetrics((current) =>
+        current !== null && current.ch === ch && current.rem === rem && current.scrollbar === scrollbar ? current : { ch, rem, scrollbar },
+      );
+    };
+    read();
+    // The code font may arrive after the first layout; its width is what counts.
+    void document.fonts?.ready.then(read);
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    for (const members of paneMembers) {
+      const first = members[0];
+      if (first !== undefined) {
+        loadRows(files, first.place.focus.path, changedFiles.get(first.place.focus.path) ?? null, first.place.focus.side);
+      }
+    }
+  }, [paneMembers, files, changedFiles]);
+  const naturalWidths = useMemo(() => {
+    const map = new Map<number, number>();
+    if (metrics === null) {
+      return map;
+    }
+    for (const pane of panes) {
+      const members = paneMembers[pane.index] ?? NO_STATIONS;
+      const first = members[0];
+      if (first === undefined || isProsePath(pane.path)) {
+        continue;
+      }
+      const content = contentOf(files, pane.path, changedFiles.get(pane.path) ?? null, first.place.focus.side);
+      const rows = content?.rows ?? [];
+      if (rows.length === 0) {
+        continue;
+      }
+      const ranges = members.flatMap((member) => stationRanges(rows, member.place, level, rowsOf(rows, member.place.focus).indexes));
+      // As the pane draws it: Before and After apply only where one of its places is a change.
+      const shownView = members.some((member) => rowsOf(rows, member.place.focus).changed) ? view : 'both';
+      map.set(pane.index, paneWidthFor(codeColumns(shownColumns(rows, ranges, shownView), maxChars), lineDigits(rows), metrics, MIN_PANE_WIDTH));
+    }
+    return map;
+  }, [metrics, panes, paneMembers, files, changedFiles, level, view, maxChars]);
+
   // Pane widths: a shared default until the reader changes one. Half the viewport
   // shows two panes side by side; a wide window still gets readable panes.
   const defaultWidth = Math.max(MIN_PANE_WIDTH, Math.min(900, Math.floor((viewWidth - PANE_GAP) / 2)));
@@ -397,6 +464,9 @@ export function WalkTimeline({
     for (const [index, width] of autoWidths) {
       map.set(index, Math.max(defaultWidth, Math.min(width, roomCap)));
     }
+    for (const [index, width] of naturalWidths) {
+      map.set(index, width);
+    }
     // A pane of prose takes the whole view from the start: in half of it a long line of prose
     // becomes a narrow column of a few words a row (Niclas's trial, 29 October 2026). Whether
     // lines wrap never sets a width (30 October 2026): Wrap lines breaks lines within the
@@ -410,11 +480,15 @@ export function WalkTimeline({
       map.set(index, width);
     }
     return map;
-  }, [autoWidths, widths, defaultWidth, roomCap, panes, viewWidth]);
+  }, [autoWidths, naturalWidths, widths, defaultWidth, roomCap, panes, viewWidth]);
   const layout = useMemo(() => layoutOf(panes.length, effectiveWidths, defaultWidth), [panes.length, effectiveWidths, defaultWidth]);
   /** Asks for room for a pane's change; true when the pane will get wider. */
   const roomFor = useCallback(
     (index: number, wanted: number): boolean => {
+      // A pane sized by its lines (DSP-216) already has the room it gets.
+      if (naturalWidths.has(index)) {
+        return false;
+      }
       const width = Math.min(wanted, roomCap);
       if (width <= Math.max(autoWidths.get(index) ?? 0, defaultWidth)) {
         return false;
@@ -422,7 +496,7 @@ export function WalkTimeline({
       setAutoWidths((current) => new Map([...current, [index, Math.max(current.get(index) ?? 0, width)]]));
       return true;
     },
-    [autoWidths, roomCap, defaultWidth],
+    [autoWidths, naturalWidths, roomCap, defaultWidth],
   );
 
   // The map's position: how far it has been moved to the left, in pixels.
@@ -516,6 +590,32 @@ export function WalkTimeline({
     setMapX(Math.min(Math.max(0, target), Math.max(0, layoutRef.current.total - viewWidth)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, viewWidth, defaultWidth, activeAutoWidth, navRequest]);
+
+  // DSP-216: when the panes' widths are worked out again — files arriving, another level or view,
+  // another Max width — the active pane stays where it is on screen, its left edge first, and is
+  // brought fully into view if it now reaches past the right edge but fits. A width set by hand
+  // and an arrival by navigation place the map themselves.
+  const placedLayout = useRef<{ lefts: readonly number[]; widths: ReadonlyMap<number, number>; active: number } | null>(null);
+  useLayoutEffect(() => {
+    const before = placedLayout.current;
+    placedLayout.current = { lefts: layout.lefts, widths, active: activePane };
+    if (before === null || before.widths !== widths || before.active !== activePane || viewWidth === 0) {
+      return;
+    }
+    const oldLeft = before.lefts[activePane];
+    const newLeft = layout.lefts[activePane];
+    if (oldLeft === undefined || newLeft === undefined || oldLeft === newLeft) {
+      return;
+    }
+    const width = layout.widths[activePane] ?? defaultWidth;
+    setMapX((x) => {
+      let next = x + newLeft - oldLeft;
+      if (width <= viewWidth && newLeft + width > next + viewWidth) {
+        next = newLeft + width - viewWidth;
+      }
+      return Math.min(Math.max(0, next), Math.max(0, layout.total - viewWidth));
+    });
+  }, [layout, widths, activePane, viewWidth, defaultWidth]);
 
   // The active place follows the map when it is panned by hand: the place whose focus
   // rows are most in view — horizontally in the map and in its pane's code area,
@@ -799,6 +899,11 @@ export function WalkTimeline({
 
   return (
     <div className="rv-timeline">
+      {/* The code font's width per column, as the panes draw it (DSP-216). */}
+      <div ref={probe} className="rv-lines rv-width-probe" aria-hidden="true">
+        <span className="rv-width-probe-text">{'0'.repeat(PROBE_COLUMNS)}</span>
+        <div className="rv-lines rv-width-probe-scroll" />
+      </div>
       <div
         className={`rv-timeline-viewport${panning ? ' rv-panning' : shiftHeld ? ' rv-pan-ready' : ''}`}
         ref={viewport}
@@ -1160,6 +1265,25 @@ function TimelinePaneView({
     }
     return set;
   }, [isActive, rows, station.place.focus, activeStopSides, activeStopFoci, path]);
+  /*
+   * DSP-217 (Niclas, 16 November 2026): a step about unchanged code still points at its lines. In
+   * the active pane, a place of the active step whose range holds no added or removed row gets its
+   * exact lines framed and lightly tinted. A place with any change, mixed or not, keeps only the
+   * diff's marking, also on its unchanged rows; changes elsewhere in the file decide nothing.
+   */
+  const anchorRows = useMemo(() => {
+    const set = new Set<number>();
+    if (!isActive) {
+      return set;
+    }
+    const places = [station.place.focus, ...(activeStopSides.has('base') && activeStopSides.has('target') ? activeStopFoci.filter((focus) => focus.path === path) : [])];
+    for (const place of places) {
+      if (unchangedPlace(rows, place)) {
+        rowsOf(rows, place).indexes.forEach((row) => set.add(row));
+      }
+    }
+    return set;
+  }, [isActive, rows, station.place.focus, activeStopSides, activeStopFoci, path]);
   // The active place's call is marked; the latest navigation's call stays unfolded.
   const fromSet = useMemo(() => (fromHere === null ? new Set<number>() : new Set(rowsOf(rows, fromHere).indexes)), [fromHere, rows]);
   const callRows = useMemo(() => {
@@ -1257,7 +1381,21 @@ function TimelinePaneView({
   const topFor = (element: HTMLElement, target: HTMLElement): number => {
     const box = element.getBoundingClientRect();
     const offsetOf = (node: Element): number => node.getBoundingClientRect().top - box.top + element.scrollTop;
-    const centred = Math.max(0, offsetOf(target) - element.clientHeight / 2 + 20);
+    // DSP-217: the place's lines as a whole, centred when they fit; a taller place shows its
+    // change, or its first line near the top when it has none.
+    const anchor = [...element.querySelectorAll<HTMLElement>('[data-focus="1"]')];
+    const anchorFirst = anchor[0];
+    const anchorLast = anchor[anchor.length - 1];
+    let centred = Math.max(0, offsetOf(target) - element.clientHeight / 2 + 20);
+    if (anchorFirst !== undefined && anchorLast !== undefined) {
+      const from = offsetOf(anchorFirst);
+      const to = offsetOf(anchorLast) + anchorLast.offsetHeight;
+      if (to - from <= element.clientHeight - 40) {
+        centred = Math.max(0, (from + to) / 2 - element.clientHeight / 2);
+      } else if (target.dataset['shownChange'] !== '1') {
+        centred = Math.max(0, from - 24);
+      }
+    }
     if (level !== 'unit') {
       return centred;
     }
@@ -1265,7 +1403,7 @@ function TimelinePaneView({
     if (head === undefined) {
       return centred;
     }
-    const changeRows = [...element.querySelectorAll<HTMLElement>('[data-focus-active="1"], [data-shown-change="1"]'), target];
+    const changeRows = [...element.querySelectorAll<HTMLElement>('[data-focus-active="1"], [data-shown-change="1"]'), ...anchor, target];
     const changeEnd = Math.max(...changeRows.map((row) => offsetOf(row) + row.offsetHeight));
     return changeEnd - offsetOf(head) <= element.clientHeight - 40 ? Math.max(0, offsetOf(head) - 8) : centred;
   };
@@ -1611,6 +1749,24 @@ function TimelinePaneView({
   }, [rows, visible, effectiveView, shownFocus, shownSet, fromSet, unitSet, inContext, station.place.unit, structureName, words]);
   const { items, tops, columns } = layoutRows;
   const digits = useMemo(() => lineDigits(rows), [rows]);
+  // DSP-217: the anchor's frame closes above its first and below its last row as drawn; a fold or
+  // a row the view leaves out inside it splits it into framed runs.
+  const anchorEdges = useMemo(() => {
+    const top = new Set<number>();
+    const bottom = new Set<number>();
+    const anchored = (item: PaneItem | undefined): boolean => item !== undefined && item.kind === 'row' && anchorRows.has(item.index);
+    items.forEach((item, at) => {
+      if (item.kind === 'row' && anchorRows.has(item.index)) {
+        if (!anchored(items[at - 1])) {
+          top.add(item.index);
+        }
+        if (!anchored(items[at + 1])) {
+          bottom.add(item.index);
+        }
+      }
+    });
+    return { top, bottom };
+  }, [items, anchorRows]);
 
   // The part of the pane's content in view, kept in step with scrolling and resizing.
   // Only when the view nears the edge of what is drawn does the pane draw again.
@@ -1659,7 +1815,7 @@ function TimelinePaneView({
       wanted.push(item);
     }
     items.forEach((item, at) => {
-      if (item.kind === 'row' && (shownSet.has(item.index) || fromSet.has(item.index))) {
+      if (item.kind === 'row' && (shownSet.has(item.index) || fromSet.has(item.index) || anchorRows.has(item.index))) {
         wanted.push(at);
       }
     });
@@ -1717,6 +1873,15 @@ function TimelinePaneView({
         classes.push('rv-arrive');
       }
     }
+    if (anchorRows.has(index)) {
+      classes.push('rv-anchor');
+      if (anchorEdges.top.has(index)) {
+        classes.push('rv-anchor-top');
+      }
+      if (anchorEdges.bottom.has(index)) {
+        classes.push('rv-anchor-bottom');
+      }
+    }
     const isFrom = fromSet.has(index);
     if (isFrom) {
       classes.push('rv-from');
@@ -1735,6 +1900,9 @@ function TimelinePaneView({
     }
     if (arrivalHere) {
       attrs['data-focus-active'] = '1';
+    }
+    if (anchorRows.has(index)) {
+      attrs['data-anchor'] = '1';
     }
     if (unitHeads.has(index)) {
       attrs['data-unit-head'] = '1';
@@ -1931,17 +2099,6 @@ function firstAtOrAfter(tops: readonly number[], y: number): number {
   return low;
 }
 
-/** A line's width in columns as `white-space: pre` draws it, tabs every eight. */
-function textColumns(text: string): number {
-  if (!text.includes('\t')) {
-    return text.length;
-  }
-  let column = 0;
-  for (const character of text) {
-    column = character === '\t' ? column + 8 - (column % 8) : column + 1;
-  }
-  return column;
-}
 
 /**
  * A pane is drawn again only when something it shows changed. Panning moves the map

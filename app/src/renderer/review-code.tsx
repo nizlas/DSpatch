@@ -179,25 +179,35 @@ export function useRows(
   diffFile: DiffFile | null,
   plainSide: RevisionSide,
 ): FileContent | null {
-  const inDiff = diffFile !== null && !diffFile.binary;
-  const needBase = inDiff ? diffFile.status !== 'added' : plainSide === 'base';
-  const needTarget = inDiff ? diffFile.status !== 'deleted' : plainSide === 'target';
   useEffect(() => {
-    if (needBase) {
-      files.load('base', path);
-    }
-    if (needTarget) {
-      files.load('target', path);
-    }
-  }, [files, path, needBase, needTarget]);
-  const base = needBase ? files.get('base', path) : NO_LINES;
-  const target = needTarget ? files.get('target', path) : NO_LINES;
-  return useMemo(() => {
-    if (base === null || target === null) {
-      return null;
-    }
-    return cachedContent(base, target, `${path}|${String(inDiff)}|${plainSide}`, () => fileContent(base, target, path, inDiff ? diffFile : null, plainSide));
-  }, [base, target, inDiff, diffFile, plainSide, path]);
+    loadRows(files, path, diffFile, plainSide);
+  }, [files, path, diffFile, plainSide]);
+  return contentOf(files, path, diffFile, plainSide);
+}
+
+/** Asks for the files a pane's rows are made of (both sides of a diff, or the one revision). */
+export function loadRows(files: Files, path: string, diffFile: DiffFile | null, plainSide: RevisionSide): void {
+  const inDiff = diffFile !== null && !diffFile.binary;
+  if (inDiff ? diffFile.status !== 'added' : plainSide === 'base') {
+    files.load('base', path);
+  }
+  if (inDiff ? diffFile.status !== 'deleted' : plainSide === 'target') {
+    files.load('target', path);
+  }
+}
+
+/**
+ * A pane's rows once its files have arrived, else null; computed once per pair of files, so the
+ * map can read what a pane shows without drawing it (DSP-216).
+ */
+export function contentOf(files: Files, path: string, diffFile: DiffFile | null, plainSide: RevisionSide): FileContent | null {
+  const inDiff = diffFile !== null && !diffFile.binary;
+  const base = (inDiff ? diffFile.status !== 'added' : plainSide === 'base') ? files.get('base', path) : NO_LINES;
+  const target = (inDiff ? diffFile.status !== 'deleted' : plainSide === 'target') ? files.get('target', path) : NO_LINES;
+  if (base === null || target === null) {
+    return null;
+  }
+  return cachedContent(base, target, `${path}|${String(inDiff)}|${plainSide}`, () => fileContent(base, target, path, inDiff ? diffFile : null, plainSide));
 }
 
 function fileContent(base: ReviewFileOutcome, target: ReviewFileOutcome, path: string, diffFile: DiffFile | null, plainSide: RevisionSide): FileContent {

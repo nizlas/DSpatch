@@ -380,7 +380,7 @@ export function planPrompt(input: PlanPromptInput): string {
       : [
           '',
           '## The reviewer\'s findings about the structure',
-          'A reviewer read the finished walks against the code and found these shortcomings in the structure. Change only what they concern: keep every other walk, step and place as it was, with its title and places, so its explanation can be kept. A step you change, add or remove will be written again.',
+          'A reviewer read the finished walks against the code and found these shortcomings in the structure. Change only what they concern: keep every other walk, step and place as it was, with its title and places, so its explanation can be kept. A step you change, add or remove will be written again. A step whose relation to the change does not hold is removed, with its place unless another step shows it; adjust the briefs of the steps around it so the course still reads.',
           ...input.rework.findings.map((finding) => `- ${finding.steps.length === 0 ? 'The walks' : finding.steps.join(', ')}: ${finding.problem}${finding.why === '' ? '' : ` (${finding.why})`}${finding.evidence === '' ? '' : ` Evidence: ${finding.evidence}`}`),
           '',
           '## Your earlier plan',
@@ -399,6 +399,57 @@ export function planPrompt(input: PlanPromptInput): string {
     folderSection(input.material, input.folder),
     '',
     changeSection(input.material),
+  ].join('\n');
+}
+
+/**
+ * DSP-217 (Niclas, 16 November 2026): a corrected step is a finished explanation for a reader who
+ * never saw the earlier one. Notes about the writing ("I rewrote W3.3 to fix…") are not for the
+ * reader, and a withdrawn claim is replaced by what the code shows, not hedged.
+ */
+export const REWRITE_AS_FINISHED =
+  'The new text replaces the earlier one for a reader who never saw it: write one coherent, finished explanation, with no word about the earlier text, the findings, the reviewer or what you changed (no "I rewrote", "Corrected:", "Updated to"). Where a claim is withdrawn, explain what the code does show instead of keeping the old framing with reservations.';
+
+/** DSP-217: what the reviewer checks of a corrected or questioned step, in every profile. */
+export const REVIEW_CORRECTION_CHECKS =
+  'When a claim a step rests on is not true, judge also whether the step, once corrected, still explains a verified relation that matters to the change: if it does, the finding is about its text ("explanation"); if it does not, it is a "structure" finding to remove the step. A text that speaks about its own writing, an earlier version, a correction or the review ("I rewrote this step to fix…") is an explanation finding, whatever else it says.';
+
+/**
+ * DSP-217: a line or paragraph in which the writer talks about its own writing instead of the code:
+ * "I rewrote W3.3 to fix…", "Corrected: …", "(Updated after review)". First-person singular verbs of
+ * editing, labels of a revision, and mentions of the reviewer or the earlier text. What the commit
+ * rewrote, "we" as the reader's company, and the code's old version are not notes.
+ */
+const EDIT_NOTE_PATTERNS: readonly RegExp[] = [
+  /\b(?:I|I've|I have|I'd)\s+(?:now\s+|also\s+)?(?:re-?wr[io]te|rewritten|revised|corrected|fixed|changed|updated|removed|adjusted|reworded|edited|amended|clarified|softened|dropped|rephrased|reworked)\b/i,
+  /^\s*[*_(]*\s*(?:edit(?:or'?s)? note|revision note|revised|rewritten|corrected|correction|updated|changes? made|note to (?:the )?reviewer)\b[^:\n]{0,40}:/im,
+  /\b(?:the|this)\s+(?:earlier|previous|original|old)\s+(?:text|draft|wording|explanation)\b/i,
+  /\b(?:the\s+)?reviewer(?:'s)?\s+(?:finding|findings|feedback|comment|point|asked|noted|said|flagged)\b/i,
+  /\b(?:per|after|following|in response to)\s+(?:the\s+)?(?:review|reviewer|finding|feedback)\b/i,
+  /\bjag\s+(?:har\s+)?(?:skrev om|skrivit om|rättade|rättat|korrigerade|korrigerat|ändrade|ändrat|strök|strukit|tog bort|tagit bort|förtydligade|förtydligat|omformulerade|omformulerat)\b/i,
+  /\b(?:granskarens|granskaren)\s+(?:påpekande|synpunkt|fynd|kommentar)/i,
+  /\b(?:den|denna)\s+(?:tidigare|förra|ursprungliga)\s+(?:texten|formuleringen|förklaringen)\b/i,
+];
+
+/** The paragraphs of a step's text that are notes about its writing, not about the code (DSP-217). */
+export function editNotesIn(text: string): readonly string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph !== '' && EDIT_NOTE_PATTERNS.some((pattern) => pattern.test(paragraph)));
+}
+
+/** The writer's second ask when its answer held a note about its own writing (DSP-217). */
+export function editNoteRetryPrompt(stepId: string, notes: readonly string[]): string {
+  return [
+    `${TASK_HEADER} ${WALK_LOOP_TASKS.write}`,
+    '',
+    `## This step: ${stepId} (again: only the finished explanation)`,
+    'Your answer spoke about its own writing instead of the code. The person reads only the finished explanation; these parts are not for them:',
+    ...notes.map((note) => `- ${note.length > 300 ? `${note.slice(0, 300)}…` : note}`),
+    '',
+    REWRITE_AS_FINISHED,
+    'Answer with the whole explanation of this step again, in the same form, and nothing else.',
   ].join('\n');
 }
 
@@ -452,6 +503,7 @@ export function writeStepPrompt(input: WriteStepPromptInput): string {
           '',
           '## The reviewer\'s findings about this step',
           'Write this step again, acting on each finding; keep what was right. The reviewer read the code: check each claim against it yourself.',
+          REWRITE_AS_FINISHED,
           ...input.rework.findings.map((finding) => `- ${finding.problem}${finding.why === '' ? '' : ` (${finding.why})`}${finding.evidence === '' ? '' : ` Evidence: ${finding.evidence}`}`),
           '',
           '## Your earlier text',
@@ -580,6 +632,7 @@ export function reviewPrompt(input: ReviewPromptInput): string {
         '- Is the part after Show more a deepening that continues the first part, not a repetition of it?',
         '- Is an important new implementation walked rather than left behind a function name, and are alternatives presented as alternatives, never as one run?',
         ]),
+    REVIEW_CORRECTION_CHECKS,
     'Report only shortcomings that matter to the reader\'s understanding, each concrete: the steps it concerns, what falls short, why it matters, and what in the code shows it. A finding about which walks, steps or places exist is "structure" and goes to the planner; one about a step\'s text is "explanation" and goes to the writer. A statement about the code that is not true is a shortcoming whatever its size, since the person checks the code through these texts: name it as a finding with the correct reading, even when the rest of the step is right. Different good explanations are acceptable: accept without changes when nothing false and nothing significant falls short, and never ask for a change on a matter of style or preference.',
     ...(input.final
       ? [

@@ -47,6 +47,8 @@ import {
   WALK_LOOP_LIMIT_FAILURE,
   WALK_LOOP_NODES,
   WALK_LOOP_REWORK_OUTCOMES,
+  editNoteRetryPrompt,
+  editNotesIn,
   planPrompt,
   readPlanAnswer,
   readReviewAnswer,
@@ -318,13 +320,20 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
     input.follow?.note(text);
   }
 
+  /** DSP-217: steps whose text failed the edit-note check twice, by step id of the current plan, with the notes left. */
+  const qualityFailures = new Map<string, readonly string[]>();
+
+  /** DSP-217: findings DSpatch adds itself, by step id of the current plan: references to steps the replan removed or renumbered. */
+  const referenceFindings = new Map<string, readonly WalkFinding[]>();
+
   /** The findings about one step, by its id in the plan the findings were written against. */
   function findingsFor(stepId: string, idMap: ReadonlyMap<string, string>): readonly WalkFinding[] {
     const review = reviews.at(-1);
+    const own = referenceFindings.get(stepId) ?? [];
     if (review === undefined) {
-      return [];
+      return own;
     }
-    return review.findings.filter((finding) => finding.kind === 'explanation' && finding.steps.some((named) => (idMap.get(named) ?? named) === stepId));
+    return [...review.findings.filter((finding) => finding.kind === 'explanation' && finding.steps.some((named) => (idMap.get(named) ?? named) === stepId)), ...own];
   }
 
   async function writeStep(context: StepContext, role: ResolvedRole): Promise<StepExecution> {
@@ -363,6 +372,35 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
         }
       }
       texts = carried;
+      // DSP-217: a kept text that names a step of the earlier plan by an id that step no longer
+      // has, removed or renumbered, is written again so its reference follows the new plan.
+      referenceFindings.clear();
+      const failedBefore = new Map(qualityFailures);
+      qualityFailures.clear();
+      for (const [oldId, left] of failedBefore) {
+        const now = previousRefs.length === 0 ? oldId : idMap.get(oldId);
+        if (now !== undefined && carried.has(now)) {
+          qualityFailures.set(now, left);
+        }
+      }
+      const earlierIds = new Set(previousRefs.map((ref) => ref.stepId));
+      for (const [stepId, text] of carried) {
+        const stale = [...new Set(`${text.body}\n${text.details}`.match(/\b[WR]\d+\.\d+\b/g) ?? [])].filter(
+          (named) => earlierIds.has(named) && idMap.get(named) !== named,
+        );
+        if (stale.length > 0) {
+          referenceFindings.set(stepId, [
+            {
+              kind: 'explanation',
+              steps: [stepId],
+              problem: `The text names ${stale.map((named) => (idMap.has(named) ? `${named}, which is now ${idMap.get(named) as string}` : `${named}, which was removed from the walks`)).join('; ')}. Name the steps as the plan now has them, or leave out what no longer exists.`,
+              why: 'The person navigates by these names.',
+              evidence: '',
+              reference: '',
+            },
+          ]);
+        }
+      }
       toWrite = refs.filter((ref) => !carried.has(ref.stepId) || findingsFor(ref.stepId, idMap).length > 0);
     }
     let providerTurns = 0;
@@ -389,7 +427,30 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
       );
       fresh = false;
       providerTurns += 1;
-      const text = readStepText(result.text);
+      let text = readStepText(result.text);
+      // DSP-217: a text that speaks about its own writing is asked for once more as a finished
+      // explanation. If the second answer still does, the check has failed: the earlier valid text
+      // is kept where there is one, nothing is cut out of the new one, and the failure goes to the
+      // reviewer's verdict as a finding, so the step is reworked or delivered with an objection.
+      const notes = text === null ? [] : editNotesIn(`${text.body}\n\n${text.details}`);
+      if (text !== null && notes.length > 0) {
+        const again = await turn(context, editNoteRetryPrompt(ref.stepId, notes), `Asking again for step ${ref.stepId} as a finished explanation`, ref.stepId);
+        providerTurns += 1;
+        const retried = readStepText(again.text);
+        const left = retried === null ? notes : editNotesIn(`${retried.body}\n\n${retried.details}`);
+        if (retried !== null && left.length === 0) {
+          text = retried;
+          qualityFailures.delete(ref.stepId);
+          input.follow?.note(`Step ${ref.stepId}: the text spoke about its own writing; asked again, and the second answer is a finished explanation.`);
+        } else {
+          const valid = earlier !== undefined && earlier.body !== '' && editNotesIn(`${earlier.body}\n\n${earlier.details}`).length === 0 ? earlier : null;
+          text = valid;
+          qualityFailures.set(ref.stepId, left);
+          input.follow?.note(`Step ${ref.stepId}: the text still spoke about its own writing when asked again; ${valid === null ? 'it has no explanation' : 'its earlier explanation is kept'} and the failed check goes to the reviewer's verdict.`);
+        }
+      } else if (text !== null) {
+        qualityFailures.delete(ref.stepId);
+      }
       if (text === null) {
         unreadable += 1;
         texts.set(ref.stepId, { body: '', details: '' });
@@ -432,9 +493,29 @@ export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome
       final ? 'The reviewer gives its final assessment' : 'The reviewer reads the walks against the code',
     );
     const parsed = readReviewAnswer(answerJson(result.text), stepIds(), final);
-    const review: WalkReview =
+    const read: WalkReview =
       parsed.review ??
       { assessment: `The reviewer's answer could not be read (${parsed.problems.join(' ')}); the walks are kept as written.`, verdict: 'accept', findings: [] };
+    // DSP-217: a step whose text failed DSpatch's edit-note check is never accepted as it stands.
+    const failed = [...qualityFailures.entries()].filter(([stepId]) => stepIds().has(stepId));
+    const review: WalkReview =
+      failed.length === 0
+        ? read
+        : {
+            ...read,
+            verdict: read.verdict === 'accept' ? (final ? 'objections' : 'rework') : read.verdict,
+            findings: [
+              ...read.findings,
+              ...failed.map(([stepId, left]) => ({
+                kind: 'explanation' as const,
+                steps: [stepId],
+                problem: `DSpatch's check: the explanation spoke about its own writing even when asked again (${left.map((note) => `"${note.length > 120 ? `${note.slice(0, 120)}…` : note}"`).join('; ')}). ${texts.get(stepId)?.body === '' ? 'The step has no explanation.' : 'The earlier explanation is shown instead.'} Write it as one finished explanation of the code.`,
+                why: 'The person reads only the finished explanation; notes about its writing are not for them, and the step is not complete.',
+                evidence: '',
+                reference: '',
+              })),
+            ],
+          };
     reviews.push(review);
     const outcome = reviewOutcomeOf(review);
     input.follow?.verdict(review, final);

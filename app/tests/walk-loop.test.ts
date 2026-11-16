@@ -23,7 +23,10 @@ import { DETAILS_MARKER } from '../src/shared/presentation-profiles';
 import { WRITING_CONTENT_RULES, type AnalysisMaterial } from '../src/shared/review-agent';
 import type { AgentMaterial } from '../src/shared/review-pair';
 import {
+  REVIEW_CORRECTION_CHECKS,
+  REWRITE_AS_FINISHED,
   WALK_LOOP_GRAPH_REL,
+  editNotesIn,
   planPrompt,
   readPlanAnswer,
   readReviewAnswer,
@@ -405,3 +408,139 @@ describe('the run', () => {
     }
   });
 });
+
+/*
+ * DSP-217 (Niclas, 16 November 2026): a corrected walk reads as finished. A walk's user text once
+ * held "I rewrote W3.3 to fix…"; the writer is now told so on a rewrite and asked once more when its
+ * answer speaks about its own writing; a second failure goes to the review as a finding, nothing is cut.
+ * A replan that removes or renumbers a step has the texts that name it written again.
+ */
+describe('a corrected walk reads as finished (DSP-217)', () => {
+  it('finds notes about the writing, not sentences about the code', () => {
+    for (const note of [
+      'I rewrote W3.3 to fix the claim about normalization.',
+      "I've corrected the earlier claim: args are not normalized here.",
+      'Corrected: the parser does not normalize.',
+      '*Revised after review:* the step now says less.',
+      'As the reviewer noted, the guard is elsewhere.',
+      'Unlike the earlier text, this says the value is raw.',
+      'Jag skrev om steget så att det stämmer.',
+    ]) {
+      assert.equal(editNotesIn(`The parser reads the flags.\n\n${note}`).length, 1, note);
+    }
+    for (const prose of [
+      'The commit rewrote parseArgs so that it no longer trims.',
+      'The old version clamped the height; the new one leaves it to the caller.',
+      'Here we follow the call into connect().',
+      'Before the change, the value was corrected by normalize().',
+      'In the review of this change, look at the caller first.',
+    ]) {
+      assert.deepEqual(editNotesIn(prose), [], prose);
+    }
+  });
+
+  it('tells the writer on a rewrite, and the reviewer what a withdrawn claim and an edit note mean', () => {
+    const plan = readPlanAnswer(JSON.parse(/```json\n([\s\S]*)\n```/.exec(PLAN_TWO)?.[1] ?? '{}')).plan;
+    assert.ok(plan !== null);
+    const role = (id: string) => ({ id, instructions: 'x', summary: undefined, sourcePath: 'x', targets: ['claude-code'], targetsDeclared: true, requirements: [] }) as never;
+    const rewrite = writeStepPrompt({ role: role('write'), plan, stepId: 'W1.2', profile: 'standard', language: 'en', material, folder, fresh: false, rework: { findings: [{ kind: 'explanation', steps: ['W1.2'], problem: 'False.', why: '', evidence: '', reference: '' }], earlierText: 'Old.' } });
+    assert.ok(rewrite.includes(REWRITE_AS_FINISHED));
+    const first = writeStepPrompt({ role: role('write'), plan, stepId: 'W1.2', profile: 'standard', language: 'en', material, folder, fresh: false, rework: null });
+    assert.ok(!first.includes(REWRITE_AS_FINISHED), 'only a rewrite is told');
+    for (const profile of ['essens', 'standard', 'pedagog'] as const) {
+      const review = reviewPrompt({ role: role('review'), plan, texts: new Map(), profile, language: 'en', material, folder, final: false, earlier: null, fresh: false });
+      assert.ok(review.includes(REVIEW_CORRECTION_CHECKS), profile);
+    }
+  });
+
+  it('asks the writer once more when its rewrite speaks about the writing, and keeps the clean answer', async () => {
+    let rewrites = 0;
+    const { outcome, sessions } = await run(
+      {
+        plan: [PLAN_TWO],
+        review: [reviewJson('rework', [{ kind: 'explanation', steps: ['W1.2'], problem: 'connect() does not retry.' }]), reviewJson('accept', [])],
+        write: (stepId, prompt) => {
+          if (prompt.includes('only the finished explanation')) {
+            return 'connect() returns what open() answers.';
+          }
+          if (stepId === 'W1.2' && prompt.includes("findings about this step")) {
+            rewrites += 1;
+            return 'I rewrote W1.2 to fix the retry claim.\n\nconnect() returns what open() answers.';
+          }
+          return `Text for ${stepId}.`;
+        },
+      },
+      { name: 'edit-note-retry' },
+    );
+    assert.equal(outcome.kind, 'delivered');
+    if (outcome.kind !== 'delivered') {
+      return;
+    }
+    assert.equal(rewrites, 1);
+    assert.equal(outcome.walks.walks[0]?.steps[1]?.body, 'connect() returns what open() answers.');
+    assert.equal(sessions.prompts.filter((entry) => entry.prompt.includes('only the finished explanation')).length, 1, 'asked again once, never in a loop');
+  });
+
+  it('fails the check when the second answer still has a note: nothing is cut, the step is reworked, not accepted', async () => {
+    const { outcome, sessions } = await run(
+      {
+        plan: [PLAN_TWO],
+        // The reviewer accepts both times; DSpatch's failed check still sends W1.1 back once.
+        review: [reviewJson('accept', []), reviewJson('accept', [])],
+        write: (stepId, prompt) =>
+          stepId === 'W1.1' && !prompt.includes("findings about this step") ? 'start() calls connect().\n\nCorrected: the earlier text said it retried.' : stepId === 'W1.1' ? 'start() calls connect() once.' : `Text for ${stepId}.`,
+      },
+      { name: 'edit-note-failed' },
+    );
+    assert.equal(outcome.kind, 'delivered');
+    if (outcome.kind !== 'delivered') {
+      return;
+    }
+    assert.equal(outcome.summary.first?.verdict, 'rework', 'an accept is not taken while the check has failed');
+    assert.ok(outcome.summary.first?.findings.some((finding) => finding.steps.includes('W1.1') && finding.problem.includes("DSpatch's check")));
+    const rewrite = sessions.prompts.filter((entry) => entry.node === 'write').at(-1)?.prompt ?? '';
+    assert.ok(rewrite.includes("DSpatch's check"), 'the writer is told why');
+    assert.equal(outcome.walks.walks[0]?.steps[0]?.body, 'start() calls connect() once.');
+    assert.equal(outcome.objections, false);
+  });
+
+  it('keeps the earlier valid text and delivers with an objection when the rewrite still has a note', async () => {
+    const { outcome } = await run(
+      {
+        plan: [PLAN_TWO],
+        review: [reviewJson('rework', [{ kind: 'explanation', steps: ['W1.2'], problem: 'connect() does not retry.' }]), reviewJson('accept', [])],
+        write: (stepId, prompt) => (stepId === 'W1.2' && prompt.includes('does not retry') || prompt.includes('only the finished explanation') ? 'I rewrote W1.2 to drop the retry claim.\n\nconnect() returns what open() answers.' : `Text for ${stepId}.`),
+      },
+      { name: 'edit-note-kept-earlier' },
+    );
+    assert.equal(outcome.kind, 'delivered');
+    if (outcome.kind !== 'delivered') {
+      return;
+    }
+    assert.equal(outcome.walks.walks[0]?.steps[1]?.body, 'Text for W1.2.', 'the earlier text, not a cut version of the new one');
+    assert.equal(outcome.objections, true, 'not presented as accepted');
+    assert.equal(outcome.summary.final?.verdict, 'objections');
+  });
+
+  it('writes again a kept step whose text names a step the replan removed or renumbered', async () => {
+    const PLAN_ONE = planJson([{ title: 'Connect', summary: 'connect() opens.', brief: 'Reached from start; what open answers.', places: [place(4, 6, { start: 2, end: 2 })] }]);
+    const { outcome, sessions } = await run(
+      {
+        plan: [PLAN_TWO, PLAN_ONE],
+        review: [reviewJson('rework', [{ kind: 'structure', steps: ['W1.1'], problem: 'start() only calls connect(); the step adds nothing verified.' }]), reviewJson('accept', [])],
+        write: (stepId, prompt) => (prompt.includes('which was removed') ? 'connect() returns what open() answers.' : stepId === 'W1.2' ? 'Reached from W1.1, connect() opens.' : `Text for ${stepId}.`),
+      },
+      { name: 'replan-references' },
+    );
+    assert.equal(outcome.kind, 'delivered');
+    if (outcome.kind !== 'delivered') {
+      return;
+    }
+    assert.equal(outcome.walks.walks[0]?.steps.length, 1, 'the step and its pane are gone');
+    const rewrite = sessions.prompts.filter((entry) => entry.node === 'write').at(-1)?.prompt ?? '';
+    assert.ok(rewrite.includes('W1.1, which was removed from the walks'), rewrite);
+    assert.deepEqual(outcome.summary.rewritten, ['W1.1']);
+    assert.equal(outcome.walks.walks[0]?.steps[0]?.body, 'connect() returns what open() answers.');
+  });
+});
+

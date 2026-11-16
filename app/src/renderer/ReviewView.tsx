@@ -92,6 +92,7 @@ import { lineDecisionsFromPair, pairAgentBeside, pairHolds, pairOpFor, pairRange
 import { KIND_WORDS, STATUS_WORDS, reviewThreadsOf, threadOfPoint, type ReviewThread } from '../shared/review-threads';
 import { PairKeyContext, ReferenceLinksContext, type ReferenceLinks } from './DiscussionAnswer';
 import { WalkContextPlaces } from './WalkContextPlaces';
+import { MAX_CHARS_LIMIT, parseMaxChars, usePaneMaxChars } from './walk-pane-width';
 import { STATUS_MARK, ThreadCard, ThreadContext, exchangesByThread, replyCountOf, type ThreadActions } from './ReviewThreads';
 
 declare global {
@@ -1053,6 +1054,8 @@ function OpenReview({
   // Long lines wrap within the code panes: Markdown by default, code when asked for.
   const wrapProse = state.ui.wrap?.markdown ?? true;
   const wrapCode = state.ui.wrap?.code ?? false;
+  // DSP-216: the widest a code pane is made for its lines, the person's choice on this computer.
+  const [paneMaxChars, setPaneMaxChars] = usePaneMaxChars();
   const setWrap = useCallback(
     (path: string, on: boolean) => {
       update((value) => {
@@ -2834,6 +2837,8 @@ function OpenReview({
                     setWrap(place.focus.path, on);
                   }
                 }}
+                maxChars={paneMaxChars}
+                onMaxChars={setPaneMaxChars}
                 words={words}
                 lang={lang}
               />
@@ -2858,6 +2863,7 @@ function OpenReview({
                 view={view}
                 wrapProse={wrapProse}
                 wrapCode={wrapCode}
+                maxChars={paneMaxChars}
                 words={words}
                 lang={lang}
                 onOpenLocation={goAway}
@@ -4543,6 +4549,8 @@ function WalkNavBar({
   onView,
   wrap,
   onWrap,
+  maxChars,
+  onMaxChars,
   words,
   lang,
 }: {
@@ -4561,6 +4569,8 @@ function WalkNavBar({
   readonly onView: (view: CodeView) => void;
   readonly wrap: boolean;
   readonly onWrap: (on: boolean) => void;
+  readonly maxChars: number | null;
+  readonly onMaxChars: (value: number | null) => void;
   readonly words: ReviewWords;
   readonly lang: Lang;
 }): JSX.Element {
@@ -4607,8 +4617,72 @@ function WalkNavBar({
         <label className="rv-check rv-walk-toggle" title={words.wrapLinesTitle}>
           <input type="checkbox" data-ev="walk-wrap" checked={wrap} onChange={(event) => onWrap(event.target.checked)} /> {words.wrapLines}
         </label>
+        <MaxWidthField value={maxChars} onChange={onMaxChars} disabled={wrap} words={words} />
       </div>
     </div>
+  );
+}
+
+/**
+ * DSP-216: "Max width: [120] chars" beside Wrap lines. Each valid value applies at once; empty is
+ * no limit; text that is not a whole number from 1 is shown as such and changes nothing, and the
+ * field shows the value in force again when it is left. Disabled while lines wrap, value kept.
+ */
+function MaxWidthField({
+  value,
+  onChange,
+  disabled,
+  words,
+}: {
+  readonly value: number | null;
+  readonly onChange: (value: number | null) => void;
+  readonly disabled: boolean;
+  readonly words: ReviewWords;
+}): JSX.Element {
+  const shown = value === null ? '' : String(value);
+  const [draft, setDraft] = useState(shown);
+  const editing = useRef(false);
+  useEffect(() => {
+    if (!editing.current) {
+      setDraft(shown);
+    }
+  }, [shown]);
+  const invalid = parseMaxChars(draft) === undefined;
+  return (
+    <label className={`rv-max-width${disabled ? ' rv-disabled' : ''}`} title={words.maxWidthTitle}>
+      {words.maxWidth}{' '}
+      <input
+        type="text"
+        inputMode="numeric"
+        data-ev="walk-max-width"
+        className="rv-max-width-input"
+        size={4}
+        maxLength={String(MAX_CHARS_LIMIT).length}
+        value={draft}
+        disabled={disabled}
+        aria-invalid={invalid}
+        onFocus={() => {
+          editing.current = true;
+        }}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          const parsed = parseMaxChars(event.target.value);
+          if (parsed !== undefined) {
+            onChange(parsed);
+          }
+        }}
+        onBlur={() => {
+          editing.current = false;
+          setDraft(shown);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === 'Escape') {
+            event.currentTarget.blur();
+          }
+        }}
+      />{' '}
+      {words.maxWidthUnit}
+    </label>
   );
 }
 

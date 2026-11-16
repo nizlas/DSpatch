@@ -1539,6 +1539,10 @@ export function stepHashesOf(definition: ReviewDefinition): Record<string, strin
  * only when its content hash is unchanged; every other mark is set aside as history.
  * Opened is registered again when the step is opened under the new walks; walked
  * needs the reviewer's own mark again. Notes and decisions are not touched.
+ *
+ * DSP-217: the marks follow the content, not the id. A step whose id changed because an
+ * earlier step was removed or added keeps its marks under its new id, when its content is
+ * that of exactly one step of the new walks that does not already have its own id.
  */
 export function carryStepMarks(
   definition: ReviewDefinition,
@@ -1550,18 +1554,47 @@ export function carryStepMarks(
   const places = new Set(
     definition.walks.flatMap((walk) => walk.steps.flatMap((step) => step.places.map((place) => placeKey(step.id, place.id)))),
   );
-  const unchanged = (stepId: string): boolean => stored.stepHashes[stepId] !== undefined && stored.stepHashes[stepId] === hashes[stepId];
-  const split = <T>(entries: Readonly<Record<string, T>>, keep: (key: string) => boolean): [Record<string, T>, Record<string, T>] => {
+  // Where each earlier step is now: under its own id when its content is unchanged, else under
+  // the one new id with that content which no earlier step keeps for itself.
+  const sameId = new Set(Object.keys(stored.stepHashes).filter((stepId) => hashes[stepId] !== undefined && hashes[stepId] === stored.stepHashes[stepId]));
+  const byHash = new Map<string, string[]>();
+  for (const [stepId, hash] of Object.entries(hashes)) {
+    if (!sameId.has(stepId)) {
+      byHash.set(hash, [...(byHash.get(hash) ?? []), stepId]);
+    }
+  }
+  const earlierByHash = new Map<string, number>();
+  for (const [stepId, hash] of Object.entries(stored.stepHashes)) {
+    if (!sameId.has(stepId)) {
+      earlierByHash.set(hash, (earlierByHash.get(hash) ?? 0) + 1);
+    }
+  }
+  const nowAt = (stepId: string): string | null => {
+    if (sameId.has(stepId)) {
+      return stepId;
+    }
+    const hash = stored.stepHashes[stepId];
+    const candidates = hash === undefined ? [] : (byHash.get(hash) ?? []);
+    return candidates.length === 1 && earlierByHash.get(hash as string) === 1 ? (candidates[0] as string) : null;
+  };
+  const unchanged = (stepId: string): boolean => nowAt(stepId) !== null;
+  const split = <T>(entries: Readonly<Record<string, T>>, keep: (key: string) => boolean, rename: (key: string) => string): [Record<string, T>, Record<string, T>] => {
     const kept: Record<string, T> = {};
     const moved: Record<string, T> = {};
     for (const [key, value] of Object.entries(entries)) {
-      (keep(key) ? kept : moved)[key] = value;
+      if (keep(key)) {
+        kept[rename(key)] = value;
+      } else {
+        moved[key] = value;
+      }
     }
     return [kept, moved];
   };
-  const [shownSteps, movedShownSteps] = split(stored.shownSteps, unchanged);
-  const [walkedSteps, movedWalkedSteps] = split(stored.walkedSteps, unchanged);
-  const [shownRefs, movedShownRefs] = split(stored.shownRefs, (key) => places.has(key) && unchanged(key.slice(0, key.indexOf('@'))));
+  const stepOf = (key: string): string => key.slice(0, key.indexOf('@'));
+  const renamedRef = (key: string): string => `${nowAt(stepOf(key)) ?? stepOf(key)}${key.slice(key.indexOf('@'))}`;
+  const [shownSteps, movedShownSteps] = split(stored.shownSteps, unchanged, (key) => nowAt(key) ?? key);
+  const [walkedSteps, movedWalkedSteps] = split(stored.walkedSteps, unchanged, (key) => nowAt(key) ?? key);
+  const [shownRefs, movedShownRefs] = split(stored.shownRefs, (key) => unchanged(stepOf(key)) && places.has(renamedRef(key)), renamedRef);
   const movedIds = new Set([...Object.keys(movedShownSteps), ...Object.keys(movedWalkedSteps)]);
   const carriedIds = new Set([...Object.keys(shownSteps), ...Object.keys(walkedSteps)]);
   const entry: MarkHistoryEntry = {
@@ -1572,9 +1605,17 @@ export function carryStepMarks(
     walkedSteps: movedWalkedSteps,
   };
   const anythingMoved = movedIds.size > 0 || Object.keys(movedShownRefs).length > 0;
+  // The step being read follows its content to its new id, with the walk that holds it.
+  const positionStep = stored.position.stepId === null ? null : nowAt(stored.position.stepId);
+  const positionWalk = positionStep === null ? undefined : definition.walks.find((walk) => walk.steps.some((step) => step.id === positionStep));
+  const position =
+    positionStep !== null && positionStep !== stored.position.stepId && positionWalk !== undefined
+      ? { ...stored.position, walkId: positionWalk.id, stepId: positionStep }
+      : stored.position;
   return {
     state: {
       ...stored,
+      position,
       definitionHash,
       previousDefinitionHashes: [...stored.previousDefinitionHashes, stored.definitionHash],
       shownSteps,
@@ -1712,6 +1753,16 @@ export function markedChangedRows(
 ): readonly number[] {
   const own = referenceRows(rows, focus).indexes.filter((index) => rows[index]?.kind === 'added' || rows[index]?.kind === 'deleted');
   return withBlankRows(rows, own);
+}
+
+/**
+ * DSP-217: whether a place's range holds no added or removed row, so the walk's code view frames
+ * its lines; a place with any change, mixed or not, keeps the diff's own marking. Changes elsewhere
+ * in the file do not count.
+ */
+export function unchangedPlace(rows: readonly DiffRow[], place: { readonly side: RevisionSide; readonly start: number; readonly end: number }): boolean {
+  const indexes = referenceRows(rows, place).indexes;
+  return indexes.length > 0 && indexes.every((index) => rows[index]?.kind === 'context') && markedChangedRows(rows, place).length === 0;
 }
 
 const isChangedRow = (row: DiffRow | undefined): boolean => row !== undefined && row.kind !== 'context';
