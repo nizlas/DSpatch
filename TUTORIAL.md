@@ -20,7 +20,15 @@ Human checkpoints in such a workflow let you steer at the level of goals and tra
 
 The expected benefit is the ability to carry a larger, open-ended assignment further with less manual coordination, clearer responsibilities and explicit assessment. Better results still depend on the quality of the roles, checks and evidence; several agents can share the same blind spot.
 
-**Current scope:** DSpatch's external development workflow explores this broader approach; the application currently includes a simplified runnable subset and a smaller work/check loop. The research example above illustrates the wider concept, not a bundled, fully implemented research workflow. In the current application, you can steer a running loop through the project conversation and choose whether work steps start automatically or wait for you. These controls are described [below](#decide-how-much-to-participate).
+**What the application offers today:** the research example above illustrates the concept; DSpatch does not ship a research workflow. What it does ship is the machinery to run and build such loops:
+
+- **Four bundled loops:** a work/check loop, a larger implementation/verification/review loop, a **Parallel loop** that splits an assignment into slices and works on them at the same time, and the mission loop DSpatch's own development uses for long assignments across several runs.
+- **Loops built in conversation:** describe the workflow you want in the project chat and the agent proposes a graph, which you inspect, open in the editor and apply.
+- **Parallel work:** a step can split its task into smaller, independent slices that run concurrently in separate worktrees, and a later step combines them.
+- **Adaptive routes:** a step can skip a later step with a stated reason, and recommend that the rest be done interactively, in the same conversation.
+- **Visible execution:** the graph shows what is running now; each agent step and each parallel branch has live output you can follow in place or in a window of its own; each run ends with a report of what each step declared, its commits and its usage.
+
+How to use these is described [below](#use-an-agent-loop).
 
 ## Review built around understanding
 
@@ -275,7 +283,7 @@ Saved conversations remain available through the chat list and **Session → Con
 
 ## Use an agent loop
 
-A loop makes the responsibilities and handovers in an assignment explicit. Depending on the workflow, steps can investigate, propose, implement or assess; the graph controls how their results lead to further work and when to stop. The bundled examples below provide a smaller starting point for using these mechanics.
+A loop makes the responsibilities and handovers in an assignment explicit. Depending on the workflow, steps can investigate, propose, implement or assess; the graph controls how their results lead to further work and when to stop.
 
 ### Choose a loop and give it an assignment
 
@@ -283,11 +291,16 @@ A loop makes the responsibilities and handovers in an assignment explicit. Depen
 2. Open **Edit agent loops** and choose a loop in the editor's list.
 3. Return to the project chat, enable **Use loop**, and send the assignment.
 
-Selecting a loop or enabling Use loop does not start it. Sending the assignment does.
+Selecting a loop or enabling Use loop does not start it. Sending the assignment does. The first step receives a summary of what the conversation already holds, its earlier messages and runs and the state of the repository, so you need not repeat the background.
 
-Until you choose one, DSpatch offers **DSpatch development loop (runnable subset)**. **Simple chat loop** stays in the list for smaller assignments, and a loop you chose earlier stays chosen.
+The bundled loops:
 
-The bundled **Simple chat loop** starts with **Do the work**, then hands its result to **Check the work** in a separate agent step. The check can accept it, request rework or report that the result could not be established. Rework follows the graph's limits; it is not an unlimited retry.
+| Loop | What it does |
+| --- | --- |
+| **Simple chat loop** | **Do the work**, then **Check the work** in a separate agent step. The check accepts, asks for rework within the graph's limits, or reports that the result could not be established. When the work needs no check, the work step can skip it and say why. |
+| **DSpatch development loop (runnable subset)** | Implement, verify, review and rework. The default until you choose another loop. It is not the full external process used to develop DSpatch. |
+| **Parallel loop** | A slicer splits the assignment into two or three independent slices; they are worked on at the same time, each in its own worktree; an integrator combines them; a check reviews the whole. |
+| **DSpatch mission loop** | A long assignment carried across many sub-goals and several runs, with planning, research, implementation, review and an assessment of the whole. Built for DSpatch's own repository. |
 
 For example:
 
@@ -297,9 +310,16 @@ Keep the file format and public API unchanged. Verify the relevant behaviour
 and report any checks you could not perform.
 ```
 
-Replies and follow-up instructions stay in the project conversation. The graph view shows the current step and route, so you can inspect the workflow without maintaining a separate conversation for each role.
+Replies and follow-up instructions stay in the project conversation. A step may also recommend continuing interactively; if you accept, the run hands over to the chat with what it did, and you go on in the same thread without sending the assignment again.
 
-The bundled **DSpatch development loop (runnable subset)** is a larger implementation/verification/review workflow. Its name matters: it is not the full external process used to develop DSpatch. It is the default until you choose another loop.
+### Follow what is happening
+
+- **The graph** shows the step that is working, the route taken, steps that were skipped and why, and parallel branches with their own state.
+- **Step cards in the chat** summarise each finished step; branches of a parallel step are grouped, with the integrator's combined report.
+- **Live output.** **Open live output** on a working step, or on a branch under **Branches**, follows that agent as it works: its text and the tools it calls. **Open in window** keeps it in a window of its own beside the graph.
+- **The run's final card** says how it ended, what each step declared, the commits made, the model used and the run's counters: steps, branch runs, rework rounds, provider turns and duration. Token usage is shown where the provider reports it; a value it does not report is shown as unknown, not as zero.
+- **Messages to running branches.** An instruction you send during a parallel step reaches each running branch at its next check, and the run records per branch when it was delivered.
+- **Machine load.** When the computer running the host is under pressure, the run holds its next step and says why, instead of starting more work.
 
 ### Decide how much to participate
 
@@ -321,18 +341,23 @@ For example, start with **wait for me**, inspect what the first agent produced, 
 
 Continuity means the visible work and conversation stay together. It does not mean every specialist shares one model context or that a cancelled process can resume at the exact instruction where it stopped. Provider recovery and resuming an interrupted loop are separate capabilities; use the continuation controls actually offered for that state.
 
-### Explore or adapt a workflow
+### Build or adapt a workflow
 
-In **Edit agent loops**, select nodes and connections to inspect the role, task, handover and outcome routes. Editing lets you adapt the process as well as the application itself.
+**In conversation.** Ask the agent in the project chat for the workflow you want, for example *"a loop that researches two approaches in parallel, lets me choose, then implements and tests the chosen one"*. The agent reads the existing loops and their building blocks and answers with a proposal card: the loop's name and purpose and what applying it would write. **Open in editor** shows the proposed graph; **Apply** writes it; **Discard** writes nothing. A proposal never runs by itself, and Apply refuses to overwrite a graph that was changed on disk in the meantime.
 
+**In the editor.** In **Edit agent loops**, select nodes and connections to inspect the role, task, handover and outcome routes, and edit them.
+
+- **Arrange** lays the graph out in layers; edges route around nodes, and back and rework edges are drawn apart.
+- Renaming a node updates every reference to it in the drawing.
+- Each agent step can have its own model: a fixed one, or one chosen by the route that leads to it. The choice is recorded in the run.
 - **Save** writes graph changes. A running workflow keeps the graph version it started with.
 - **Dry-run** exercises graph routing without contacting a provider. It does not demonstrate that a real agent will solve the task.
 - **Open loop…** loads a `.loop.json` declaration and makes its workflow selectable.
 - A `.graph.json` is the drawing and workflow structure. Opening a drawing alone is not the same as installing a selectable loop.
 
-Project loop declarations live under `.dspatch/loops/`. For a custom workflow, copy a working declaration and its needed resources into your own project or branch, keep paths relative, and open the declaration in the editor. Do not edit read-only resources inside an installed application. The existing [chat-loop declaration](.dspatch/loops/dspatch-chat-loop.loop.json) and [graph](docs/loop/graphs/dspatch-chat-loop.graph.json) are useful starting points.
+Project loop declarations live under `.dspatch/loops/`. For a custom workflow, copy a working declaration and its needed resources into your own project or branch, keep paths relative, and open the declaration in the editor. Do not edit read-only resources inside an installed application. The [chat-loop declaration](.dspatch/loops/dspatch-chat-loop.loop.json), its [graph](docs/loop/graphs/dspatch-chat-loop.graph.json) and the [parallel loop](.dspatch/loops/dspatch-parallel-loop.loop.json) are useful starting points.
 
-Some graph concepts in the design documents are not runnable yet. Use the editor's validation and the runnable examples; the full development-process drawing includes unsupported parts and is not an executable template.
+Some graph concepts in the design documents are not runnable yet, such as a node that is itself a subloop. Use the editor's validation and the runnable examples; the full development-process drawing includes unsupported parts and is not an executable template.
 
 ## Work remotely
 
@@ -359,6 +384,8 @@ See [installation details](docs/INSTALL.md) for host paths, package matching and
 - The current revision-review workflow uses a Git repository and two commits. Publishing review comments to Gerrit is not part of this tutorial's supported workflow.
 - Richer delegated-review activity and more compact result presentation are areas for improvement; expect that surface to differ from short Discussion answers.
 - Tool hooks are not a filter over all code sent to a model. Before using restricted repositories, read the [content-exclusion contract](docs/DSPATCH_CONTENT_EXCLUSION_CONTRACT.md) and confirm the approved provider and controls for your environment.
+- A parallel step runs at most three slices at a time; how many your provider actually runs concurrently is read from its code, not measured.
+- Token usage and cost depend on what the provider reports; DSpatch shows an unreported value as unknown.
 - Release notes state which operating systems and real-provider paths have been exercised. Automated simulations and dry-runs have a different scope.
 
 For problems, record the release version, operating system, selected provider, local/remote mode, and the steps that led to the issue. Include a screenshot or a relevant diagnostic excerpt without credentials or private source code. The [issue tracker](https://github.com/nizlas/DSpatch/issues) is the place to report it.
