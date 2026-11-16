@@ -34,7 +34,7 @@ Niclas's request of 16 November 2026: the guide in 1.0.2 is still too long; "The
 - [x] #3 The helper prints one ready Windows command with key, address, user, version and the script's SHA-256 filled in, and a clear next step
 - [x] #4 Targeted tests for the helper and the guide pass; typecheck and build pass
 - [x] #5 The guide is seen in the real app, the save buttons included
-- [ ] #6 A new pre-release is published from the pushed commit
+- [x] #6 A new pre-release is published from the pushed commit
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -48,4 +48,5 @@ Done (16 November 2026), released as 1.0.3:
 - Help commands wrap instead of scrolling and never run under the Copy button (seen at 520 px wide before the fix).
 - Checks: help-guides, remote-setup-linux and remote-setup-scripts (14) and prepare-bundled (18) tests; typecheck; build. The Help window opened from its real menu item in this checkout's build (headless Electron, isolated profile): the default view fits 900x900, every view opens and returns, the save buttons save files identical to the scripts (the native dialog answered by the trial). On the real Windows 11 host, read-only: the printed command with a throwaway key and `-DryRun` downloaded 1.0.2's (identical) script, matched its SHA-256 and showed the plan; afterwards no rule, no key, no downloaded file.
 - Not tried: the Windows script's changing path; the full flow with 1.0.3's packages; the Help window on a real screen and the native save dialog; a work network.
+- Published 16 November 2026: v1.0.3 on 7246d4c, pre-release, workflow run 43849245297. All eight files match `SHA256SUMS`; the .deb's `bundled/remote-setup/VERSION` is 1.0.3, its scripts and manifest equal the published ones, and its helper prints the v1.0.3 download with the published Windows script's SHA-256 (094b9938…, unchanged from 1.0.2).
 <!-- SECTION:NOTES:END -->
