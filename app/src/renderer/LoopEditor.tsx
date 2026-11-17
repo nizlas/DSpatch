@@ -38,6 +38,7 @@ import {
   describeTargetChange,
   modelsNamedBy,
   withTarget,
+  MODEL_CLASSES,
 } from '../shared/loop-graph';
 import type {
   LoopEdge,
@@ -103,7 +104,7 @@ import {
   summariseEditorRun,
 } from '../shared/loop-editor-run';
 import type { EditorRunSummary } from '../shared/loop-editor-run';
-import { formatJournalEntry, latestModelSelection, modelSelectionFromData, type RunJournalEntry, type RunResult } from '../shared/loop-run';
+import { formatJournalEntry, latestModelSelection, modelSelectionFromData, nodeModelLine, type RunJournalEntry, type RunResult } from '../shared/loop-run';
 import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
@@ -423,6 +424,10 @@ export function LoopEditor(): React.JSX.Element {
             ...(entryNode.label === undefined ? {} : { label: entryNode.label }),
             ...(entryNode.model === undefined ? {} : { model: entryNode.model }),
           },
+    // DSP-222: the classes any step offers, once each, in their own order.
+    classes: MODEL_CLASSES.filter((name) =>
+      (graph?.nodes ?? []).some((node) => node.model?.policy === 'select' && (node.model.options ?? []).some((option) => option.modelClass === name)),
+    ),
   });
   useEffect(() => {
     let cancelled = false;
@@ -2380,6 +2385,9 @@ export function LoopEditor(): React.JSX.Element {
     [outputRun, runGraph],
   );
   const runModeEdges = useMemo(() => edgesTakenIn(outputRun), [outputRun]);
+  // DSP-222: the model line of each step whose model is chosen per visit, in either mode.
+  const runModelLines = useMemo(() => modelLinesOf(runGraph, outputRun?.entries ?? null), [runGraph, outputRun]);
+  const editModelLines = useMemo(() => modelLinesOf(graph, null), [graph]);
   // DSP-80: which node is working, from the run's journal and this run's own control phase.
   const runModeWorking = useMemo(() => {
     const working = new Set<string>();
@@ -3170,6 +3178,7 @@ export function LoopEditor(): React.JSX.Element {
                 edgesTaken={runModeEdges}
                 runStates={runModeStates}
                 branchSummaries={runBranchSummaries}
+                modelSummaries={runModelLines}
                 onOpenBranches={(nodeId) => setRunSelection({ kind: 'node', id: nodeId })}
                 workingNodes={runModeWorking}
                 endingMarks={runModeMarks}
@@ -3196,6 +3205,7 @@ export function LoopEditor(): React.JSX.Element {
               showLabels={showLabels}
               edgesTaken={NO_EDGES}
               runStates={editStates}
+              modelSummaries={editModelLines}
               workingNodes={NO_NODES}
               endingMarks={null}
               severityOfNode={(id) => worstSeverity(index.byNode.get(id) ?? [])}
@@ -4174,7 +4184,7 @@ function NodeInspector({
           {liveModel !== null ? (
             <p data-ev="node-model-live">
               <strong>This run:</strong> {liveModel.model === '' ? 'the provider’s default' : <code>{liveModel.model}</code>}
-              {liveModel.option === null ? '' : ` (option “${liveModel.option}”)`} on {liveModel.provider} —{' '}
+              {liveModel.option === null ? '' : ` (option “${liveModel.option}”${liveModel.modelClass === undefined ? '' : `, class ${liveModel.modelClass}`})`} on {liveModel.provider} —{' '}
               {liveModel.source === 'policy' ? 'chosen by the policy' : liveModel.source === 'fixed' ? 'fixed by the step' : 'the run’s model'}
               , because: {liveModel.reason}
             </p>
@@ -4222,10 +4232,31 @@ function NodeInspector({
                       Option id
                       <input value={option.id} onChange={(event) => replaceOption({ ...option, id: event.target.value })} />
                     </label>
-                    <label>
-                      Model
-                      <input value={option.model} onChange={(event) => replaceOption({ ...option, model: event.target.value })} />
+                    <label title="A class is mapped to a model in the configuration of the provider that runs the graph, not in the graph">
+                      Model class
+                      <select
+                        data-ev="node-model-option-class"
+                        value={option.modelClass ?? ''}
+                        onChange={(event) => {
+                          const picked = MODEL_CLASSES.find((name) => name === event.target.value);
+                          const { model: _model, modelClass: _class, ...rest } = option;
+                          replaceOption(picked === undefined ? { ...rest, model: option.model ?? '' } : { ...rest, modelClass: picked });
+                        }}
+                      >
+                        <option value="">None: a named model</option>
+                        {MODEL_CLASSES.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
                     </label>
+                    {option.modelClass === undefined ? (
+                      <label>
+                        Model
+                        <input value={option.model ?? ''} onChange={(event) => replaceOption({ ...option, model: event.target.value })} />
+                      </label>
+                    ) : null}
                     <label>
                       Note
                       <input
@@ -5023,4 +5054,16 @@ function TargetChangeDialog({
       </div>
     </div>
   );
+}
+
+/** DSP-222: the canvas's model line for every step whose model is chosen per visit. */
+function modelLinesOf(graph: LoopGraph | null, entries: readonly RunJournalEntry[] | null): ReadonlyMap<string, string> {
+  const lines = new Map<string, string>();
+  for (const node of graph?.nodes ?? []) {
+    const line = nodeModelLine(node, entries);
+    if (line !== null) {
+      lines.set(node.id, line);
+    }
+  }
+  return lines;
 }

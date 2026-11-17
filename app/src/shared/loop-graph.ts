@@ -416,12 +416,29 @@ export interface ModelPolicy {
   readonly default?: string;
 }
 
-/** DSP-209 S19: one model a `select` policy may run its step with. */
+/**
+ * DSP-222: a provider-independent model class. The names say the capacity a step is meant to
+ * have, not a model's size: which model a class means is configured per provider (see
+ * {@link ModelClassMap}), never written in a graph.
+ */
+export type ModelClass = 'small' | 'medium' | 'large';
+export const MODEL_CLASSES: readonly ModelClass[] = ['small', 'medium', 'large'];
+
+/** DSP-222: the run's provider's configured model for each class; a class absent is not mapped. */
+export type ModelClassMap = Readonly<Partial<Record<ModelClass, string>>>;
+
+/**
+ * DSP-209 S19: one model a `select` policy may run its step with. Exactly one of `model` and
+ * `modelClass` (DSP-222): a concrete model id for one provider, or a class the run's provider
+ * maps to one.
+ */
 export interface ModelOption {
   /** What an edge's `selectsModel` names, such as `small`. */
   readonly id: string;
   /** The provider's model id, within the run's one provider (decision 8). */
-  readonly model: string;
+  readonly model?: string;
+  /** DSP-222: a model class, resolved through the run provider's {@link ModelClassMap}. */
+  readonly modelClass?: ModelClass;
   /** What the option is for, for the person reading the drawing. */
   readonly note?: string;
 }
@@ -433,7 +450,15 @@ export interface ModelOption {
  * is what `inherit`, `described` and a node without `model` have always run with.
  */
 export interface StepModelChoice {
+  /**
+   * `null` is the run's own model: for `inherit` and friends, and (DSP-222) for a class the
+   * provider has not mapped, which {@link classUnmapped} then says.
+   */
   readonly model: string | null;
+  /** DSP-222: the option's model class, or `null` when the option names a model or there is none. */
+  readonly modelClass: ModelClass | null;
+  /** DSP-222: `true` when {@link modelClass} has no model configured for the run's provider. */
+  readonly classUnmapped: boolean;
   /** The node's policy, or `null` when it names none. */
   readonly policy: ModelPolicy['policy'] | null;
   /** The `select` option taken, or `null`. */
@@ -452,34 +477,82 @@ export interface StepModelChoice {
 export function stepModelChoice(
   node: Pick<LoopNode, 'model'>,
   arrival: Pick<LoopEdge, 'selectsModel'> | null,
+  classes: ModelClassMap = {},
 ): StepModelChoice {
   const policy = node.model;
+  const plain = { modelClass: null, classUnmapped: false } as const;
   if (policy === undefined) {
-    return { model: null, policy: null, option: null, by: null };
+    return { model: null, policy: null, option: null, by: null, ...plain };
   }
   if (policy.policy === 'fixed' && policy.model !== undefined && policy.model !== '') {
-    return { model: policy.model, policy: 'fixed', option: null, by: null };
+    return { model: policy.model, policy: 'fixed', option: null, by: null, ...plain };
   }
   if (policy.policy === 'select') {
     const options = policy.options ?? [];
     const named = arrival?.selectsModel;
     const byEdge = named === undefined ? undefined : options.find((option) => option.id === named);
-    if (byEdge !== undefined) {
-      return { model: byEdge.model, policy: 'select', option: byEdge.id, by: 'edge' };
-    }
-    const fallback = options.find((option) => option.id === policy.default) ?? options[0];
-    if (fallback !== undefined) {
-      return { model: fallback.model, policy: 'select', option: fallback.id, by: 'default' };
+    const taken = byEdge ?? options.find((option) => option.id === policy.default) ?? options[0];
+    if (taken !== undefined) {
+      const by = byEdge !== undefined ? 'edge' : 'default';
+      if (taken.modelClass !== undefined) {
+        const mapped = classes[taken.modelClass];
+        const known = mapped !== undefined && mapped !== '';
+        return { model: known ? mapped : null, policy: 'select', option: taken.id, by, modelClass: taken.modelClass, classUnmapped: !known };
+      }
+      return { model: taken.model ?? null, policy: 'select', option: taken.id, by, ...plain };
     }
   }
-  return { model: null, policy: policy.policy, option: null, by: null };
+  return { model: null, policy: policy.policy, option: null, by: null, ...plain };
+}
+
+/**
+ * DSP-222: the per-provider class mapping as configured (`modelClasses` in DSpatch's model
+ * configuration), keeping only non-empty model ids for known providers and classes.
+ */
+export function parseModelClasses(raw: unknown): Partial<Record<RunProvider, ModelClassMap>> {
+  const mapped: Partial<Record<RunProvider, ModelClassMap>> = {};
+  if (typeof raw !== 'object' || raw === null) {
+    return mapped;
+  }
+  for (const provider of ['cursor', 'claude', 'copilot'] as const) {
+    const entry = (raw as Record<string, unknown>)[provider];
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const classes: Partial<Record<ModelClass, string>> = {};
+    for (const modelClass of MODEL_CLASSES) {
+      const model = (entry as Record<string, unknown>)[modelClass];
+      if (typeof model === 'string' && model.trim() !== '') {
+        classes[modelClass] = model.trim();
+      }
+    }
+    if (Object.keys(classes).length > 0) {
+      mapped[provider] = classes;
+    }
+  }
+  return mapped;
+}
+
+/** DSP-222: the classes a drawing's `select` options name that `classes` does not map, once each. */
+export function unmappedClassesOf(graph: Pick<LoopGraph, 'nodes'>, classes: ModelClassMap): readonly ModelClass[] {
+  const named = new Set<ModelClass>();
+  for (const node of graph.nodes) {
+    if (node.kind === 'agent' && node.model?.policy === 'select') {
+      for (const option of node.model.options ?? []) {
+        if (option.modelClass !== undefined && (classes[option.modelClass] ?? '') === '') {
+          named.add(option.modelClass);
+        }
+      }
+    }
+  }
+  return MODEL_CLASSES.filter((modelClass) => named.has(modelClass));
 }
 
 /**
  * DSP-209 S19: every model a drawing's agent steps may ask for — fixed models and every
  * `select` option — once each, for the check before a run starts.
  */
-export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>): readonly { readonly nodeId: string; readonly label: string; readonly model: string; readonly option: string | null }[] {
+export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>, classes: ModelClassMap = {}): readonly { readonly nodeId: string; readonly label: string; readonly model: string; readonly option: string | null }[] {
   const named: { nodeId: string; label: string; model: string; option: string | null }[] = [];
   for (const node of graph.nodes) {
     if (node.kind !== 'agent' || node.model === undefined) {
@@ -491,7 +564,11 @@ export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>): readonly { reado
     }
     if (node.model.policy === 'select') {
       for (const option of node.model.options ?? []) {
-        named.push({ nodeId: node.id, label, model: option.model, option: option.id });
+        // DSP-222: a class names the model its provider maps it to; an unmapped class names none.
+        const model = option.modelClass === undefined ? option.model : classes[option.modelClass];
+        if (model !== undefined && model !== '') {
+          named.push({ nodeId: node.id, label, model, option: option.id });
+        }
       }
     }
   }
@@ -1069,8 +1146,10 @@ export const ATTRIBUTE_SUPPORT: readonly AttributeSupport[] = [
     by:
       'DSP-209 S19. A run DSpatch walks opens each agent step with its own node\'s model: "fixed" ' +
       'for every step, not only the entry, and "select" takes the option the arriving edge\'s ' +
-      'selectsModel names, else its default. node-entered and branch-started record the model, ' +
-      'the option, the reason and who chose.',
+      'selectsModel names, else its default. DSP-222: an option may name a model class (small, ' +
+      'medium or large) instead of a model; the run\'s provider maps it to a model in DSpatch\'s ' +
+      'model configuration, and an unmapped class runs the run\'s model and says so. node-entered ' +
+      'and branch-started record the model, the option, the class, the reason and who chose.',
     caveat:
       '"described" is recorded and not applied: such a step runs the run\'s model. "inherit" runs ' +
       'the model chosen for the run\'s one provider. A run with Claude is refused before it starts ' +

@@ -459,6 +459,14 @@
  *
  * The palette is the one already in this file: no new colours were introduced.
  */
+/* DSP-222: a step whose model is chosen per visit: its choices, or the model a run chose. */
+.node-model {
+  fill: #c6d2df;
+  font-size: 9.5px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
 /* DSP-209 S20: a fan-out's branches, on the node, and the control that opens their list. */
 .node-branches {
   fill: #c6d2df;

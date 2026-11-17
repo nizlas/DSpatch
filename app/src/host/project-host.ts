@@ -67,7 +67,8 @@ import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/
 import { handoffAnswerFrom } from '../shared/loop-control';
 import { describeLiveBinding } from '../shared/loop-editor-run';
 import { checkRunRequirements, formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
-import type { LoopGraph, LoopNode, RoleReference, RoleResolver, RunProvider } from '../shared/loop-graph';
+import type { LoopGraph, LoopNode, ModelClassMap, RoleReference, RoleResolver, RunProvider } from '../shared/loop-graph';
+import { MODEL_CLASSES, parseModelClasses } from '../shared/loop-graph';
 import { earlierInstructionsContext, instructionPreamble } from '../shared/loop-instruction';
 import {
   describeRunOutcome,
@@ -513,6 +514,8 @@ function loopRunRequest(input: {
     cursorModels: chatService.knownModelIds('cursor'),
     copilotModels: chatService.knownModelIds('copilot'),
     copilotModel: chatService.modelFor('copilot'),
+    // DSP-222: each provider's configured model per class, from the same configuration file.
+    modelClasses: modelChoiceStore.readClasses(),
     sessionProvider: chatService.openSession()?.provider ?? null,
     chosenAgent: chatService.chosenAgent(),
     adapters: {
@@ -741,6 +744,19 @@ const modelChoiceStore = {
   read(provider: StoredSessionProvider): string | null {
     return modelChoiceStore.readAll()[provider] ?? null;
   },
+  /**
+   * DSP-222: the model each provider runs for a model class (small, medium, large), under
+   * `modelClasses` in the same file: `{"modelClasses": {"copilot": {"small": "...", ...}}}`.
+   * Only what is written there; nothing is assumed for a class or provider left out.
+   */
+  readClasses(): Partial<Record<StoredSessionProvider, ModelClassMap>> {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(modelChoiceStore.file(), 'utf8')) as { modelClasses?: Record<string, unknown> };
+      return parseModelClasses(parsed.modelClasses);
+    } catch {
+      return {};
+    }
+  },
   write(provider: StoredSessionProvider, modelId: string | null): void {
     const models = { ...modelChoiceStore.readAll() };
     if (modelId === null) {
@@ -751,7 +767,9 @@ const modelChoiceStore = {
     try {
       const file = modelChoiceStore.file();
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, `${JSON.stringify({ formatVersion: 1, models }, null, 2)}
+      // DSP-222: the class mapping in the same file is kept as it is.
+      const modelClasses = modelChoiceStore.readClasses();
+      fs.writeFileSync(file, `${JSON.stringify({ formatVersion: 1, models, ...(Object.keys(modelClasses).length === 0 ? {} : { modelClasses }) }, null, 2)}
 `, 'utf8');
     } catch (error) {
       log(`[model] the choice could not be remembered: ${error instanceof Error ? error.message : String(error)}`);
@@ -2799,6 +2817,7 @@ function registerLoopMethods(): void {
           modelRequested: agent.modelRequested,
           // DSP-209 S19: a step naming no model runs with the person's model, not the entry's.
           personModel: agent.personModel,
+          modelClasses: agent.modelClasses,
           ...withRequirementsNote(requirementsNote(loaded.graph, agent.provider, resolveEditorRole)),
           keepWorkspace: true,
           // DSP-147: the editor's run works in a new folder of its own, which a workspace
@@ -2932,8 +2951,15 @@ function registerLoopMethods(): void {
    * constructing anything. The drawing's `target` is not asked for: it chooses nothing (DSP-218).
    */
   handle('loop.readRunAgent', (_event, query: unknown): LoopRunAgentInfo => {
-    const asked = (typeof query === 'object' && query !== null ? query : {}) as { entry?: unknown };
-    return loopRunAgentInfo(editorLoopRunRequest(entryFromQuery(asked.entry)));
+    const asked = (typeof query === 'object' && query !== null ? query : {}) as { entry?: unknown; classes?: unknown };
+    // DSP-222: the classes the drawing offers, as one stand-in step, so the line says which
+    // the provider maps and which run the chat's model; checked, as they came from a renderer.
+    const classes = Array.isArray(asked.classes) ? MODEL_CLASSES.filter((name) => (asked.classes as unknown[]).includes(name)) : [];
+    const offered: LoopRunAgentRequest['graph'] =
+      classes.length === 0
+        ? undefined
+        : { nodes: [{ id: 'classes', kind: 'agent', model: { policy: 'select', options: classes.map((name) => ({ id: name, modelClass: name })), default: classes[0] } }] };
+    return loopRunAgentInfo(editorLoopRunRequest(entryFromQuery(asked.entry), offered));
   });
 
   /**
@@ -3273,6 +3299,7 @@ function registerLoopMethods(): void {
           modelRequested,
           // DSP-209 S19: a step naming no model runs with the person's model, not the entry's.
           personModel: agent.personModel,
+          modelClasses: agent.modelClasses,
           ...withRequirementsNote(requirementsNote(loaded.graph, agent.provider, resolveRole)),
           workspacePath,
           workingRoots,

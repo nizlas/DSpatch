@@ -36,7 +36,7 @@
  * provider to call, so it *cannot* spend a turn rather than being trusted not to.
  */
 
-import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
+import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ModelClassMap, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
 import { BRANCH_FAILED, stepModelChoice } from './loop-graph';
 import type { ModelSelectionRecord } from './run-presentation';
 import { readSlices, type Slice } from './loop-slices';
@@ -516,6 +516,8 @@ export const NO_SKIP_REASON = 'no reason given';
 export interface RunModel {
   readonly provider: string;
   readonly model: string;
+  /** DSP-222: the provider's configured model per class, for steps whose options name a class. */
+  readonly classes?: ModelClassMap;
 }
 
 /** DSP-209 S19: the reason recorded for a `select` visit that no edge chose for. */
@@ -539,13 +541,14 @@ export function modelSelectionData(
   if (node.kind !== 'agent') {
     return {};
   }
-  const choice = stepModelChoice(node, arrival);
+  const choice = stepModelChoice(node, arrival, run?.classes);
   const policy: Record<string, string> = choice.policy === null ? {} : { modelPolicy: choice.policy };
+  const classData: Record<string, string> = choice.modelClass === null ? {} : { modelClass: choice.modelClass };
   const model = choice.model ?? run?.model ?? null;
   if (model === null) {
-    return policy;
+    return { ...policy, ...classData };
   }
-  const why =
+  const chosen =
     choice.by === 'edge'
       ? oneLineReason(reason)
       : choice.by === 'default'
@@ -553,11 +556,17 @@ export function modelSelectionData(
         : choice.policy === 'fixed'
           ? 'fixed by the step'
           : `the model chosen for ${run?.provider ?? 'the run'}${model === '' ? ' (the provider’s default)' : ''}`;
+  // DSP-222: an unmapped class runs the run's own model, and the record says so rather than
+  // letting that model pass as the class's.
+  const why = choice.classUnmapped
+    ? `${chosen}; class ${choice.modelClass ?? ''} has no model configured for ${run?.provider ?? 'the run'}, so the model chosen for the run ran`
+    : chosen;
   return {
     model,
     modelProvider: run?.provider ?? 'unknown',
     ...policy,
     ...(choice.option === null ? {} : { modelOption: choice.option }),
+    ...classData,
     modelReason: why,
     modelSource: choice.policy === 'fixed' ? 'fixed' : choice.policy === 'select' ? 'policy' : 'person',
   };
@@ -580,6 +589,25 @@ export function latestModelSelection(
   return null;
 }
 
+/**
+ * DSP-222: the line a step whose model is chosen per visit carries on the canvas: the class or
+ * option and model its latest visit in `entries` ran with, else the choices its policy offers.
+ * `null` for any other step.
+ */
+export function nodeModelLine(
+  node: Pick<LoopNode, 'id' | 'kind' | 'model'>,
+  entries: readonly RunJournalEntry[] | null,
+): string | null {
+  if (node.kind !== 'agent' || node.model?.policy !== 'select') {
+    return null;
+  }
+  const chosen = entries === null ? null : latestModelSelection(entries, node.id);
+  if (chosen !== null) {
+    return `${chosen.modelClass ?? chosen.option ?? 'model'}: ${chosen.model === '' ? 'provider default' : chosen.model}`;
+  }
+  return `model by route: ${(node.model.options ?? []).map((option) => option.modelClass ?? option.id).join(' · ')}`;
+}
+
 /** DSP-209 S19: {@link modelSelectionData} read back from a journal entry, or `null` when it has none. */
 export function modelSelectionFromData(
   data: Readonly<Record<string, string | number | boolean>> | undefined,
@@ -597,6 +625,7 @@ export function modelSelectionFromData(
     model,
     policy: policy === 'fixed' ? null : policy,
     option: text('modelOption'),
+    ...(text('modelClass') === null ? {} : { modelClass: text('modelClass') as string }),
     reason,
     source,
   };

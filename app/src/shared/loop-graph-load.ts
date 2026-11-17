@@ -27,6 +27,7 @@ import {
   LOOP_GRAPH_FORMAT,
   LOOP_GRAPH_FORMAT_VERSION,
   LOOP_TARGETS,
+  MODEL_CLASSES,
   BRANCH_FAILED,
   FAN_OUT_ISOLATIONS,
   FAN_OUT_ADAPTER_CAPS,
@@ -858,11 +859,15 @@ function parseModelSelect(
     const at = `${pointer}/options/${String(index)}`;
     const id = isRecord(entry) ? nonEmptyString(entry['id']) : null;
     const model = isRecord(entry) ? nonEmptyString(entry['model']) : null;
-    if (id === null || model === null) {
+    // DSP-222: or a model class, which the run's provider maps to a model.
+    const rawClass = isRecord(entry) ? entry['modelClass'] : undefined;
+    const modelClass = MODEL_CLASSES.find((name) => name === rawClass) ?? null;
+    if (id === null || (model === null) === (modelClass === null) || (rawClass !== undefined && modelClass === null)) {
       findings.error(
         'bad-model-option',
         at,
-        `Node "${nodeId}": each model option needs an "id" and a "model".`,
+        `Node "${nodeId}": each model option needs an "id" and either a "model" or a "modelClass" ` +
+          `(${MODEL_CLASSES.map((name) => `"${name}"`).join(', ')}), not both.`,
         { nodeId },
       );
       ok = false;
@@ -874,7 +879,7 @@ function parseModelSelect(
       return;
     }
     const note = isRecord(entry) ? nonEmptyString(entry['note']) : null;
-    options.push({ id, model, ...(note === null ? {} : { note }) });
+    options.push({ id, ...(model === null ? {} : { model }), ...(modelClass === null ? {} : { modelClass }), ...(note === null ? {} : { note }) });
   });
   const fallback = nonEmptyString(value['default']);
   if (fallback === null || !options.some((option) => option.id === fallback)) {

@@ -13,7 +13,7 @@ import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import { nodeSize } from '../src/shared/loop-edge-geometry';
 import { routeLoopEdges, routingBox, segmentCrossesBox } from '../src/shared/loop-edge-routing';
 import { createMemoryResultStore } from '../src/shared/loop-results';
-import { runLoopGraph, type StepContext, type StepExecution } from '../src/shared/loop-run';
+import { modelSelectionData, modelSelectionFromData, runLoopGraph, type StepContext, type StepExecution } from '../src/shared/loop-run';
 import { prepareBundled } from '../scripts/prepare-bundled.mjs';
 import type { AgentEvent, AgentEventListener } from '../src/adapter/types';
 import type { ChatAdapter } from '../src/main/chat-service';
@@ -49,9 +49,9 @@ test('generic network loads, resolves its roles and retains its result and routi
   assert.equal(choice.preselected, false);
   const graph = load(root);
   const agents = graph.nodes.filter((node) => node.kind === 'agent');
-  assert.equal(agents.length, 36);
-  assert.equal(graph.edges.length, 140);
-  assert.equal(new Set(agents.map((node) => node.role?.id)).size, 21);
+  assert.equal(agents.length, 34);
+  assert.equal(graph.edges.length, 130);
+  assert.equal(new Set(agents.map((node) => node.role?.id)).size, 19);
   assert.ok(agents.every((node) => node.produces?.required && node.produces.form === 'stored-result'));
   assert.ok(graph.nodes.some((node) => node.kind === 'terminal' && node.ending === 'report-delivered'));
   assert.ok(graph.edges.every((edge) => edge.delivers?.includes('executive-intake')));
@@ -127,7 +127,7 @@ test('client bundling carries the definition, graph and every role', (context) =
   prepareBundled(app);
   const bundled = path.join(app, 'build/bundled');
   const graph = load(bundled);
-  assert.equal(graph.nodes.filter((node) => node.kind === 'agent').length, 36);
+  assert.equal(graph.nodes.filter((node) => node.kind === 'agent').length, 34);
   for (const file of [definitionPath, graphPath, ...fs.readdirSync(path.join(root, roleDirectory)).map((name) => `${roleDirectory}/${name}`)]) {
     assert.deepEqual(fs.readFileSync(path.join(bundled, file)), fs.readFileSync(path.join(root, file)), file);
   }
@@ -219,9 +219,15 @@ test('a backlog start limit delivers the existing plan to wrap-up', async () => 
   assert.deepEqual(receivedBy(seen, 'documenter-wrapup').map((item) => item.nodeId), ['executive-intake', 'planner', 'backlog-start']);
 });
 
-for (const worker of ['implementer-s', 'implementer-m', 'implementer-l']) {
-  test(`${worker} passes its actual contract and work through QA, review, challenge and acceptance`, async () => {
-    const { result, seen } = await scriptedRun({ outcomes: { 'tl-dispatch': worker } });
+/** DSP-222: the node a dispatch outcome runs: the small and medium variants are one node each. */
+function workerNode(outcome: string): string {
+  return outcome === 'implementer-s' || outcome === 'implementer-m' ? 'implementer' : outcome === 'explorer-s' || outcome === 'explorer-m' ? 'explorer' : outcome;
+}
+
+for (const outcome of ['implementer-s', 'implementer-m', 'implementer-l']) {
+  const worker = workerNode(outcome);
+  test(`${outcome} passes its actual contract and work through QA, review, challenge and acceptance`, async () => {
+    const { result, seen } = await scriptedRun({ outcomes: { 'tl-dispatch': outcome } });
     assert.equal(result.status, 'completed', result.fault?.detail ?? '');
     const qa = worker === 'implementer-l' ? 'qa-design' : 'qa';
     const reviewer = worker === 'implementer-l' ? 'reviewer-l' : 'reviewer-s';
@@ -243,14 +249,15 @@ for (const worker of ['implementer-s', 'implementer-m', 'implementer-l']) {
   });
 }
 
-for (const worker of ['researcher-m', 'researcher-l', 'explorer-s', 'explorer-m', 'data-curator', 'experiment-analyst', 'infra']) {
-  test(`${worker} delivers only its executed branch to acceptance`, async () => {
-    const { result, seen } = await scriptedRun({ outcomes: { 'tl-dispatch': worker } });
+for (const outcome of ['researcher-m', 'researcher-l', 'explorer-s', 'explorer-m', 'data-curator', 'experiment-analyst', 'infra']) {
+  const worker = workerNode(outcome);
+  test(`${outcome} delivers only its executed branch to acceptance`, async () => {
+    const { result, seen } = await scriptedRun({ outcomes: { 'tl-dispatch': outcome } });
     assert.equal(result.status, 'completed', result.fault?.detail ?? '');
     const body = receivedBy(seen, 'tl-accept').map((item) => item.body).join('\n');
     assert.match(body, /planner#1 evidence/);
     assert.ok(body.includes(`${worker}#1 evidence`));
-    assert.ok(!body.includes('implementer-s#1 evidence'));
+    assert.ok(!body.includes('implementer#1 evidence'));
   });
 }
 
@@ -272,13 +279,13 @@ test('design review and skeptic escalation carry the actual prior evidence', asy
   const { result, seen } = await scriptedRun({ outcomes: { 'reviewer-s': 'design-review', 'skeptic': 'pass' } });
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
   const design = receivedBy(seen, 'reviewer-l').map((item) => item.body).join('\n');
-  for (const marker of ['planner#1 evidence', 'implementer-s#1 evidence', 'qa#1 evidence', 'reviewer-s#1 evidence']) {
+  for (const marker of ['planner#1 evidence', 'implementer#1 evidence', 'qa#1 evidence', 'reviewer-s#1 evidence']) {
     assert.ok(design.includes(marker));
   }
   const escalated = await scriptedRun({ outcomes: { 'skeptic-s': 'escalate' } });
   assert.equal(escalated.result.status, 'completed', escalated.result.fault?.detail ?? '');
   const skeptic = receivedBy(escalated.seen, 'skeptic').map((item) => item.body).join('\n');
-  for (const marker of ['planner#1 evidence', 'implementer-s#1 evidence', 'qa#1 evidence', 'reviewer-s#1 evidence', 'skeptic-s#1 evidence']) {
+  for (const marker of ['planner#1 evidence', 'implementer#1 evidence', 'qa#1 evidence', 'reviewer-s#1 evidence', 'skeptic-s#1 evidence']) {
     assert.ok(skeptic.includes(marker));
   }
 });
@@ -289,18 +296,18 @@ test('QA rework carries the failure forward and later review receives the new wo
   const dispatch = seen.filter((item) => item.node.id === 'tl-dispatch')[1];
   assert.ok(dispatch?.received.some((item) => item.nodeId === 'qa' && item.body.includes('qa#1 evidence')));
   const reviewer = receivedBy(seen, 'reviewer-s').find((item) => item.nodeId === 'qa');
-  assert.ok(reviewer?.body.includes('implementer-s#2 evidence'));
+  assert.ok(reviewer?.body.includes('implementer#2 evidence'));
   assert.equal(reviewer?.occurrence, 2);
 });
 
 test('a worker failure reaches dispatch with its contract and reported state', async () => {
   const { result, seen } = await scriptedRun({
-    failures: { 'implementer-s#1': 'research-needed' },
-    bodies: { 'implementer-s#1': 'Evidence needed; no change reported.' },
+    failures: { 'implementer#1': 'research-needed' },
+    bodies: { 'implementer#1': 'Evidence needed; no change reported.' },
   });
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
   const dispatch = seen.filter((item) => item.node.id === 'tl-dispatch')[1];
-  const worker = dispatch?.received.find((item) => item.nodeId === 'implementer-s');
+  const worker = dispatch?.received.find((item) => item.nodeId === 'implementer');
   assert.match(worker?.body ?? '', /planner#1 evidence/);
   assert.match(worker?.body ?? '', /Evidence needed; no change reported/);
 });
@@ -368,7 +375,7 @@ async function selectiveTwoSliceRun(secondStartFailure?: 'blocked' | 'limit-reac
         output.evidence = latest('evidence');
       }
       if (node === 'planner') output.contract = `contract-${context.occurrence}`;
-      if (node === 'implementer-s') output.work = `work-${context.occurrence}`;
+      if (node === 'implementer') output.work = `work-${context.occurrence}`;
       if (node === 'qa') output.evidence = `check-${context.occurrence}`;
       if (node === 'tl-accept') {
         assert.ok(output.contract && output.work && output.evidence);
@@ -424,15 +431,28 @@ class NetworkAgent {
   private readonly listeners = new Map<string, AgentEventListener>();
   private readonly provider: RunProvider;
   private readonly nodeIds: readonly string[];
-  constructor(provider: RunProvider, nodeIds: readonly string[]) {
+  private readonly outcomes: Readonly<Record<string, string>>;
+  /** DSP-222: the model each turn of a node was sent with, in order. */
+  private readonly sessionModel = new Map<string, string>();
+  private readonly turnModels = new Map<string, string[]>();
+  constructor(provider: RunProvider, nodeIds: readonly string[], outcomes: Readonly<Record<string, string>> = {}) {
     this.provider = provider;
     this.nodeIds = nodeIds;
+    this.outcomes = outcomes;
+  }
+  modelsOf(node: string): readonly string[] {
+    return this.turnModels.get(node) ?? [];
   }
   private nodeOf(sessionId: string): string {
-    return [...this.nodeIds].sort((a, b) => b.length - a.length).find((id) => sessionId.endsWith(`--${id}`)) ?? '';
+    const bare = sessionId.replace(/--visit-\d+$/, '');
+    return [...this.nodeIds].sort((a, b) => b.length - a.length).find((id) => bare.endsWith(`--${id}`)) ?? '';
   }
-  startSession(config: { dspatchSessionId?: string; workspacePath?: string }) {
+  setSessionModel(sessionId: string, model: string) {
+    this.sessionModel.set(sessionId, model);
+  }
+  startSession(config: { dspatchSessionId?: string; workspacePath?: string; modelRequested?: string }) {
     if (config.workspacePath !== undefined) this.workspaces.add(config.workspacePath);
+    this.sessionModel.set(config.dspatchSessionId ?? 's', config.modelRequested ?? '');
     const id = config.dspatchSessionId ?? 's';
     return Promise.resolve({ dspatchSessionId: id, provider: this.provider, providerSessionId: `${this.provider}-${id}`, createdAt: new Date().toISOString() });
   }
@@ -443,13 +463,16 @@ class NetworkAgent {
   send(sessionId: string, prompt: string) {
     const node = this.nodeOf(sessionId);
     this.prompts.set(node, [...(this.prompts.get(node) ?? []), prompt]);
+    this.turnModels.set(node, [...(this.turnModels.get(node) ?? []), this.sessionModel.get(sessionId) ?? '']);
+    const visit = this.prompts.get(node)?.length ?? 0;
+    const outcome = this.outcomes[`${node}#${String(visit)}`] ?? defaultOutcomes[node] ?? 'succeeded';
     const runId = `${sessionId}-${String(this.prompts.get(node)?.length ?? 0)}`;
     const emit = (event: Partial<AgentEvent>): void => {
       this.listeners.get(sessionId)?.({ dspatchSessionId: sessionId, dspatchRunId: runId, at: new Date().toISOString(), rawProviderEvent: null, ...event } as AgentEvent);
     };
     setImmediate(() => {
       emit({ type: 'run.started' });
-      emit({ type: 'assistant.message', text: `${node} done.\n\nRESULT: ${defaultOutcomes[node] ?? 'succeeded'}` } as Partial<AgentEvent>);
+      emit({ type: 'assistant.message', text: `${node} done.\n\nRESULT: ${outcome}` } as Partial<AgentEvent>);
       emit({ type: 'run.finished', status: 'finished' } as Partial<AgentEvent>);
     });
     return Promise.resolve({ dspatchRunId: runId });
@@ -533,8 +556,145 @@ for (const provider of ['cursor', 'claude', 'copilot'] as const) {
     const executive = resolveRole({ id: 'generic-executive', source: { kind: 'role-source', path: 'docs/loop/roles/generic/executive.role.md' } });
     assert.ok(executive !== null && fs.existsSync(path.resolve(installed, executive.sourcePath)), 'roles are read from the installed copy');
     assert.ok(entry.includes((executive?.instructions ?? '').split('\n').find((line) => line.trim() !== '') ?? '\u0000'));
-    for (const node of ['tl-dispatch', 'implementer-s', 'qa', 'reviewer-s', 'tl-accept', 'documenter-wrapup', 'executive-report']) {
+    for (const node of ['tl-dispatch', 'implementer', 'qa', 'reviewer-s', 'tl-accept', 'documenter-wrapup', 'executive-report']) {
       assert.ok(agent.prompts.has(node), `${node} ran`);
     }
   });
 }
+
+/* DSP-222: the small and medium variants as one node each, with a model class per visit. */
+
+test('DSP-222: implementer and explorer variants run as one node each, the class chosen by the dispatch route', () => {
+  const graph = load(root);
+  const ids = graph.nodes.map((node) => node.id);
+  for (const gone of ['implementer-s', 'implementer-m', 'explorer-s', 'explorer-m']) {
+    assert.ok(!ids.includes(gone), `${gone} is merged`);
+  }
+  for (const id of ['implementer', 'explorer']) {
+    const node = graph.nodes.find((item) => item.id === id);
+    assert.equal(node?.model?.policy, 'select');
+    assert.deepEqual(node?.model?.options?.map((option) => option.modelClass), ['small', 'medium']);
+    assert.ok(node?.model?.options?.every((option) => option.model === undefined), 'the generic graph names no concrete model');
+  }
+  const outcomeOf = (edge: (typeof graph.edges)[number]): string => ('outcome' in edge.when ? String(edge.when.outcome) : edge.when.on);
+  const chosen = graph.edges
+    .filter((edge) => edge.from === 'tl-dispatch' && edge.selectsModel !== undefined)
+    .map((edge) => `${outcomeOf(edge)}->${edge.to}:${edge.selectsModel ?? ''}`)
+    .sort();
+  assert.deepEqual(chosen, ['explorer-m->explorer:medium', 'explorer-s->explorer:small', 'implementer-m->implementer:medium', 'implementer-s->implementer:small']);
+  // The large implementer keeps its own path through design QA and the large review.
+  assert.ok(graph.edges.some((edge) => edge.from === 'implementer-l' && edge.to === 'qa-design'));
+  // A merged node's routes are those of either variant, once.
+  for (const id of ['implementer', 'explorer']) {
+    const routes = graph.edges.filter((edge) => edge.from === id).map((edge) => `${outcomeOf(edge)}${'failure' in edge.when ? String(edge.when.failure) : ''}->${edge.to}`);
+    assert.equal(new Set(routes).size, routes.length, `${id}: ${routes.join(', ')}`);
+    assert.equal(routes.length, 5);
+  }
+  assert.match(graph.nodes.find((node) => node.id === 'tl-dispatch')?.purpose ?? '', /Model class policy/);
+});
+
+test('DSP-222: the class varies between slices and each visit records class, model and reason', async () => {
+  const graph = load(root);
+  const entries: { nodeId?: string; kind: string; data?: Readonly<Record<string, string | number | boolean>> }[] = [];
+  const store = createMemoryResultStore((text) => createHash('sha256').update(text).digest('hex'));
+  const result = await runLoopGraph(graph, {
+    runId: 'model-classes',
+    dryRun: false,
+    maxTransitions: 100,
+    resultStore: store,
+    runModel: { provider: 'copilot', model: 'person-model', classes: { small: 'model-for-small', medium: 'model-for-medium' } },
+    onJournalEntry: (entry) => entries.push(entry),
+    executor: async (context): Promise<StepExecution> => {
+      const node = context.node.id;
+      const outcome =
+        node === 'tl-dispatch' ? (context.occurrence === 1 ? 'implementer-s' : 'implementer-m')
+          : node === 'executive-continue' && context.occurrence === 1 ? 'next-slice'
+            : defaultOutcomes[node];
+      return {
+        product: outcome === undefined ? { kind: 'success' } : { kind: 'outcome', outcome, source: 'step-declared' },
+        summary: node,
+        providerTurns: 0,
+        resultBody: `${node}#${context.occurrence}`,
+        ...(node === 'tl-dispatch' ? { reason: context.occurrence === 1 ? 'one localized fix' : 'the same pattern in four places' } : {}),
+      };
+    },
+  });
+  assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+  const visits = entries.filter((entry) => entry.kind === 'node-entered' && entry.nodeId === 'implementer').map((entry) => modelSelectionFromData(entry.data));
+  assert.equal(visits.length, 2);
+  assert.deepEqual(visits.map((visit) => [visit?.modelClass, visit?.model, visit?.source]), [['small', 'model-for-small', 'policy'], ['medium', 'model-for-medium', 'policy']]);
+  assert.match(visits[0]?.reason ?? '', /one localized fix/);
+  assert.match(visits[1]?.reason ?? '', /the same pattern in four places/);
+});
+
+test('DSP-222: an unmapped class runs the chat\'s model and says so, before the run and on the visit', async () => {
+  const graph = load(root);
+  const prepared = prepareLoopRun({
+    sessionProvider: 'copilot',
+    chosenAgent: null,
+    rootCount: 1,
+    entryNode: graph.nodes.find((node) => node.id === graph.entry),
+    graph,
+    cursorModel: 'composer-2',
+    claudeModel: '',
+    copilotModel: 'person-model',
+    copilotModels: null,
+    modelClasses: { copilot: { medium: 'model-for-medium' } },
+    adapters: { preflight: () => null, createAdapter: () => { throw new Error('not built'); } },
+  });
+  assert.ok(prepared.ok);
+  assert.match(prepared.classNote ?? '', /Model class small has no model configured for Copilot, so that class runs with person-model/);
+  const data = modelSelectionData(
+    graph.nodes.find((node) => node.id === 'implementer')!,
+    graph.edges.find((edge) => edge.from === 'tl-dispatch' && edge.selectsModel === 'small') ?? null,
+    'one localized fix',
+    { provider: 'copilot', model: 'person-model', classes: prepared.modelClasses },
+  );
+  assert.equal(data['model'], 'person-model');
+  assert.equal(data['modelClass'], 'small');
+  assert.match(String(data['modelReason']), /class small has no model configured for copilot, so the model chosen for the run ran/);
+});
+
+test('DSP-222: on the live path the class\'s model reaches the adapter, and a revisit with another class gets its model', async (context) => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-generic-classes-'));
+  context.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const project = path.join(scratch, 'project');
+  fs.mkdirSync(project);
+  const graph = load(root);
+  const resolveRole = createFileRoleResolver(root);
+  const agent = new NetworkAgent('copilot', graph.nodes.map((node) => node.id), {
+    'tl-dispatch#1': 'implementer-s',
+    'tl-dispatch#2': 'implementer-m',
+    'executive-continue#1': 'next-slice',
+  });
+  const delivery = await runLiveGraph(graph, {
+    runId: 'generic-classes',
+    repoRoot: root,
+    outDir: null,
+    resultsDir: path.join(scratch, 'results'),
+    modelRequested: 'person-model',
+    personModel: 'person-model',
+    modelClasses: { small: 'model-for-small', medium: 'model-for-medium' },
+    workspacePath: project,
+    keepWorkspace: true,
+    bindingKind: 'chat-loop',
+    provider: 'copilot',
+    createAdapter: () => agent as unknown as ChatAdapter,
+    promptFor: (node, step) => chatPromptFor(node, { entryId: graph.entry, mandate: 'Two slices.', step, role: (() => { const resolved = node.role === undefined ? null : resolveRole(node.role); return resolved === null ? null : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null }; })(), skipping: skippingRoutesOf(graph, node.id) }),
+  });
+  assert.equal(delivery.result.status, 'completed', delivery.journalText);
+  assert.deepEqual(agent.modelsOf('implementer'), ['model-for-small', 'model-for-medium']);
+  assert.ok(agent.modelsOf('qa').every((model) => model === 'person-model'), 'a step without a policy keeps the chat\'s model');
+});
+
+test('DSP-222: an option names a model or a known class, never both and never an unknown class', () => {
+  const text = fs.readFileSync(path.join(root, graphPath), 'utf8');
+  const resolveRole = createFileRoleResolver(root);
+  for (const bad of ['{ "id": "small", "modelClass": "small", "model": "x" }', '{ "id": "small", "modelClass": "tiny" }', '{ "id": "small" }']) {
+    const json = JSON.parse(text);
+    json.nodes.find((node: { id: string }) => node.id === 'implementer').model.options[0] = JSON.parse(bad);
+    const loaded = loadLoopGraph(JSON.stringify(json), { resolveRole });
+    assert.equal(loaded.ok, false, bad);
+    assert.ok(!loaded.ok && loaded.findings.some((finding) => finding.code === 'bad-model-option'), bad);
+  }
+});

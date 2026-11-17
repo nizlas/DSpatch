@@ -444,7 +444,7 @@ describe('both run handlers decide the agent before anything is recorded or clai
   it("the editor's Run and its read channel both pass the drawing's entry step", () => {
     const body = handler('START_EDITOR_LOOP_RUN');
     assert.match(body, /prepareLoopRun\(\s*editorLoopRunRequest\(loaded\.graph\.nodes\.find\(/);
-    assert.match(main, /loopRunAgentInfo\(editorLoopRunRequest\(entryFromQuery\(asked\.entry\)\)\)/);
+    assert.match(main, /loopRunAgentInfo\(editorLoopRunRequest\(entryFromQuery\(asked\.entry\), offered\)\)/);
   });
 
   it("DSP-218: the editor's Run takes the chat's model, and the announcements carry the run's own summary", () => {

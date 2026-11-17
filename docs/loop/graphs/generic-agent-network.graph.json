@@ -42,34 +42,14 @@
       "purpose": "Assess the original mandate and supplied context. Choose plan-iteration if a plan is needed, select-slice if an actionable plan exists, or wrap-up if no work can proceed. Preserve explicit constraints and decisions for later steps.",
       "role": {
         "id": "generic-executive",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/executive.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/executive.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "plan-iteration",
-        "select-slice",
-        "wrap-up"
-      ],
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2314,
-        "y": 40
-      }
+      "model": { "policy": "inherit" },
+      "outcomes": ["plan-iteration", "select-slice", "wrap-up"],
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 40 }
     },
     {
       "id": "tl-plan",
@@ -78,33 +58,14 @@
       "purpose": "Define the goal, technical boundaries, dependencies and an initial ordering for planning. Choose needs-decision if an essential decision is outside the mandate; otherwise choose skeleton.",
       "role": {
         "id": "generic-tech-lead",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "skeleton",
-        "needs-decision"
-      ],
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1980,
-        "y": 170
-      }
+      "model": { "policy": "inherit" },
+      "outcomes": ["skeleton", "needs-decision"],
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 920, "y": 160 }
     },
     {
       "id": "planner-expand",
@@ -113,30 +74,13 @@
       "purpose": "Expand the supplied skeleton into actionable work with scope, dependencies, acceptance criteria and verification. Address specific findings when revisited.",
       "role": {
         "id": "generic-planner",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/planner.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/planner.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1257,
-        "y": 300
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 920, "y": 280 }
     },
     {
       "id": "reviewer-s-readiness",
@@ -145,34 +89,15 @@
       "purpose": "Independently assess whether the proposed work is actionable and sufficiently specified. Choose accept or rework with concrete findings. Carry the received proposed plan and its technical constraints with source attribution, including on rework; identify missing evidence.",
       "role": {
         "id": "generic-reviewer-s",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/reviewer-s.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer-s.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "accept",
-        "rework"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1234,
-        "y": 430
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 920, "y": 400 }
     },
     {
       "id": "tl-plan-accept",
@@ -181,35 +106,15 @@
       "purpose": "Assess the proposed plan and its technical constraints. Choose accept, rework with specific defects, or needs-decision when a person must decide. Carry the received plan, constraints and review with source attribution, including on rework; identify missing evidence.",
       "role": {
         "id": "generic-tech-lead",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "accept",
-        "rework",
-        "needs-decision"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework", "needs-decision"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1213,
-        "y": 560
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 920, "y": 520 }
     },
     {
       "id": "backlog-plan",
@@ -218,30 +123,13 @@
       "purpose": "Record the accepted plan in the authorized work system if the mandate calls for it; otherwise return the plan and explain that no record was changed.",
       "role": {
         "id": "generic-backlog",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/backlog.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1582,
-        "y": 690
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 920, "y": 640 }
     },
     {
       "id": "tl-select",
@@ -250,34 +138,14 @@
       "purpose": "Select the next useful bounded slice from the mandate and available plan, using the received carry-forward ledger to avoid repeating accepted work. Include that ledger in the reply. Choose slice-selected, needs-planning, or focus-complete.",
       "role": {
         "id": "generic-tech-lead-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead-m.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "slice-selected",
-        "needs-planning",
-        "focus-complete"
-      ],
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1952,
-        "y": 820
-      }
+      "model": { "policy": "inherit" },
+      "outcomes": ["slice-selected", "needs-planning", "focus-complete"],
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 760 }
     },
     {
       "id": "planner",
@@ -286,30 +154,13 @@
       "purpose": "Prepare a bounded slice contract with inputs, scope, deliverables, acceptance and verification; address specific feedback on return. Include the received carry-forward ledger in the reply.",
       "role": {
         "id": "generic-planner",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/planner.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/planner.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1509,
-        "y": 950
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 880 }
     },
     {
       "id": "reviewer-s-plan-gate",
@@ -318,34 +169,15 @@
       "purpose": "Independently assess the slice contract for readiness and conformance to the mandate. Choose accept or rework with findings. Carry the received contract with source attribution, including on rework; identify missing evidence.",
       "role": {
         "id": "generic-reviewer-s",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/reviewer-s.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer-s.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "accept",
-        "rework"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1496,
-        "y": 1080
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 1000 }
     },
     {
       "id": "backlog-start",
@@ -354,76 +186,29 @@
       "purpose": "Record the start and current focus in the authorized work system if requested and permitted; otherwise return the intended focus without claiming an update.",
       "role": {
         "id": "generic-backlog",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/backlog.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1481,
-        "y": 1210
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 1120 }
     },
     {
       "id": "tl-dispatch",
       "kind": "agent",
       "label": "Tech Lead (medium): tl-dispatch",
-      "purpose": "Choose the declared capability that best fits the slice, or choose replan, escalate, or stop-slice. Carry the current slice contract, original constraints and actual incoming work, verification and feedback into the handoff; identify missing or uncertain evidence and do not claim unobserved work.",
+      "purpose": "Choose the declared capability that best fits the slice, or choose replan, escalate, or stop-slice. Carry the current slice contract, original constraints and actual incoming work, verification and feedback into the handoff; identify missing or uncertain evidence and do not claim unobserved work. Model class policy, stated on the RESULT line with a short reason: implementer-s for a straightforward, localized change with an obvious approach, and implementer-m for a change that follows established patterns across several places, both run by the Implementer (small or medium model class); implementer-l for a complex change whose design is uncertain, which goes on to design QA and the large review. explorer-s to locate material and references, and explorer-m to trace behavior, dependencies and adaptation risk, both run by the Explorer (small or medium model class).",
       "role": {
         "id": "generic-tech-lead-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead-m.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "implementer-s",
-        "implementer-m",
-        "implementer-l",
-        "researcher-m",
-        "researcher-l",
-        "explorer-s",
-        "explorer-m",
-        "data-curator",
-        "infra",
-        "experiment-analyst",
-        "replan",
-        "escalate",
-        "stop-slice"
-      ],
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1467,
-        "y": 1340
-      }
+      "model": { "policy": "inherit" },
+      "outcomes": ["implementer-s", "implementer-m", "implementer-l", "researcher-m", "researcher-l", "explorer-s", "explorer-m", "data-curator", "infra", "experiment-analyst", "replan", "escalate", "stop-slice"],
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 1240 }
     },
     {
       "id": "tl-escalation",
@@ -432,102 +217,29 @@
       "purpose": "Resolve the escalated technical issue within the mandate. Choose decided, replan, or stop-slice; identify any required human decision. Carry the current contract and actual incoming work, verification and feedback, identifying missing or uncertain evidence.",
       "role": {
         "id": "generic-tech-lead",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "decided",
-        "replan",
-        "stop-slice"
-      ],
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2442,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "outcomes": ["decided", "replan", "stop-slice"],
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 440, "y": 1420 }
     },
     {
-      "id": "implementer-s",
+      "id": "implementer",
       "kind": "agent",
-      "label": "Implementer (small): implementer-s",
-      "purpose": "Implement the assigned straightforward slice and report changes and checks. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
-      "role": {
-        "id": "generic-implementer-s",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/implementer-s.role.md"
-        }
-      },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 874,
-        "y": 1470
-      }
-    },
-    {
-      "id": "implementer-m",
-      "kind": "agent",
-      "label": "Implementer (medium): implementer-m",
+      "label": "Implementer: implementer",
       "purpose": "Implement the assigned slice and report changes, checks and limitations. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
-        "id": "generic-implementer-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/implementer-m.role.md"
-        }
+        "id": "generic-implementer",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/implementer.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1098,
-        "y": 1470
-      }
+      "model": { "policy": "select", "options": [{ "id": "small", "modelClass": "small", "note": "A straightforward, localized change with an obvious approach." }, { "id": "medium", "modelClass": "medium", "note": "A change that follows established patterns across several places." }], "default": "medium" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 1420 }
     },
     {
       "id": "implementer-l",
@@ -536,32 +248,13 @@
       "purpose": "Implement the assigned complex slice and report design choices, checks and limitations. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
         "id": "generic-implementer-l",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/implementer-l.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/implementer-l.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1770,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1640, "y": 1420 }
     },
     {
       "id": "researcher-m",
@@ -570,32 +263,13 @@
       "purpose": "Investigate the assigned question and return sources, findings and uncertainties. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
         "id": "generic-researcher-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/researcher-m.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/researcher-m.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 202,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 920, "y": 1420 }
     },
     {
       "id": "researcher-l",
@@ -604,100 +278,28 @@
       "purpose": "Investigate the assigned complex question and return evidence, alternatives and uncertainties. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
         "id": "generic-researcher-l",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/researcher-l.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/researcher-l.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1546,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1880, "y": 1420 }
     },
     {
-      "id": "explorer-s",
+      "id": "explorer",
       "kind": "agent",
-      "label": "Explorer (small): explorer-s",
-      "purpose": "Locate the assigned material and report direct evidence and references. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
+      "label": "Explorer: explorer",
+      "purpose": "Locate the assigned material, or trace the assigned behavior or prior work, and report direct evidence, references and adaptation implications. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
-        "id": "generic-explorer-s",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/explorer-s.role.md"
-        }
+        "id": "generic-explorer",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/explorer.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 426,
-        "y": 1470
-      }
-    },
-    {
-      "id": "explorer-m",
-      "kind": "agent",
-      "label": "Explorer (medium): explorer-m",
-      "purpose": "Trace the assigned behavior or prior work and report evidence and adaptation implications. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
-      "role": {
-        "id": "generic-explorer-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/explorer-m.role.md"
-        }
-      },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 650,
-        "y": 1470
-      }
+      "model": { "policy": "select", "options": [{ "id": "small", "modelClass": "small", "note": "Locating material and references." }, { "id": "medium", "modelClass": "medium", "note": "Tracing behavior, dependencies and adaptation risk." }], "default": "small" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 680, "y": 1420 }
     },
     {
       "id": "data-curator",
@@ -706,32 +308,13 @@
       "purpose": "Perform the assigned authorized data work and report provenance, checks and limitations. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
         "id": "generic-data-curator",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/data-curator.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/data-curator.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1322,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1160, "y": 1420 }
     },
     {
       "id": "infra",
@@ -740,36 +323,14 @@
       "purpose": "Perform the assigned authorized infrastructure work. Choose done for completed ordinary work or job-gate-needed when authorization or verification remains pending. Identify the plan, operations actually performed, pending authorization and verification, and any uncertain outcome; do not imply a launch or verification occurred without evidence. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution.",
       "role": {
         "id": "generic-infra",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/infra.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/infra.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "done",
-        "job-gate-needed"
-      ],
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1994,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "outcomes": ["done", "job-gate-needed"],
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 2360, "y": 1420 }
     },
     {
       "id": "experiment-analyst",
@@ -778,32 +339,13 @@
       "purpose": "Analyze the supplied experiment evidence and report comparisons, limitations and conclusions. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
       "role": {
         "id": "generic-experiment-analyst",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/experiment-analyst.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/experiment-analyst.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "spec-error",
-        "research-needed",
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2218,
-        "y": 1470
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 2120, "y": 1420 }
     },
     {
       "id": "qa",
@@ -812,34 +354,15 @@
       "purpose": "Independently verify the result against the slice criteria. Choose pass or fail and identify the tested content, checks, results and gaps. Include the received slice contract and actual worker result in the reply, identified by source, so the next step can review them; mark missing evidence as missing.",
       "role": {
         "id": "generic-qa",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/qa.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/qa.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "pass",
-        "fail"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["pass", "fail"],
       "whenUndeclared": "fail",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1082,
-        "y": 1600
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 1600 }
     },
     {
       "id": "qa-design",
@@ -848,34 +371,15 @@
       "purpose": "Verify the design-related result against the assigned criteria. Choose pass or fail and identify evidence and gaps. Include the received slice contract and actual worker result in the reply, identified by source, so the next step can review them; mark missing evidence as missing.",
       "role": {
         "id": "generic-qa",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/qa.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/qa.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "pass",
-        "fail"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["pass", "fail"],
       "whenUndeclared": "fail",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1756,
-        "y": 1600
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1640, "y": 1600 }
     },
     {
       "id": "reviewer-s",
@@ -884,35 +388,15 @@
       "purpose": "Independently review the slice contract, actual work and available verification evidence. Choose accept, rework, or design-review when deeper design assessment is needed; do not accept when evidence needed for the contract is missing. Carry the received contract, work and verification artifacts with source attribution in the reply alongside the review; identify missing evidence without inventing it.",
       "role": {
         "id": "generic-reviewer-s",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/reviewer-s.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer-s.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "accept",
-        "rework",
-        "design-review"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework", "design-review"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1273,
-        "y": 1730
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1280, "y": 1744 }
     },
     {
       "id": "reviewer-job-gate",
@@ -921,29 +405,13 @@
       "purpose": "Independently review only the received infrastructure plan and reported state. Identify pending authorization and verification, uncertain outcomes and any findings. Carry the received slice contract and infrastructure result with source attribution. This review is not authorization, evidence of launch or verification, or slice acceptance; do not perform the job.",
       "role": {
         "id": "generic-reviewer-l",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/reviewer-l.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer-l.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1994,
-        "y": 1600
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 2360, "y": 1600 }
     },
     {
       "id": "reviewer-l",
@@ -952,34 +420,15 @@
       "purpose": "Independently review substantive design and correctness against the slice contract, actual work and available verification evidence. Choose accept or rework with actionable findings; do not accept when evidence needed for the contract is missing. Carry the received contract, work, verification and prior review artifacts with source attribution in the reply; identify missing evidence without inventing it.",
       "role": {
         "id": "generic-reviewer-l",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/reviewer-l.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer-l.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "accept",
-        "rework"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1731,
-        "y": 1860
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1760, "y": 1744 }
     },
     {
       "id": "skeptic-s",
@@ -988,35 +437,15 @@
       "purpose": "Challenge the claims and supporting evidence against the slice contract. Choose pass, rework, or escalate with a reason; do not pass when evidence needed for the contract is missing. Carry the received contract, work, verification and review artifacts with source attribution in the reply; identify missing evidence without inventing it.",
       "role": {
         "id": "generic-skeptic-s",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/skeptic-s.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/skeptic-s.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "pass",
-        "rework",
-        "escalate"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["pass", "rework", "escalate"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 956,
-        "y": 1860
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1160, "y": 1888 }
     },
     {
       "id": "skeptic",
@@ -1025,34 +454,15 @@
       "purpose": "Challenge the substantive conclusions and supporting evidence against the slice contract. Choose pass or rework with a reason; do not pass when evidence needed for the contract is missing. Carry the received contract, work, verification and review artifacts with source attribution in the reply; identify missing evidence without inventing it.",
       "role": {
         "id": "generic-skeptic",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/skeptic.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/skeptic.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "pass",
-        "rework"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["pass", "rework"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1709,
-        "y": 1990
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1640, "y": 1888 }
     },
     {
       "id": "tl-accept",
@@ -1061,35 +471,15 @@
       "purpose": "Judge the slice against its contract and the actual work, verification, review and challenge evidence. Choose accept, rework with concrete findings, or stop-slice; do not accept when evidence needed for the contract is missing, and do not treat agent acceptance as human approval. Carry these received artifacts with source attribution in the reply and identify missing evidence without inventing it.",
       "role": {
         "id": "generic-tech-lead-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead-m.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "accept",
-        "rework",
-        "stop-slice"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["accept", "rework", "stop-slice"],
       "whenUndeclared": "rework",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1805,
-        "y": 2120
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 2032 }
     },
     {
       "id": "backlog-done",
@@ -1098,30 +488,13 @@
       "purpose": "Record the accepted slice and its evidence in the authorized work system if requested and permitted; otherwise report the accepted state without claiming an update. Carry the received acceptance and its contract, work and evidence with source attribution, including if recording is blocked.",
       "role": {
         "id": "generic-backlog",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/backlog.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 1935,
-        "y": 2250
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1256, "y": 2176 }
     },
     {
       "id": "backlog-blocked",
@@ -1130,30 +503,13 @@
       "purpose": "Record the actual stopped state and a concrete continuation in the authorized work system if requested and permitted; otherwise return them in the result. Carry the received contract, work and evidence with source attribution, including if recording is blocked; identify missing evidence.",
       "role": {
         "id": "generic-backlog",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/backlog.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "declaredFailures": [
-        "blocked",
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2195,
-        "y": 2250
-      }
+      "model": { "policy": "inherit" },
+      "declaredFailures": ["blocked", "limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1544, "y": 2176 }
     },
     {
       "id": "executive-continue",
@@ -1162,34 +518,15 @@
       "purpose": "Assess the current mandate, accepted work and remaining limits. Choose next-slice when useful authorized work remains, otherwise wrap-up. Carry the received state, contract, work and evidence with source attribution; distinguish stopped work from accepted work and identify missing evidence.",
       "role": {
         "id": "generic-executive",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/executive.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/executive.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "outcomes": [
-        "next-slice",
-        "wrap-up"
-      ],
+      "model": { "policy": "inherit" },
+      "outcomes": ["next-slice", "wrap-up"],
       "whenUndeclared": "wrap-up",
-      "declaredFailures": [
-        "limit-reached"
-      ],
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2065,
-        "y": 2380
-      }
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 2320 }
     },
     {
       "id": "documenter-wrapup",
@@ -1198,26 +535,12 @@
       "purpose": "Summarize durable decisions, results, uncertainties and a concrete continuation. Carry the actual incoming evidence and stopped or blocked state with source attribution; report pending authorization and verification without implying completion. Update project documentation only when authorized; otherwise return the information.",
       "role": {
         "id": "generic-documenter",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/documenter.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/documenter.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2149,
-        "y": 2510
-      }
+      "model": { "policy": "inherit" },
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 2464 }
     },
     {
       "id": "tl-report",
@@ -1226,26 +549,12 @@
       "purpose": "Summarize technical work, decisions, checks, remaining risks and the current state from identifiable evidence. Carry the received evidence and stopped or blocked state with source attribution; identify missing or uncertain evidence.",
       "role": {
         "id": "generic-tech-lead-m",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/tech-lead-m.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2149,
-        "y": 2640
-      }
+      "model": { "policy": "inherit" },
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 2584 }
     },
     {
       "id": "executive-report",
@@ -1254,26 +563,12 @@
       "purpose": "Deliver the final report: the mandate, outcomes, evidence, unverified claims, decisions needed and next actions. Distinguish the agents reports from independently observed facts.",
       "role": {
         "id": "generic-executive",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/generic/executive.role.md"
-        }
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/executive.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "report": {
-        "writtenBy": "self"
-      },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller."
-      },
-      "view": {
-        "x": 2149,
-        "y": 2770
-      }
+      "model": { "policy": "inherit" },
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
+      "view": { "x": 1400, "y": 2704 }
     },
     {
       "id": "iteration-ended",
@@ -1281,1844 +576,139 @@
       "label": "Report delivered",
       "purpose": "The final report has been delivered. Consult the report and available run results for accepted work, limitations and continuation.",
       "ending": "report-delivered",
-      "view": {
-        "x": 2149,
-        "y": 2900
-      }
+      "view": { "x": 1400, "y": 2824 }
     }
   ],
   "edges": [
-    {
-      "id": "e01",
-      "from": "executive-intake",
-      "to": "tl-plan",
-      "when": {
-        "on": "outcome",
-        "outcome": "plan-iteration"
-      },
-      "delivers": [
-        "executive-intake"
-      ]
-    },
-    {
-      "id": "e02",
-      "from": "executive-intake",
-      "to": "tl-select",
-      "when": {
-        "on": "outcome",
-        "outcome": "select-slice"
-      },
-      "delivers": [
-        "executive-intake"
-      ]
-    },
-    {
-      "id": "e03",
-      "from": "executive-intake",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "outcome",
-        "outcome": "wrap-up"
-      },
-      "delivers": [
-        "executive-intake"
-      ]
-    },
-    {
-      "id": "e04",
-      "from": "executive-intake",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake"
-      ]
-    },
-    {
-      "id": "e05",
-      "from": "tl-plan",
-      "to": "planner-expand",
-      "when": {
-        "on": "outcome",
-        "outcome": "skeleton"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan"
-      ]
-    },
-    {
-      "id": "e06",
-      "from": "tl-plan",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "outcome",
-        "outcome": "needs-decision"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan"
-      ]
-    },
-    {
-      "id": "e07",
-      "from": "tl-plan",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan"
-      ]
-    },
-    {
-      "id": "e08",
-      "from": "planner-expand",
-      "to": "reviewer-s-readiness",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan",
-        "planner-expand"
-      ]
-    },
-    {
-      "id": "e09",
-      "from": "planner-expand",
-      "to": "tl-plan",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner-expand"
-      ]
-    },
-    {
-      "id": "e10",
-      "from": "planner-expand",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner-expand"
-      ]
-    },
-    {
-      "id": "e11",
-      "from": "reviewer-s-readiness",
-      "to": "tl-plan-accept",
-      "when": {
-        "on": "outcome",
-        "outcome": "accept"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner-expand",
-        "reviewer-s-readiness"
-      ]
-    },
-    {
-      "id": "e12",
-      "from": "reviewer-s-readiness",
-      "to": "planner-expand",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s-readiness"
-      ]
-    },
-    {
-      "id": "e13",
-      "from": "reviewer-s-readiness",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s-readiness"
-      ]
-    },
-    {
-      "id": "e14",
-      "from": "tl-plan-accept",
-      "to": "backlog-plan",
-      "when": {
-        "on": "outcome",
-        "outcome": "accept"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner-expand",
-        "tl-plan-accept"
-      ]
-    },
-    {
-      "id": "e15",
-      "from": "tl-plan-accept",
-      "to": "planner-expand",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan-accept"
-      ]
-    },
-    {
-      "id": "e16",
-      "from": "tl-plan-accept",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "outcome",
-        "outcome": "needs-decision"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan-accept"
-      ]
-    },
-    {
-      "id": "e17",
-      "from": "tl-plan-accept",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan-accept"
-      ]
-    },
-    {
-      "id": "e18",
-      "from": "backlog-plan",
-      "to": "tl-select",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-plan-accept",
-        "backlog-plan"
-      ]
-    },
-    {
-      "id": "e19",
-      "from": "backlog-plan",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-plan"
-      ]
-    },
-    {
-      "id": "e20",
-      "from": "backlog-plan",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-plan"
-      ]
-    },
-    {
-      "id": "e21",
-      "from": "tl-select",
-      "to": "planner",
-      "when": {
-        "on": "outcome",
-        "outcome": "slice-selected"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-select"
-      ]
-    },
-    {
-      "id": "e22",
-      "from": "tl-select",
-      "to": "tl-plan",
-      "when": {
-        "on": "outcome",
-        "outcome": "needs-planning"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-select"
-      ]
-    },
-    {
-      "id": "e23",
-      "from": "tl-select",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "outcome",
-        "outcome": "focus-complete"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-select"
-      ]
-    },
-    {
-      "id": "e24",
-      "from": "tl-select",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-select"
-      ]
-    },
-    {
-      "id": "e25",
-      "from": "planner",
-      "to": "reviewer-s-plan-gate",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-select",
-        "planner"
-      ]
-    },
-    {
-      "id": "e26",
-      "from": "planner",
-      "to": "tl-select",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner"
-      ]
-    },
-    {
-      "id": "e27",
-      "from": "planner",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner"
-      ]
-    },
-    {
-      "id": "e28",
-      "from": "reviewer-s-plan-gate",
-      "to": "backlog-start",
-      "when": {
-        "on": "outcome",
-        "outcome": "accept"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "reviewer-s-plan-gate"
-      ]
-    },
-    {
-      "id": "e29",
-      "from": "reviewer-s-plan-gate",
-      "to": "planner",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s-plan-gate"
-      ]
-    },
-    {
-      "id": "e30",
-      "from": "reviewer-s-plan-gate",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s-plan-gate"
-      ]
-    },
-    {
-      "id": "e31",
-      "from": "backlog-start",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "backlog-start"
-      ]
-    },
-    {
-      "id": "e32",
-      "from": "backlog-start",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "backlog-start"
-      ]
-    },
-    {
-      "id": "e33",
-      "from": "backlog-start",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "backlog-start"
-      ]
-    },
-    {
-      "id": "e34",
-      "from": "tl-dispatch",
-      "to": "implementer-s",
-      "when": {
-        "on": "outcome",
-        "outcome": "implementer-s"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e35",
-      "from": "tl-dispatch",
-      "to": "implementer-m",
-      "when": {
-        "on": "outcome",
-        "outcome": "implementer-m"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e36",
-      "from": "tl-dispatch",
-      "to": "implementer-l",
-      "when": {
-        "on": "outcome",
-        "outcome": "implementer-l"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e37",
-      "from": "tl-dispatch",
-      "to": "researcher-m",
-      "when": {
-        "on": "outcome",
-        "outcome": "researcher-m"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e38",
-      "from": "tl-dispatch",
-      "to": "researcher-l",
-      "when": {
-        "on": "outcome",
-        "outcome": "researcher-l"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e39",
-      "from": "tl-dispatch",
-      "to": "explorer-s",
-      "when": {
-        "on": "outcome",
-        "outcome": "explorer-s"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e40",
-      "from": "tl-dispatch",
-      "to": "explorer-m",
-      "when": {
-        "on": "outcome",
-        "outcome": "explorer-m"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e41",
-      "from": "tl-dispatch",
-      "to": "data-curator",
-      "when": {
-        "on": "outcome",
-        "outcome": "data-curator"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e42",
-      "from": "tl-dispatch",
-      "to": "infra",
-      "when": {
-        "on": "outcome",
-        "outcome": "infra"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e43",
-      "from": "tl-dispatch",
-      "to": "experiment-analyst",
-      "when": {
-        "on": "outcome",
-        "outcome": "experiment-analyst"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e44",
-      "from": "tl-dispatch",
-      "to": "planner",
-      "when": {
-        "on": "outcome",
-        "outcome": "replan"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e45",
-      "from": "tl-dispatch",
-      "to": "tl-escalation",
-      "when": {
-        "on": "outcome",
-        "outcome": "escalate"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e46",
-      "from": "tl-dispatch",
-      "to": "backlog-blocked",
-      "when": {
-        "on": "outcome",
-        "outcome": "stop-slice"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e47",
-      "from": "tl-dispatch",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-dispatch"
-      ]
-    },
-    {
-      "id": "e48",
-      "from": "tl-escalation",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "decided"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-escalation"
-      ]
-    },
-    {
-      "id": "e49",
-      "from": "tl-escalation",
-      "to": "planner",
-      "when": {
-        "on": "outcome",
-        "outcome": "replan"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-escalation"
-      ]
-    },
-    {
-      "id": "e50",
-      "from": "tl-escalation",
-      "to": "backlog-blocked",
-      "when": {
-        "on": "outcome",
-        "outcome": "stop-slice"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-escalation"
-      ]
-    },
-    {
-      "id": "e51",
-      "from": "tl-escalation",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-escalation"
-      ]
-    },
-    {
-      "id": "e52",
-      "from": "implementer-s",
-      "to": "qa",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "implementer-s"
-      ]
-    },
-    {
-      "id": "e53",
-      "from": "implementer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-s"
-      ]
-    },
-    {
-      "id": "e54",
-      "from": "implementer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-s"
-      ]
-    },
-    {
-      "id": "e55",
-      "from": "implementer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-s"
-      ]
-    },
-    {
-      "id": "e56",
-      "from": "implementer-s",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-s"
-      ]
-    },
-    {
-      "id": "e57",
-      "from": "implementer-m",
-      "to": "qa",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "implementer-m"
-      ]
-    },
-    {
-      "id": "e58",
-      "from": "implementer-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-m"
-      ]
-    },
-    {
-      "id": "e59",
-      "from": "implementer-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-m"
-      ]
-    },
-    {
-      "id": "e60",
-      "from": "implementer-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-m"
-      ]
-    },
-    {
-      "id": "e61",
-      "from": "implementer-m",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-m"
-      ]
-    },
-    {
-      "id": "e62",
-      "from": "implementer-l",
-      "to": "qa-design",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "implementer-l"
-      ]
-    },
-    {
-      "id": "e63",
-      "from": "implementer-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-l"
-      ]
-    },
-    {
-      "id": "e64",
-      "from": "implementer-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-l"
-      ]
-    },
-    {
-      "id": "e65",
-      "from": "implementer-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-l"
-      ]
-    },
-    {
-      "id": "e66",
-      "from": "implementer-l",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "implementer-l"
-      ]
-    },
-    {
-      "id": "e67",
-      "from": "researcher-m",
-      "to": "skeptic-s",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "researcher-m"
-      ]
-    },
-    {
-      "id": "e68",
-      "from": "researcher-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-m"
-      ]
-    },
-    {
-      "id": "e69",
-      "from": "researcher-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-m"
-      ]
-    },
-    {
-      "id": "e70",
-      "from": "researcher-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-m"
-      ]
-    },
-    {
-      "id": "e71",
-      "from": "researcher-m",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-m"
-      ]
-    },
-    {
-      "id": "e72",
-      "from": "researcher-l",
-      "to": "skeptic",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "researcher-l"
-      ]
-    },
-    {
-      "id": "e73",
-      "from": "researcher-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-l"
-      ]
-    },
-    {
-      "id": "e74",
-      "from": "researcher-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-l"
-      ]
-    },
-    {
-      "id": "e75",
-      "from": "researcher-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-l"
-      ]
-    },
-    {
-      "id": "e76",
-      "from": "researcher-l",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "researcher-l"
-      ]
-    },
-    {
-      "id": "e77",
-      "from": "explorer-s",
-      "to": "skeptic-s",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "explorer-s"
-      ]
-    },
-    {
-      "id": "e78",
-      "from": "explorer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-s"
-      ]
-    },
-    {
-      "id": "e79",
-      "from": "explorer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-s"
-      ]
-    },
-    {
-      "id": "e80",
-      "from": "explorer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-s"
-      ]
-    },
-    {
-      "id": "e81",
-      "from": "explorer-s",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-s"
-      ]
-    },
-    {
-      "id": "e82",
-      "from": "explorer-m",
-      "to": "skeptic-s",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "explorer-m"
-      ]
-    },
-    {
-      "id": "e83",
-      "from": "explorer-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-m"
-      ]
-    },
-    {
-      "id": "e84",
-      "from": "explorer-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-m"
-      ]
-    },
-    {
-      "id": "e85",
-      "from": "explorer-m",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-m"
-      ]
-    },
-    {
-      "id": "e86",
-      "from": "explorer-m",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "explorer-m"
-      ]
-    },
-    {
-      "id": "e87",
-      "from": "data-curator",
-      "to": "reviewer-s",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "data-curator"
-      ]
-    },
-    {
-      "id": "e88",
-      "from": "data-curator",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "data-curator"
-      ]
-    },
-    {
-      "id": "e89",
-      "from": "data-curator",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "data-curator"
-      ]
-    },
-    {
-      "id": "e90",
-      "from": "data-curator",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "data-curator"
-      ]
-    },
-    {
-      "id": "e91",
-      "from": "data-curator",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "data-curator"
-      ]
-    },
-    {
-      "id": "e92",
-      "from": "infra",
-      "to": "skeptic",
-      "when": {
-        "on": "outcome",
-        "outcome": "done"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "infra"
-      ]
-    },
-    {
-      "id": "e93",
-      "from": "infra",
-      "to": "reviewer-job-gate",
-      "when": {
-        "on": "outcome",
-        "outcome": "job-gate-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "infra"
-      ]
-    },
-    {
-      "id": "e94",
-      "from": "infra",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "infra"
-      ]
-    },
-    {
-      "id": "e95",
-      "from": "infra",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "infra"
-      ]
-    },
-    {
-      "id": "e96",
-      "from": "infra",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "infra"
-      ]
-    },
-    {
-      "id": "e97",
-      "from": "infra",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "infra"
-      ]
-    },
-    {
-      "id": "e98",
-      "from": "experiment-analyst",
-      "to": "skeptic",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "experiment-analyst"
-      ]
-    },
-    {
-      "id": "e99",
-      "from": "experiment-analyst",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "spec-error"
-      },
-      "delivers": [
-        "executive-intake",
-        "experiment-analyst"
-      ]
-    },
-    {
-      "id": "e100",
-      "from": "experiment-analyst",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "research-needed"
-      },
-      "delivers": [
-        "executive-intake",
-        "experiment-analyst"
-      ]
-    },
-    {
-      "id": "e101",
-      "from": "experiment-analyst",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "experiment-analyst"
-      ]
-    },
-    {
-      "id": "e102",
-      "from": "experiment-analyst",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "experiment-analyst"
-      ]
-    },
-    {
-      "id": "e103",
-      "from": "qa",
-      "to": "reviewer-s",
-      "when": {
-        "on": "outcome",
-        "outcome": "pass"
-      },
-      "delivers": [
-        "executive-intake",
-        "qa"
-      ]
-    },
-    {
-      "id": "e104",
-      "from": "qa",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "fail"
-      },
-      "delivers": [
-        "executive-intake",
-        "qa"
-      ]
-    },
-    {
-      "id": "e105",
-      "from": "qa",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "qa"
-      ]
-    },
-    {
-      "id": "e106",
-      "from": "qa-design",
-      "to": "reviewer-l",
-      "when": {
-        "on": "outcome",
-        "outcome": "pass"
-      },
-      "delivers": [
-        "executive-intake",
-        "qa-design"
-      ]
-    },
-    {
-      "id": "e107",
-      "from": "qa-design",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "fail"
-      },
-      "delivers": [
-        "executive-intake",
-        "qa-design"
-      ]
-    },
-    {
-      "id": "e108",
-      "from": "qa-design",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "qa-design"
-      ]
-    },
-    {
-      "id": "e109",
-      "from": "reviewer-s",
-      "to": "skeptic-s",
-      "when": {
-        "on": "outcome",
-        "outcome": "accept"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s"
-      ]
-    },
-    {
-      "id": "e110",
-      "from": "reviewer-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s"
-      ]
-    },
-    {
-      "id": "e111",
-      "from": "reviewer-s",
-      "to": "reviewer-l",
-      "when": {
-        "on": "outcome",
-        "outcome": "design-review"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s"
-      ]
-    },
-    {
-      "id": "e112",
-      "from": "reviewer-s",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-s"
-      ]
-    },
-    {
-      "id": "e113",
-      "from": "reviewer-l",
-      "to": "skeptic",
-      "when": {
-        "on": "outcome",
-        "outcome": "accept"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-l"
-      ]
-    },
-    {
-      "id": "e114",
-      "from": "reviewer-l",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-l"
-      ]
-    },
-    {
-      "id": "e115",
-      "from": "reviewer-l",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-l"
-      ]
-    },
-    {
-      "id": "e116",
-      "from": "skeptic-s",
-      "to": "tl-accept",
-      "when": {
-        "on": "outcome",
-        "outcome": "pass"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic-s"
-      ]
-    },
-    {
-      "id": "e117",
-      "from": "skeptic-s",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic-s"
-      ]
-    },
-    {
-      "id": "e118",
-      "from": "skeptic-s",
-      "to": "skeptic",
-      "when": {
-        "on": "outcome",
-        "outcome": "escalate"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic-s"
-      ]
-    },
-    {
-      "id": "e119",
-      "from": "skeptic-s",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic-s"
-      ]
-    },
-    {
-      "id": "e120",
-      "from": "skeptic",
-      "to": "tl-accept",
-      "when": {
-        "on": "outcome",
-        "outcome": "pass"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic"
-      ]
-    },
-    {
-      "id": "e121",
-      "from": "skeptic",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic"
-      ]
-    },
-    {
-      "id": "e122",
-      "from": "skeptic",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "skeptic"
-      ]
-    },
-    {
-      "id": "e123",
-      "from": "tl-accept",
-      "to": "backlog-done",
-      "when": {
-        "on": "outcome",
-        "outcome": "accept"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-accept"
-      ]
-    },
-    {
-      "id": "e124",
-      "from": "tl-accept",
-      "to": "tl-dispatch",
-      "when": {
-        "on": "outcome",
-        "outcome": "rework"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-accept"
-      ]
-    },
-    {
-      "id": "e125",
-      "from": "tl-accept",
-      "to": "backlog-blocked",
-      "when": {
-        "on": "outcome",
-        "outcome": "stop-slice"
-      },
-      "delivers": [
-        "executive-intake",
-        "planner",
-        "tl-accept"
-      ]
-    },
-    {
-      "id": "e126",
-      "from": "tl-accept",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-accept"
-      ]
-    },
-    {
-      "id": "e127",
-      "from": "backlog-done",
-      "to": "executive-continue",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-accept",
-        "backlog-done"
-      ]
-    },
-    {
-      "id": "e128",
-      "from": "backlog-done",
-      "to": "executive-continue",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-done"
-      ]
-    },
-    {
-      "id": "e129",
-      "from": "backlog-done",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-done"
-      ]
-    },
-    {
-      "id": "e130",
-      "from": "backlog-blocked",
-      "to": "executive-continue",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-blocked"
-      ]
-    },
-    {
-      "id": "e131",
-      "from": "backlog-blocked",
-      "to": "executive-continue",
-      "when": {
-        "on": "declared-failure",
-        "failure": "blocked"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-blocked"
-      ]
-    },
-    {
-      "id": "e132",
-      "from": "backlog-blocked",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "backlog-blocked"
-      ]
-    },
-    {
-      "id": "e133",
-      "from": "executive-continue",
-      "to": "tl-select",
-      "when": {
-        "on": "outcome",
-        "outcome": "next-slice"
-      },
-      "delivers": [
-        "executive-intake",
-        "executive-continue"
-      ]
-    },
-    {
-      "id": "e134",
-      "from": "executive-continue",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "outcome",
-        "outcome": "wrap-up"
-      },
-      "delivers": [
-        "executive-intake",
-        "executive-continue"
-      ]
-    },
-    {
-      "id": "e135",
-      "from": "executive-continue",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "executive-continue"
-      ]
-    },
-    {
-      "id": "e136",
-      "from": "documenter-wrapup",
-      "to": "tl-report",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "documenter-wrapup"
-      ]
-    },
-    {
-      "id": "e137",
-      "from": "tl-report",
-      "to": "executive-report",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "documenter-wrapup",
-        "tl-report"
-      ]
-    },
-    {
-      "id": "e138",
-      "from": "executive-report",
-      "to": "iteration-ended",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "tl-report",
-        "executive-report"
-      ]
-    },
-    {
-      "id": "e139",
-      "from": "reviewer-job-gate",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "success"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-job-gate"
-      ]
-    },
-    {
-      "id": "e140",
-      "from": "reviewer-job-gate",
-      "to": "documenter-wrapup",
-      "when": {
-        "on": "declared-failure",
-        "failure": "limit-reached"
-      },
-      "delivers": [
-        "executive-intake",
-        "reviewer-job-gate"
-      ]
-    }
+    { "id": "e01", "from": "executive-intake", "to": "tl-plan", "when": { "on": "outcome", "outcome": "plan-iteration" }, "delivers": ["executive-intake"] },
+    { "id": "e02", "from": "executive-intake", "to": "tl-select", "when": { "on": "outcome", "outcome": "select-slice" }, "delivers": ["executive-intake"] },
+    { "id": "e03", "from": "executive-intake", "to": "documenter-wrapup", "when": { "on": "outcome", "outcome": "wrap-up" }, "delivers": ["executive-intake"] },
+    { "id": "e04", "from": "executive-intake", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake"] },
+    { "id": "e05", "from": "tl-plan", "to": "planner-expand", "when": { "on": "outcome", "outcome": "skeleton" }, "delivers": ["executive-intake", "tl-plan"] },
+    { "id": "e06", "from": "tl-plan", "to": "documenter-wrapup", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["executive-intake", "tl-plan"] },
+    { "id": "e07", "from": "tl-plan", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "tl-plan"] },
+    { "id": "e08", "from": "planner-expand", "to": "reviewer-s-readiness", "when": { "on": "success" }, "delivers": ["executive-intake", "tl-plan", "planner-expand"] },
+    { "id": "e09", "from": "planner-expand", "to": "tl-plan", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "planner-expand"] },
+    { "id": "e10", "from": "planner-expand", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "planner-expand"] },
+    { "id": "e11", "from": "reviewer-s-readiness", "to": "tl-plan-accept", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["executive-intake", "planner-expand", "reviewer-s-readiness"] },
+    { "id": "e12", "from": "reviewer-s-readiness", "to": "planner-expand", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "reviewer-s-readiness"] },
+    { "id": "e13", "from": "reviewer-s-readiness", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-s-readiness"] },
+    { "id": "e14", "from": "tl-plan-accept", "to": "backlog-plan", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["executive-intake", "planner-expand", "tl-plan-accept"] },
+    { "id": "e15", "from": "tl-plan-accept", "to": "planner-expand", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "tl-plan-accept"] },
+    { "id": "e16", "from": "tl-plan-accept", "to": "documenter-wrapup", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["executive-intake", "tl-plan-accept"] },
+    { "id": "e17", "from": "tl-plan-accept", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "tl-plan-accept"] },
+    { "id": "e18", "from": "backlog-plan", "to": "tl-select", "when": { "on": "success" }, "delivers": ["executive-intake", "tl-plan-accept", "backlog-plan"] },
+    { "id": "e19", "from": "backlog-plan", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "backlog-plan"] },
+    { "id": "e20", "from": "backlog-plan", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "backlog-plan"] },
+    { "id": "e21", "from": "tl-select", "to": "planner", "when": { "on": "outcome", "outcome": "slice-selected" }, "delivers": ["executive-intake", "tl-select"] },
+    { "id": "e22", "from": "tl-select", "to": "tl-plan", "when": { "on": "outcome", "outcome": "needs-planning" }, "delivers": ["executive-intake", "tl-select"] },
+    { "id": "e23", "from": "tl-select", "to": "documenter-wrapup", "when": { "on": "outcome", "outcome": "focus-complete" }, "delivers": ["executive-intake", "tl-select"] },
+    { "id": "e24", "from": "tl-select", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "tl-select"] },
+    { "id": "e25", "from": "planner", "to": "reviewer-s-plan-gate", "when": { "on": "success" }, "delivers": ["executive-intake", "tl-select", "planner"] },
+    { "id": "e26", "from": "planner", "to": "tl-select", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "planner"] },
+    { "id": "e27", "from": "planner", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "planner"] },
+    { "id": "e28", "from": "reviewer-s-plan-gate", "to": "backlog-start", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["executive-intake", "planner", "reviewer-s-plan-gate"] },
+    { "id": "e29", "from": "reviewer-s-plan-gate", "to": "planner", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "reviewer-s-plan-gate"] },
+    { "id": "e30", "from": "reviewer-s-plan-gate", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-s-plan-gate"] },
+    { "id": "e31", "from": "backlog-start", "to": "tl-dispatch", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "backlog-start"] },
+    { "id": "e32", "from": "backlog-start", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "planner", "backlog-start"] },
+    { "id": "e33", "from": "backlog-start", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "planner", "backlog-start"] },
+    { "id": "e34", "from": "tl-dispatch", "to": "implementer", "when": { "on": "outcome", "outcome": "implementer-s" }, "delivers": ["executive-intake", "planner", "tl-dispatch"], "selectsModel": "small" },
+    { "id": "e35", "from": "tl-dispatch", "to": "implementer", "when": { "on": "outcome", "outcome": "implementer-m" }, "delivers": ["executive-intake", "planner", "tl-dispatch"], "selectsModel": "medium" },
+    { "id": "e36", "from": "tl-dispatch", "to": "implementer-l", "when": { "on": "outcome", "outcome": "implementer-l" }, "delivers": ["executive-intake", "planner", "tl-dispatch"] },
+    { "id": "e37", "from": "tl-dispatch", "to": "researcher-m", "when": { "on": "outcome", "outcome": "researcher-m" }, "delivers": ["executive-intake", "planner", "tl-dispatch"] },
+    { "id": "e38", "from": "tl-dispatch", "to": "researcher-l", "when": { "on": "outcome", "outcome": "researcher-l" }, "delivers": ["executive-intake", "planner", "tl-dispatch"] },
+    { "id": "e39", "from": "tl-dispatch", "to": "explorer", "when": { "on": "outcome", "outcome": "explorer-s" }, "delivers": ["executive-intake", "planner", "tl-dispatch"], "selectsModel": "small" },
+    { "id": "e40", "from": "tl-dispatch", "to": "explorer", "when": { "on": "outcome", "outcome": "explorer-m" }, "delivers": ["executive-intake", "planner", "tl-dispatch"], "selectsModel": "medium" },
+    { "id": "e41", "from": "tl-dispatch", "to": "data-curator", "when": { "on": "outcome", "outcome": "data-curator" }, "delivers": ["executive-intake", "planner", "tl-dispatch"] },
+    { "id": "e42", "from": "tl-dispatch", "to": "infra", "when": { "on": "outcome", "outcome": "infra" }, "delivers": ["executive-intake", "planner", "tl-dispatch"] },
+    { "id": "e43", "from": "tl-dispatch", "to": "experiment-analyst", "when": { "on": "outcome", "outcome": "experiment-analyst" }, "delivers": ["executive-intake", "planner", "tl-dispatch"] },
+    { "id": "e44", "from": "tl-dispatch", "to": "planner", "when": { "on": "outcome", "outcome": "replan" }, "delivers": ["executive-intake", "tl-dispatch"] },
+    { "id": "e45", "from": "tl-dispatch", "to": "tl-escalation", "when": { "on": "outcome", "outcome": "escalate" }, "delivers": ["executive-intake", "tl-dispatch"] },
+    { "id": "e46", "from": "tl-dispatch", "to": "backlog-blocked", "when": { "on": "outcome", "outcome": "stop-slice" }, "delivers": ["executive-intake", "tl-dispatch"] },
+    { "id": "e47", "from": "tl-dispatch", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "tl-dispatch"] },
+    { "id": "e48", "from": "tl-escalation", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "decided" }, "delivers": ["executive-intake", "tl-escalation"] },
+    { "id": "e49", "from": "tl-escalation", "to": "planner", "when": { "on": "outcome", "outcome": "replan" }, "delivers": ["executive-intake", "tl-escalation"] },
+    { "id": "e50", "from": "tl-escalation", "to": "backlog-blocked", "when": { "on": "outcome", "outcome": "stop-slice" }, "delivers": ["executive-intake", "tl-escalation"] },
+    { "id": "e51", "from": "tl-escalation", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "tl-escalation"] },
+    { "id": "e52", "from": "implementer", "to": "qa", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "implementer"] },
+    { "id": "e53", "from": "implementer", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "implementer"] },
+    { "id": "e54", "from": "implementer", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "implementer"] },
+    { "id": "e55", "from": "implementer", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "implementer"] },
+    { "id": "e56", "from": "implementer", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "implementer"] },
+    { "id": "e62", "from": "implementer-l", "to": "qa-design", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "implementer-l"] },
+    { "id": "e63", "from": "implementer-l", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "implementer-l"] },
+    { "id": "e64", "from": "implementer-l", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "implementer-l"] },
+    { "id": "e65", "from": "implementer-l", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "implementer-l"] },
+    { "id": "e66", "from": "implementer-l", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "implementer-l"] },
+    { "id": "e67", "from": "researcher-m", "to": "skeptic-s", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "researcher-m"] },
+    { "id": "e68", "from": "researcher-m", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "researcher-m"] },
+    { "id": "e69", "from": "researcher-m", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "researcher-m"] },
+    { "id": "e70", "from": "researcher-m", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "researcher-m"] },
+    { "id": "e71", "from": "researcher-m", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "researcher-m"] },
+    { "id": "e72", "from": "researcher-l", "to": "skeptic", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "researcher-l"] },
+    { "id": "e73", "from": "researcher-l", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "researcher-l"] },
+    { "id": "e74", "from": "researcher-l", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "researcher-l"] },
+    { "id": "e75", "from": "researcher-l", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "researcher-l"] },
+    { "id": "e76", "from": "researcher-l", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "researcher-l"] },
+    { "id": "e77", "from": "explorer", "to": "skeptic-s", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "explorer"] },
+    { "id": "e78", "from": "explorer", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "explorer"] },
+    { "id": "e79", "from": "explorer", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "explorer"] },
+    { "id": "e80", "from": "explorer", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "explorer"] },
+    { "id": "e81", "from": "explorer", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "explorer"] },
+    { "id": "e87", "from": "data-curator", "to": "reviewer-s", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "data-curator"] },
+    { "id": "e88", "from": "data-curator", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "data-curator"] },
+    { "id": "e89", "from": "data-curator", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "data-curator"] },
+    { "id": "e90", "from": "data-curator", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "data-curator"] },
+    { "id": "e91", "from": "data-curator", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "data-curator"] },
+    { "id": "e92", "from": "infra", "to": "skeptic", "when": { "on": "outcome", "outcome": "done" }, "delivers": ["executive-intake", "planner", "infra"] },
+    { "id": "e93", "from": "infra", "to": "reviewer-job-gate", "when": { "on": "outcome", "outcome": "job-gate-needed" }, "delivers": ["executive-intake", "planner", "infra"] },
+    { "id": "e94", "from": "infra", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "infra"] },
+    { "id": "e95", "from": "infra", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "infra"] },
+    { "id": "e96", "from": "infra", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "infra"] },
+    { "id": "e97", "from": "infra", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "infra"] },
+    { "id": "e98", "from": "experiment-analyst", "to": "skeptic", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "experiment-analyst"] },
+    { "id": "e99", "from": "experiment-analyst", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["executive-intake", "experiment-analyst"] },
+    { "id": "e100", "from": "experiment-analyst", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["executive-intake", "experiment-analyst"] },
+    { "id": "e101", "from": "experiment-analyst", "to": "tl-dispatch", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "experiment-analyst"] },
+    { "id": "e102", "from": "experiment-analyst", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "experiment-analyst"] },
+    { "id": "e103", "from": "qa", "to": "reviewer-s", "when": { "on": "outcome", "outcome": "pass" }, "delivers": ["executive-intake", "qa"] },
+    { "id": "e104", "from": "qa", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "fail" }, "delivers": ["executive-intake", "qa"] },
+    { "id": "e105", "from": "qa", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "qa"] },
+    { "id": "e106", "from": "qa-design", "to": "reviewer-l", "when": { "on": "outcome", "outcome": "pass" }, "delivers": ["executive-intake", "qa-design"] },
+    { "id": "e107", "from": "qa-design", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "fail" }, "delivers": ["executive-intake", "qa-design"] },
+    { "id": "e108", "from": "qa-design", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "qa-design"] },
+    { "id": "e109", "from": "reviewer-s", "to": "skeptic-s", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["executive-intake", "reviewer-s"] },
+    { "id": "e110", "from": "reviewer-s", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "reviewer-s"] },
+    { "id": "e111", "from": "reviewer-s", "to": "reviewer-l", "when": { "on": "outcome", "outcome": "design-review" }, "delivers": ["executive-intake", "reviewer-s"] },
+    { "id": "e112", "from": "reviewer-s", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-s"] },
+    { "id": "e113", "from": "reviewer-l", "to": "skeptic", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["executive-intake", "reviewer-l"] },
+    { "id": "e114", "from": "reviewer-l", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "reviewer-l"] },
+    { "id": "e115", "from": "reviewer-l", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-l"] },
+    { "id": "e116", "from": "skeptic-s", "to": "tl-accept", "when": { "on": "outcome", "outcome": "pass" }, "delivers": ["executive-intake", "skeptic-s"] },
+    { "id": "e117", "from": "skeptic-s", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "skeptic-s"] },
+    { "id": "e118", "from": "skeptic-s", "to": "skeptic", "when": { "on": "outcome", "outcome": "escalate" }, "delivers": ["executive-intake", "skeptic-s"] },
+    { "id": "e119", "from": "skeptic-s", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "skeptic-s"] },
+    { "id": "e120", "from": "skeptic", "to": "tl-accept", "when": { "on": "outcome", "outcome": "pass" }, "delivers": ["executive-intake", "skeptic"] },
+    { "id": "e121", "from": "skeptic", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "skeptic"] },
+    { "id": "e122", "from": "skeptic", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "skeptic"] },
+    { "id": "e123", "from": "tl-accept", "to": "backlog-done", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["executive-intake", "planner", "tl-accept"] },
+    { "id": "e124", "from": "tl-accept", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "tl-accept"] },
+    { "id": "e125", "from": "tl-accept", "to": "backlog-blocked", "when": { "on": "outcome", "outcome": "stop-slice" }, "delivers": ["executive-intake", "planner", "tl-accept"] },
+    { "id": "e126", "from": "tl-accept", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "tl-accept"] },
+    { "id": "e127", "from": "backlog-done", "to": "executive-continue", "when": { "on": "success" }, "delivers": ["executive-intake", "tl-accept", "backlog-done"] },
+    { "id": "e128", "from": "backlog-done", "to": "executive-continue", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "backlog-done"] },
+    { "id": "e129", "from": "backlog-done", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "backlog-done"] },
+    { "id": "e130", "from": "backlog-blocked", "to": "executive-continue", "when": { "on": "success" }, "delivers": ["executive-intake", "backlog-blocked"] },
+    { "id": "e131", "from": "backlog-blocked", "to": "executive-continue", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["executive-intake", "backlog-blocked"] },
+    { "id": "e132", "from": "backlog-blocked", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "backlog-blocked"] },
+    { "id": "e133", "from": "executive-continue", "to": "tl-select", "when": { "on": "outcome", "outcome": "next-slice" }, "delivers": ["executive-intake", "executive-continue"] },
+    { "id": "e134", "from": "executive-continue", "to": "documenter-wrapup", "when": { "on": "outcome", "outcome": "wrap-up" }, "delivers": ["executive-intake", "executive-continue"] },
+    { "id": "e135", "from": "executive-continue", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "executive-continue"] },
+    { "id": "e136", "from": "documenter-wrapup", "to": "tl-report", "when": { "on": "success" }, "delivers": ["executive-intake", "documenter-wrapup"] },
+    { "id": "e137", "from": "tl-report", "to": "executive-report", "when": { "on": "success" }, "delivers": ["executive-intake", "documenter-wrapup", "tl-report"] },
+    { "id": "e138", "from": "executive-report", "to": "iteration-ended", "when": { "on": "success" }, "delivers": ["executive-intake", "tl-report", "executive-report"] },
+    { "id": "e139", "from": "reviewer-job-gate", "to": "documenter-wrapup", "when": { "on": "success" }, "delivers": ["executive-intake", "reviewer-job-gate"] },
+    { "id": "e140", "from": "reviewer-job-gate", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-job-gate"] }
   ]
 }

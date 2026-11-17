@@ -13,11 +13,16 @@ The graph ships with DSpatch and is listed as **Generic agent network** in the g
 
 Project instructions come from the open project, through the context DSpatch gives every graph run started from the chat: the first step is told which instruction files are present in the working folder (names only, such as `AGENTS.md`), and every step works in that folder and reads what its task needs. Later steps receive the person's words rather than the whole snapshot, so they find the instruction files in the working folder themselves. The template adds no instructions of its own beyond the roles and node tasks shown in the editor.
 
+## One node per role, with a model class per slice
+
+The Implementer and the Explorer are one node each with a `select` model policy whose options are the model classes small and medium. Tech Lead's dispatch chooses the class with the slice: `implementer-s` for a straightforward, localized change and `implementer-m` for a change that follows established patterns across several places, `explorer-s` to locate material and `explorer-m` to trace behavior and adaptation risk, each with its reason on the `RESULT:` line. The class is mapped to a model by the run's provider, under `modelClasses` in DSpatch's model configuration (`dspatch-model-choice.json`), never in this graph. Each visit records the class, the model and the reason, and a later visit with another class runs that class's model.
+
 ## Behaviour the run engine does not provide
 
 These parts of the orchestration are carried by instructions or by ending the run, not enforced by DSpatch:
 
-- **Small, medium and large variants share one model.** Implementer, Explorer, Researcher, Reviewer, Skeptic and Tech Lead variants differ in their instructions and in where Tech Lead dispatches work, not in model or capacity. A step can fix a model of its own in the graph, but such a model is specific to one provider, so the template does not set any.
+- **Model classes need a mapping to change the model.** The Implementer and the Explorer run with a small or medium model class, chosen per slice by Tech Lead's dispatch (see below). Until the provider's classes are mapped in DSpatch's model configuration, every class runs with the model chosen in the chat, and the run says so.
+- **Variants with their own path stay separate nodes.** The large Implementer goes through design QA and the large Reviewer; the medium and large Researchers go to different Skeptic steps; the small and large Reviewer and Skeptic declare different outcomes. The engine cannot route by model class, so merging them would change the flow.
 - **No pause for human authorization.** When Infrastructure needs a job approved, the job plan is reviewed and the run goes to wrap-up and reports. Approving and launching the job happens outside the run; a new run continues afterwards. The graph has no human step.
 - **One slice at a time.** Workers run one after another; the template does not use DSpatch's parallel fan-out, and subagent delegation is off unless the user authorizes it.
 - **The carry-forward ledger is not verified.** The runner delivers the named results along each edge; that each reply carries the ledger is the agents' instruction, not a check.

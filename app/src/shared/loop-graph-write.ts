@@ -104,7 +104,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   // DSP-209 S19: a `select` policy's options and default follow the older fields, so a graph
   // without them is written exactly as before.
   '/nodes/*/model': ['policy', 'model', 'description', 'options', 'default'],
-  '/nodes/*/model/options/*': ['id', 'model', 'note'],
+  '/nodes/*/model/options/*': ['id', 'model', 'modelClass', 'note'],
   '/nodes/*/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/nodes/*/report': ['writtenBy', 'path'],
   '/nodes/*/produces': ['required', 'form', 'note'],

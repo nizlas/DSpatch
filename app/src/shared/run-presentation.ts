@@ -165,6 +165,8 @@ export interface ModelSelectionRecord {
   readonly policy: string | null;
   /** Which of the policy's options was taken, or `null`. */
   readonly option: string | null;
+  /** DSP-222: the option's model class, when it named one. */
+  readonly modelClass?: string;
   readonly reason: string;
   /** Who chose: the drawing's fixed model, the policy, or the person. */
   readonly source: 'fixed' | 'policy' | 'person';

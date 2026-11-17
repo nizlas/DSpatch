@@ -74,6 +74,8 @@ export interface GraphCanvasProps {
   readonly branchSummaries?: ReadonlyMap<string, string>;
   /** DSP-209 S20: the node's branch line was pressed; open its Branches list. */
   readonly onOpenBranches?: (nodeId: string) => void;
+  /** DSP-222: a step's model line, by node id: its per-visit choice, or the model a run chose. */
+  readonly modelSummaries?: ReadonlyMap<string, string>;
   /**
    * The roles map may lack a reference the drawing makes (Niclas, 15 November 2026: a run's
    * own drawing, whose roles the window never resolved). A missing entry then reads as not
@@ -180,6 +182,7 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           severity={props.severityOfNode?.(node.id) ?? null}
           helpTitle={props.helpTitleOf?.(node, node.role ? (props.roles.get(roleKey(node.role)) ?? null) : null)}
           branches={props.branchSummaries?.get(node.id) ?? null}
+          modelLine={props.modelSummaries?.get(node.id) ?? null}
           {...(props.onOpenBranches === undefined ? {} : { onOpenBranches: () => props.onOpenBranches?.(node.id) })}
           roleUnknown={props.rolesMayBeUnknown === true && node.role !== undefined && !props.roles.has(roleKey(node.role))}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}
@@ -291,6 +294,7 @@ function NodeShape({
   severity,
   helpTitle,
   branches,
+  modelLine,
   onOpenBranches,
   roleUnknown,
   onMouseDown,
@@ -314,6 +318,8 @@ function NodeShape({
   readonly severity: Finding['severity'] | null;
   readonly helpTitle?: string;
   readonly branches: string | null;
+  /** DSP-222: the third line of a step whose model is chosen per visit. */
+  readonly modelLine?: string | null;
   /** DSP-209 S20: opens the node's Branches list; the branch line is its control. */
   readonly onOpenBranches?: () => void;
   /** The role was never resolved here, so it is neither shown as resolved nor as broken. */
@@ -476,6 +482,17 @@ function NodeShape({
         Branches list, where every branch's task, state, model and messages are written out.
         A long line is fitted to the node rather than cut off.
       */}
+      {modelLine === null || modelLine === undefined || node.fanOut !== undefined ? null : (
+        <text
+          x={NODE_WIDTH / 2}
+          y={53}
+          className="node-model"
+          data-ev="node-model-line"
+          {...(modelLine.length > 30 ? { textLength: NODE_WIDTH - 12, lengthAdjust: 'spacingAndGlyphs' } : {})}
+        >
+          {modelLine}
+        </text>
+      )}
       {branches === null || node.fanOut === undefined ? null : (
         <text
           x={NODE_WIDTH / 2}

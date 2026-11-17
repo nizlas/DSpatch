@@ -54,7 +54,7 @@ import {
   type CommandFingerprint,
   type RootSnapshot,
 } from './loop-snapshot';
-import { stepModelChoice, undeclaredOutcomeOf, type LoopNode, type StepLimits } from '../shared/loop-graph';
+import { stepModelChoice, undeclaredOutcomeOf, type LoopNode, type ModelClassMap, type StepLimits } from '../shared/loop-graph';
 import {
   carriesRunChange,
   declaredFailureFrom,
@@ -435,6 +435,8 @@ export interface LiveExecutorOptions {
    * for the provider, never the entry step's fixed model. Left out, `modelRequested`.
    */
   readonly personModel?: string;
+  /** DSP-222: the run provider's configured model per class, for options that name a class. */
+  readonly modelClasses?: ModelClassMap;
   /** Cursor reports a used model separately from the request. Optional on the interface. */
   readonly modelReported?: (sessionId: DspatchSessionId) => string | null;
   readonly now?: () => number;
@@ -1723,7 +1725,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       context.arrivedBy === null
         ? null
         : (context.graph.edges.find((candidate) => candidate.id === context.arrivedBy?.edgeId) ?? null);
-    return stepModelChoice(context.node, edge).model ?? options.personModel ?? options.modelRequested;
+    return stepModelChoice(context.node, edge, options.modelClasses).model ?? options.personModel ?? options.modelRequested;
   };
   /**
    * Which code each gate visit's command ran against, keyed `node#visit` (DSP-139).

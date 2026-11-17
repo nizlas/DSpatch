@@ -29,13 +29,15 @@ export const ANCHOR_DOT_RADIUS = 3.5;
  * Run state is not something this can be given, which is what keeps sizes, and with them
  * every edge route, the same while a run walks.
  */
-export function nodeSize(node: { readonly kind: NodeKind; readonly fanOut?: unknown }): {
+export function nodeSize(node: { readonly kind: NodeKind; readonly fanOut?: unknown; readonly model?: { readonly policy: string } }): {
   readonly width: number;
   readonly height: number;
 } {
+  // DSP-222: a step whose model is chosen per visit has a third line, for that choice.
+  const tall = node.fanOut !== undefined || node.model?.policy === 'select';
   return {
     width: NODE_WIDTH,
-    height: node.fanOut === undefined ? NODE_HEIGHT : FAN_OUT_NODE_HEIGHT,
+    height: tall ? FAN_OUT_NODE_HEIGHT : NODE_HEIGHT,
   };
 }
 

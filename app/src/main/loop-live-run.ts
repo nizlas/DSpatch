@@ -52,6 +52,7 @@ import {
   writeReachOf,
   type LoopGraph,
   type LoopNode,
+  type ModelClassMap,
 } from '../shared/loop-graph';
 import { createFileRoleResolver } from './loop-graph-roles';
 import { createFileResultStore } from './loop-result-store';
@@ -80,6 +81,8 @@ export interface LiveCliOptions {
    * `modelRequested`, as for the CLI, where the two are the same.
    */
   readonly personModel?: string;
+  /** DSP-222: the run provider's configured model per class (`model-classes`), for options that name a class. */
+  readonly modelClasses?: ModelClassMap;
   /** DSP-219: the start's requirement check for the agent, recorded on `run-started`. */
   readonly requirementsNote?: string;
   readonly workspacePath?: string;
@@ -408,7 +411,7 @@ async function driveLive(
       fanOutAdapterCap: FAN_OUT_ADAPTER_CAPS[options.provider],
       ...(options.requirementsNote === undefined ? {} : { requirementsNote: options.requirementsNote }),
       // DSP-209 S19: what a step naming no model runs with, for its `node-entered` record.
-      runModel: { provider: options.provider, model: options.personModel ?? options.modelRequested },
+      runModel: { provider: options.provider, model: options.personModel ?? options.modelRequested, ...(options.modelClasses === undefined ? {} : { classes: options.modelClasses }) },
       ...(options.takeInstructions === undefined ? {} : { takeInstructions: options.takeInstructions }),
       executor: createLiveExecutor({
         workspacePath,
@@ -417,6 +420,7 @@ async function driveLive(
         provider: options.provider,
         modelRequested: options.modelRequested,
         ...(options.personModel === undefined ? {} : { personModel: options.personModel }),
+        ...(options.modelClasses === undefined ? {} : { modelClasses: options.modelClasses }),
         modelReported: modelReportedBy,
         abortSignal: options.abortSignal,
         inspection,

@@ -25,7 +25,7 @@
  */
 
 import type { StoredSessionProvider } from '../shared/bridge';
-import { modelsNamedBy, stepModelChoice, type LoopGraph, type LoopNode } from '../shared/loop-graph';
+import { modelsNamedBy, stepModelChoice, unmappedClassesOf, type LoopGraph, type LoopNode, type ModelClassMap } from '../shared/loop-graph';
 import {
   describeLoopRunAgent,
   describeLoopRunRefused,
@@ -81,6 +81,12 @@ export interface LoopRunAgentRequest {
    */
   readonly cursorModels?: readonly string[] | null;
   readonly copilotModels?: readonly string[] | null;
+  /**
+   * DSP-222: each provider's configured model per class, from DSpatch's model configuration.
+   * A class a step's options name but its provider does not map runs the person's model, said
+   * before the run ({@link LoopRunPreparation} `classNote`) and on every visit's record.
+   */
+  readonly modelClasses?: Partial<Record<StoredSessionProvider, ModelClassMap>>;
   readonly adapters: LoopRunAdapterSource;
 }
 
@@ -102,6 +108,10 @@ export type LoopRunPreparation =
        * `modelRequested` keeps its meaning for the record and the "Runs with ..." line.
        */
       readonly personModel: string;
+      /** DSP-222: the run provider's configured model per class. */
+      readonly modelClasses: ModelClassMap;
+      /** DSP-222: said when the drawing's classes are not all mapped for this provider; else `null`. */
+      readonly classNote: string | null;
       /**
        * DSP-209 S19b: said when steps name models that could not be checked before the run
        * (no list read for this provider in this launch), so the provider decides; else `null`.
@@ -135,6 +145,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     );
   }
   const purpose = 'loop' as const;
+  const classes: ModelClassMap = request.modelClasses?.[provider] ?? {};
   // Availability and, for Claude, the adapter's own authentication rule - asked of the
   // factory without building anything. The factory's sentence, not reworded.
   const unavailable = request.adapters.preflight({ provider, purpose });
@@ -165,7 +176,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
   // the account does not list is refused here rather than replaced by another.
   if (provider === 'claude' && request.graph !== undefined && request.claudeModels != null) {
     const listed = request.claudeModels;
-    const missing = modelsNamedBy(request.graph).find((named) => !listed.includes(named.model));
+    const missing = modelsNamedBy(request.graph, classes).find((named) => !listed.includes(named.model));
     if (missing !== undefined) {
       return refused(
         `The step "${missing.label}" ${
@@ -184,7 +195,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     const listed = provider === 'copilot' ? request.copilotModels : request.cursorModels;
     const named =
       request.graph !== undefined
-        ? modelsNamedBy(request.graph)
+        ? modelsNamedBy(request.graph, classes)
         : fixed?.policy === 'fixed' && fixed.model !== undefined && fixed.model !== ''
           ? [{ nodeId: request.entryNode?.id ?? '', label: request.entryNode?.label ?? request.entryNode?.id ?? 'the first step', model: fixed.model, option: null }]
           : [];
@@ -218,11 +229,22 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
       : provider === 'copilot'
         ? (request.copilotModel ?? '')
         : request.cursorModel;
+  // DSP-222: an unmapped class is never replaced by another model in secret: it runs the
+  // person's model for this provider, and this says so before anything starts.
+  const unmapped = request.graph === undefined ? [] : unmappedClassesOf(request.graph, classes);
+  const providerName = provider === 'claude' ? 'Claude' : provider === 'copilot' ? 'Copilot' : 'Cursor';
+  const classNote =
+    unmapped.length === 0
+      ? null
+      : `Model class${unmapped.length === 1 ? '' : 'es'} ${unmapped.join(', ')} ${unmapped.length === 1 ? 'has' : 'have'} no model configured for ${providerName}, ` +
+        `so ${unmapped.length === 1 ? 'that class runs' : 'those classes run'} with ${personModel === '' ? 'the provider’s default model' : personModel}, the model chosen in the chat.`;
   return {
     ok: true,
     provider,
     modelRequested,
     personModel,
+    modelClasses: classes,
+    classNote,
     modelCheck,
     createAdapter: () => request.adapters.createAdapter({ provider, purpose }),
   };
@@ -247,7 +269,7 @@ export function loopRunAgentInfo(request: LoopRunAgentRequest): LoopRunAgentInfo
   const line = describeLoopRunAgent({ provider: prepared.provider, modelRequested: shown });
   return {
     provider: prepared.provider,
-    line: prepared.modelCheck === null ? line : `${line} ${prepared.modelCheck}`,
+    line: [line, prepared.modelCheck, prepared.classNote].filter((part) => part !== null).join(' '),
     // DSP-218: the run's own model choice; a step that fixes or selects its own is an exception
     // the window names beside it, from the drawing (or, while it runs, from the journal).
     summary: loopRunAgentSummary(prepared.provider, prepared.personModel),
