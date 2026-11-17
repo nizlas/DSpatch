@@ -379,7 +379,7 @@ describe('what the window says about a choice', () => {
     assert.match(said, /will ask/, `it has to say the start asks. It said: ${said}`);
     assert.match(
       said,
-      /choosing another loop/,
+      /choosing another graph/,
       `the switch asks too, and the standing line is where that is read. It said: ${said}`,
     );
     assert.doesNotMatch(
@@ -401,7 +401,7 @@ describe('what the window says about a choice', () => {
     );
 
     const withNothing = describeChoiceRefused({ note: 'broken', stillChosen: null });
-    assert.ok(withNothing.includes('no loop is selected'));
+    assert.ok(withNothing.includes('no graph is selected'));
   });
 
   /*

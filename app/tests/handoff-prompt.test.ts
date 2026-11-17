@@ -49,7 +49,7 @@ describe('the handoff prompt in the chat (DSP-209 S5b)', () => {
       view.choices.map((choice) => [choice.label, choice.answer]),
       [
         ['Continue interactively', { runId: 'chat-loop-1', visit: 2, choice: 'interactive' }],
-        ['Continue in the loop', { runId: 'chat-loop-1', visit: 2, choice: 'loop' }],
+        ['Continue the run', { runId: 'chat-loop-1', visit: 2, choice: 'loop' }],
       ],
     );
   });

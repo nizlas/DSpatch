@@ -2,6 +2,8 @@
 
 # The loop graph format
 
+**Terminology (DSP-221, 17 November 2026).** The product calls these *agent execution graphs*: nodes are steps, connections decide how execution proceeds, and an agent loop is one recurring path through a graph. The file format, its `dspatch-loop-graph` and `dspatch-loop-definition` identifiers, the `.loop.json` suffix and the `.dspatch/loops/` folder keep their original names, and so does this document's title. A run chooses its path through the graph by outcomes and conditions; it does not change the graph's structure, and keeps the version it started with.
+
 DSP-21, 15 September 2026. This is the file between [the editor](../../backlog/tasks/dsp-22%20-%20Build-a-graph-editor-for-agent-loops.md) and [the runner](../../backlog/tasks/dsp-18%20-%20Define-and-run-a-bounded-Maestro-loop-in-DSpatch.md), settled first so that both can be built against it instead of against each other's assumptions. It is a contract, not a feature.
 
 | What | Where |

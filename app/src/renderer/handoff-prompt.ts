@@ -43,16 +43,16 @@ export function handoffPromptView(report: LoopControlReport): HandoffPromptView 
         choice: 'interactive',
         label: 'Continue interactively',
         title:
-          'End the loop run here as handed over. DSpatch then sends the run’s mandate and what it ' +
+          'End the graph run here as handed over. DSpatch then sends the run’s mandate and what it ' +
           'did to the agent in this chat, once, and the work continues there; you do not type it again.',
         hint: 'End the run; carry on in this chat',
         answer: { ...bound, choice: 'interactive' },
       },
       {
         choice: 'loop',
-        label: 'Continue in the loop',
-        title: 'Let this step carry on in the loop. It will not recommend this again in this run.',
-        hint: 'Let this step carry on in the loop',
+        label: 'Continue the run',
+        title: 'Let this step carry on within the graph run. It will not recommend this again in this run.',
+        hint: 'Carry on within the graph run',
         answer: { ...bound, choice: 'loop' },
       },
     ],

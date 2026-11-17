@@ -2,11 +2,13 @@
 
 **Develop with agents. Understand the code. Choose how much to delegate.**
 
-DSpatch is an experimental desktop workspace for interactive agent-assisted development, configurable agent loops, and code review. Work in conversation or delegate a larger effort through a loop that coordinates agent roles and checks. The broader aim is sustained autonomous work across research, concept development, implementation and evaluation, with human direction at meaningful checkpoints. DSpatch currently provides simpler runnable workflows as a starting point; you can steer them in conversation or pause between steps.
+DSpatch is an experimental desktop workspace for interactive agent-assisted development, agent workflows and code review. DSpatch orchestrates agents through executable graphs with conditional routing, feedback cycles, and controlled parallel execution. Agent loops are a natural subset of this model. The graph makes the workflow visible, understandable, and editable.
+
+Work in conversation, or delegate a larger effort to an agent execution graph whose steps carry agent roles, handovers and checks. You can build the graph in conversation with DSpatch, refine it in the graph editor, and follow each run on the same drawing. The broader aim is sustained autonomous work across research, concept development, implementation and evaluation, with human direction at meaningful checkpoints. DSpatch currently ships simpler runnable workflows as a starting point; you can steer them in conversation or pause between steps.
 
 Review combines a traditional diff for the overview with **code walks** that connect related code into an explained flow, including the purpose of the change. Select code, ask questions and follow references within the same review: the integrated agent receives the relevant code and revision without you having to assemble the context yourself. The aim is to make complex changes easier to understand while leaving review decisions with you, with selective agent delegation when you judge it appropriate. Review also works independently of development in DSpatch, for changes made in any editor.
 
-See the [tutorial introduction](TUTORIAL.md#why-use-a-loop) for the reasoning behind loops and this approach to code understanding.
+See the [tutorial introduction](TUTORIAL.md#from-agent-loops-to-agent-execution-graphs) for the reasoning behind agent execution graphs and this approach to code understanding.
 
 **[Download a release](https://github.com/nizlas/DSpatch/releases) · [Read the tutorial](TUTORIAL.md) · [Run from source](#run-from-source)**
 
@@ -15,7 +17,7 @@ See the [tutorial introduction](TUTORIAL.md#why-use-a-loop) for the reasoning be
 | Start with | Use DSpatch to |
 | --- | --- |
 | A question or development task | Read and discuss a project, request changes, and ask the agent to build or test them. |
-| A larger assignment | Choose or edit an agent loop, follow its steps, steer the work, and control when the next step starts. |
+| A larger assignment | Choose, build or edit an agent execution graph, follow its steps, steer the work, and control when the next step starts. |
 | Two Git revisions | Browse every changed file, expand context, ask about selected code, generate code walks, and review or delegate selected changes. |
 | A remote development machine | Keep the interface on your computer while the repository, agents and tools run on the host over SSH. |
 
@@ -141,7 +143,7 @@ Commit on your branch and open a pull request if you want to share the result. P
 ## Practical limits
 
 - DSpatch is under active development. Follow the installed version's release notes when they differ from documentation on `main`.
-- Agents in development chat and loops can change files and run commands. Review questions use the selected revisions and read-only analysis where the provider supports it.
+- Agents in development chat and graph runs can change files and run commands. Review questions use the selected revisions and read-only analysis where the provider supports it.
 - Copilot tool hooks run on the host, but they do **not** filter everything DSpatch sends. In particular, direct prompt content such as selected code and diffs is outside tool hooks. See the [content-exclusion contract](docs/DSPATCH_CONTENT_EXCLUSION_CONTRACT.md) before using restricted material.
 - Claude integration and distribution have provider-specific conditions and an unresolved approval question documented in [installation notes](docs/INSTALL.md#why-support-is-fetched-and-what-the-terms-say). A successful sign-in is not evidence of distribution permission.
 
@@ -151,7 +153,7 @@ Commit on your branch and open a pull request if you want to share the result. P
 
 | Read | For |
 | --- | --- |
-| [Tutorial](TUTORIAL.md) | A guided introduction to review, interactive development and loops. |
+| [Tutorial](TUTORIAL.md) | A guided introduction to review, interactive development and agent execution graphs. |
 | [Installation details](docs/INSTALL.md) | Package layout, provider support, SSH and troubleshooting details. |
 | [Developer reference](app/README.md) | Scripts, architecture and implementation history; some sections describe earlier stages. |
 | [Vision](docs/VISION.md) | Product direction and design decisions; proposals are distinguished from implemented behaviour. |
@@ -165,7 +167,7 @@ Commit on your branch and open a pull request if you want to share the result. P
 
 <a id="prova-utvecklingsloopen-i-cursor"></a>
 
-The [external development loop](docs/DEVELOPMENT_LOOP.md) helps develop DSpatch from Cursor or Claude Code. It is separate from the loops run inside DSpatch. Its coordinator, roles and calibration history are described there; installing DSpatch does not require running that calibration.
+The [external development loop](docs/DEVELOPMENT_LOOP.md) helps develop DSpatch from Cursor or Claude Code. It is separate from the graphs run inside DSpatch. Its coordinator, roles and calibration history are described there; installing DSpatch does not require running that calibration.
 
 <a id="granska-direkt-på-github"></a>
 

@@ -65,7 +65,7 @@ export const nodeGraphSaveFiles: GraphSaveFiles = {
 
 /** The sentence the card shows when the disk moved on since the proposal was made. */
 export const PROPOSAL_CONFLICT_NOTE =
-  'Not applied: the loop was changed in the editor since this proposal was made. Ask the chat to revise it from the current version.';
+  'Not applied: the graph was changed in the editor since this proposal was made. Ask the chat to revise it from the current version.';
 
 function inside(folder: string, file: string): boolean {
   const relative = path.relative(path.resolve(folder), path.resolve(file));
@@ -151,7 +151,7 @@ function actOnProposal(
     return {
       kind: 'refused',
       reason: 'run-active',
-      note: 'Not applied: a run of this loop is active, and it keeps the version it started with. Apply once it has ended. Nothing was written.',
+      note: 'Not applied: a run of this graph is active, and it keeps the version it started with. Apply once it has ended. Nothing was written.',
       status: proposal.status,
     };
   }

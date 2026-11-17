@@ -472,7 +472,7 @@ describe('the words and the buttons', () => {
 
   it('says what is happening when no run is walking, without claiming a state of one', () => {
     const report = describeControl(initialControlState('interactive'), { runActive: false });
-    assert.match(report.detail, /No loop is running/);
+    assert.match(report.detail, /No graph run is in progress/);
     assert.doesNotMatch(report.headline, /^Paused$/);
   });
 

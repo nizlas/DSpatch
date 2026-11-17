@@ -999,7 +999,7 @@ export function explainRunView(view: RunView): string {
       : `graph version ${view.run.graphVersionId}`;
   if (viewIsReady(view)) {
     return (
-      `This is ${view.run.graphName} as ${version} — the loop that will run when you send ` +
+      `This is ${view.run.graphName} as ${version} — the graph that will run when you send ` +
       `a task. Nothing has started, and opening or closing this window starts nothing.`
     );
   }
@@ -1049,10 +1049,10 @@ export function describePinnedDrawing(
   const name = view.run.graphName;
   if (viewIsReady(view)) {
     return check === 'unreadable'
-      ? `DSpatch could not read "${name}", the loop a run would use, so it cannot tell ` +
-          `you whether the drawing on screen is that loop.`
-      : `"${name}" is the loop a run would use, and the drawing on screen is not it. ` +
-          `A run uses the chosen loop, not whatever is drawn here.`;
+      ? `DSpatch could not read "${name}", the graph a run would use, so it cannot tell ` +
+          `you whether the drawing on screen is that graph.`
+      : `"${name}" is the graph a run would use, and the drawing on screen is not it. ` +
+          `A run uses the chosen graph, not whatever is drawn here.`;
   }
   const tense = view.ended ? 'ran' : 'is running';
   if (check === 'unreadable') {

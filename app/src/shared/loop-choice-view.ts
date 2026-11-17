@@ -79,9 +79,9 @@ export function nextMandateLoopFrom(
  */
 export function describeLoopChooser(): string {
   return (
-    'Which loop the next mandate walks. Picking one draws it here and selects it for ' +
+    'Which graph the next mandate runs. Picking one draws it here and selects it for ' +
     'running, in one act. It starts nothing: a run begins when a mandate is sent with ' +
-    'Use loop ticked.'
+    'Use workflow ticked.'
   );
 }
 
@@ -108,7 +108,7 @@ export function describeChoiceMade(input: {
     readonly answer: 'save' | 'discard';
   } | null;
 }): string {
-  const head = `"${input.name}" is now the loop the next mandate will use, and it is on the canvas. Nothing was started.`;
+  const head = `"${input.name}" is now the graph the next mandate will use, and it is on the canvas. Nothing was started.`;
   const running = input.runInProgress
     ? ' A run is walking now and keeps the definition and version it started with, so ' +
       'this applies to the next run.'
@@ -148,7 +148,7 @@ export function describeChoiceRefused(input: {
 }): string {
   const unchanged =
     input.stillChosen === null
-      ? 'Nothing was selected, and no loop is selected for the next mandate.'
+      ? 'Nothing was selected, and no graph is selected for the next mandate.'
       : `Nothing was selected. The next mandate still walks "${input.stillChosen.name}".`;
   return `${input.note}\n\n${unchanged}`;
 }
@@ -185,7 +185,7 @@ export function describeUnsavedAgainstChoice(input: {
   }
   return (
     `Unsaved changes to ${input.graphDisplayPath}, which is the file a run reads. Starting a ` +
-    `run, choosing another loop or opening another drawing will ask what to do with them ` +
+    `run, choosing another graph or opening another drawing will ask what to do with them ` +
     `first; nothing runs an older version of this drawing, or throws it away, without you ` +
     `saying so.`
   );

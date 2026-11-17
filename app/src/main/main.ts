@@ -523,14 +523,14 @@ async function moveToHost(next: RemoteEndpoint | null, remember: () => void, rea
     if (drawing !== null) {
       const answer = await askAboutUnsavedDrawing(drawing, 'reload');
       if (answer === 'cancel') {
-        return 'Stayed where you are: the loop editor holds unsaved changes.';
+        return 'Stayed where you are: the graph editor holds unsaved changes.';
       }
       if (answer === 'discard') {
         unsavedDrawing = null;
       } else {
         const failure = await writeUnsavedDrawing(drawing, 'reload');
         if (failure !== null) {
-          return `Stayed where you are: the loop editor's drawing could not be saved. ${failure}`;
+          return `Stayed where you are: the graph editor's drawing could not be saved. ${failure}`;
         }
       }
     }
@@ -663,7 +663,7 @@ async function answerHandover(): Promise<void> {
   if (nonce === null) {
     return;
   }
-  const busy = unsavedDrawing !== null ? 'The loop editor holds unsaved changes.' : await host.call<string | null>('host.busy', NO_SENDER);
+  const busy = unsavedDrawing !== null ? 'The graph editor holds unsaved changes.' : await host.call<string | null>('host.busy', NO_SENDER);
   if (busy !== null) {
     log(`a handover was asked for and refused: ${busy}`);
     writeHandoverAnswer(folder, { nonce, answer: 'busy', detail: busy });
@@ -761,8 +761,8 @@ async function leaveRemoteSession(): Promise<string> {
   const own = sharedHere ? ownRunningHost() : null;
   if (own !== null) {
     if (unsavedDrawing !== null) {
-      publishLink({ phase: 'connected', note: 'The loop editor holds unsaved changes. Save them first.' });
-      return 'The loop editor holds unsaved changes.';
+      publishLink({ phase: 'connected', note: 'The graph editor holds unsaved changes. Save them first.' });
+      return 'The graph editor holds unsaved changes.';
     }
     const busy = await host.call<string | null>('host.busy', NO_SENDER);
     if (busy !== null) {
@@ -1365,7 +1365,7 @@ async function startHostOrQuit(): Promise<boolean> {
       title: 'DSpatch could not start',
       message: started.failure.message,
       detail:
-        'DSpatch keeps a project’s work (the conversations, git, agents and loop runs) in ' +
+        'DSpatch keeps a project’s work (the conversations, git, agents and graph runs) in ' +
         'a process of its own, and that process did not start. Nothing was opened or changed.' +
         (started.failure.detail === undefined || started.failure.detail === ''
           ? ''
@@ -1430,7 +1430,7 @@ async function hostLost(loss: HostLoss): Promise<void> {
   const drawing =
     unsavedDrawing === null
       ? ''
-      : ` The loop editor is holding unsaved changes to ${unsavedDrawing.path}; you will be asked ` +
+      : ` The graph editor is holding unsaved changes to ${unsavedDrawing.path}; you will be asked ` +
         'about them before it is reloaded.';
   const response = await askPerson({
     type: 'error',
@@ -1440,7 +1440,7 @@ async function hostLost(loss: HostLoss): Promise<void> {
     title: 'DSpatch stopped working on the project',
     message: 'DSpatch’s project host stopped unexpectedly.',
     detail:
-      `${pending} Work that was in progress (an agent turn, a command, a loop step) may still ` +
+      `${pending} Work that was in progress (an agent turn, a command, a graph step) may still ` +
       'be running, or may have finished: DSpatch does not know, and has not sent anything ' +
       'again. What was saved before it stopped is on disk: conversations, run records and ' +
       'reviews.\n\n' +
@@ -1477,7 +1477,7 @@ async function hostLost(loss: HostLoss): Promise<void> {
       if (failure !== null) {
         reloadEditor = false;
         log(`the editor was not reloaded, because its drawing could not be saved: ${failure}`);
-        void askPerson({ type: 'warning', buttons: ['OK'], message: 'The loop editor was not reloaded', detail: failure });
+        void askPerson({ type: 'warning', buttons: ['OK'], message: 'The graph editor was not reloaded', detail: failure });
       }
     }
   }
@@ -2576,7 +2576,7 @@ async function openGraphFileForEditing(): Promise<void> {
       title: 'Open a graph file for editing',
       defaultPath:
         ownRepoRoot === null ? undefined : path.join(ownRepoRoot, 'docs', 'loop', 'graphs'),
-      filters: [{ name: 'Loop graph', extensions: ['json'] }],
+      filters: [{ name: 'Graph file (.graph.json)', extensions: ['json'] }],
       properties: ['openFile'],
     });
     chosen = picked.canceled ? null : (picked.filePaths[0] ?? null);
@@ -3067,7 +3067,7 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
     log('loop editor window focused (already open)');
     return {
       kind: 'focused',
-      note: 'The loop editor is already open. It has been brought to the front — one editor, so two windows cannot edit the same file behind each other.',
+      note: 'The graph editor is already open. It has been brought to the front — one editor, so two windows cannot edit the same file behind each other.',
     };
   }
 
@@ -3087,7 +3087,7 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
       show: false,
       backgroundColor: '#101317',
       ...windowIcon(),
-      title: 'DSpatch — loop editor',
+      title: 'DSpatch — graph editor',
       // Deliberately no `parent` and no `modal`. See above.
       webPreferences: {
         preload: path.join(__dirname, '..', 'preload', 'preload.js'),
@@ -3156,7 +3156,7 @@ function openLoopEditorWindow(): LoopEditorWindowOutcome {
     log('loop editor window opened');
     return {
       kind: 'opened',
-      note: 'The loop editor is open in its own window. The chat and any running loop are unaffected; closing the editor leaves them as they are.',
+      note: 'The graph editor is open in its own window. The chat and any graph run are unaffected; closing the editor leaves them as they are.',
     };
   } catch (error) {
     editorWindow = null;
@@ -3532,7 +3532,7 @@ function startPanelTrial(): void {
     // The editor already has its own drawing open when the trial starts, so "something
     // is on the canvas" is not evidence that it is the right something.
     if (definition) {
-      if (!opened.noteText.includes('Opened the loop "')) {
+      if (!opened.noteText.includes('Opened the graph "')) {
         fail(`the definition was not opened as a loop: ${opened.noteText}`);
         return;
       }
@@ -4644,10 +4644,10 @@ function registerIpc(): void {
     );
     rendererReady = true;
     completeSmokeRunIfReady();
-    if (process.env['DSPATCH_EDITOR_AUTORUN'] === '1' && ready.headingText === 'Loop editor') {
+    if (process.env['DSPATCH_EDITOR_AUTORUN'] === '1' && ready.headingText === 'Graph editor') {
       startEditorAutorun();
     }
-    if (ready.headingText === 'Loop editor') {
+    if (ready.headingText === 'Graph editor') {
       startPanelTrial();
     }
   });
@@ -5101,9 +5101,9 @@ function registerLoopGraphIpc(): void {
       }
       // A dialog taking either kind; the host decides by what the file says it is.
       const picked = await pickers.showOpenDialog({
-        title: 'Open a loop or a graph',
+        title: 'Open a graph definition or a graph file',
         defaultPath: ownRoot === null ? undefined : path.join(ownRoot, '.dspatch', 'loops'),
-        filters: [{ name: 'Loop definition or graph', extensions: ['json'] }],
+        filters: [{ name: 'Graph definition (.loop.json) or graph file', extensions: ['json'] }],
         properties: ['openFile'],
       });
       if (picked.canceled || picked.filePaths.length === 0) {
@@ -5206,12 +5206,12 @@ function registerLoopGraphIpc(): void {
     async (_event, definitionPath: string | null): Promise<LoopDefinitionChooseOutcome> => {
       let asked = definitionPath;
       if (asked === null && chatRunMode) {
-        asked = scriptedFilePick('Open loop…');
+        asked = scriptedFilePick('Open graph…');
       } else if (asked === null) {
         const picked = await pickers.showOpenDialog({
-          title: 'Open a loop definition',
+          title: 'Open a graph definition',
           defaultPath: ownRoot === null ? undefined : path.join(ownRoot, '.dspatch', 'loops'),
-          filters: [{ name: 'Loop definition', extensions: ['json'] }],
+          filters: [{ name: 'Graph definition (.loop.json)', extensions: ['json'] }],
           properties: ['openFile'],
         });
         asked = picked.canceled ? null : (picked.filePaths[0] ?? null);
@@ -5251,7 +5251,7 @@ function registerLoopGraphIpc(): void {
     if (waiting.as !== 'loop') {
       const settled = await settleUnsavedDrawingBeforeRedraw();
       if (!settled.go) {
-        return { kind: 'failed', note: 'The loop editor kept its unsaved drawing, so the loop was not opened.' };
+        return { kind: 'failed', note: 'The graph editor kept its unsaved drawing, so the graph was not opened.' };
       }
     }
     graphToEdit = waiting;
@@ -5364,7 +5364,7 @@ function registerLoopGraphIpc(): void {
           return {
             kind: 'refused',
             reason:
-              `Nothing was started. The loop editor is holding unsaved changes to ` +
+              `Nothing was started. The graph editor is holding unsaved changes to ` +
               `${pendingSave.path}, which is the file a run reads, and you chose not to save ` +
               `them — so DSpatch did not run the older version on disk behind your drawing. ` +
               `Save in the editor, or send again and choose Save and run.`,

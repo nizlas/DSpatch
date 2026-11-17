@@ -109,7 +109,7 @@ export function parseLoopDefinition(text: string): LoopDefinitionParse {
     error(
       'not-json',
       '',
-      `This file is not valid JSON, so it cannot be read as a loop definition and has ` +
+      `This file is not valid JSON, so it cannot be read as a graph definition and has ` +
         `not been changed: ${describe(cause)}`,
     );
     return { ok: false, definition: null, findings };
@@ -119,7 +119,7 @@ export function parseLoopDefinition(text: string): LoopDefinitionParse {
     error(
       'not-an-object',
       '',
-      'A loop definition is a JSON object. This file contains something else, so there ' +
+      'A graph definition is a JSON object. This file contains something else, so there ' +
         'is nothing to load.',
     );
     return { ok: false, definition: null, findings };
@@ -129,9 +129,9 @@ export function parseLoopDefinition(text: string): LoopDefinitionParse {
     error(
       'wrong-format',
       '/format',
-      `This does not look like a loop definition: its "format" is ` +
-        `${JSON.stringify(parsed['format']) ?? 'absent'}, and a loop definition says ` +
-        `"${LOOP_DEFINITION_FORMAT}". A loop graph is a different file and is pointed ` +
+      `This does not look like a graph definition: its "format" is ` +
+        `${JSON.stringify(parsed['format']) ?? 'absent'}, and a graph definition says ` +
+        `"${LOOP_DEFINITION_FORMAT}". A graph file is a different file and is pointed ` +
         `at by "graph" rather than named here.`,
     );
     return { ok: false, definition: null, findings };

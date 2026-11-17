@@ -129,8 +129,8 @@ export class LoopRunController implements RunControlPort {
       accepted: true,
       note:
         action.choice === 'interactive'
-          ? 'Handing over to interactive work. The loop will start nothing more.'
-          : `Continuing in the loop: "${pending.nodeLabel}" goes on in its own session, and it will not ` +
+          ? 'Handing over to interactive work. The graph run will start nothing more.'
+          : `Continuing the run: "${pending.nodeLabel}" goes on in its own session, and it will not ` +
             'recommend this again in this run.',
       report: this.report(),
     };
@@ -148,7 +148,7 @@ export class LoopRunController implements RunControlPort {
    */
   requestPause(): LoopControlOutcome {
     if (this.runId === null) {
-      return { accepted: false, note: 'No loop is running, so there is nothing to pause.', report: this.report() };
+      return { accepted: false, note: 'No graph run is in progress, so there is nothing to pause.', report: this.report() };
     }
     this.change({ kind: 'request-pause' });
     const inFlight = this.state.inFlight;
@@ -166,7 +166,7 @@ export class LoopRunController implements RunControlPort {
   /** Clear any pause and let exactly one held work step start. */
   continueRun(): LoopControlOutcome {
     if (this.runId === null) {
-      return { accepted: false, note: 'No loop is running, so there is nothing to continue.', report: this.report() };
+      return { accepted: false, note: 'No graph run is in progress, so there is nothing to continue.', report: this.report() };
     }
     this.change({ kind: 'continue' });
     return {
@@ -247,8 +247,8 @@ export class LoopRunController implements RunControlPort {
         ? 'It has no work step running at this moment, but it has not ended.'
         : `"${inFlight.nodeLabel}" is running in it right now.`;
     return (
-      `A loop run is already in progress (${this.runId ?? 'unknown'}). ${doing} DSpatch runs one ` +
-      `loop at a time, so this one was not started: no step was begun, nothing was reset and the ` +
+      `A graph run is already in progress (${this.runId ?? 'unknown'}). ${doing} DSpatch runs one ` +
+      `graph at a time, so this one was not started: no step was begun, nothing was reset and the ` +
       `run already going was not disturbed. Let it finish or cancel it, then start this one.`
     );
   }
@@ -347,7 +347,7 @@ export class LoopRunController implements RunControlPort {
             detail:
               choice === 'interactive'
                 ? `You chose to continue interactively after "${request.nodeLabel}" recommended it.`
-                : `You chose to continue in the loop; "${request.nodeLabel}" goes on in its own session.`,
+                : `You chose to continue the run; "${request.nodeLabel}" goes on in its own session.`,
             waitedMs: this.now() - heldAt,
           };
         }

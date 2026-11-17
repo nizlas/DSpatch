@@ -76,7 +76,7 @@ export function attentionWords(attention: StepAttention | null): string | null {
     case 'question':
       return 'Waiting for your answer.';
     case 'action':
-      return 'Asks you to decide: continue in the loop or interactively.';
+      return 'Asks you to decide: continue the run or interactively.';
     case null:
       return null;
   }

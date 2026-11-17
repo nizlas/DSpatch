@@ -3113,13 +3113,13 @@ function Workbench({
                       },
                       () => {
                         setEditorWindowNote(
-                          'The loop editor window could not be opened, and DSpatch did not get a reason.',
+                          'The graph editor window could not be opened, and DSpatch did not get a reason.',
                         );
                       },
                     );
                   }}
                 >
-                  Edit agent loops
+                  Graph editor
                 </button>
                 <button
                   type="button"
@@ -3366,7 +3366,7 @@ function Workbench({
                         {running.earlier.length} earlier step
                         {running.earlier.length === 1 ? '' : 's'} in this run
                       </summary>
-                      <ol className="loop-log" aria-label="Loop log" data-ev="loop-log">
+                      <ol className="loop-log" aria-label="Run log" data-ev="loop-log">
                         {running.earlier.map((line, index) => (
                           <li key={`${String(index)}-${line}`}>{line}</li>
                         ))}
@@ -3497,7 +3497,7 @@ function Workbench({
                   // "beside this box" until DSP-85 moved the chooser into the graph editor.
                   // The tick is unchanged and the sentence has to keep pointing at where the
                   // choice is actually made, or it names a control that is not there.
-                  title="Send runs the chosen loop"
+                  title="Send runs the chosen workflow"
                 >
                   <input
                     type="checkbox"
@@ -3560,14 +3560,14 @@ function Workbench({
                       });
                     }}
                   />
-                  Use loop
+                  Use workflow
                 </label>
                 )}
                 {/* DSP-209 S26 (R7): what the tick does, readable and open until closed, not only on hover. */}
                 {session.origin !== 'no-workspace' && (
                   <details className="inline-help" data-ev="use-loop-help">
                     <summary>What is this?</summary>
-                    When on, Send runs the loop chosen in the graph editor, on this project. Off is ordinary single-agent chat.
+                    When on, Send runs the workflow chosen in the graph editor, on this project. Off is ordinary single-agent chat.
                   </details>
                 )}
                 {/*
@@ -3664,7 +3664,7 @@ function Workbench({
                     What this applies to
                   </summary>
                   <span className="model__note" data-ev="model-affects">
-                    for your next message here. A loop run uses the model it was started with.
+                    for your next message here. A graph run uses the model it was started with.
                   </span>
                 </details>
                 {/*
@@ -4213,7 +4213,7 @@ function SteeringFactsSection({
                 {instruction.text.length > 80 ? `${instruction.text.slice(0, 80)}…` : instruction.text}
               </p>
               <p className="files__meta">
-                {loopInstructionStatusText(instruction)} · {instruction.scope === 'chat' ? 'chat turn' : 'loop run'}{' '}
+                {loopInstructionStatusText(instruction)} · {instruction.scope === 'chat' ? 'chat turn' : 'graph run'}{' '}
                 {instruction.runId} · received {instruction.receivedAtUtc}
                 {instruction.delivered === null ? '' : ` · delivered ${instruction.delivered.atUtc}`}
                 {instruction.delivered?.during === true ? ' · by the runtime’s steering' : ''}
@@ -6948,10 +6948,10 @@ function LoopTurnEntry({
         reason the rest of this file gives: one wording, in the place with the test.
       */}
       <p className="turn__loop-mark" data-ev={`${at}-mark`}>
-        Loop run · {caption.asCode ? <code>{caption.text}</code> : caption.text} ·{' '}
+        Graph run · {caption.asCode ? <code>{caption.text}</code> : caption.text} ·{' '}
         {turn.restoredFrom === 'record'
           ? 'read back from this conversation’s saved record — history, not something in flight'
-          : 'your assignment, run by the loop'}
+          : 'your assignment, run by the workflow'}
       </p>
       <UserMessage text={turn.mandate} testId={`${at}-mandate`} />
       {/*
@@ -8318,7 +8318,7 @@ function FolderSidebar({
           type="button"
           className="button button--quiet"
           data-ev="add-folder"
-          title="Add a folder to this workspace. The agent works in it from its next message, in the chat and in loops; the first folder stays where commands start."
+          title="Add a folder to this workspace. The agent works in it from its next message, in the chat and in graph runs; the first folder stays where commands start."
           onClick={onAdd}
         >
           Add…

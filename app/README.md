@@ -233,10 +233,10 @@ renderer development server on port 5273 and opens Electron against it.
 `strictPort` fixes the port: startup fails if it is occupied rather than
 silently switching ports.
 
-The chat window has **Edit agent loops** (the graph editor at `#editor`; the
-editor has **Back to chat**) and **Use loop**. With Use loop off, Send is the
-ordinary single-agent chat. With it on, Send walks
-`docs/loop/graphs/dspatch-chat-loop.graph.json` on the project already open;
+The chat window has **Graph editor** (the graph editor at `#editor`; the
+editor has **Back to chat**) and **Use workflow**. With Use workflow off, Send is the
+ordinary single-agent chat. With it on, Send runs the chosen agent execution graph
+(by default `docs/loop/graphs/dspatch-chat-loop.graph.json`) on the project already open;
 the composer text is the entry mandate. `npm run editor` opens the editor
 directly.
 
@@ -245,7 +245,7 @@ Ctrl and `-`, and Ctrl and `0` for normal size, with the keypad's own keys too, 
 the same three items in each window's View menu. One press is one of VS Code's
 steps (zoom level ±1, scale 1.2 to its power, bounded to −8..8). The level is kept
 per window identity in the client's user data (`window-zoom.json`: the chat, the
-loop editor, a review of a definition, a review of a revision pair, the review's
+graph editor, a review of a definition, a review of a revision pair, the review's
 panel in its own window, and the host chooser) and applied before the page is
 shown when such a window opens again. A docked review panel follows the window it
 is in; in its own window it has a level of its own.
@@ -859,7 +859,7 @@ happens, and the window says which:
   session — history only*, and Enter keeps your text in the box with a note naming
   the way forward (*Try again or start a new session to send.*) instead of sending
   it to be refused, and an earlier attempt with no known outcome does not take that
-  note's place or offer *Send anyway* meanwhile; with *Use loop* on, a loop run is
+  note's place or offer *Send anyway* meanwhile; with *Use workflow* on, a graph run is
   unaffected, since it opens sessions of its own, and the status then reads as it
   normally would. The diagnostics — the service's full statement, the failure's own
   words, the provider's code, the session tried, the adapter, what the resume call
@@ -1160,7 +1160,7 @@ for the same reason, though the lingering process itself is still DSP-62. Removi
 old sample folders is a separate action, under **Project → Old sample projects…**.
 
 `loop-result` also makes **no provider call**, and it is the first scenario to walk a
-real loop run without one. It opens a project, ticks *Use loop*, sends one mandate,
+real graph run without one. It opens a project, ticks *Use workflow*, sends one mandate,
 waits for the run to report an end, and then reads the **run record the main process
 wrote to disk**: a filed result with its bytes and digest, one provider session per
 agent node, and the work step's own words inside the checking step's prompt. The run

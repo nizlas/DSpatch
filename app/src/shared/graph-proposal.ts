@@ -137,10 +137,10 @@ export interface ProposalInput {
 export function createProposal(input: ProposalInput, options: CheckOptions = {}): GraphEditProposal {
   const newLoop = isNewLoopTarget(input.target);
   if (newLoop && input.baseText !== null) {
-    throw new Error('A proposal for a new loop has no base text.');
+    throw new Error('A proposal for a new graph has no base text.');
   }
   if (!newLoop && input.baseText === null) {
-    throw new Error('A proposal for an existing loop needs the graph text it was made against.');
+    throw new Error('A proposal for an existing graph needs the graph text it was made against.');
   }
   const loaded = loadLoopGraph(input.graphText, options);
   const after = parseLoopGraph(input.graphText);
@@ -220,13 +220,13 @@ export function applyProposal(proposal: GraphEditProposal, disk: DiskState): App
   const graphPath = targetGraphPath(proposal.target);
   if (isNewLoopTarget(proposal.target)) {
     if (disk.graph !== null) {
-      reasons.push(`${graphPath} already exists, and a new loop never replaces a file.`);
+      reasons.push(`${graphPath} already exists, and a new graph never replaces a file.`);
     }
     const definitionPath = proposal.target.newLoop.definitionPath;
     if (disk.definition === undefined) {
       reasons.push(`What ${definitionPath} holds was not established.`);
     } else if (disk.definition !== null) {
-      reasons.push(`${definitionPath} already exists, and a new loop never replaces a file.`);
+      reasons.push(`${definitionPath} already exists, and a new graph never replaces a file.`);
     }
   } else if (disk.graph === null) {
     reasons.push(`${graphPath} no longer exists.`);
@@ -759,11 +759,11 @@ export function summariseProposal(proposal: Pick<GraphEditProposal, 'target' | '
   let change: string;
   if (isNew && graph !== null) {
     const endings = graph.nodes.filter((node) => node.kind === 'terminal').length;
-    change = `A new loop: ${count(graph.nodes.length - endings, 'step')} and ${count(endings, 'ending')}, ${count(graph.edges.length, 'connection')}${roles}.`;
+    change = `A new graph: ${count(graph.nodes.length - endings, 'step')} and ${count(endings, 'ending')}, ${count(graph.edges.length, 'connection')}${roles}.`;
   } else if (proposal.change === null) {
     change = 'The change could not be described; the details say why.';
   } else if (proposal.change.unchanged) {
-    change = proposal.roleFiles.length === 0 ? 'No change to the loop.' : `No change to the graph${roles}.`;
+    change = proposal.roleFiles.length === 0 ? 'No change to the graph.' : `No change to the graph${roles}.`;
   } else if (proposal.change.layoutOnly) {
     change = `Only the layout: ${count(proposal.change.moved.length, 'step')} moved.`;
   } else {
@@ -776,7 +776,7 @@ export function summariseProposal(proposal: Pick<GraphEditProposal, 'target' | '
       edges.added.length === 0 ? '' : `${count(edges.added.length, 'connection')} added`,
       edges.removed.length === 0 ? '' : `${count(edges.removed.length, 'connection')} removed`,
       edges.changed.length === 0 ? '' : `${count(edges.changed.length, 'connection')} changed`,
-      proposal.change.graph.length === 0 ? '' : 'the loop’s own settings changed',
+      proposal.change.graph.length === 0 ? '' : 'the graph’s own settings changed',
     ].filter((part) => part !== '');
     change = parts.length === 0 ? `Changes the file's order only${roles}.` : `Changes: ${parts.join(', ')}${roles}.`;
   }

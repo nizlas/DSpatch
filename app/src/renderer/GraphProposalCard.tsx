@@ -44,14 +44,14 @@ const STATUS_WORDS: Readonly<Record<ProposalStatus, string>> = {
   applied: 'Applied — written to disk',
   discarded: 'Discarded — nothing was written',
   superseded: 'Superseded by a later proposal — nothing was written',
-  conflict: 'Not applied — the loop changed since',
+  conflict: 'Not applied — the graph changed since',
 };
 
 /** The paths a proposal would write, graph first, in full. */
 export function proposalPaths(proposal: GraphEditProposal): readonly { readonly what: string; readonly path: string }[] {
   return [
     { what: isNewLoopTarget(proposal.target) ? 'New graph file' : 'Graph file (replaced)', path: targetGraphPath(proposal.target) },
-    ...(isNewLoopTarget(proposal.target) ? [{ what: 'New loop definition', path: proposal.target.newLoop.definitionPath }] : []),
+    ...(isNewLoopTarget(proposal.target) ? [{ what: 'New graph definition', path: proposal.target.newLoop.definitionPath }] : []),
     ...proposal.roleFiles.map((file) => ({ what: 'New role file', path: file.path })),
   ];
 }
@@ -153,7 +153,7 @@ export function GraphProposalCard({
         {STATUS_WORDS[proposal.status]}
       </p>
       <p className="graph-proposal__name" data-ev="graph-proposal-name">
-        {summary.isNew ? 'New loop: ' : 'Change to '}
+        {summary.isNew ? 'New graph: ' : 'Change to '}
         <strong>{summary.loopName}</strong>
       </p>
       {summary.purpose === null ? null : <p className="graph-proposal__purpose">{summary.purpose}</p>}
@@ -211,7 +211,7 @@ export function GraphProposalCard({
             className="button"
             data-ev="graph-proposal-open"
             disabled={busy}
-            title="Choose this loop and open it as it is on disk"
+            title="Choose this graph and open it as it is on disk"
             onClick={() => openEditor(editorOpenFor(proposal))}
           >
             Open in editor
@@ -226,8 +226,8 @@ export function GraphProposalCard({
       <p className="graph-proposal__hint">
         {open
           ? isNewLoopTarget(proposal.target)
-            ? 'Preview shows it in the editor now; Open in editor works once it is applied. Apply never runs the loop.'
-            : 'Preview shows this proposal; Open in editor chooses the loop and shows it as it is on disk. Neither runs it.'
+            ? 'Preview shows it in the editor now; Open in editor works once it is applied. Apply never runs the graph.'
+            : 'Preview shows this proposal; Open in editor chooses the graph and shows it as it is on disk. Neither runs it.'
           : 'This proposal is no longer open, so it cannot be applied. Preview still shows what it proposed.'}
       </p>
       {note === null ? null : (
@@ -242,7 +242,7 @@ export function GraphProposalCard({
         </summary>
         {summary.wholePurpose === null ? null : (
           <>
-            <p className="graph-proposal__label">The loop's purpose:</p>
+            <p className="graph-proposal__label">The graph's purpose:</p>
             <p className="graph-proposal__purpose-whole">{summary.wholePurpose}</p>
           </>
         )}

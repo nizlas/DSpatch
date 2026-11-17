@@ -295,7 +295,7 @@ function standingOf(record: FinalCardRecord, journal: readonly RunJournalEntry[]
     default:
       return {
         status: 'failed',
-        reason: ending.note.trim() === '' ? 'DSpatch could not run the loop.' : ending.note,
+        reason: ending.note.trim() === '' ? 'DSpatch could not run the graph.' : ending.note,
         nextAction: 'Check the project before anything is repeated: the outcome is unknown.',
         nextActionSource: 'runtime',
       };

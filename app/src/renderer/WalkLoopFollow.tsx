@@ -441,7 +441,7 @@ function FollowRun({ bridge, start }: { readonly bridge: ReviewPairBridge; reado
         )}
         <Pannable className="fw-graph editor-canvas" data-ev="follow-graph">
           {graph === null ? (
-            <p className="fw-muted fw-graph-empty">{view === null ? 'The loop is drawn once the run has started.' : 'The run\'s drawing could not be loaded.'}</p>
+            <p className="fw-muted fw-graph-empty">{view === null ? 'The graph is drawn once the run has started.' : 'The run\'s drawing could not be loaded.'}</p>
           ) : (
             <GraphCanvas
               graph={graph}

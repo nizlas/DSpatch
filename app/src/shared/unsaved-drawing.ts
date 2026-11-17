@@ -79,10 +79,10 @@ export function describeUnsavedDrawingQuestion(input: {
 }): UnsavedDrawingQuestion {
   if (input.occasion === 'run') {
     return {
-      title: 'Unsaved changes to the loop that is about to run',
+      title: 'Unsaved changes to the graph that is about to run',
       message: `Save your changes to "${input.graphName}" and run them?`,
       detail:
-        `A run reads ${input.path} from disk, and the drawing in the loop editor has ` +
+        `A run reads ${input.path} from disk, and the drawing in the graph editor has ` +
         `changes that are not in that file yet.\n\n` +
         `Save and run writes those changes and walks them. Cancel starts nothing and ` +
         `leaves both the file and your drawing exactly as they are.`,
@@ -96,11 +96,11 @@ export function describeUnsavedDrawingQuestion(input: {
     // to be reloaded so they read what was saved. Reloading the editor would draw the file
     // on disk over the drawing, so the drawing is asked about first.
     return {
-      title: 'Unsaved changes in the loop editor',
-      message: `Save your changes to "${input.graphName}" before the loop editor is reloaded?`,
+      title: 'Unsaved changes in the graph editor',
+      message: `Save your changes to "${input.graphName}" before the graph editor is reloaded?`,
       detail:
         `DSpatch's project host was restarted, and the windows are reloaded so that they ` +
-        `read what was saved. The loop editor is holding changes to ${input.path} that are ` +
+        `read what was saved. The graph editor is holding changes to ${input.path} that are ` +
         `not in that file yet, and reloading it draws the file as it is on disk.\n\n` +
         `Save writes your changes and then reloads the editor. Discard changes reloads it ` +
         `without writing, and your edits are gone. Keep the editor as it is leaves the ` +
@@ -115,11 +115,11 @@ export function describeUnsavedDrawingQuestion(input: {
     title: 'Unsaved changes to the drawing on screen',
     message: `Save your changes to "${input.graphName}" before drawing something else?`,
     detail:
-      `The loop editor is holding changes to ${input.path} that are not in that file ` +
+      `The graph editor is holding changes to ${input.path} that are not in that file ` +
       `yet, and the canvas is about to be drawn with something else.\n\n` +
       `Save writes those changes and then switches. Discard changes switches without ` +
       `writing, and your edits are gone. Cancel switches nothing and leaves the file, ` +
-      `your drawing and the loop selected for the next run exactly as they are.`,
+      `your drawing and the graph selected for the next run exactly as they are.`,
     buttons: ['Save', 'Discard changes', 'Cancel'],
     answers: ['save', 'discard', 'cancel'],
     cancelId: 2,
@@ -140,8 +140,8 @@ export function describeUnsavedDrawingQuestion(input: {
  */
 export function describeSwitchKept(path: string): string {
   return (
-    `Nothing was switched. The loop editor is holding unsaved changes to ${path}, and you ` +
-    `chose to keep them, so your drawing is still on the canvas and the loop selected for ` +
+    `Nothing was switched. The graph editor is holding unsaved changes to ${path}, and you ` +
+    `chose to keep them, so your drawing is still on the canvas and the graph selected for ` +
     `the next run has not moved. Save in the editor, or choose again and answer Save or ` +
     `Discard changes.`
   );

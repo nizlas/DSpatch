@@ -222,7 +222,7 @@ export function LoopEditor(): React.JSX.Element {
   const [savedText, setSavedText] = useState<string | null>(null);
   const [roles, setRoles] = useState<ReadonlyMap<string, ResolvedRole | null>>(new Map());
   const [refusal, setRefusal] = useState<readonly Finding[] | null>(null);
-  const [note, setNote] = useState('Choosing a loop above draws it here.');
+  const [note, setNote] = useState('Choosing a graph above draws it here.');
   /** DSP-147: the attempts a refused live run waits for someone to name. */
   const [runNeedsAcknowledgement, setRunNeedsAcknowledgement] = useState<readonly AttemptRef[] | null>(null);
   /**
@@ -754,7 +754,7 @@ export function LoopEditor(): React.JSX.Element {
         return 'switched';
       } catch {
         setChoiceError(
-          'DSpatch could not reach the main process to choose a loop, so nothing was ' +
+          'DSpatch could not reach the main process to choose a graph, so nothing was ' +
             'selected and the next mandate still walks whatever it walked before.',
         );
         return 'unchanged';
@@ -1494,7 +1494,7 @@ export function LoopEditor(): React.JSX.Element {
 
   useEffect(() => {
     window.dspatch.reportReady({
-      headingText: 'Loop editor',
+      headingText: 'Graph editor',
       capabilityCount: NODE_KINDS.length,
       renderedAt: new Date().toISOString(),
     });
@@ -2523,7 +2523,7 @@ export function LoopEditor(): React.JSX.Element {
           now` while the control beside it said `Waiting for you`.
         */}
         <div className="editor-title">
-          <h1>Loop editor</h1>
+          <h1>Graph editor</h1>
           <p data-ev="editor-title-line">
             {`${graph === null ? 'No graph open' : graph.name}${
               // The loop's name when a declaration was the way in, because that is
@@ -2627,8 +2627,8 @@ export function LoopEditor(): React.JSX.Element {
             them landing on whatever node ids happened to match. The lock lifts by itself
             when the run ends (#5), so nothing has to be pressed to choose again.
           */}
-          <label className="editor-loop" title="The loop the next mandate walks">
-            Loop
+          <label className="editor-loop" title="The graph the next mandate runs">
+            Graph
             <select
               data-ev="editor-loop-definition"
               value={chosenLoop?.key ?? ''}
@@ -2697,7 +2697,7 @@ export function LoopEditor(): React.JSX.Element {
             title={locked ? 'Held while a run walks' : 'Choose a .loop.json from anywhere'}
             onClick={() => void chooseLoop(null)}
           >
-            Open loop…
+            Open graph…
           </button>
           <button
             type="button"
@@ -2759,7 +2759,7 @@ export function LoopEditor(): React.JSX.Element {
             type="button"
             className="editor-run"
             disabled={!liveRun.enabled}
-            title={liveRun.enabled ? 'Run this loop on the project' : 'Cannot run now: see Details'}
+            title={liveRun.enabled ? 'Run this graph on the project' : 'Cannot run now: see Details'}
             onClick={() => void liveRunCanvas()}
           >
             Run
@@ -2949,14 +2949,14 @@ export function LoopEditor(): React.JSX.Element {
                   text: [choice.display.error, choice.display.dependency].filter((part): part is string => part !== null).join(' '),
                 })),
               {
-                label: 'Open loop…',
-                text: 'Choose a .loop.json from anywhere. It joins the list beside this button, is drawn here, and becomes the loop the next mandate walks. It starts nothing.',
+                label: 'Open graph…',
+                text: 'Choose a .loop.json from anywhere. It joins the list beside this button, is drawn here, and becomes the graph the next mandate runs. It starts nothing.',
               },
               ...(locked
                 ? [
                     {
                       label: 'While a run walks',
-                      text: 'The loop choice, Open loop…, Save, Dry-run and editing are held: a run keeps the version it started with, and a second walk would put its own marks on the same nodes. They unlock by themselves when the run ends.',
+                      text: 'The graph choice, Open graph…, Save, Dry-run and editing are held: a run keeps the version it started with, and a second walk would put its own marks on the same nodes. They unlock by themselves when the run ends.',
                     },
                   ]
                 : []),
@@ -3015,7 +3015,7 @@ export function LoopEditor(): React.JSX.Element {
         {editingOff ? (
           <span className={`editor-palette-title${previewing && !locked && !inRun ? ' editor-preview-note' : ''}`} data-ev="editor-held">
             {inRun
-              ? 'Run view: the drawing is the one this run walked. Back to editing changes the loop.'
+              ? 'Run view: the drawing is the one this run walked. Back to editing changes the graph.'
               : locked
               ? 'Editing is held while this run walks'
               : 'Proposal preview, not applied: nothing here is saved or run. Apply it in the chat to write it.'}
@@ -3146,7 +3146,7 @@ export function LoopEditor(): React.JSX.Element {
                 <p>
                   {recordedRun.kind === 'found' && recordedRun.problem !== null
                     ? recordedRun.problem
-                    : 'There is no run to show here: this loop has no run in memory or on record, or its graph could not be read.'}
+                    : 'There is no run to show here: this graph has no run in memory or on record, or its graph could not be read.'}
                 </p>
                 <button type="button" className="button" onClick={() => setMode((current) => editorModeAfter(current, 'back-to-editing'))}>
                   Back to editing
@@ -3253,13 +3253,13 @@ export function LoopEditor(): React.JSX.Element {
           <fieldset className="inspector-lock" disabled={locked} data-ev="inspector-lock">
           {graph === null ? (
             <p className="muted">
-              Nothing is open. The <strong>Loop</strong> chooser above lists the loops
+              Nothing is open. The <strong>Graph</strong> chooser above lists the graphs
               declared in the folders DSpatch has open; picking one draws it here and
-              makes it the loop the next mandate walks, in one act, and starts nothing.{' '}
-              <strong>Open loop…</strong> reaches a declaration filed anywhere else and
+              makes it the graph the next mandate runs, in one act, and starts nothing.{' '}
+              <strong>Open graph…</strong> reaches a declaration filed anywhere else and
               adds it to that same list. To edit a graph file on its own, use{' '}
               <strong>File → Open Graph File…</strong>: a .graph.json has no declaration
-              behind it, so it is not a loop and opening one leaves the chosen loop
+              behind it, so it is not a selectable workflow and opening one leaves the chosen graph
               exactly where the chooser says it is.
             </p>
           ) : selectedNode !== null ? (
@@ -3545,8 +3545,8 @@ function RefusalPanel({
       <div className="refusal">
         <h2>No graph open</h2>
         <p>
-          Pick a loop from the chooser above — that draws it and selects it for the next
-          mandate together — or reach one filed elsewhere with “Open loop…”. A graph file
+          Pick a graph from the chooser above — that draws it and selects it for the next
+          mandate together — or reach one filed elsewhere with “Open graph…”. A graph file
           on its own opens from File → Open Graph File… and chooses nothing.
         </p>
       </div>
@@ -3630,7 +3630,7 @@ function RequirementBadge({
       : enforcement === 'other-means'
         ? ['instruction only', 'support-stated', 'Held by instruction only: the agent is told and trusted to follow it']
         : enforcement === 'unmet'
-          ? ['not supported', 'support-inert', 'The agent that runs the loop cannot meet this, so a run is refused']
+          ? ['not supported', 'support-inert', 'The agent that runs the graph cannot meet this, so a run is refused']
           : ['not established', 'support-stated', 'Nobody has established what the agent does about this'];
   return (
     <span className={`support ${className}`} data-ev={`requirement-${enforcement}`} title={title}>
@@ -3858,7 +3858,7 @@ function NodeInspector({
                 data-ev="node-role-open"
                 onClick={() => {
                   if (resourceRoot === null) {
-                    onNote('There is no open loop, so there is no folder to measure the role path from.');
+                    onNote('There is no open graph, so there is no folder to measure the role path from.');
                     return;
                   }
                   void window.dspatch
@@ -3893,7 +3893,7 @@ function NodeInspector({
           ) : role === null ? (
             <p className="broken-note">
               Nothing was found at <code>{node.role.source.path}</code>, measured from{' '}
-              <code>{resourceRoot ?? 'the loop’s own folder'}</code>. An agent with no description is
+              <code>{resourceRoot ?? 'the graph’s own folder'}</code>. An agent with no description is
               an agent that will be handed whatever the runner happens to have, so the run is refused
               before it starts. Fix the path in Advanced below, or write the file.
             </p>
@@ -4139,7 +4139,7 @@ function NodeInspector({
               </select>
             </label>
             <label>
-              Path, measured from <code>{resourceRoot ?? 'the loop’s own folder'}</code>
+              Path, measured from <code>{resourceRoot ?? 'the graph’s own folder'}</code>
               <input
                 value={node.role.source.path}
                 onChange={(event) =>
@@ -4484,7 +4484,7 @@ function NodeInspector({
           <legend>Failures it may declare</legend>
           {graph.failureKinds.length === 0 ? (
             <p className="muted">
-              This loop declares no failures at all, so no step can end by reporting one. Every way
+              This graph declares no failures at all, so no step can end by reporting one. Every way
               out is an outcome or plain success.
             </p>
           ) : (
@@ -4828,7 +4828,7 @@ function GraphInspector({
         <input value={graph.id} onChange={(event) => onChange({ ...graph, id: event.target.value })} />
       </label>
       <label>
-        Purpose — what kind of work this loop is for
+        Purpose — what kind of work this graph is for
         <textarea
           rows={4}
           value={graph.purpose}
@@ -4846,7 +4846,7 @@ function GraphInspector({
         </select>
       </label>
       <p className="muted" data-ev="loop-run-agent">
-        {agentLine ?? 'Which agent runs this loop is being read.'} The agent and its model are
+        {agentLine ?? 'Which agent runs this graph is being read.'} The agent and its model are
         chosen in the chat.
       </p>
       <p className="muted">
@@ -4876,7 +4876,7 @@ function GraphInspector({
           </select>
         </label>
         <p className="muted">
-          Which framework's agent files this loop's roles would be generated for, for use
+          Which framework's agent files this graph's roles would be generated for, for use
           outside DSpatch. Stored in the file. DSpatch's own runs do not use it: they read the
           roles' common instructions and run with the agent and model chosen in the chat, and
           the steps' requirements are checked against that agent.
@@ -4917,7 +4917,7 @@ function GraphInspector({
       </fieldset>
 
       <fieldset>
-        <legend>Failures this loop routes on</legend>
+        <legend>Failures this graph routes on</legend>
         {graph.failureKinds.length === 0 ? (
           <p className="muted">None, so no step can end by reporting one.</p>
         ) : (

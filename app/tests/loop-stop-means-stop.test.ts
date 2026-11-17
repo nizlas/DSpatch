@@ -309,7 +309,7 @@ describe('the loop control is claimed inside the try that releases it', () => {
     assert.equal(later.started, false, 'this is the state the guard exists to prevent');
     assert.match(
       later.note,
-      /A loop run is already in progress \(editor-live-2026-09-18T09-00-00-000Z\)/,
+      /A graph run is already in progress \(editor-live-2026-09-18T09-00-00-000Z\)/,
       `the refusal names a run that is not walking, which is the unrecoverable state. It said: ${later.note}`,
     );
 

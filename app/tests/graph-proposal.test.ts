@@ -84,8 +84,8 @@ function proposalFor(baseText: string, graphText: string, id = 'p1'): GraphEditP
 }
 
 describe('bundled graphs', () => {
-  it('there are eight, and each loads without errors as it stands', () => {
-    assert.equal(bundled.length, 8);
+  it('there are nine, and each loads without errors as it stands', () => {
+    assert.equal(bundled.length, 9);
     for (const name of bundled) {
       const { text } = read(name);
       assert.ok(loadLoopGraph(text).ok, `${name} loads`);
@@ -355,7 +355,7 @@ describe('the card opens with a readable summary (DSP-209 S23b, Niclas 14 Novemb
     const endings = graph.nodes.filter((node) => node.kind === 'terminal').length;
     assert.equal(
       summariseProposal(proposal).change,
-      `A new loop: ${String(graph.nodes.length - endings)} steps and ${String(endings)} endings, ${String(graph.edges.length)} connections, and 1 new role.`,
+      `A new graph: ${String(graph.nodes.length - endings)} steps and ${String(endings)} endings, ${String(graph.edges.length)} connections, and 1 new role.`,
     );
     assert.equal(firstSentence('No sentence end here'), 'No sentence end here');
     assert.equal(firstSentence('One. Two.'), 'One.');

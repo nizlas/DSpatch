@@ -997,7 +997,7 @@ function removeWorkspaceFolder(folderPath: string): WorkspaceView {
  */
 /** Work under way in this host's open session, as a sentence. */
 function workInSession(): string | null {
-  return chatService.workRunning() ?? (runAudience.working() ? 'A loop run is in progress.' : null);
+  return chatService.workRunning() ?? (runAudience.working() ? 'A graph run is in progress.' : null);
 }
 
 /**
@@ -2312,7 +2312,7 @@ function registerLoopMethods(): void {
         return {
           revealed: false,
           note:
-            `${request.path} resolves outside ${root}, which is the folder this loop's roles are ` +
+            `${request.path} resolves outside ${root}, which is the folder this graph's roles are ` +
             `measured from. Nothing was opened.`,
         };
       }
@@ -2394,14 +2394,14 @@ function registerLoopMethods(): void {
       current === null
         ? 'in another window'
         : current.binding === 'chat-loop'
-          ? `from the chat window's Use loop, walking "${current.graphName}"`
+          ? `from the chat window's Use workflow, walking "${current.graphName}"`
           : `from the graph editor's Live run, walking "${current.graphName}"`;
     const howToStop =
       current?.binding === 'chat-loop'
-        ? 'Switching Use loop off cancels it without resetting files.'
+        ? 'Switching Use workflow off cancels it without resetting files.'
         : 'Cancel it first, or let it finish.';
     return (
-      `A loop run is already in progress — started ${where}. DSpatch runs one loop at a time, so ` +
+      `A graph run is already in progress — started ${where}. DSpatch runs one graph at a time, so ` +
       `this one was not started: no step was begun, no file was changed and the graph was not ` +
       `reset. ${howToStop}`
     );
@@ -2482,8 +2482,8 @@ function registerLoopMethods(): void {
       return {
         ok: false,
         note:
-          'No loop definition was found beside this project or in DSpatch\u2019s own ' +
-          'folder, and none was chosen. A loop is a `.loop.json` file in a folder\u2019s ' +
+          'No graph definition was found beside this project or in DSpatch\u2019s own ' +
+          'folder, and none was chosen. A graph definition is a `.loop.json` file in a folder\u2019s ' +
           '`.dspatch/loops/` directory.',
       };
     }
@@ -2629,7 +2629,7 @@ function registerLoopMethods(): void {
         return {
           refused: {
             kind: 'refused',
-            reason: 'Open a project first. Use loop walks the project already open in chat.',
+            reason: 'Open a project first. Use workflow runs on the project already open in chat.',
           },
         };
       }
@@ -2639,7 +2639,7 @@ function registerLoopMethods(): void {
             kind: 'failed',
             note:
               'DSpatch could not find its own working copy from where it is running, so it ' +
-              'cannot offer its own loop definitions. A definition beside the open project ' +
+              'cannot offer its own graph definitions. A definition beside the open project ' +
               'would still run.',
           },
         };
@@ -2960,7 +2960,7 @@ function registerLoopMethods(): void {
 
   handle('loop.cancelEditorRun', (): EditorLoopCancelOutcome => {
     if (editorLoopAbort === null) {
-      return { cancelled: false, note: 'No loop run is in progress.' };
+      return { cancelled: false, note: 'No graph run is in progress.' };
     }
     editorLoopAbort.abort();
     return {
@@ -2983,7 +2983,7 @@ function registerLoopMethods(): void {
       if (session === null) {
         return {
           kind: 'refused',
-          reason: 'Open a project first. Use loop walks the project already open in chat.',
+          reason: 'Open a project first. Use workflow runs on the project already open in chat.',
         };
       }
       if (ownRoot === null) {
@@ -2991,7 +2991,7 @@ function registerLoopMethods(): void {
           kind: 'failed',
           note:
             'DSpatch could not find its own working copy from where it is running, so it ' +
-            'cannot offer its own loop definitions. A definition beside the open project ' +
+            'cannot offer its own graph definitions. A definition beside the open project ' +
             'would still run.',
         };
       }
@@ -3094,17 +3094,17 @@ function registerLoopMethods(): void {
       // named it (an unconfirmed stop of a turn or a loop step). The rule a message meets.
       const uncertain = chatService.uncertainAgentWorkRefusal();
       if (uncertain !== null) {
-        return { kind: 'refused', reason: `${uncertain} The loop was not started.` };
+        return { kind: 'refused', reason: `${uncertain} The graph run was not started.` };
       }
       // DSP-147: no loop run while the person's own command runs in a folder of this
       // run's. Before the record is opened, so a refusal leaves nothing behind.
       const workClaim = WORKING_COPY_LOCK.claim({
         kind: 'agent-work',
         folders: workingRoots.map((root) => root.path),
-        label: 'a loop run',
+        label: 'a graph run',
       });
       if (!workClaim.ok) {
-        return { kind: 'refused', reason: `${workClaim.reason} The loop was not started.` };
+        return { kind: 'refused', reason: `${workClaim.reason} The graph run was not started.` };
       }
       // Opened before the walk starts and appended to as it happens, because DSP-25
       // #4 says an interrupted run must still leave understandable history — which
@@ -3589,13 +3589,13 @@ function registerLoopMethods(): void {
           kind: 'failed',
           result: null,
           inspection: null,
-          note: `The loop could not be run: ${note}`,
+          note: `The graph could not be run: ${note}`,
           modelRequested,
           cancelled: chatLoopAbort?.signal.aborted ?? false,
           messages: [...chatLoopMessages.values()],
           startHead,
         });
-        endedNote = `The loop could not be run: ${note}`;
+        endedNote = `The graph could not be run: ${note}`;
         return { kind: 'failed', note };
       } finally {
         // The run's identity rather than the announcement's, for the reason the
@@ -3704,7 +3704,7 @@ function registerLoopMethods(): void {
         return {
           kind: 'refused',
           reason:
-            'No loop run is working now, so there is nothing to add this to. Your text ' +
+            'No graph run is working now, so there is nothing to add this to. Your text ' +
             'has not been sent anywhere and is still in the box — send it again to start ' +
             'new work, or ask it as an ordinary question.',
         };
@@ -3923,8 +3923,8 @@ function registerLoopMethods(): void {
         return {
           kind: 'not-shown',
           note:
-            'A loop run is already on screen, so the graph view keeps showing the run ' +
-            'that is walking rather than the loop you have just chosen. Nothing was ' +
+            'A graph run is already on screen, so the graph view keeps showing the run ' +
+            'that is walking rather than the graph you have just chosen. Nothing was ' +
             'started or stopped.',
         };
       }
@@ -3934,7 +3934,7 @@ function registerLoopMethods(): void {
 
   handle('loop.cancelChatRun', (): ChatLoopCancelOutcome => {
     if (chatLoopAbort === null) {
-      return { cancelled: false, note: 'No chat loop is in progress.' };
+      return { cancelled: false, note: 'No graph run from the chat is in progress.' };
     }
     chatLoopAbort.abort();
     return {
@@ -4796,7 +4796,7 @@ function registerCoreMethods(): void {
     'host.busy',
     (): string | null =>
       chatService.workRunning() ??
-      (runAudience.working() ? 'A loop run is in progress.' : reviewAgentJobs?.working() === true ? 'A review job is running.' : null),
+      (runAudience.working() ? 'A graph run is in progress.' : reviewAgentJobs?.working() === true ? 'A review job is running.' : null),
   );
   handle('host.dataNotice', (): string | null => adoptionNotice(userDataDir()));
   handle('chat.runTest', (_event, request: TestRunRequest) => chatService.runWorkspaceTest(request));

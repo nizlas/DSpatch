@@ -576,7 +576,7 @@ describe('the run pins a version, and the window says so when the drawing is not
     );
     assert.ok(said !== null);
     assert.match(said, /Chat loop/);
-    assert.match(said, /A run uses the chosen loop/, `it said: ${said}`);
+    assert.match(said, /A run uses the chosen graph/, `it said: ${said}`);
     assert.doesNotMatch(said, /running|is walking/, 'nothing has been started');
   });
 });

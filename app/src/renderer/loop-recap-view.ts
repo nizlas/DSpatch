@@ -9,11 +9,11 @@
 /** Beside the composer, while a recap waits for the next message. */
 export function loopRecapPendingLine(runCount: number): string {
   return runCount === 1
-    ? 'Your next message also tells the agent what the loop run did. DSpatch sends this once.'
-    : `Your next message also tells the agent what ${String(runCount)} loop runs did. DSpatch sends this once.`;
+    ? 'Your next message also tells the agent what the graph run did. DSpatch sends this once.'
+    : `Your next message also tells the agent what ${String(runCount)} graph runs did. DSpatch sends this once.`;
 }
 
 /** The disclosure's summary, before sending and on the message that carried it. */
 export function loopRecapSentLine(characters: number): string {
-  return `DSpatch's recap of what the loop did (${String(characters)} characters)`;
+  return `DSpatch's recap of what the graph run did (${String(characters)} characters)`;
 }

@@ -2,7 +2,7 @@
   "format": "dspatch-loop-definition",
   "formatVersion": 1,
   "id": "dspatch-parallel-loop",
-  "name": "Parallel loop",
+  "name": "Parallel workflow",
   "description": "Split the mandate into two or three slices, do them at the same time in separate worktrees, combine them, then check the result. Concurrency caps are read from code, not observed.",
   "resourceRoot": "../..",
   "resourceRootNote": "The DSpatch working copy this file is filed in, two levels up from .dspatch/loops. Its graph and its role files live there.",

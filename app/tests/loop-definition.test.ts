@@ -356,7 +356,7 @@ describe('discovery', () => {
       [true, false, false, true],
     );
     assert.equal(describeDefinitionRow(rows[1] as never).error?.includes('not valid JSON'), true);
-    assert.match(String(describeDefinitionRow(rows[2] as never).error), /loop definition says/);
+    assert.match(String(describeDefinitionRow(rows[2] as never).error), /graph definition says/);
     assert.equal(describeDefinitionRow(rows[3] as never).error, null, 'the good ones stay usable');
   });
 

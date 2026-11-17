@@ -455,7 +455,7 @@ describe('what the editor says it has open', () => {
       definition: null,
     });
     assert.match(described.title, /graph opened directly/);
-    assert.match(described.opened, /no loop definition behind it/);
+    assert.match(described.opened, /no graph definition behind it/);
     assert.equal(/loop "/.test(described.opened), false, 'no name is invented for it');
   });
 });

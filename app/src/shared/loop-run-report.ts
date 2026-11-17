@@ -566,9 +566,9 @@ function handoverLines(input: RunReportInput): string[] {
       const choice = text(entry.data, 'choice');
       lines.push(
         choice === 'interactive'
-          ? 'You chose to continue interactively; the loop ran nothing after it.'
+          ? 'You chose to continue interactively; the graph run ran nothing after it.'
           : choice === 'loop'
-            ? 'You chose to keep it in the loop.'
+            ? 'You chose to keep it in the graph run.'
             : choice === 'cancelled'
               ? 'The run was cancelled while it waited for your answer.'
               : 'Your answer is not recorded.',

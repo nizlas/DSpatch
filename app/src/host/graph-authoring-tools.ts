@@ -133,8 +133,8 @@ function graphExample(): string {
       format: 'dspatch-loop-graph',
       formatVersion: 1,
       id: 'example',
-      name: 'Example loop',
-      purpose: 'What the loop is for, in a sentence or two.',
+      name: 'Example workflow',
+      purpose: 'What the graph is for, in a sentence or two.',
       target: LOOP_TARGETS[0],
       entry: 'work',
       onRuntimeFault: 'stop-and-reconcile',
@@ -198,35 +198,35 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
     {
       name: 'list_loops',
       description:
-        'The loops this project and DSpatch itself declare: each loop id, name, where it comes from, ' +
+        'The agent execution graphs this project and DSpatch itself declare (the tool names keep the older word "loop"): each graph id, name, where it comes from, ' +
         'its definition file and its graph file. Reads only.',
       parameters: {},
       readOnly: true,
       execute: () => {
         const found = rows();
         if (found.length === 0) {
-          return Promise.resolve(ok('No loop is declared in the open folders or by DSpatch.'));
+          return Promise.resolve(ok('No graph is declared in the open folders or by DSpatch.'));
         }
         const lines = found.map(({ row, from }) =>
           row.definition === null
             ? `- (unreadable) ${row.filePath} [${from}]: ${row.findings.map((finding) => finding.message).join(' ')}`
             : `- ${row.definition.id} — ${row.definition.name} [${from}]\n  definition: ${row.filePath}\n  graph: ${row.graphPath ?? '(not resolved)'}`,
         );
-        return Promise.resolve(ok(`Loops (${String(found.length)}):\n${lines.join('\n')}`));
+        return Promise.resolve(ok(`Graphs (${String(found.length)}):\n${lines.join('\n')}`));
       },
     },
     {
       name: 'read_loop_graph',
       description:
-        'The graph file of one loop as it is on disk now, by loop id from list_loops, and what was ' +
+        'The graph file of one declared graph as it is on disk now, by its id from list_loops, and what was ' +
         'changed by hand since the last proposal applied for it in this conversation. Reads only.',
-      parameters: { loopId: { type: 'string', description: 'The loop id, as list_loops gives it.' } },
+      parameters: { loopId: { type: 'string', description: 'The graph id, as list_loops gives it.' } },
       readOnly: true,
       execute: (args) => {
         const loopId = typeof args['loopId'] === 'string' ? args['loopId'] : '';
         const row = loopById(loopId);
         if (row === null || row.graphPath === null) {
-          return Promise.resolve(refuse(`No loop "${loopId}" with a graph file is declared. list_loops names the loops there are.`));
+          return Promise.resolve(refuse(`No graph "${loopId}" with a graph file is declared. list_loops names the graphs there are.`));
         }
         const text = readText(row.graphPath);
         if (text === null) {
@@ -241,13 +241,13 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
                 .find((proposal) => proposal.status === 'applied' && samePath(targetGraphPath(proposal.target), row.graphPath ?? ''));
         let edits: string;
         if (applied === undefined) {
-          edits = 'No proposal for this loop has been applied in this conversation, so there is nothing to compare by hand.';
+          edits = 'No proposal for this graph has been applied in this conversation, so there is nothing to compare by hand.';
         } else {
           const manual = manualEditsSince(applied.graphText, text);
           edits = !manual.edited
             ? 'Unchanged since the last proposal applied for it in this conversation.'
             : !manual.readable
-              ? 'Changed by hand since the last applied proposal, and the file no longer reads as a loop graph.'
+              ? 'Changed by hand since the last applied proposal, and the file no longer reads as a graph file.'
               : `Changed by hand since the last applied proposal:\n${manual.change === null ? '- (the change could not be established)' : describeChangeLines(manual.change).map((line) => `- ${line}`).join('\n')}`;
         }
         return Promise.resolve(ok(`Graph file: ${row.graphPath}\n\n${edits}\n\n${text}`));
@@ -256,7 +256,7 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
     {
       name: 'describe_loop_building_blocks',
       description:
-        "What a loop graph can contain: node kinds, the settings DSpatch honours and where it does " +
+        "What an agent execution graph can contain: node kinds, the settings DSpatch honours and where it does " +
         'not, and what each agent provider supports. Reads only.',
       parameters: {},
       readOnly: true,
@@ -265,18 +265,18 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
     {
       name: 'propose_loop_graph',
       description:
-        'Propose a loop graph for the person to review and apply. Writes nothing and runs nothing: ' +
+        'Propose an agent execution graph for the person to review and apply. Writes nothing and runs nothing: ' +
         'the proposal is kept on this conversation, and only the person can apply it. The draft is ' +
         'checked first; if it has errors they are returned and nothing is kept, so fix them and ' +
-        'propose again. target is a loop id from list_loops, or "new:<id>" for a new loop in this ' +
+        'propose again. target is a graph id from list_loops, or "new:<id>" for a new graph in this ' +
         'project. Every agent node needs a role. A role the project does not have yet goes in ' +
         'roleFiles, in the same proposal, written to disk only when the person applies it: each ' +
         'entry is a whole role source (describe_loop_building_blocks shows one). A new role R of ' +
-        'loop L is placed at .dspatch/loops/roles/L-R.role.md, and a node references it as ' +
+        'graph L is placed at .dspatch/loops/roles/L-R.role.md, and a node references it as ' +
         '{"id": "R", "source": {"kind": "role-source", "path": ".dspatch/loops/roles/L-R.role.md"}}; ' +
-        'for a new loop the path is from the project folder.',
+        'for a new graph the path is from the project folder.',
       parameters: {
-        target: { type: 'string', description: 'A loop id from list_loops, or "new:<id>" with a lower-case id.' },
+        target: { type: 'string', description: 'A graph id from list_loops, or "new:<id>" with a lower-case id.' },
         graphText: { type: 'string', description: 'The whole graph file, in the dspatch-loop-graph format.' },
         explanation: { type: 'string', description: 'Why this graph, in your words. Shown to the person as yours.' },
         roleFiles: {
@@ -323,16 +323,16 @@ function propose(
     loopId = targetArg.slice(4).trim();
     const project = host.folders()[0];
     if (!SLUG.test(loopId)) {
-      return refuse(`"${loopId}" is not a usable loop id: use lower-case letters, digits and hyphens. Nothing was proposed.`);
+      return refuse(`"${loopId}" is not a usable graph id: use lower-case letters, digits and hyphens. Nothing was proposed.`);
     }
     if (project === undefined) {
-      return refuse('No project folder is open, so a new loop has nowhere to go. Nothing was proposed.');
+      return refuse('No project folder is open, so a new graph has nowhere to go. Nothing was proposed.');
     }
     loopsDir = path.join(project, '.dspatch', 'loops');
     const definitionPath = path.join(loopsDir, `${loopId}.loop.json`);
     const graphPath = path.join(loopsDir, `${loopId}.graph.json`);
     if (fs.existsSync(definitionPath) || fs.existsSync(graphPath) || rows().some((entry) => entry.row.definition?.id === loopId)) {
-      return refuse(`A loop "${loopId}" exists already. Propose a change to it by its id instead. Nothing was proposed.`);
+      return refuse(`A graph "${loopId}" exists already. Propose a change to it by its id instead. Nothing was proposed.`);
     }
     const name = (() => {
       const parsed = parseLoopGraph(graphArg);
@@ -356,7 +356,7 @@ function propose(
   } else {
     const row = rows().find((entry) => entry.row.definition?.id === targetArg)?.row ?? null;
     if (row === null || row.graphPath === null || row.resourceRoot === null || row.definition === null) {
-      return refuse(`No loop "${targetArg}" is declared; list_loops names them, and "new:<id>" proposes a new one. Nothing was proposed.`);
+      return refuse(`No graph "${targetArg}" is declared; list_loops names them, and "new:<id>" proposes a new one. Nothing was proposed.`);
     }
     const disk = readText(row.graphPath);
     if (disk === null) {
@@ -488,17 +488,21 @@ function buildingBlocks(): string {
     return `- ${provider}:\n${answers.join('\n')}`;
   });
   return [
-    'The graph format is dspatch-loop-graph. One provider runs a whole run. read_loop_graph shows any listed loop whole, as a fuller example. ' +
-      'The smallest graph, for a new loop "example" (propose it with target "new:example"), and the role source it uses, passed in roleFiles:',
+    'Terms. DSpatch orchestrates agents through agent execution graphs: nodes are steps with their work and responsibilities, and connections decide how execution proceeds. ' +
+      'A step\'s declared outcome or failure picks the next connection, so a run can take different paths, return to earlier steps or split into parallel branches and join them. ' +
+      'A loop is a recurring path through the graph; a graph may hold several loops or none. The path is chosen during a run; the graph\'s structure is not changed by a run, which keeps the version it started with. ' +
+      'Call the whole thing a graph or a workflow when you explain it to the person, and a loop only for a recurring path.',
+    'The graph format is dspatch-loop-graph. One provider runs a whole run. read_loop_graph shows any listed graph whole, as a fuller example. ' +
+      'The smallest graph, for a new graph "example" (propose it with target "new:example"), and the role source it uses, passed in roleFiles:',
     `\`\`\`json\n${graphExample()}\n\`\`\``,
     `\`\`\`markdown\n${ROLE_SOURCE_EXAMPLE}\n\`\`\``,
-    `Roles. Every agent node references one role, as {"id", "source": {"kind": "role-source", "path"}}. The path is read from the loop's resource root, ` +
-      'which for a new loop is the project folder; a role outside it cannot be used. A role the project does not have goes in the proposal\'s roleFiles: ' +
-      `role R of loop L is placed at .dspatch/loops/roles/L-R.role.md, and nothing is written until the person applies the proposal. A role source: ${ROLE_SOURCE_RULES}`,
+    `Roles. Every agent node references one role, as {"id", "source": {"kind": "role-source", "path"}}. The path is read from the graph's resource root, ` +
+      'which for a new graph is the project folder; a role outside it cannot be used. A role the project does not have goes in the proposal\'s roleFiles: ' +
+      `role R of graph L is placed at .dspatch/loops/roles/L-R.role.md, and nothing is written until the person applies the proposal. A role source: ${ROLE_SOURCE_RULES}`,
     'What a person reads. Hovering a node shows its purpose when that is one line of at most ' +
       `${String(NODE_HELP_LABEL_MAX)} characters, otherwise its role's summary, never a purpose cut short. So put a step's whole instruction in its ` +
       "purpose, and give each role a summary that says in one sentence what its step does; an ending's purpose can say in a sentence or two how the run ended. " +
-      "Leave out each node's view: DSpatch places the nodes, with room for every edge's label. A node the loop already has keeps the place the person " +
+      "Leave out each node's view: DSpatch places the nodes, with room for every edge's label. A node the graph already has keeps the place the person " +
       'saved; positions written in a proposal are not used.',
     `Node kinds:\n${kinds.join('\n')}`,
     `Settings on a node or edge:\n${settings.join('\n')}`,

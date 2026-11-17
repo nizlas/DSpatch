@@ -1527,7 +1527,7 @@ async function startedRunOnScreen(previousRunId: string): Promise<Record<string,
  * two consecutive rounds run the same graph version.
  *
  * **Both ways in.** Round one reaches a declaration filed outside every open folder by
- * pressing the real **Open loop…** button; round two picks the repository's own loop from
+ * pressing the real **Open graph…** button; round two picks the repository's own loop from
  * the dropdown. One declaration outside every folder is the case that could be drawn and
  * not chosen before DSP-84, and it is the one Niclas met.
  *
@@ -1706,7 +1706,7 @@ async function runOpenChooseRunScenario(plan: ScriptedRunPlan): Promise<Scripted
 
       // --- Choose it: one gesture that draws it and selects it ---------------
       //
-      // Round one presses the real `Open loop…`, whose dialog answers with the first
+      // Round one presses the real `Open graph…`, whose dialog answers with the first
       // `DSPATCH_PICK_FILE` entry — the declaration filed outside every open folder, which
       // is #3's case. Every later round drives the real `<select>` through `chooseInSelect`,
       // which is #2's: the native value setter and a bubbling `change`, so React's own
@@ -1714,7 +1714,7 @@ async function runOpenChooseRunScenario(plan: ScriptedRunPlan): Promise<Scripted
       if (roundNumber === 1) {
         await click('open-loop-definition');
         await waitFor(
-          `Open loop… to have selected and drawn ${definitionPath}`,
+          `Open graph… to have selected and drawn ${definitionPath}`,
           () => editorHook().readChooser().chooserValue === definitionPath,
           30_000,
         );
@@ -1736,7 +1736,7 @@ async function runOpenChooseRunScenario(plan: ScriptedRunPlan): Promise<Scripted
       };
       record('editor-chose', {
         definitionPath,
-        by: roundNumber === 1 ? 'Open loop…' : 'the dropdown',
+        by: roundNumber === 1 ? 'Open graph…' : 'the dropdown',
         note: chose.noteText.slice(0, 240),
         selected: chose.chooserValue,
         nodesDrawn: chose.nodesDrawn,
@@ -1840,7 +1840,7 @@ async function runOpenChooseRunScenario(plan: ScriptedRunPlan): Promise<Scripted
 
       const round = {
         definitionPath,
-        chosenBy: roundNumber === 1 ? 'Open loop…' : 'the dropdown',
+        chosenBy: roundNumber === 1 ? 'Open graph…' : 'the dropdown',
         editorHeaderBeforeChoosing: beforeRound.headerText,
         editorHeaderAfterChoosing: chose.headerText,
         editorSelectedKeyBefore: beforeRound.chooserValue,
@@ -1903,7 +1903,7 @@ async function runOpenChooseRunScenario(plan: ScriptedRunPlan): Promise<Scripted
     } else {
       await goToEditor();
       const beforeRefusal = editorHook().readChooser();
-      // Through the real `Open loop…`, whose dialog answers with the broken declaration:
+      // Through the real `Open graph…`, whose dialog answers with the broken declaration:
       // it is filed outside every open folder and so is not in the dropdown at all, which
       // is exactly how a person would meet it.
       await click('open-loop-definition');
@@ -2137,7 +2137,7 @@ function viewDifferences(before: ViewReading, after: ViewReading): readonly stri
  * view would compare equal to.
  *
  * **The lock is a separate claim from the view.** During the run the reading has to
- * show editing refused *and* reading still working: the chooser, **Open loop…**,
+ * show editing refused *and* reading still working: the chooser, **Open graph…**,
  * **Save**, the palette and the inspector's fields all disabled, while selecting a
  * node and reading its Markdown role text still answers (#3, #10). Those are opposite
  * signs of the same reading, which is why they are taken from one call.
@@ -2358,7 +2358,7 @@ async function runOneGraphViewScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     // #3: editing refused, in the three places a person would try it.
     for (const [what, state] of [
       ['the loop chooser', during.chooserDisabled],
-      ['Open loop…', during.openLoopDisabled],
+      ['Open graph…', during.openLoopDisabled],
       ['the inspector fields', during.inspectorLocked],
       ['Save', during.saveDisabled],
       // Not an edit, and it belongs in this list all the same: a dry run walks the graph
@@ -2548,7 +2548,7 @@ async function runOneGraphViewScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     }
     for (const [what, state] of [
       ['the loop chooser', after.chooserDisabled],
-      ['Open loop…', after.openLoopDisabled],
+      ['Open graph…', after.openLoopDisabled],
       ['the inspector fields', after.inspectorLocked],
       ['Dry-run', after.dryRunDisabled],
     ] as const) {
@@ -2582,7 +2582,7 @@ async function runOneGraphViewScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     /*
      * --- Unsaved edits are never run quietly (#8) ---------------------------
      *
-     * A throwaway copy of the loop, chosen through the real **Open loop…**, because this
+     * A throwaway copy of the loop, chosen through the real **Open graph…**, because this
      * part *writes a file* and the loop the rest of the trial used is the repository's
      * own. The harness puts the copy under %TEMP% and answers the two dialogs through
      * `DSPATCH_PICK_FILE` and `DSPATCH_SAVE_BEFORE_RUN`.
@@ -2602,7 +2602,7 @@ async function runOneGraphViewScenario(plan: ScriptedRunPlan): Promise<ScriptedR
     } else {
       await click('open-loop-definition');
       await waitFor(
-        `Open loop… to have selected and drawn ${scratchDefinition}`,
+        `Open graph… to have selected and drawn ${scratchDefinition}`,
         () => editorHook().readChooser().chooserValue === scratchDefinition,
         30_000,
       );
@@ -4031,7 +4031,7 @@ async function storedChoice(): Promise<string> {
  * Unsaved edits survive a loop being switched under them.
  *
  * **What went wrong, and why a dialog appearing is not the reading.** Until this card the
- * editor's dropdown, **Open loop…** and **File → Open Graph File…** each told the person
+ * editor's dropdown, **Open graph…** and **File → Open Graph File…** each told the person
  * that the drawing had never been written and then drew something else over it. Informing
  * is not preserving. So the question now comes *before* the switch and has three answers,
  * and each of them has two halves that can fail independently: what the window ends up
@@ -4050,7 +4050,7 @@ async function storedChoice(): Promise<string> {
  * one from the File menu; round 3 then answers **Save** and the file on disk has to change
  * — which is the only way to establish that the edits were still there after two cancels
  * rather than merely that the window still said *unsaved changes*. Round 4 edits the
- * second loop and answers **Discard changes** through **Open loop…**, and that file must
+ * second loop and answers **Discard changes** through **Open graph…**, and that file must
  * be unchanged at the end.
  *
  * **The order also catches a question that is never asked.** The scripted answers are one
@@ -4124,7 +4124,7 @@ async function runUnsavedEditsSurviveASwitchScenario(
     );
 
     /*
-     * --- Both loops introduced, through the real Open loop… -----------------
+     * --- Both loops introduced, through the real Open graph… -----------------
      *
      * Two presses before anything is measured, and the second one is not redundant. A
      * throwaway loop under the temporary directory is in no folder the window has open, so
@@ -4135,13 +4135,13 @@ async function runUnsavedEditsSurviveASwitchScenario(
      */
     await click('open-loop-definition');
     await waitFor(
-      `Open loop… to have selected and drawn ${loopB}`,
+      `Open graph… to have selected and drawn ${loopB}`,
       () => editorHook().readChooser().chooserValue === loopB,
       30_000,
     );
     await click('open-loop-definition');
     await waitFor(
-      `Open loop… to have selected and drawn ${loopA}`,
+      `Open graph… to have selected and drawn ${loopA}`,
       () => editorHook().readChooser().chooserValue === loopA,
       30_000,
     );
@@ -4351,7 +4351,7 @@ async function runUnsavedEditsSurviveASwitchScenario(
     }
 
     /*
-     * --- Round 4: Discard changes, through Open loop… ---------------------
+     * --- Round 4: Discard changes, through Open graph… ---------------------
      *
      * The second loop is edited and thrown away deliberately, which is the answer the run's
      * own question does not have. Both halves again: the canvas goes back to loop A, and
@@ -4369,7 +4369,7 @@ async function runUnsavedEditsSurviveASwitchScenario(
     }
     await click('open-loop-definition');
     await waitFor(
-      'Open loop… to have gone back to the first loop after the drawing was discarded',
+      'Open graph… to have gone back to the first loop after the drawing was discarded',
       () => editorHook().readChooser().chooserValue === loopA,
       30_000,
     );

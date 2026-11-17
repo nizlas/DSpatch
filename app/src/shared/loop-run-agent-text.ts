@@ -68,5 +68,5 @@ export function describeLoopRunAgent(input: {
 
 /** The line shown where no run would start, from the refusal's own reason. */
 export function describeLoopRunRefused(why: string): string {
-  return `No loop run can start: ${why}`;
+  return `No graph run can start: ${why}`;
 }

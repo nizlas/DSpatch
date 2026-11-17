@@ -130,8 +130,8 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
   const provider = resolveLoopProvider(request);
   if (provider === null) {
     return refused(
-      'No agent is chosen, so this loop has nothing to run with. Choose an agent when you ' +
-        'open a project, then run the loop again.',
+      'No agent is chosen, so this graph has nothing to run with. Choose an agent when you ' +
+        'open a project, then run the graph again.',
     );
   }
   const purpose = 'loop' as const;
@@ -156,9 +156,9 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
   ) {
     const step = request.entryNode?.label ?? request.entryNode?.id ?? 'the first step';
     return refused(
-      `The loop's first step, "${step}", fixes the model ${fixed.model}, which Claude does not offer ` +
+      `The graph's first step, "${step}", fixes the model ${fixed.model}, which Claude does not offer ` +
         "this account. Set that step's model to inherit to use the model chosen for Claude, or run " +
-        'the loop with the agent that offers it.',
+        'the graph with the agent that offers it.',
     );
   }
   // DSP-209 S19: every step's own model, not only the first's, by the same rule. A model
@@ -171,7 +171,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
         `The step "${missing.label}" ${
           missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
         } the model ${missing.model}, which Claude does not offer this account. Change that ` +
-          "step's model, or run the loop with the agent that offers it.",
+          "step's model, or run the graph with the agent that offers it.",
       );
     }
   }
@@ -195,7 +195,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
           `The step "${missing.label}" ${
             missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
           } the model ${missing.model}, which ${name} does not offer this account. Change that ` +
-            "step's model, or run the loop with the agent that offers it.",
+            "step's model, or run the graph with the agent that offers it.",
         );
       }
     } else if (named.length > 0) {

@@ -29,13 +29,13 @@ export function describeOpenedGraph(input: {
   if (definition === null) {
     return {
       title: `${input.displayPath} \u00b7 graph opened directly`,
-      opened: `Opened ${input.displayPath} as a graph file, with no loop definition behind it.`,
+      opened: `Opened ${input.displayPath} as a graph file, with no graph definition behind it.`,
     };
   }
   return {
     title: `${definition.name} \u00b7 ${input.displayPath}`,
     // The declaration's own path is in the sentence because a name is not a location,
     // and two folders may declare loops called the same thing.
-    opened: `Opened the loop "${definition.name}", declared in ${definition.path}, and its graph ${input.displayPath}.`,
+    opened: `Opened the graph "${definition.name}", declared in ${definition.path}, and its graph ${input.displayPath}.`,
   };
 }

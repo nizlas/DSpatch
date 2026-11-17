@@ -630,7 +630,7 @@ export function loopTurnsAfter(
           // contain is the contradiction this field exists to prevent.
           outcome: null,
           text:
-            `DSpatch could not read the result of this loop run: ${
+            `DSpatch could not read the result of this graph run: ${
               said === '' ? 'the call failed and reported no message.' : said
             } Treat the outcome as unknown and check the project before anything is ` +
             `repeated: the run may have changed files before the call failed.`,
@@ -677,8 +677,8 @@ export function describeLoopEnding(
         actionNote: null,
         text:
           reason === ''
-            ? `${lead}The loop did not start and gave no reason. Nothing was run and no file was changed.`
-            : `${lead}The loop did not start: ${reason}`,
+            ? `${lead}The graph run did not start and gave no reason. Nothing was run and no file was changed.`
+            : `${lead}The graph run did not start: ${reason}`,
       };
     }
     case 'failed': {
@@ -692,9 +692,9 @@ export function describeLoopEnding(
         actionNote: null,
         text:
           note === ''
-            ? `${lead}The loop could not be run and gave no reason. Treat the outcome as ` +
+            ? `${lead}The graph could not be run and gave no reason. Treat the outcome as ` +
               `unknown and check the project before anything is repeated.`
-            : `${lead}The loop could not be run: ${note}`,
+            : `${lead}The graph could not be run: ${note}`,
       };
     }
     case 'cancelled':
@@ -883,9 +883,9 @@ function describeRunResult(result: RunResult, measuredFileChanges: boolean | nul
     case 'completed': {
       const terminal = terminalNameFor(result.terminalNodeId, result.journal);
       return (
-        `The loop ran to a terminal step and stopped` +
+        `The graph run reached a terminal step and stopped` +
         `${terminal === null ? '' : ` at "${terminal}"`}. ` +
-        `Reaching a terminal is not a verdict on the work: the loop log below shows ` +
+        `Reaching a terminal is not a verdict on the work: the run log below shows ` +
         `which branch it took` +
         `${measuredFileChanges === false ? '' : ', and the file changes are in the workspace view'}.`
       );
@@ -912,10 +912,10 @@ function describeRunResult(result: RunResult, measuredFileChanges: boolean | nul
     case 'handed-over': {
       const handed = result.handedOver;
       return handed === null
-        ? 'Handed over to interactive work. The loop ran nothing after that.'
+        ? 'Handed over to interactive work. The graph run ran nothing after that.'
         : `Handed over to interactive work at your choice, after "${
             terminalNameFor(handed.nodeId, result.journal) ?? handed.nodeId
-          }" recommended it: ${handed.reason}. The loop ran nothing after that step; nothing ` +
+          }" recommended it: ${handed.reason}. The graph run ran nothing after that step; nothing ` +
             `was repeated and what changed is in the working copy.`;
     }
     case 'refused': {
@@ -1026,7 +1026,7 @@ export function loopTurnStatusText(turn: LoopTurn): string {
    * action in it is the one that stays.
    */
   if (turn.abandoned || turn.cancelRequested) {
-    return `The loop is running.${silence}`;
+    return `The graph run is working.${silence}`;
   }
   /*
    * A running run says it is running, and nothing about silence (DSP-87).
@@ -1042,7 +1042,7 @@ export function loopTurnStatusText(turn: LoopTurn): string {
    * above, as itself, and what the working step is doing is the step's own status line.
    * Neither needed a sentence down here to announce it.
    */
-  return `The loop is running.${silence}`;
+  return `The graph run is working.${silence}`;
 }
 
 /**
@@ -1188,7 +1188,7 @@ export function loopTurnCaption(turn: LoopTurn): {
   if (id !== null && id.trim() !== '') {
     return { text: id, asCode: true };
   }
-  return { text: 'a loop this conversation did not record by name', asCode: false };
+  return { text: 'a graph this conversation did not record by name', asCode: false };
 }
 
 export function loopTurnBadge(turn: LoopTurn): CapabilitySupport {

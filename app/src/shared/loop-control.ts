@@ -411,8 +411,8 @@ export function describeControl(
       headline: state.mode === 'interactive' ? 'Interactive' : 'Autonomous',
       detail:
         state.mode === 'interactive'
-          ? 'No loop is running. When one is, DSpatch will ask you before it starts an agent or runs a command.'
-          : 'No loop is running. When one is, it will continue within the graph and the assignment it is given.',
+          ? 'No graph run is in progress. When one is, DSpatch will ask you before it starts an agent or runs a command.'
+          : 'No graph run is in progress. When one is, it will continue within the graph and the assignment it is given.',
     };
   }
   switch (phase) {
@@ -572,7 +572,7 @@ export interface ControlActionOffer {
  */
 export const LOOP_MODE_EXPLANATION =
   'Applies to a step that starts an agent, runs a command or hands work to someone DSpatch does ' +
-  'not run. The loop is not held between steps: routing from one to the next never waits, and a ' +
+  'not run. The run is not held between steps: routing from one to the next never waits, and a ' +
   'human step waits for an answer either way. Letting one step through is spent on that step, so ' +
   'the next one asks again.';
 

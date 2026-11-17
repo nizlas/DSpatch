@@ -77,7 +77,7 @@ describe('the mandate in the conversation', () => {
     const turn = only(sent());
     // What the user sees: their own words, and a sentence about what is happening.
     assert.equal(turn.mandate, 'Add a --json flag to the report command.');
-    assert.equal(loopTurnStatusText(turn), 'The loop is running.');
+    assert.equal(loopTurnStatusText(turn), 'The graph run is working.');
   });
 
   /*
@@ -176,7 +176,7 @@ describe("the agent's own words", () => {
     // One sentence for a run in flight since DSP-87, whether or not a reply has
     // finished. The reply itself is above this line, in the column, as itself; the
     // line's job is the run, and it said the same thing twice.
-    assert.equal(loopTurnStatusText(turn), 'The loop is running.');
+    assert.equal(loopTurnStatusText(turn), 'The graph run is working.');
   });
 
   /**
@@ -487,7 +487,7 @@ describe('how a run ends', () => {
       );
       assert.match(
         ending.text,
-        /the loop log below shows which branch it took\./,
+        /the run log below shows which branch it took\./,
         'the half of the tail that is still true is kept',
       );
     });
@@ -866,7 +866,7 @@ describe('stopping a loop run', () => {
     assert.match(note, /asking is not stopping/);
     // And the caption says nothing that could be read as the agent having stopped.
     const account = loopTurnStatusText(turn);
-    assert.equal(account, 'The loop is running.');
+    assert.equal(account, 'The graph run is working.');
     assert.equal(/has stopped|was stopped|stopped short/i.test(account), false, account);
   });
 
@@ -922,7 +922,7 @@ describe('stopping a loop run', () => {
       abandonsWait: true,
     });
     assert.equal(only(after).cancelRequested, false);
-    assert.ok(loopTurnStatusText(only(after)).startsWith('The loop ran to a terminal step'));
+    assert.ok(loopTurnStatusText(only(after)).startsWith('The graph run reached a terminal step'));
   });
 });
 

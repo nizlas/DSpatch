@@ -326,7 +326,7 @@ describe('graph tools on the chat session (DSP-209 S23a)', () => {
     const { root, graphPath } = project();
     const { host, kept, set } = hostFor(root);
     const none = await tool(host, 'read_loop_graph')({ loopId: 'tiny' });
-    assert.match(none.text, /No proposal for this loop has been applied/);
+    assert.match(none.text, /No proposal for this graph has been applied/);
     assert.ok(none.text.includes('"Done"'));
     await tool(host, 'propose_loop_graph')({ target: 'tiny', graphText: TINY, explanation: 'As it is.' });
     // As S23b's Apply will leave it: applied, with the same text on disk.

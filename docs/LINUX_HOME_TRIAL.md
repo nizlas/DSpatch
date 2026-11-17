@@ -107,7 +107,7 @@ Two things to know first:
     ps -o pid,pgid,cmd -u "$USER" | grep -v grep | grep -e setTimeout -e "node --test"
     ```
 
-15. **The same task as a loop.** Open another new sample project as Claude, tick *Use loop* and send the task from step 13. Expected:
+15. **The same task as a loop.** Open another new sample project as Claude, tick *Use workflow* and send the task from step 13. Expected:
     - *work* edits and runs the tests itself, possibly several times, and declares it is done;
     - *check* (an independent agent with its own session) runs the checks itself and is handed the commands DSpatch recorded, each marked current or stale; it declares *met*, or *rework* with concrete findings, which sends the work back (at most 2 correction rounds), then checks again;
     - the run ends at *done* (*Assignment met*), *Assignment not met* (including when the correction rounds are spent) or *Could not establish*;
@@ -118,7 +118,7 @@ Two things to know first:
 
 17. **The review discussion runs no commands.** Open the review discussion with Claude (Part B) and ask it to run the tests. Expected: it answers in text; no command runs and none is listed. (Since 30 October 2026 it may read the two revisions with read-only tools; it still cannot run anything.)
 
-18. **Refusals, no run.** (a) With Claude's conversation open, add a second folder and try *Use loop*: a plain sentence that Claude works in one folder, ending *Nothing was started.* (b) Quit, start once with plain `npm run dev` (no `DSPATCH_CLAUDE_AUTHORIZATION`), **do not start a Cursor session**, open the graph editor: the line under the drawing reads *No loop run can start: …*. Nothing contacts Cursor or installs anything.
+18. **Refusals, no run.** (a) With Claude's conversation open, add a second folder and try *Use workflow*: a plain sentence that Claude works in one folder, ending *Nothing was started.* (b) Quit, start once with plain `npm run dev` (no `DSPATCH_CLAUDE_AUTHORIZATION`), **do not start a Cursor session**, open the graph editor: the line under the drawing reads *No loop run can start: …*. Nothing contacts Cursor or installs anything.
 
 The bundled drawing `dspatch-duration-check` (a gate step in which DSpatch runs a fixed test command) remains as test material for the editor's Run; it is no longer the way to verify work and need not be tried.
 

@@ -326,7 +326,7 @@ export function composerTextAfterSend(
  * is thinking.
  */
 export const ACTIVITY_OWN_SENTENCES = [
-  'The loop has started. Waiting for the first step\u2026',
+  'The graph run has started. Waiting for the first step\u2026',
   'Sent. Nothing has come back yet.',
 ] as const;
 

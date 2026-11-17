@@ -300,7 +300,7 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
         claudeModels: ['claude-haiku-4-5'],
       });
     assert.match(refusal(prepareLoopRun(editor('claude'))), /fixes the model composer-2/);
-    assert.match(loopRunAgentInfo(editor('claude')).line, /^No loop run can start: .*fixes the model/);
+    assert.match(loopRunAgentInfo(editor('claude')).line, /^No graph run can start: .*fixes the model/);
     assert.deepEqual(built.claudePermissions, []);
     assert.deepEqual(built.cursorPolicies, []);
     assert.equal(prepared(editor('cursor')).modelRequested, 'composer-2');
@@ -311,7 +311,7 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
     const info = loopRunAgentInfo(request(factory, { sessionProvider: null }));
     assert.equal(info.summary, null);
     assert.equal(info.provider, null);
-    assert.match(info.line, /^No loop run can start: No agent is chosen/);
+    assert.match(info.line, /^No graph run can start: No agent is chosen/);
   });
 });
 
