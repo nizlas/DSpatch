@@ -36,6 +36,7 @@ import {
   attributeSupport,
   describeRunToolPolicy,
   describeTargetChange,
+  modelsNamedBy,
   withTarget,
 } from '../shared/loop-graph';
 import type {
@@ -102,7 +103,7 @@ import {
   summariseEditorRun,
 } from '../shared/loop-editor-run';
 import type { EditorRunSummary } from '../shared/loop-editor-run';
-import { formatJournalEntry, latestModelSelection, type RunJournalEntry, type RunResult } from '../shared/loop-run';
+import { formatJournalEntry, latestModelSelection, modelSelectionFromData, type RunJournalEntry, type RunResult } from '../shared/loop-run';
 import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
@@ -451,12 +452,46 @@ export function LoopEditor(): React.JSX.Element {
   // announcement from a host before DSP-218 has the line and no summary.
   const agentLine = watch?.run.agent ?? runAgent?.line ?? null;
   const agentSummary = watch === null ? (runAgent?.summary ?? null) : (watch.run.agentSummary ?? null);
+  // DSP-218: the agent the steps' requirements are checked against - the watched run's own,
+  // else the one a run started now would use; `null` while neither is known.
+  const runProvider = watch === null ? (runAgent?.provider ?? null) : (watch.run.agentProvider ?? null);
+  // DSP-218: the summary is the run's own model choice. A step that fixes or selects its own
+  // model is an exception: before a run, the drawing's steps that name one; during a run, the
+  // step just entered when the journal says its model is not the person's.
+  const ownModelSteps = useMemo(() => {
+    if (graph === null) {
+      return [];
+    }
+    const byNode = new Map<string, string[]>();
+    for (const named of modelsNamedBy(graph)) {
+      byNode.set(named.label, [...(byNode.get(named.label) ?? []), named.model]);
+    }
+    return [...byNode].map(([label, models]) => `${label}: ${[...new Set(models)].join(' or ')}`);
+  }, [graph]);
+  const stepModelNow = useMemo(() => {
+    if (watch === null || watch.run.phase === 'ready' || watch.ended) {
+      return null;
+    }
+    for (let at = watch.entries.length - 1; at >= 0; at -= 1) {
+      const entry = watch.entries[at];
+      if (entry?.kind !== 'node-entered') {
+        continue;
+      }
+      const chosen = modelSelectionFromData(entry.data);
+      if (chosen === null || chosen.source === 'person') {
+        return null;
+      }
+      const label = graph?.nodes.find((node) => node.id === entry.nodeId)?.label ?? entry.nodeId;
+      return { label, model: chosen.model === '' ? 'the provider’s default' : chosen.model, reason: chosen.reason };
+    }
+    return null;
+  }, [watch, graph]);
 
   // A refused file has no graph to check, and its refusal is what the counters count: the
   // panel lists those findings, and a row of zeros beside it would say the file is fine.
   const findings = useMemo<readonly Finding[]>(
-    () => (graph === null ? (refusal ?? []) : checkLoopGraph(graph, { resolveRole })),
-    [graph, refusal, resolveRole],
+    () => (graph === null ? (refusal ?? []) : checkLoopGraph(graph, { resolveRole, runProvider })),
+    [graph, refusal, resolveRole, runProvider],
   );
   const index = useMemo(() => indexFindings(findings), [findings]);
 
@@ -2739,8 +2774,27 @@ export function LoopEditor(): React.JSX.Element {
             the graph's Advanced section.
           */}
           {agentSummary === null ? null : (
-            <span className="editor-agent" data-ev="editor-run-agent" title={`${agentLine ?? ''}\n\nChosen in the chat: change the agent or its model there.`}>
-              {watch?.run.phase === 'ready' || watch === null ? 'Runs with' : 'Running with'} <strong>{agentSummary}</strong>
+            <span
+              className="editor-agent"
+              data-ev="editor-run-agent"
+              title={
+                `${agentLine ?? ''}\n\nChosen in the chat: change the agent or its model there.` +
+                (ownModelSteps.length === 0 ? '' : `\n\nSteps with their own model:\n${ownModelSteps.join('\n')}`)
+              }
+            >
+              {watch === null || watch.run.phase === 'ready' ? 'Runs with' : watch.ended ? 'Ran with' : 'Running with'}{' '}
+              <strong>{agentSummary}</strong>
+              {stepModelNow !== null ? (
+                <span data-ev="editor-run-step-model">
+                  {' '}
+                  · now “{stepModelNow.label}” on <strong>{stepModelNow.model}</strong> ({stepModelNow.reason})
+                </span>
+              ) : ownModelSteps.length > 0 ? (
+                <span data-ev="editor-run-own-models">
+                  {' '}
+                  · {ownModelSteps.length === 1 ? 'one step sets its own model' : `${ownModelSteps.length} steps set their own models`}
+                </span>
+              ) : null}
             </span>
           )}
           {/*
@@ -3310,7 +3364,7 @@ export function LoopEditor(): React.JSX.Element {
           onApply={() => {
             apply(
               withTarget(graph, pendingTarget.to),
-              `Target is now ${pendingTarget.to}. Nothing was removed; the warnings below are about ${pendingTarget.to}.`,
+              `The roles are now checked for ${pendingTarget.to}. Nothing was removed.`,
             );
             setPendingTarget(null);
           }}
@@ -4815,8 +4869,9 @@ function GraphInspector({
           </select>
         </label>
         <p className="muted">
-          The roles and the steps' requirements are checked against this framework, and it is
-          stored in the file. It does not choose the agent or the model that runs the loop.
+          Each role is checked for a form for this framework, and it is stored in the file. It
+          does not choose the agent or the model that runs the loop, and the steps' requirements
+          are checked against that agent, chosen in the chat.
         </p>
       </details>
 
@@ -4938,32 +4993,24 @@ function TargetChangeDialog({
     <div className="dialog-backdrop">
       <div className="dialog">
         <h2>
-          Change target from {graph.target} to {to}?
+          Check the roles for {to} instead of {graph.target}?
         </h2>
         <p>
-          This report is all that happens until you apply it. Nothing is removed either way: no node
-          is dropped and no requirement is deleted, even where {to} cannot meet it.
+          This report is all that happens until you apply it. Nothing is removed either way. The
+          framework decides which form the roles are checked for; the agent and model that run
+          the loop are chosen in the chat, and the steps' requirements are checked against that
+          agent whatever this says.
         </p>
-        {section('Stops being enforced', report.losses)}
-        {section('Newly enforced', report.gains)}
-        {section('Nobody has established', report.unknowns)}
-        {section('Cannot be met at all — the graph would be invalid', report.blocking)}
         {report.rolesChecked
-          ? section('Roles with no form for the new target', report.rolesWithoutSupport)
+          ? section('Roles with no form for the new framework', report.rolesWithoutSupport)
           : null}
-        {report.losses.length === 0 &&
-        report.gains.length === 0 &&
-        report.unknowns.length === 0 &&
-        report.blocking.length === 0 &&
-        report.rolesWithoutSupport.length === 0 ? (
-          <p>Nothing changes about the requirements this graph uses.</p>
-        ) : null}
+        {report.rolesChecked && report.rolesWithoutSupport.length === 0 ? <p>Every role this graph uses has a {to} form.</p> : null}
         <div className="dialog-actions">
           <button type="button" onClick={onCancel}>
             Keep {graph.target}
           </button>
           <button type="button" onClick={onApply}>
-            Set the target to {to}
+            Check the roles for {to}
           </button>
         </div>
       </div>

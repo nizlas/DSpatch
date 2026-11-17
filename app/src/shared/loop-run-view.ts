@@ -20,6 +20,7 @@
  * in a picture that never contained it.
  */
 
+import type { LoopRunProvider } from './loop-run-agent-text';
 import {
   finishBranch,
   finishStepsForNode,
@@ -202,6 +203,8 @@ export interface LiveRunAnnouncement extends LoopRunIdentity {
    * would start.
    */
   readonly agentSummary?: string;
+  /** DSP-218: the agent itself, so the loop view checks the steps' requirements against it. */
+  readonly agentProvider?: LoopRunProvider;
 }
 
 export type LoopRunPhase = 'ready' | 'running';

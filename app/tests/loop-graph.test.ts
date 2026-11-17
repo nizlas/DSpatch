@@ -30,7 +30,7 @@ import { createFileRoleResolver } from '../src/main/loop-graph-roles.ts';
 import {
   LOOP_GRAPH_FORMAT,
   LOOP_GRAPH_FORMAT_VERSION,
-  TARGET_CAPABILITIES,
+  RUN_PROVIDER_CAPABILITIES,
   attributeSupport,
   describeTargetChange,
   namesARuntimeFault,
@@ -38,9 +38,10 @@ import {
   withTarget,
   writeReachOf,
 } from '../src/shared/loop-graph.ts';
-import type { LoopGraph, ResolvedRole, TargetCapabilities } from '../src/shared/loop-graph.ts';
+import type { LoopGraph, ResolvedRole, RunProviderCapabilities } from '../src/shared/loop-graph.ts';
 import {
   checkLoopGraph,
+  checkRunRequirements,
   formatFindings,
   hasErrors,
   loadLoopGraph,
@@ -915,7 +916,7 @@ test('the same file means the same thing whoever opens it', () => {
   }
 });
 
-test('changing the target reports what is lost and gained, and changes nothing', () => {
+test('changing the target reports the roles without a form for it, and changes nothing', () => {
   const parsed = parseLoopGraph(fs.readFileSync(examplePath, 'utf8'));
   assert.equal(parsed.ok, true);
   if (!parsed.ok) {
@@ -926,7 +927,6 @@ test('changing the target reports what is lost and gained, and changes nothing',
 
   assert.equal(report.from, 'cursor');
   assert.equal(report.to, 'claude-code');
-  assert.ok(report.unknowns.length > 0, 'nothing has been run against Claude Code from here');
   assert.equal(report.rolesChecked, true);
   assert.ok(
     report.rolesWithoutSupport.length > 0,
@@ -943,11 +943,11 @@ test('changing the target reports what is lost and gained, and changes nothing',
   assert.equal(parsed.graph.target, 'cursor', 'the original graph is untouched');
 });
 
-test('a requirement the target cannot meet is an error', () => {
-  const table: TargetCapabilities = {
-    ...TARGET_CAPABILITIES,
+test('DSP-218: a requirement the run\'s agent cannot meet is an error, whatever the target says', () => {
+  const table: RunProviderCapabilities = {
+    ...RUN_PROVIDER_CAPABILITIES,
     copilot: {
-      ...TARGET_CAPABILITIES.copilot,
+      ...RUN_PROVIDER_CAPABILITIES.copilot,
       'no-file-writes': {
         status: 'unmet',
         how: 'There is no way to prevent writes there.',
@@ -957,7 +957,7 @@ test('a requirement the target cannot meet is an error', () => {
   };
   const graph: LoopGraph = {
     ...minimal(),
-    target: 'copilot',
+    target: 'cursor',
     nodes: [
       {
         id: 'start',
@@ -969,25 +969,41 @@ test('a requirement the target cannot meet is an error', () => {
       { id: 'done', kind: 'terminal' },
     ],
   };
-  const findings = checkLoopGraph(graph, {
-    resolveRole: () => ({
-      id: 'r',
-      sourcePath: 'roles/r.md',
-      targets: ['copilot'],
-      targetsDeclared: true,
-      requirements: [],
-      requirementsDeclared: true,
-    }),
-    targetCapabilities: table,
+  const resolveRole = (): ResolvedRole => ({
+    id: 'r',
+    sourcePath: 'roles/r.md',
+    targets: ['cursor'],
+    targetsDeclared: true,
+    requirements: [],
+    requirementsDeclared: true,
   });
-  const finding = findings.find((item) => item.code === 'requirement-target-cannot-meet');
+  // A cursor-labelled drawing run through Copilot is judged by Copilot's answer.
+  const viaCopilot = checkLoopGraph(graph, { resolveRole, runProvider: 'copilot', runProviderCapabilities: table });
+  const finding = viaCopilot.find((item) => item.code === 'requirement-target-cannot-meet');
   assert.ok(finding);
+  assert.match(finding?.message ?? '', /Copilot, which runs this loop, cannot meet it/);
   assert.match(finding?.message ?? '', /reads as though the requirement held/);
+  assert.deepEqual(
+    checkRunRequirements(graph, 'copilot', resolveRole, table).map((item) => item.code),
+    ['requirement-target-cannot-meet'],
+  );
+  // And the label does not stop a run whose agent can meet it, nor pass one that cannot.
+  const viaCursor = checkLoopGraph({ ...graph, target: 'copilot' }, { resolveRole: () => ({ ...resolveRole(), targets: ['copilot'] }), runProvider: 'cursor', runProviderCapabilities: table });
+  assert.equal(viaCursor.some((item) => item.severity === 'error'), false);
+  // The role's form is still checked against the target, apart from the requirements.
+  const noForm = checkLoopGraph({ ...graph, target: 'claude-code' }, { resolveRole, runProvider: 'cursor' });
+  assert.ok(noForm.some((item) => item.code === 'role-does-not-support-target'));
+});
 
-  const change = describeTargetChange({ ...graph, target: 'cursor' }, 'copilot', {
-    targetCapabilities: table,
-  });
-  assert.ok(change.blocking.some((entry) => entry.startsWith('no-file-writes')));
+test('DSP-218: requirements wait for the agent when it is not known, and are not judged by the target', () => {
+  const parsed = parseLoopGraph(fs.readFileSync(examplePath, 'utf8'));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) {
+    return;
+  }
+  const findings = checkLoopGraph(parsed.graph, { resolveRole: createFileRoleResolver(repoRoot), runProvider: null });
+  assert.equal(findings.filter((item) => item.code.startsWith('requirement-')).length, 0);
+  assert.equal(findings.filter((item) => item.code === 'requirements-await-agent').length, 1);
 });
 
 test('a requirement the target does not enforce is said out loud rather than assumed', () => {
@@ -996,7 +1012,7 @@ test('a requirement the target does not enforce is said out loud rather than ass
   if (!parsed.ok) {
     return;
   }
-  const findings = checkLoopGraph(parsed.graph, { resolveRole: createFileRoleResolver(repoRoot) });
+  const findings = checkLoopGraph(parsed.graph, { resolveRole: createFileRoleResolver(repoRoot), runProvider: 'cursor' });
   const notices = findings.filter((finding) => finding.code === 'requirement-not-enforced');
   assert.ok(
     notices.some((notice) => notice.message.includes('no-subagent-delegation')),
@@ -1051,10 +1067,10 @@ const READ_ONLY_ROLE: ResolvedRole = {
  * asserting it of `cursor` — is the difference between testing the mechanism and asserting
  * a guarantee the product does not have.
  */
-const ENFORCED_READ_ONLY: TargetCapabilities = {
-  ...TARGET_CAPABILITIES,
+const ENFORCED_READ_ONLY: RunProviderCapabilities = {
+  ...RUN_PROVIDER_CAPABILITIES,
   cursor: {
-    ...TARGET_CAPABILITIES.cursor,
+    ...RUN_PROVIDER_CAPABILITIES.cursor,
     'no-file-writes': {
       status: 'enforced',
       how: 'a sandbox that refuses writes.',
@@ -1083,7 +1099,7 @@ test('a read-only drawing is still hashed while read-only is only an instruction
   // As the product actually stands. The skip would otherwise fire exactly where the
   // read-only guarantee is weakest, removing the only thing DSpatch has that can
   // contradict an agent claiming it changed nothing (DSP-92 F12 point 4).
-  const asItStands = writeReachOf(drawing, () => READ_ONLY_ROLE);
+  const asItStands = writeReachOf(drawing, () => READ_ONLY_ROLE, 'cursor');
   assert.equal(asItStands.mayWrite, true);
   assert.match(asItStands.reason, /"review"/);
   assert.match(asItStands.reason, /does not enforce it/);
@@ -1093,11 +1109,17 @@ test('a read-only drawing is still hashed while read-only is only an instruction
   // read-only true. The reason is written for a run record, so it has to say what was
   // concluded and from what — a record that only said "skipped" would be the absent
   // measurement again.
-  const enforced = writeReachOf(drawing, () => READ_ONLY_ROLE, ENFORCED_READ_ONLY);
+  const enforced = writeReachOf(drawing, () => READ_ONLY_ROLE, 'cursor', ENFORCED_READ_ONLY);
   assert.equal(enforced.mayWrite, false);
   assert.match(enforced.reason, /No step in this drawing may write/);
   assert.match(enforced.reason, /no-file-writes/);
-  assert.match(enforced.reason, /enforces that on the path this run takes/);
+  assert.match(enforced.reason, /Cursor, which runs them, enforces that/);
+
+  // DSP-218: the same cursor-labelled drawing run through Copilot asks Copilot, so Cursor's
+  // enforcement does not stop the snapshots of a run Copilot's tools could write in.
+  const viaCopilot = writeReachOf({ ...drawing, target: 'cursor' }, () => READ_ONLY_ROLE, 'copilot', ENFORCED_READ_ONLY);
+  assert.equal(viaCopilot.mayWrite, true);
+  assert.match(viaCopilot.reason, /Copilot, which runs it, does not enforce it/);
 });
 
 test('one agent step that may write is enough, and the reason names it', () => {
@@ -1116,6 +1138,7 @@ test('one agent step that may write is enough, and the reason names it', () => {
     ]),
     (reference) =>
       reference.id === 'reader' ? READ_ONLY_ROLE : { ...READ_ONLY_ROLE, id: 'writer', requirements: [] },
+    'cursor',
     // Enforced, so that the step this test is about is the first one that may write. With
     // the real table the read-only step may write too, which is that table's point and not
     // this test's.
@@ -1130,11 +1153,12 @@ test('a gate and an external step count as able to write, because nothing here c
   const gate = writeReachOf(
     reachGraph([{ id: 'build', kind: 'gate' }]),
     NEVER_RESOLVES,
+    'cursor',
   );
   assert.equal(gate.mayWrite, true);
   assert.match(gate.reason, /a command may write anything/);
 
-  const external = writeReachOf(reachGraph([{ id: 'ci', kind: 'external' }]), NEVER_RESOLVES);
+  const external = writeReachOf(reachGraph([{ id: 'ci', kind: 'external' }]), NEVER_RESOLVES, 'cursor');
   assert.equal(external.mayWrite, true);
   assert.match(external.reason, /unknown is not none/);
 });
@@ -1149,6 +1173,7 @@ test('an agent step whose role will not resolve may write, rather than being ass
       },
     ]),
     NEVER_RESOLVES,
+    'cursor',
   );
   assert.equal(reach.mayWrite, true);
 });
@@ -1168,5 +1193,5 @@ test('the runnable development loop is hashed, because its implementer writes th
   }
   // The direction that matters: the drawing DSP-91 was verified on keeps its snapshots,
   // so the skip cannot silently become the default for a loop that changes code.
-  assert.equal(writeReachOf(loaded.graph, createFileRoleResolver(repoRoot)).mayWrite, true);
+  assert.equal(writeReachOf(loaded.graph, createFileRoleResolver(repoRoot), 'cursor').mayWrite, true);
 });

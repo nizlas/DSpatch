@@ -66,8 +66,8 @@ import {
 import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/loop-control';
 import { handoffAnswerFrom } from '../shared/loop-control';
 import { describeLiveBinding } from '../shared/loop-editor-run';
-import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
-import type { LoopGraph, LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph';
+import { checkRunRequirements, formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
+import type { LoopGraph, LoopNode, RoleReference, RoleResolver, RunProvider } from '../shared/loop-graph';
 import { earlierInstructionsContext, instructionPreamble } from '../shared/loop-instruction';
 import {
   describeRunOutcome,
@@ -146,7 +146,7 @@ import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock'
 import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
 import { runLiveGraph } from '../main/loop-live-run';
 import { LoopRunAudience } from '../main/loop-run-audience';
-import { loopRunAgentInfo, prepareLoopRun, resolveLoopProvider, type LoopRunAgentRequest } from '../main/loop-run-agent';
+import { loopRunAgentInfo, NOTHING_WAS_STARTED, prepareLoopRun, resolveLoopProvider, type LoopRunAgentRequest } from '../main/loop-run-agent';
 import { ownRepositoryRoot } from '../main/own-repository';
 import {
   CLAUDE_SHAPED_MODELS,
@@ -545,6 +545,15 @@ function editorLoopRunRequest(
     ...(graph === undefined ? {} : { graph }),
     cursorModel: modelForChatNode(entryNode, chatService.openSession()?.modelRequested ?? chatService.modelFor('cursor')),
   });
+}
+
+/**
+ * DSP-218: a step requirement the run's agent cannot meet refuses the run before anything is
+ * recorded or claimed. Asked of the agent the run goes through, never of the drawing's target.
+ */
+function requirementsRefusal(graph: LoopGraph, provider: RunProvider, resolveRole: RoleResolver): string | null {
+  const errors = checkRunRequirements(graph, provider, resolveRole).filter((finding) => finding.severity === 'error');
+  return errors.length === 0 ? null : `${errors.map((finding) => finding.message).join(' ')} ${NOTHING_WAS_STARTED}`;
 }
 
 /** The entry step a window named, checked field by field: it came from a renderer. */
@@ -2698,6 +2707,10 @@ function registerLoopMethods(): void {
       if (!agent.ok) {
         return { kind: 'refused', reason: agent.reason };
       }
+      const unmet = requirementsRefusal(loaded.graph, agent.provider, resolveEditorRole);
+      if (unmet !== null) {
+        return { kind: 'refused', reason: unmet };
+      }
 
       editorLoopAbort = new AbortController();
       const abort = editorLoopAbort;
@@ -2757,8 +2770,10 @@ function registerLoopMethods(): void {
             provider: agent.provider,
             modelRequested: agent.modelRequested,
           }),
-          // DSP-218: the same provider and model in a few words, for the loop view beside Run.
-          agentSummary: loopRunAgentSummary(agent.provider, agent.modelRequested),
+          // DSP-218: the agent and the run's own model choice (a step that fixes its own model
+          // runs with that, which the journal records per step), for the loop view beside Run.
+          agentSummary: loopRunAgentSummary(agent.provider, agent.personModel),
+          agentProvider: agent.provider,
           // Read from the same bytes the run is walking, so the bindings that travel
           // are the bindings of the drawing that travels.
           roles: resolvedRolesWith(referencedRoles(request.text), resolveEditorRole),
@@ -3059,6 +3074,10 @@ function registerLoopMethods(): void {
       if (!agent.ok) {
         return { kind: 'refused', reason: agent.reason };
       }
+      const unmet = requirementsRefusal(loaded.graph, agent.provider, resolveRole);
+      if (unmet !== null) {
+        return { kind: 'refused', reason: unmet };
+      }
       const modelRequested = agent.modelRequested;
       // DSP-147: nor while earlier agent work here has no confirmed end and nobody has
       // named it (an unconfirmed stop of a turn or a loop step). The rule a message meets.
@@ -3223,8 +3242,10 @@ function registerLoopMethods(): void {
             provider: agent.provider,
             modelRequested: agent.modelRequested,
           }),
-          // DSP-218: the same provider and model in a few words, for the loop view beside Run.
-          agentSummary: loopRunAgentSummary(agent.provider, agent.modelRequested),
+          // DSP-218: the agent and the run's own model choice (a step that fixes its own model
+          // runs with that, which the journal records per step), for the loop view beside Run.
+          agentSummary: loopRunAgentSummary(agent.provider, agent.personModel),
+          agentProvider: agent.provider,
           // The bindings this run is actually using, announced with the drawing.
           // `resolveRole` above has already read every one of them in order to build
           // the prompts, so this costs a cache lookup and closes the defect where a
@@ -3803,7 +3824,7 @@ function registerLoopMethods(): void {
         phase: 'ready',
         // DSP-138: which agent *Use loop* would run this with now, or why it would not.
         agent: agent.line,
-        ...(agent.summary === null ? {} : { agentSummary: agent.summary }),
+        ...(agent.summary === null || agent.provider === null ? {} : { agentSummary: agent.summary, agentProvider: agent.provider }),
         roles: resolvedRolesWith(referencedRoles(graphText), chosen.resolveRole),
       },
     };

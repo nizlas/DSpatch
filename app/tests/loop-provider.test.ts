@@ -386,6 +386,14 @@ describe('the agent line, the policy text and Cursor', () => {
     assert.doesNotMatch(info.line, /cursor/i);
   });
 
+  it('DSP-218: a step that fixes its own model leaves the summary on the run\'s own choice', () => {
+    const factory: LoopRunAgentRequest['adapters'] = { preflight: () => null, createAdapter: () => ({}) as ReturnType<LoopRunAgentRequest['adapters']['createAdapter']> };
+    const entryNode = { id: 'plan', label: 'Plan', model: { policy: 'fixed', model: 'gpt-fixed' } } as const;
+    const info = loopRunAgentInfo(request(factory, { sessionProvider: 'copilot', copilotModel: 'claude-opus-5.5', copilotModels: null, entryNode }));
+    assert.equal(info.summary, 'Copilot · claude-opus-5.5');
+    assert.match(info.line, /^Runs with Copilot \(gpt-fixed\)/, 'the line still names the first step\'s own model');
+  });
+
   it('resolves the open session first, then the stored choice', () => {
     const { factory } = adapters(null, {}, { cursorAllowed: true });
     assert.equal(prepared(request(factory, { sessionProvider: null, chosenAgent: 'cursor' })).provider, 'cursor');
@@ -445,7 +453,13 @@ describe('both run handlers decide the agent before anything is recorded or clai
     assert.doesNotMatch(body, /defaultLiveModel/);
     assert.match(body, /chatService\.openSession\(\)\?\.modelRequested \?\? chatService\.modelFor\('cursor'\)/);
     for (const channel of ['START_EDITOR_LOOP_RUN', 'START_CHAT_LOOP_RUN']) {
-      assert.match(handler(channel), /agentSummary: loopRunAgentSummary\(agent\.provider, agent\.modelRequested\)/);
+      const body = handler(channel);
+      assert.match(body, /agentSummary: loopRunAgentSummary\(agent\.provider, agent\.personModel\)/);
+      assert.match(body, /agentProvider: agent\.provider/);
+      // The steps' requirements are asked of the run's agent before the control is claimed.
+      const unmet = body.indexOf('requirementsRefusal(loaded.graph, agent.provider,');
+      assert.notEqual(unmet, -1);
+      assert.ok(unmet < body.indexOf('loopControl.beginRun('));
     }
     assert.doesNotMatch(main, /drawnFor/);
   });

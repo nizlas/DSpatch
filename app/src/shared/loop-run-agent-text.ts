@@ -8,7 +8,7 @@
  * framework named beside the agent read as the agent.
  */
 
-import type { ModelPolicy } from './loop-graph';
+import { RUN_PROVIDER_NAMES, type ModelPolicy } from './loop-graph';
 
 export type LoopRunProvider = 'cursor' | 'claude' | 'copilot';
 
@@ -34,18 +34,12 @@ export interface LoopRunAgentInfo {
   readonly summary: string | null;
 }
 
-const PROVIDER_NAMES: Readonly<Record<LoopRunProvider, string>> = {
-  cursor: 'Cursor',
-  claude: 'Claude',
-  copilot: 'Copilot',
-};
-
 /**
  * DSP-218: the provider and model a run uses, in a few words, for the loop view beside Run.
  * Read-only information: the choice is made in the chat.
  */
 export function loopRunAgentSummary(provider: LoopRunProvider, model: string): string {
-  return `${PROVIDER_NAMES[provider]} · ${model === '' ? 'its default model' : model}`;
+  return `${RUN_PROVIDER_NAMES[provider]} · ${model === '' ? 'its default model' : model}`;
 }
 
 export function describeLoopRunAgent(input: {

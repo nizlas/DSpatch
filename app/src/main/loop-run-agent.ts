@@ -245,10 +245,11 @@ export function loopRunAgentInfo(request: LoopRunAgentRequest): LoopRunAgentInfo
       ? `${entryChoice.model === '' ? 'the provider’s default' : entryChoice.model}, option “${entryChoice.option ?? ''}” by default; an edge may select another`
       : prepared.modelRequested;
   const line = describeLoopRunAgent({ provider: prepared.provider, modelRequested: shown });
-  const summaryModel = entryChoice?.policy === 'select' && entryChoice.model !== null ? entryChoice.model : prepared.modelRequested;
   return {
     provider: prepared.provider,
     line: prepared.modelCheck === null ? line : `${line} ${prepared.modelCheck}`,
-    summary: loopRunAgentSummary(prepared.provider, summaryModel),
+    // DSP-218: the run's own model choice; a step that fixes or selects its own is an exception
+    // the window names beside it, from the drawing (or, while it runs, from the journal).
+    summary: loopRunAgentSummary(prepared.provider, prepared.personModel),
   };
 }

@@ -331,8 +331,10 @@ function withEditorBinding(
 function snapshotDecisionFor(
   graph: LoopGraph,
   repoRoot: string,
+  // DSP-218: the agent this run goes through, whose tools decide whether read-only holds.
+  provider: ProviderId,
 ): { readonly hashWorkingRoots: boolean; readonly reason: string } {
-  const reach = writeReachOf(graph, createFileRoleResolver(repoRoot));
+  const reach = writeReachOf(graph, createFileRoleResolver(repoRoot), provider);
   return { hashWorkingRoots: reach.mayWrite, reason: reach.reason };
 }
 
@@ -346,7 +348,7 @@ async function driveLive(
   const inspection = emptyInspection(workspacePath, options.modelRequested, roots, options.provider);
   // Before the walk, so the note the record carries and the behaviour the executor takes are
   // the same decision rather than two that could disagree.
-  const snapshots = snapshotDecisionFor(graph, options.repoRoot);
+  const snapshots = snapshotDecisionFor(graph, options.repoRoot, options.provider);
   if (!snapshots.hashWorkingRoots) {
     inspection.rootsNote = describeUnobservedOutside(roots, snapshots.reason);
   }

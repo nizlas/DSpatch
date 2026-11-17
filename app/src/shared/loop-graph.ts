@@ -1345,9 +1345,18 @@ const CLAUDE_EVIDENCE_NOTE =
  * and checked offline with a substituted SDK, and no live Claude session has been
  * observed applying them.
  */
-export const RUN_PROVIDER_CAPABILITIES: Readonly<
+export type RunProviderCapabilities = Readonly<
   Record<RunProvider, Readonly<Record<RequirementId, CapabilityAnswer>>>
-> = {
+>;
+
+/** DSP-218: the agent's name in what DSpatch says about a run's requirements. */
+export const RUN_PROVIDER_NAMES: Readonly<Record<RunProvider, string>> = {
+  cursor: 'Cursor',
+  claude: 'Claude',
+  copilot: 'Copilot',
+};
+
+export const RUN_PROVIDER_CAPABILITIES: RunProviderCapabilities = {
   cursor: Object.fromEntries(
     REQUIREMENTS.map((requirement) => [
       requirement,
@@ -1489,11 +1498,15 @@ export interface WriteReach {
 }
 
 export function writeReachOf(
-  graph: Pick<LoopGraph, 'nodes' | 'target'>,
+  graph: Pick<LoopGraph, 'nodes'>,
   resolveRole: RoleResolver,
-  table: TargetCapabilities = TARGET_CAPABILITIES,
+  // DSP-218: the agent the run goes through decides whether read-only is applied, not the
+  // drawing's target, which is a label for its roles' form.
+  provider: RunProvider,
+  table: RunProviderCapabilities = RUN_PROVIDER_CAPABILITIES,
 ): WriteReach {
-  const readOnly = capabilityAnswer(graph.target, 'no-file-writes', 'dspatch-walked-run', table);
+  const readOnly = table[provider]['no-file-writes'];
+  const agent = RUN_PROVIDER_NAMES[provider];
   for (const node of graph.nodes) {
     if (node.kind === 'gate') {
       return {
@@ -1529,7 +1542,7 @@ export function writeReachOf(
       return {
         mayWrite: true,
         reason:
-          `${named} requires no-file-writes, and on the path this run takes ${graph.target} ` +
+          `${named} requires no-file-writes, and ${agent}, which runs it, ` +
           `does not enforce it: ${readOnly.how} So the requirement is an instruction the ` +
           `agent is expected to follow, which is not a reason to stop measuring whether it ` +
           `did.`,
@@ -1541,7 +1554,7 @@ export function writeReachOf(
     reason:
       'No step in this drawing may write in the working folders: every agent step requires ' +
       'no-file-writes, ' +
-      `${graph.target} enforces that on the path this run takes (${readOnly.how}), and there ` +
+      `${agent}, which runs them, enforces that (${readOnly.how}), and there ` +
       'is no gate or external step to start anything. Two snapshots of the project could ' +
       'therefore only ever be equal.',
   };
@@ -1583,18 +1596,16 @@ export function runnableHere(
   };
 }
 
-/** What switching target would mean. Nothing is changed and nothing is removed. */
+/**
+ * What switching target would mean. Nothing is changed and nothing is removed.
+ *
+ * DSP-218: only the roles' form. The steps' requirements are answered by the agent that runs
+ * the loop ({@link RUN_PROVIDER_CAPABILITIES}), which the target does not choose, so a report
+ * comparing two targets' answers would describe a run that never happens.
+ */
 export interface TargetChangeReport {
   readonly from: LoopTarget;
   readonly to: LoopTarget;
-  /** Requirements that stop being enforced, each with what is lost. */
-  readonly losses: readonly string[];
-  /** Requirements the new target enforces and the old one did not. */
-  readonly gains: readonly string[];
-  /** Requirements nobody has established for the new target. Not losses; unknowns. */
-  readonly unknowns: readonly string[];
-  /** Requirements the new target cannot meet at all. These would make the graph invalid. */
-  readonly blocking: readonly string[];
   /** Roles that do not support the new target. Empty when no resolver was supplied. */
   readonly rolesWithoutSupport: readonly string[];
   /** Whether a resolver was available to check the roles at all. */
@@ -1605,58 +1616,14 @@ export interface TargetChangeReport {
  * Report what changing the target would mean, without changing anything.
  *
  * DSP-21 is explicit that this is a reported operation and never a silent migration
- * or an automatic removal: "a requirement silently dropped during a target change is
- * the failure this whole design exists to prevent". So this returns prose for a person
- * and no graph at all. Use {@link withTarget} afterwards, which also removes nothing.
+ * or an automatic removal. So this returns prose for a person and no graph at all. Use
+ * {@link withTarget} afterwards, which also removes nothing.
  */
 export function describeTargetChange(
   graph: LoopGraph,
   to: LoopTarget,
-  options: {
-    readonly resolveRole?: RoleResolver;
-    readonly targetCapabilities?: TargetCapabilities;
-  } = {},
+  options: { readonly resolveRole?: RoleResolver } = {},
 ): TargetChangeReport {
-  const table = options.targetCapabilities ?? TARGET_CAPABILITIES;
-  const from = graph.target;
-  const losses: string[] = [];
-  const gains: string[] = [];
-  const unknowns: string[] = [];
-  const blocking: string[] = [];
-
-  const required = new Set<RequirementId>();
-  for (const node of graph.nodes) {
-    const role = node.role && options.resolveRole ? options.resolveRole(node.role) : null;
-    for (const entry of effectiveRequirements(node, role)) {
-      required.add(entry.requirement);
-    }
-  }
-
-  for (const requirement of required) {
-    // Both sides on the path this graph would be run on, which is DSpatch's own: a
-    // report that compared one framework's file mechanism with another's would be
-    // answering a question nobody asked of a drawing.
-    const before = capabilityAnswer(from, requirement, 'dspatch-walked-run', table);
-    const after = capabilityAnswer(to, requirement, 'dspatch-walked-run', table);
-    if (after.status === 'unmet') {
-      blocking.push(`${requirement}: ${to} cannot meet it. ${after.how}`);
-      continue;
-    }
-    if (after.status === 'unknown') {
-      unknowns.push(`${requirement}: unestablished for ${to}. ${after.how}`);
-      continue;
-    }
-    if (before.status === 'enforced' && after.status === 'other-means') {
-      losses.push(
-        `${requirement}: enforced by ${from}, but only achieved by other means on ${to}. ${after.how}`,
-      );
-      continue;
-    }
-    if (before.status !== 'enforced' && after.status === 'enforced') {
-      gains.push(`${requirement}: ${to} enforces it natively. ${after.how}`);
-    }
-  }
-
   const rolesWithoutSupport: string[] = [];
   if (options.resolveRole) {
     for (const node of graph.nodes) {
@@ -1672,17 +1639,7 @@ export function describeTargetChange(
       }
     }
   }
-
-  return {
-    from,
-    to,
-    losses,
-    gains,
-    unknowns,
-    blocking,
-    rolesWithoutSupport,
-    rolesChecked: Boolean(options.resolveRole),
-  };
+  return { from: graph.target, to, rolesWithoutSupport, rolesChecked: Boolean(options.resolveRole) };
 }
 
 /**

@@ -38,9 +38,9 @@ import {
   RESULT_FORMS,
   ROLE_SOURCE_KINDS,
   RUNTIME_FAULT_POLICIES,
-  TARGET_CAPABILITIES,
+  RUN_PROVIDER_CAPABILITIES,
+  RUN_PROVIDER_NAMES,
   TERMINAL_ENDINGS,
-  capabilityAnswer,
   effectiveRequirements,
   namesARuntimeFault,
   runnableHere,
@@ -68,8 +68,9 @@ import type {
   RoleReference,
   RoleResolver,
   RunnableHere,
+  RunProvider,
+  RunProviderCapabilities,
   StepLimits,
-  TargetCapabilities,
   TerminalEnding,
 } from './loop-graph';
 
@@ -110,8 +111,15 @@ export interface CheckOptions {
   readonly resolveRole?: RoleResolver;
   /** Which frameworks this machine is connected to. `null` means it was not established. */
   readonly connectedTargets?: readonly LoopTarget[] | null;
-  /** Overridable so a test can exercise a target that cannot meet a requirement. */
-  readonly targetCapabilities?: TargetCapabilities;
+  /**
+   * DSP-218: the agent the run goes through, which is what applies a step's requirements (or
+   * does not). The drawing's `target` is not asked: it is the form the roles are checked for.
+   * Left out, the requirements are not judged at all (a caller that judges no run); `null`
+   * says the agent is not known yet, and one notice says the requirements wait for it.
+   */
+  readonly runProvider?: RunProvider | null;
+  /** Overridable so a test can exercise an agent that cannot meet a requirement. */
+  readonly runProviderCapabilities?: RunProviderCapabilities;
 }
 
 class Findings {
@@ -1438,7 +1446,6 @@ function parseCondition(
  */
 export function checkLoopGraph(graph: LoopGraph, options: CheckOptions = {}): readonly Finding[] {
   const findings = new Findings();
-  const table = options.targetCapabilities ?? TARGET_CAPABILITIES;
   const byId = new Map(graph.nodes.map((node) => [node.id, node] as const));
   const failureKindIds = new Set(graph.failureKinds.map((kind) => kind.id));
   const outgoing = new Map<string, LoopEdge[]>();
@@ -1538,7 +1545,15 @@ export function checkLoopGraph(graph: LoopGraph, options: CheckOptions = {}): re
     const out = outgoing.get(node.id) ?? [];
     checkNodeShape(node, pointer, out, findings);
     checkNodeRouting(node, pointer, out, findings);
-    checkNodeRole(node, pointer, graph, table, options, findings);
+    checkNodeRole(node, pointer, graph, options, findings);
+  }
+  if (options.runProvider === null && graph.nodes.some((node) => node.kind === 'agent' && effectiveRequirements(node, node.role && options.resolveRole ? options.resolveRole(node.role) : null).length > 0)) {
+    findings.notice(
+      'requirements-await-agent',
+      '/nodes',
+      'The steps\' requirements are checked against the agent that runs the loop, chosen in the ' +
+        'chat, and which agent that is has not been read yet. They are checked again when a run starts.',
+    );
   }
 
   checkReachability(graph, byId, outgoing, pointerOf, findings);
@@ -1807,11 +1822,76 @@ function checkUndeclaredRoute(node: LoopNode, pointer: string, findings: Finding
   }
 }
 
+/**
+ * DSP-218: what the run's agent does about each requirement a step has. Answered for the
+ * agent DSpatch runs the loop with (DSP-139's table), never for the drawing's target: a
+ * `cursor` label must neither pass nor stop a run that goes through Copilot. A generated
+ * agent file is answered where those files are written, in `role-generate.ts`.
+ */
+function requirementFindings(
+  node: LoopNode,
+  pointer: string,
+  effective: ReturnType<typeof effectiveRequirements>,
+  provider: RunProvider,
+  table: RunProviderCapabilities,
+  findings: Findings,
+): void {
+  const ids: Ids = { nodeId: node.id };
+  const agent = RUN_PROVIDER_NAMES[provider];
+  for (const entry of effective) {
+    const answer = table[provider][entry.requirement];
+    const origin = entry.from === 'role' ? `role "${node.role?.id ?? ''}"` : 'this node';
+    if (answer.status === 'unmet') {
+      findings.error(
+        'requirement-target-cannot-meet',
+        `${pointer}/requirements`,
+        `Node "${node.id}" requires ${entry.requirement} (from ${origin}) and ${agent}, which runs ` +
+          `this loop, cannot meet it: ${answer.how} Running it there would produce a step that ` +
+          `reads as though the requirement held.`,
+        ids,
+      );
+    } else if (answer.status === 'unknown') {
+      findings.warning(
+        'requirement-unestablished',
+        `${pointer}/requirements`,
+        `Node "${node.id}" requires ${entry.requirement} (from ${origin}) and whether ` +
+          `${agent}, which runs this loop, can meet it is unestablished: ${answer.how}`,
+        ids,
+      );
+    } else if (answer.status === 'other-means') {
+      findings.notice(
+        'requirement-not-enforced',
+        `${pointer}/requirements`,
+        `Node "${node.id}" requires ${entry.requirement} (from ${origin}). ${agent}, which runs ` +
+          `this loop, does not enforce it: ${answer.how}`,
+        ids,
+      );
+    }
+  }
+}
+
+/**
+ * DSP-218: a run's requirement check on its own, for a run whose agent is known only after
+ * its graph was loaded. Errors here refuse the run before anything starts.
+ */
+export function checkRunRequirements(
+  graph: LoopGraph,
+  provider: RunProvider,
+  resolveRole: RoleResolver,
+  table: RunProviderCapabilities = RUN_PROVIDER_CAPABILITIES,
+): readonly Finding[] {
+  const findings = new Findings();
+  graph.nodes.forEach((node, index) => {
+    const role = node.role ? resolveRole(node.role) : null;
+    requirementFindings(node, `/nodes/${index}`, effectiveRequirements(node, role), provider, table, findings);
+  });
+  return findings.all;
+}
+
 function checkNodeRole(
   node: LoopNode,
   pointer: string,
   graph: LoopGraph,
-  table: TargetCapabilities,
   options: CheckOptions,
   findings: Findings,
 ): void {
@@ -1872,39 +1952,8 @@ function checkNodeRole(
   }
 
   const effective = effectiveRequirements(node, role);
-  for (const entry of effective) {
-    // A graph is checked for the run DSpatch would walk. The other path — a generated
-    // agent file the framework runs — is answered where those files are written, in
-    // `role-generate.ts`, and answering it here would tell a person a mechanism holds
-    // for a run that never loads the file it lives in.
-    const answer = capabilityAnswer(graph.target, entry.requirement, 'dspatch-walked-run', table);
-    const origin = entry.from === 'role' ? `role "${node.role?.id ?? ''}"` : 'this node';
-    if (answer.status === 'unmet') {
-      findings.error(
-        'requirement-target-cannot-meet',
-        `${pointer}/requirements`,
-        `Node "${node.id}" requires ${entry.requirement} (from ${origin}) and ${graph.target} ` +
-          `cannot meet it: ${answer.how} Running this graph there would produce a step that ` +
-          `reads as though the requirement held.`,
-        ids,
-      );
-    } else if (answer.status === 'unknown') {
-      findings.warning(
-        'requirement-unestablished',
-        `${pointer}/requirements`,
-        `Node "${node.id}" requires ${entry.requirement} (from ${origin}) and whether ` +
-          `${graph.target} can meet it is unestablished: ${answer.how}`,
-        ids,
-      );
-    } else if (answer.status === 'other-means') {
-      findings.notice(
-        'requirement-not-enforced',
-        `${pointer}/requirements`,
-        `Node "${node.id}" requires ${entry.requirement} (from ${origin}). ${graph.target} ` +
-          `does not enforce it: ${answer.how}`,
-        ids,
-      );
-    }
+  if (options.runProvider !== undefined && options.runProvider !== null) {
+    requirementFindings(node, pointer, effective, options.runProvider, options.runProviderCapabilities ?? RUN_PROVIDER_CAPABILITIES, findings);
   }
 
   const cannotWrite = effective.some((entry) => entry.requirement === 'no-file-writes');
