@@ -1,0 +1,9 @@
+# Generic agent network
+
+Run the loop from live chat for a conversational workflow. Opening the graph in the editor is for inspection and editing; the editor's live Run binding does not run this template. `stored-result` carries reply bodies for handoffs during the run; supplying a results directory alone does not write those bodies as files. Do not assume durable reports or resumability from this graph: verify the recording and recovery behavior of the chosen run path, and save any needed report through an authorized project mechanism.
+
+This template has write-capable steps. DSpatch may read the working folders for snapshots even when the agent is instructed not to read them; the instructions neither disable host observation nor enforce permissions. Do not use this template when the mandate prohibits all project access or observation. Whether observation is allowed, and which runtime or provider controls apply, must be established for the actual environment.
+
+Every role returns a carry-forward ledger of accepted slices with attributed evidence. Each edge supplies only the named results, and each step must carry the ledger in its actual reply, including failures. Agent instructions are not a guarantee of model compliance; inspect results and reconcile missing or uncertain evidence.
+
+The call limit is checked after each step. If a limit is routed, later reporting calls may exceed it. If the limit is first spent at a reporting node, those nodes have no limit route and the run stops without reaching the report-delivered ending; it may stop before the final report step runs. Without limit routing, the run stops at the limit. A report-delivered ending is not human approval or proof of verification.

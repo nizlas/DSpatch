@@ -1,0 +1,10 @@
+{
+  "format": "dspatch-loop-definition",
+  "formatVersion": 1,
+  "id": "generic-agent-network",
+  "name": "Generic agent network",
+  "description": "A reusable planning, work, verification and review network.",
+  "resourceRoot": "../..",
+  "graph": "docs/loop/graphs/generic-agent-network.graph.json",
+  "notes": "Run this template from live chat. DSpatch may read working folders for snapshots regardless of the agent's instructions. Do not use this template when the mandate prohibits all project access or observation. The generic roles do not enforce permissions; the project's applicable instructions and actual runtime controls remain in force. See docs/loop/graphs/generic-agent-network.README.md for result, limit and verification limitations."
+}

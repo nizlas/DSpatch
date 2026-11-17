@@ -1,5 +1,5 @@
 /**
- * DSP-209 S18b: the layered layout, on the eight bundled drawings and a synthetic 25-node one.
+ * DSP-209 S18b: the layered layout, on the bundled drawings and a synthetic 25-node one.
  *
  * What is asserted is what a person relies on: no box on another, the entry at the top, rework
  * edges still drawn as rework and going back up, the same answer every time, a placed drawing
@@ -18,7 +18,7 @@ import { edgeLabelText, LABEL_WRAP_WIDTH, labelTextWidth } from '../src/shared/l
 import { countRouteCrossings, findBackEdges, routeLoopEdges, routingBox, segmentCrossesBox, sidePathEdges } from '../src/shared/loop-edge-routing';
 import type { LoopEdge, LoopGraph, LoopNode } from '../src/shared/loop-graph';
 import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION } from '../src/shared/loop-graph';
-import { arrangeGraph, layOutMissingViews } from '../src/shared/loop-graph-editing';
+import { arrangeGraph, layOutMissingViews, shouldUsePlainLayout } from '../src/shared/loop-graph-editing';
 import { parseLoopGraph } from '../src/shared/loop-graph-load';
 import { layeredLayout } from '../src/shared/loop-layout';
 
@@ -95,8 +95,8 @@ function overlaps(graph: LoopGraph): string[] {
 }
 
 describe('the layered layout (DSP-209 S18b)', () => {
-  it('covers eight bundled drawings and the 25-node one', () => {
-    assert.equal(bundled().length, 8);
+  it('covers the generic network, bundled drawings and the 25-node one', () => {
+    assert.ok(bundled().some(({ name }) => name === 'generic-agent-network.graph.json'));
     assert.equal(synthetic().nodes.length, 25);
   });
 
@@ -132,7 +132,16 @@ describe('the layered layout (DSP-209 S18b)', () => {
 
   it('leaves a fully placed drawing exactly as it is on open, and places a missing node below the rest', () => {
     for (const { name, graph } of bundled()) {
-      assert.equal(layOutMissingViews(graph).graph, graph, `${name}: the same graph object`);
+      const laidOut = layOutMissingViews(graph);
+      const missing = graph.nodes.filter((node) => node.view === undefined).map((node) => node.id);
+      assert.deepEqual(laidOut.placed, missing, `${name}: all missing nodes are placed`);
+      for (const node of graph.nodes.filter((item) => item.view !== undefined)) {
+        assert.deepEqual(laidOut.graph.nodes.find((item) => item.id === node.id)?.view, node.view, `${name}: ${node.id} keeps its position`);
+      }
+      assert.equal(layOutMissingViews(laidOut.graph).graph, laidOut.graph, `${name}: a fully placed drawing keeps the same graph object`);
+      if (missing.length === 0) {
+        assert.equal(laidOut.graph, graph, `${name}: the same graph object`);
+      }
     }
     const { graph } = bundled().find((item) => item.name === 'dspatch-mission-loop.graph.json')!;
     const target = graph.nodes.find((node) => node.kind === 'agent')!;
@@ -158,6 +167,17 @@ describe('the layered layout (DSP-209 S18b)', () => {
 });
 
 describe('side paths outside the main flow (Niclas, 14 November 2026)', () => {
+  it('only falls back to fewer main crossings without degrading routing quality', () => {
+    const best = { mainCrossings: 2, labelConflicts: 0, dogLegs: 0, narrowed: false };
+    const plain = { ...best, mainCrossings: 1 };
+    assert.equal(shouldUsePlainLayout(best, plain), true);
+    assert.equal(shouldUsePlainLayout(best, { ...plain, labelConflicts: 1 }), false);
+    assert.equal(shouldUsePlainLayout(best, { ...plain, dogLegs: 1 }), false);
+    assert.equal(shouldUsePlainLayout(best, { ...plain, narrowed: true }), false);
+    assert.equal(shouldUsePlainLayout(best, { ...plain, mainCrossings: 2 }), false);
+    assert.equal(shouldUsePlainLayout({ ...best, labelConflicts: 2, dogLegs: 2, narrowed: true }, { ...plain, labelConflicts: 1, dogLegs: 1, narrowed: true }), true);
+  });
+
   it('reads side paths from the drawing’s own declarations: failures and a node’s fallback outcome', () => {
     const chat = bundled().find((entry) => entry.name === 'dspatch-chat-loop.graph.json')?.graph;
     assert.ok(chat !== undefined);

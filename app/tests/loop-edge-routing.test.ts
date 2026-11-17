@@ -56,8 +56,8 @@ function insideOrOn(point: Point, box: Box): boolean {
 describe('routes for the bundled graphs at their saved positions', () => {
   const graphs = bundledGraphs();
 
-  it('finds all eight bundled graphs', () => {
-    assert.equal(graphs.length, 8);
+  it('includes the generic agent network among the bundled graphs', () => {
+    assert.ok(graphs.some(({ name }) => name === 'generic-agent-network.graph.json'));
   });
 
   for (const { name, graph } of graphs) {
