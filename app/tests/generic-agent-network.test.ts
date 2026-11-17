@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -14,6 +15,14 @@ import { routeLoopEdges, routingBox, segmentCrossesBox } from '../src/shared/loo
 import { createMemoryResultStore } from '../src/shared/loop-results';
 import { runLoopGraph, type StepContext, type StepExecution } from '../src/shared/loop-run';
 import { prepareBundled } from '../scripts/prepare-bundled.mjs';
+import type { AgentEvent, AgentEventListener } from '../src/adapter/types';
+import type { ChatAdapter } from '../src/main/chat-service';
+import { runLiveGraph } from '../src/main/loop-live-run';
+import { prepareLoopRun } from '../src/main/loop-run-agent';
+import type { RunProvider } from '../src/shared/loop-graph';
+import { checkLoopGraph } from '../src/shared/loop-graph-load';
+import { chatPromptFor, skippingRoutesOf } from '../src/shared/loop-chat';
+import { buildContextSnapshot } from '../src/shared/context-snapshot';
 
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const definitionPath = '.dspatch/loops/generic-agent-network.loop.json';
@@ -408,3 +417,124 @@ test('a runner-enforced limit on the second backlog start preserves the first ac
   assert.deepEqual(outputs.get('executive-report#1')?.ledger, [{ slice: 'slice-1', contract: 'contract-1', work: 'work-1', evidence: 'check-1', source: 'tl-accept#1' }]);
   assert.ok(!seen.some((item) => item.node.id === 'tl-accept' && item.occurrence === 2));
 });
+/** An agent that answers each step with the outcome {@link defaultOutcomes} names for it, keeping what it was given. */
+class NetworkAgent {
+  readonly prompts = new Map<string, string[]>();
+  readonly workspaces = new Set<string>();
+  private readonly listeners = new Map<string, AgentEventListener>();
+  private readonly provider: RunProvider;
+  private readonly nodeIds: readonly string[];
+  constructor(provider: RunProvider, nodeIds: readonly string[]) {
+    this.provider = provider;
+    this.nodeIds = nodeIds;
+  }
+  private nodeOf(sessionId: string): string {
+    return [...this.nodeIds].sort((a, b) => b.length - a.length).find((id) => sessionId.endsWith(`--${id}`)) ?? '';
+  }
+  startSession(config: { dspatchSessionId?: string; workspacePath?: string }) {
+    if (config.workspacePath !== undefined) this.workspaces.add(config.workspacePath);
+    const id = config.dspatchSessionId ?? 's';
+    return Promise.resolve({ dspatchSessionId: id, provider: this.provider, providerSessionId: `${this.provider}-${id}`, createdAt: new Date().toISOString() });
+  }
+  subscribe(sessionId: string, listener: AgentEventListener) {
+    this.listeners.set(sessionId, listener);
+    return () => this.listeners.delete(sessionId);
+  }
+  send(sessionId: string, prompt: string) {
+    const node = this.nodeOf(sessionId);
+    this.prompts.set(node, [...(this.prompts.get(node) ?? []), prompt]);
+    const runId = `${sessionId}-${String(this.prompts.get(node)?.length ?? 0)}`;
+    const emit = (event: Partial<AgentEvent>): void => {
+      this.listeners.get(sessionId)?.({ dspatchSessionId: sessionId, dspatchRunId: runId, at: new Date().toISOString(), rawProviderEvent: null, ...event } as AgentEvent);
+    };
+    setImmediate(() => {
+      emit({ type: 'run.started' });
+      emit({ type: 'assistant.message', text: `${node} done.\n\nRESULT: ${defaultOutcomes[node] ?? 'succeeded'}` } as Partial<AgentEvent>);
+      emit({ type: 'run.finished', status: 'finished' } as Partial<AgentEvent>);
+    });
+    return Promise.resolve({ dspatchRunId: runId });
+  }
+  cancel() { return Promise.resolve(); }
+  readUsage() { return Promise.resolve([]); }
+  dispose() { return Promise.resolve(); }
+}
+
+for (const provider of ['cursor', 'claude', 'copilot'] as const) {
+  test(`installed copy, open project: the network runs on the chat-loop path with ${provider} (simulated adapter)`, async (context) => {
+    // As installed: the definition, graph and roles copied out of the repository, and a
+    // separate project with its own instruction file and no loop definitions of its own.
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-generic-network-'));
+    context.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+    const installed = path.join(scratch, 'bundled');
+    fs.cpSync(path.join(root, 'docs/loop'), path.join(installed, 'docs/loop'), { recursive: true });
+    fs.cpSync(path.join(root, '.dspatch/loops'), path.join(installed, '.dspatch/loops'), { recursive: true });
+    const project = path.join(scratch, 'project');
+    fs.mkdirSync(project);
+    fs.writeFileSync(path.join(project, 'AGENTS.md'), '# Project rules\n', 'utf8');
+    const graph = load(installed);
+    const resolveRole = createFileRoleResolver(installed);
+    assert.deepEqual(checkLoopGraph(graph, { resolveRole, runProvider: provider }).filter((finding) => finding.severity === 'error'), []);
+
+    const agent = new NetworkAgent(provider, graph.nodes.map((node) => node.id));
+    const prepared = prepareLoopRun({
+      sessionProvider: provider,
+      chosenAgent: null,
+      rootCount: 1,
+      entryNode: graph.nodes.find((node) => node.id === graph.entry),
+      graph,
+      cursorModel: 'composer-2',
+      claudeModel: 'claude-haiku-4-5',
+      claudeModels: ['claude-haiku-4-5'],
+      copilotModel: 'claude-opus-5.5',
+      copilotModels: null,
+      adapters: { preflight: () => null, createAdapter: () => agent as unknown as ChatAdapter },
+    });
+    assert.ok(prepared.ok, prepared.ok ? '' : prepared.reason);
+    // The host's shared snapshot names the instruction files of the open project's folder.
+    const snapshot = buildContextSnapshot({
+      conversationId: 'c1',
+      messages: [{ ordinal: 0, prompt: 'Add a changelog entry.', answer: '' } as never],
+      earlierRuns: [],
+      repository: null,
+      instructionFiles: ['AGENTS.md', 'CLAUDE.md'].filter((name) => fs.existsSync(path.join(project, name))),
+      mandate: 'Add a changelog entry.',
+    });
+    assert.ok(snapshot);
+    const delivery = await runLiveGraph(graph, {
+      runId: `generic-${provider}`,
+      repoRoot: installed,
+      outDir: null,
+      resultsDir: path.join(scratch, 'results'),
+      modelRequested: prepared.modelRequested,
+      personModel: prepared.personModel,
+      workspacePath: project,
+      keepWorkspace: true,
+      bindingKind: 'chat-loop',
+      provider: prepared.provider,
+      createAdapter: prepared.createAdapter,
+      promptFor: (node, step) => chatPromptFor(node, {
+        entryId: graph.entry,
+        mandate: 'Add a changelog entry.',
+        step,
+        role: (() => {
+          const resolved = node.role === undefined ? null : resolveRole(node.role);
+          return resolved === null ? null : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null };
+        })(),
+        context: { text: snapshot.text, personWordsText: snapshot.personWordsText },
+        skipping: skippingRoutesOf(graph, node.id),
+      }),
+    });
+    assert.equal(delivery.result.status, 'completed', delivery.journalText);
+    assert.equal(delivery.result.terminalNodeId, 'iteration-ended');
+    assert.deepEqual([...agent.workspaces], [project], 'every step works in the open project');
+    assert.ok(delivery.inspection.sessions.every((session) => session.provider === provider));
+    const entry = agent.prompts.get('executive-intake')?.[0] ?? '';
+    assert.match(entry, /Project instruction files present[^\n]*\n- AGENTS\.md/);
+    const executive = resolveRole({ id: 'generic-executive', source: { kind: 'role-source', path: 'docs/loop/roles/generic/executive.role.md' } });
+    assert.ok(executive !== null && fs.existsSync(path.resolve(installed, executive.sourcePath)), 'roles are read from the installed copy');
+    assert.ok(entry.includes((executive?.instructions ?? '').split('\n').find((line) => line.trim() !== '') ?? '\u0000'));
+    for (const node of ['tl-dispatch', 'implementer-s', 'qa', 'reviewer-s', 'tl-accept', 'documenter-wrapup', 'executive-report']) {
+      assert.ok(agent.prompts.has(node), `${node} ran`);
+    }
+  });
+}

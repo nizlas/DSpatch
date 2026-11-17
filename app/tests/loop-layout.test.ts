@@ -96,6 +96,7 @@ function overlaps(graph: LoopGraph): string[] {
 
 describe('the layered layout (DSP-209 S18b)', () => {
   it('covers the generic network, bundled drawings and the 25-node one', () => {
+    assert.equal(bundled().length, 9);
     assert.ok(bundled().some(({ name }) => name === 'generic-agent-network.graph.json'));
     assert.equal(synthetic().nodes.length, 25);
   });
