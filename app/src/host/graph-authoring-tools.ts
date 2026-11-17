@@ -110,7 +110,7 @@ const ROLE_SOURCE_EXAMPLE = [
 const ROLE_SOURCE_RULES =
   '`role` is its id (lower case, digits, hyphens) and is the id a node references; `title` is required, and so is `summary`: ' +
   'one complete sentence on what the step does, which is what a person reads when hovering a node that uses the role; ' +
-  `\`targets\` lists the frameworks it supports (${LOOP_TARGETS.join(', ')}) and must include the graph's own target; ` +
+  `\`targets\` lists the frameworks its agent files may be exported for (${LOOP_TARGETS.join(', ')}); DSpatch's own runs read the common prose and run with the agent chosen in the chat, whatever it says; ` +
   `\`requires\` is optional (${REQUIREMENTS.join(', ')}). The prose goes under the headings ` +
   `${ROLE_SECTIONS.map((section) => `## ${section[0]?.toUpperCase() ?? ''}${section.slice(1)}`).join(', ')}, in that order, ` +
   '`## Purpose` required and nothing outside them.';
@@ -157,7 +157,8 @@ const ROLE_FINDINGS = new Set([
   'bad-role-source-kind',
   'role-does-not-resolve',
   'role-id-mismatch',
-  'role-does-not-support-target',
+  'role-has-no-instructions',
+  'role-export-form',
 ]);
 
 function ok(text: string): AppToolResult {

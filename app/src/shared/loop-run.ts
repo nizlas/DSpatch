@@ -321,12 +321,8 @@ export function instanceSessionId(runId: string, nodeId: string, occurrence: num
   return `dsp-session-${safe(runId)}--${safe(nodeId)}+${String(occurrence)}+${safe(sliceId)}`;
 }
 
-/** DSP-209 S10b: how many branches each adapter may run at once (mission decision 22; read from code, not observed). */
-export const FAN_OUT_ADAPTER_CAPS: Readonly<Record<'claude' | 'copilot' | 'cursor', number>> = {
-  claude: 3,
-  copilot: 3,
-  cursor: 1,
-};
+/** DSP-209 S10b; moved to `loop-graph.ts` (DSP-219) so the run check can say what it means. */
+export { FAN_OUT_ADAPTER_CAPS } from './loop-graph';
 
 /** Where a step's entry lands and who is responsible for filing it. */
 export interface ArchivePlacement {
@@ -776,6 +772,11 @@ export interface RunOptions {
    * Left out — a dry run, a test — only the node's own `maxConcurrent` bounds it.
    */
   readonly fanOutAdapterCap?: number;
+  /**
+   * DSP-219: what the run's agent does about the steps' requirements, as checked when it
+   * started (`checkRunRequirements`), for the run-started record. Left out, nothing is said.
+   */
+  readonly requirementsNote?: string;
   /**
    * DSP-209 S11: the person's instructions to the run that have arrived since the last ask,
    * taken while a fan-out runs. They reach every branch that has not ended as a mailbox message
@@ -1479,6 +1480,10 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       reworkOutcomes: reworkOutcomes.join(', '),
       routeLimitAs: options.routeLimitAs ?? '(none: a spent bound stops the run)',
       ...(maxTasks === undefined ? {} : { maxTasks }),
+      // DSP-219: the agent the steps' requirements were checked against when the run started,
+      // and what it does about each one (instruction only, not established), on record.
+      ...(options.runModel === undefined ? {} : { agent: options.runModel.provider }),
+      ...(options.requirementsNote === undefined ? {} : { requirements: options.requirementsNote }),
     },
     },
   );

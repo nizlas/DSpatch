@@ -26,11 +26,14 @@
  * reads as though the requirement holds. This is DSP-23's rule, adopted here so the
  * two formats cannot contradict each other.
  *
- * **The target is stored in the file.** The connected account may supply a default
- * for a *new* graph and nothing more. A stored graph opened on another machine must
- * mean what it meant on the first one — DSP-12 recorded what happens when the reader's
- * installation decides what the reader sees. A graph drawn for a target this account
- * cannot run is *not runnable here*: reported, never refused, never migrated.
+ * **The target is stored in the file, as an export format.** It names the framework
+ * whose agent files the roles would be generated for, for tools outside DSpatch, and a
+ * stored graph opened on another machine keeps it — DSP-12 recorded what happens when the
+ * reader's installation decides what the reader sees. It is never migrated. Since DSP-219
+ * it decides nothing about opening, choosing, validating or running a loop in DSpatch:
+ * a run uses the agent and model chosen in the chat, reads the roles' common
+ * instructions, and has its steps' requirements answered by that agent
+ * ({@link RUN_PROVIDER_CAPABILITIES}).
  */
 
 /** The marker that distinguishes a loop graph from any other JSON object. */
@@ -642,6 +645,17 @@ export type FanOutIsolation = (typeof FAN_OUT_ISOLATIONS)[number];
 
 /** DSP-209 S10a: the most branches one fan-out may run at the same time, whatever the adapter. */
 export const FAN_OUT_MAX_CONCURRENT = 3;
+
+/**
+ * DSP-209 S10b: how many branches each adapter may run at once (mission decision 22; read
+ * from code, not observed). DSpatch's own sessions, one per branch: nothing to do with an
+ * agent starting agents of its own, which `no-subagent-delegation` is about.
+ */
+export const FAN_OUT_ADAPTER_CAPS: Readonly<Record<'claude' | 'copilot' | 'cursor', number>> = {
+  claude: 3,
+  copilot: 3,
+  cursor: 1,
+};
 
 /** The failure a fan-out node declares when a branch, or its slice block, fails. */
 export const BRANCH_FAILED = 'branch-failed';
@@ -1270,6 +1284,11 @@ export interface ResolvedRole {
    * role says nothing further*, never *nobody looked*.
    */
   readonly instructions?: string;
+  /**
+   * DSP-219: what is wrong with the role's export form only (its `targets` and target
+   * blocks), which a run DSpatch walks does not read. Absent when there is nothing.
+   */
+  readonly exportProblems?: readonly string[];
 }
 
 /**
@@ -1560,42 +1579,6 @@ export function writeReachOf(
   };
 }
 
-/** Whether a graph can be run by the account reading it, which is not a matter of validity. */
-export interface RunnableHere {
-  readonly runnable: boolean;
-  readonly reason: string;
-}
-
-/**
- * A graph targeting a framework this account is not connected to is not an invalid
- * graph. It is a graph for somewhere else, and saying so is the whole of the
- * response.
- */
-export function runnableHere(
-  graph: LoopGraph,
-  connectedTargets: readonly LoopTarget[] | null,
-): RunnableHere {
-  if (connectedTargets === null) {
-    return {
-      runnable: false,
-      reason:
-        `This graph is drawn for ${graph.target}. Which frameworks this machine is ` +
-        `connected to was not established, so whether it can run here is unknown.`,
-    };
-  }
-  if (connectedTargets.includes(graph.target)) {
-    return { runnable: true, reason: `This machine is connected to ${graph.target}.` };
-  }
-  return {
-    runnable: false,
-    reason:
-      `This graph is drawn for ${graph.target}, which this machine is not connected ` +
-      `to${connectedTargets.length > 0 ? ` (connected: ${connectedTargets.join(', ')})` : ''}. ` +
-      `It can be opened and edited; it cannot be run here. Changing its target is a ` +
-      `separate, reported decision — see describeTargetChange.`,
-  };
-}
-
 /**
  * What switching target would mean. Nothing is changed and nothing is removed.
  *
@@ -1634,7 +1617,7 @@ export function describeTargetChange(
       if (role && !role.targets.includes(to)) {
         rolesWithoutSupport.push(
           `${node.id} uses role ${node.role.id} (${node.role.source.path}), which does not ` +
-            `support ${to}. It would need a ${to} form before this graph could target ${to}.`,
+            `have a ${to} export form. Generating ${to} agent files would need one; DSpatch's own runs do not.`,
         );
       }
     }

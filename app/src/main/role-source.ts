@@ -110,11 +110,25 @@ export interface RoleSourceProblem {
   readonly message: string;
   /** 1-based, when the problem belongs to a line. */
   readonly line?: number;
+  /**
+   * DSP-219: true when the problem is only about the frameworks the role is exported for
+   * (`targets` and target blocks). Generation refuses it; DSpatch's own runs read the
+   * portable sections and do not.
+   */
+  readonly exportOnly?: true;
 }
 
 export type RoleSourceResult =
   | { readonly ok: true; readonly source: RoleSource; readonly problems: readonly [] }
-  | { readonly ok: false; readonly problems: readonly RoleSourceProblem[] };
+  | {
+      readonly ok: false;
+      readonly problems: readonly RoleSourceProblem[];
+      /**
+       * DSP-219: the source as parsed, present when every problem is `exportOnly`, so a run
+       * DSpatch walks can still read the role's portable instructions.
+       */
+      readonly portable?: RoleSource;
+    };
 
 const TARGET_OPEN = /^<!--\s*target:\s*([a-z0-9-]+)\s*-->$/;
 const TARGET_CLOSE = /^<!--\s*end target\s*-->$/;
@@ -202,6 +216,7 @@ export function parseRoleSource(text: string): RoleSourceResult {
         problems.push({
           message: `Unknown target \`${named}\` in a target block. Known targets: ${LOOP_TARGETS.join(', ')}.`,
           line: lineNumber,
+          exportOnly: true,
         });
         // Consume the block anyway so its contents are not read as prose.
         currentBlock = { target: 'cursor', lines: [], line: lineNumber };
@@ -271,6 +286,7 @@ export function parseRoleSource(text: string): RoleSourceResult {
       problems.push({
         message: `Unknown target \`${name}\`. Known targets: ${LOOP_TARGETS.join(', ')}.`,
         ...(targetsField ? { line: targetsField.line } : {}),
+        exportOnly: true,
       });
       continue;
     }
@@ -282,6 +298,7 @@ export function parseRoleSource(text: string): RoleSourceResult {
     problems.push({
       message: 'Missing `targets`. A role must declare the frameworks it supports; one is enough.',
       ...(targetsField ? { line: targetsField.line } : {}),
+      exportOnly: true,
     });
   }
 
@@ -323,6 +340,7 @@ export function parseRoleSource(text: string): RoleSourceResult {
         message:
           `There is a \`${block.target}\` block, but \`${block.target}\` is not in \`targets\`. ` +
           'A block for an undeclared target would never be generated and reads as though it would be.',
+        exportOnly: true,
       });
     }
   }
@@ -333,14 +351,11 @@ export function parseRoleSource(text: string): RoleSourceResult {
     problems.push({ message: 'Missing `## Purpose`.' });
   }
 
+  const source: RoleSource = { id, title, summary, targets, requirements, sections, targetBlocks };
   if (problems.length > 0) {
-    return { ok: false, problems };
+    return problems.every((problem) => problem.exportOnly === true) ? { ok: false, problems, portable: source } : { ok: false, problems };
   }
-  return {
-    ok: true,
-    problems: [],
-    source: { id, title, summary, targets, requirements, sections, targetBlocks },
-  };
+  return { ok: true, problems: [], source };
 }
 
 /** The portable prose, in the order the source declares it. */

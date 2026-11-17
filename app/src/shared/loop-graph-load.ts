@@ -29,6 +29,7 @@ import {
   LOOP_TARGETS,
   BRANCH_FAILED,
   FAN_OUT_ISOLATIONS,
+  FAN_OUT_ADAPTER_CAPS,
   FAN_OUT_MAX_CONCURRENT,
   NODE_CAPABILITIES,
   NODE_DECLARATIONS,
@@ -43,7 +44,6 @@ import {
   TERMINAL_ENDINGS,
   effectiveRequirements,
   namesARuntimeFault,
-  runnableHere,
 } from './loop-graph';
 import type {
   ArchivePolicy,
@@ -67,7 +67,6 @@ import type {
   ResultPolicy,
   RoleReference,
   RoleResolver,
-  RunnableHere,
   RunProvider,
   RunProviderCapabilities,
   StepLimits,
@@ -98,7 +97,6 @@ export type LoadResult =
       readonly graph: LoopGraph;
       /** Warnings and notices only. Any error means `ok` is false. */
       readonly findings: readonly Finding[];
-      readonly runnable: RunnableHere;
     }
   | { readonly ok: false; readonly graph: null; readonly findings: readonly Finding[] };
 
@@ -109,8 +107,6 @@ export interface CheckOptions {
    * different answers and the second is an error.
    */
   readonly resolveRole?: RoleResolver;
-  /** Which frameworks this machine is connected to. `null` means it was not established. */
-  readonly connectedTargets?: readonly LoopTarget[] | null;
   /**
    * DSP-218: the agent the run goes through, which is what applies a step's requirements (or
    * does not). The drawing's `target` is not asked: it is the form the roles are checked for.
@@ -1583,14 +1579,6 @@ export function checkLoopGraph(graph: LoopGraph, options: CheckOptions = {}): re
   }
   reportNotYetHonoured(graph, findings);
 
-  const connected = options.connectedTargets;
-  if (connected !== undefined) {
-    const runnable = runnableHere(graph, connected ?? null);
-    if (!runnable.runnable) {
-      findings.notice('not-runnable-here', '/target', runnable.reason);
-    }
-  }
-
   return findings.all;
 }
 
@@ -1838,6 +1826,20 @@ function requirementFindings(
 ): void {
   const ids: Ids = { nodeId: node.id };
   const agent = RUN_PROVIDER_NAMES[provider];
+  // DSP-219: a fan-out's branches are DSpatch's own sessions, so the agent's ban on starting
+  // agents of its own does not touch them; how many run at once is the adapter's real limit.
+  const cap = FAN_OUT_ADAPTER_CAPS[provider];
+  if (node.fanOut !== undefined && node.fanOut.maxConcurrent > cap) {
+    findings.notice(
+      'fan-out-limited-by-agent',
+      `${pointer}/fanOut/maxConcurrent`,
+      `Node "${node.id}" runs up to ${String(node.fanOut.maxConcurrent)} branches at once, and ` +
+        `${agent}, which runs this loop, runs at most ${String(cap)} at a time in DSpatch, so ` +
+        `${cap === 1 ? 'its branches run one after another' : `at most ${String(cap)} run together`}. ` +
+        `The branches and their results are the same; it takes longer.`,
+      ids,
+    );
+  }
   for (const entry of effective) {
     const answer = table[provider][entry.requirement];
     const origin = entry.from === 'role' ? `role "${node.role?.id ?? ''}"` : 'this node';
@@ -1845,7 +1847,7 @@ function requirementFindings(
       findings.error(
         'requirement-target-cannot-meet',
         `${pointer}/requirements`,
-        `Node "${node.id}" requires ${entry.requirement} (from ${origin}) and ${agent}, which runs ` +
+        `Not supported: node "${node.id}" requires ${entry.requirement} (from ${origin}) and ${agent}, which runs ` +
           `this loop, cannot meet it: ${answer.how} Running it there would produce a step that ` +
           `reads as though the requirement held.`,
         ids,
@@ -1854,7 +1856,7 @@ function requirementFindings(
       findings.warning(
         'requirement-unestablished',
         `${pointer}/requirements`,
-        `Node "${node.id}" requires ${entry.requirement} (from ${origin}) and whether ` +
+        `Not established: node "${node.id}" requires ${entry.requirement} (from ${origin}) and whether ` +
           `${agent}, which runs this loop, can meet it is unestablished: ${answer.how}`,
         ids,
       );
@@ -1862,8 +1864,8 @@ function requirementFindings(
       findings.notice(
         'requirement-not-enforced',
         `${pointer}/requirements`,
-        `Node "${node.id}" requires ${entry.requirement} (from ${origin}). ${agent}, which runs ` +
-          `this loop, does not enforce it: ${answer.how}`,
+        `Instruction only: node "${node.id}" requires ${entry.requirement} (from ${origin}). ${agent}, which runs ` +
+          `this loop, does not enforce it, so the agent is told and trusted to follow it: ${answer.how}`,
         ids,
       );
     }
@@ -1904,8 +1906,8 @@ function checkNodeRole(
         'role-not-checked',
         `${pointer}/role`,
         `Role "${node.role.id}" on node "${node.id}" was not checked, because this ` +
-          `validation ran without a way to reach role descriptions. Whether it exists, and ` +
-          `whether it supports ${graph.target}, is unknown — not confirmed.`,
+          `validation ran without a way to reach role descriptions. Whether it exists and ` +
+          `what it says is unknown — not confirmed.`,
         ids,
       );
     } else {
@@ -1920,33 +1922,40 @@ function checkNodeRole(
             `an agent that will be handed whatever the runner happens to have.`,
           ids,
         );
-      } else if (!role.targets.includes(graph.target)) {
-        findings.error(
-          'role-does-not-support-target',
-          `${pointer}/role`,
-          `This graph is drawn for ${graph.target}, and role "${node.role.id}" at ` +
-            `${role.sourcePath} supports ${quoteList(role.targets)}. Give the role a ` +
-            `${graph.target} form, or draw this loop for a framework the role supports.`,
-          ids,
-        );
-      } else if (role.id !== node.role.id) {
-        findings.warning(
-          'role-id-mismatch',
-          `${pointer}/role/id`,
-          `Node "${node.id}" asks for role "${node.role.id}", and the description at ` +
-            `${role.sourcePath} calls itself "${role.id}". One of them has been renamed. ` +
-            `The file is what will be used.`,
-          ids,
-        );
-      } else if (!role.targetsDeclared) {
-        findings.notice(
-          'role-target-inferred',
-          `${pointer}/role`,
-          `Role "${node.role.id}" does not declare which frameworks it supports; support ` +
-            `for ${graph.target} was inferred from the kind of file it is ` +
-            `(${role.sourcePath}). DSP-23 is what makes that declaration explicit.`,
-          ids,
-        );
+      } else {
+        // DSP-219: what DSpatch's own run reads of a role is its portable instructions, so
+        // that is what is checked. Which frameworks the role has an export form for (its
+        // `targets`, the drawing's `target`) decides nothing about opening, choosing or
+        // running it here; a problem with that form only is said, for export.
+        if (role.id !== node.role.id) {
+          findings.warning(
+            'role-id-mismatch',
+            `${pointer}/role/id`,
+            `Node "${node.id}" asks for role "${node.role.id}", and the description at ` +
+              `${role.sourcePath} calls itself "${role.id}". One of them has been renamed. ` +
+              `The file is what will be used.`,
+            ids,
+          );
+        }
+        if (node.kind === 'agent' && (role.instructions ?? '').trim() === '') {
+          findings.warning(
+            'role-has-no-instructions',
+            `${pointer}/role`,
+            `Role "${node.role.id}" at ${role.sourcePath} says nothing beyond its fields, so the ` +
+              `agent on "${node.id}" is told only the step's own task.`,
+            ids,
+          );
+        }
+        if (role.exportProblems !== undefined && role.exportProblems.length > 0) {
+          findings.notice(
+            'role-export-form',
+            `${pointer}/role`,
+            `Role "${node.role.id}" at ${role.sourcePath} is read for this loop, and its form for ` +
+              `exported agent files has problems, which generating those files will refuse: ` +
+              `${role.exportProblems.join(' ')}`,
+            ids,
+          );
+        }
       }
     }
   }
@@ -2459,7 +2468,6 @@ export function loadLoopGraph(text: string, options: CheckOptions = {}): LoadRes
     ok: true,
     graph: parsed.graph,
     findings,
-    runnable: runnableHere(parsed.graph, options.connectedTargets ?? null),
   };
 }
 

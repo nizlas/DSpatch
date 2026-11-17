@@ -556,6 +556,20 @@ function requirementsRefusal(graph: LoopGraph, provider: RunProvider, resolveRol
   return errors.length === 0 ? null : `${errors.map((finding) => finding.message).join(' ')} ${NOTHING_WAS_STARTED}`;
 }
 
+function withRequirementsNote(note: string | undefined): { readonly requirementsNote?: string } {
+  return note === undefined ? {} : { requirementsNote: note };
+}
+
+/**
+ * DSP-219: the same check's other answers - instruction only, not established, a fan-out
+ * the agent runs fewer at a time - for the run's own record, so a requirement that holds
+ * only as an instruction is never weakened without a word. `undefined` when there are none.
+ */
+function requirementsNote(graph: LoopGraph, provider: RunProvider, resolveRole: RoleResolver): string | undefined {
+  const said = checkRunRequirements(graph, provider, resolveRole).filter((finding) => finding.severity !== 'error');
+  return said.length === 0 ? undefined : said.map((finding) => finding.message).join(' ');
+}
+
 /** The entry step a window named, checked field by field: it came from a renderer. */
 function entryFromQuery(value: unknown): Pick<LoopNode, 'id' | 'label' | 'model'> | undefined {
   if (typeof value !== 'object' || value === null) {
@@ -2680,8 +2694,6 @@ function registerLoopMethods(): void {
       // references resolved to. A run that shows a window its drawing without its
       // bindings is a run that window cannot draw.
       const resolveEditorRole = createFileRoleResolver(ownRoot);
-      // No `connectedTargets`: a graph's target is a label of the drawing and does not
-      // decide which agent runs it (DSP-138). It only ever produced a notice.
       const loaded = loadLoopGraph(request.text, {
         resolveRole: resolveEditorRole,
       });
@@ -2787,6 +2799,7 @@ function registerLoopMethods(): void {
           modelRequested: agent.modelRequested,
           // DSP-209 S19: a step naming no model runs with the person's model, not the entry's.
           personModel: agent.personModel,
+          ...withRequirementsNote(requirementsNote(loaded.graph, agent.provider, resolveEditorRole)),
           keepWorkspace: true,
           // DSP-147: the editor's run works in a new folder of its own, which a workspace
           // containing it (the temp folder, a whole drive) still overlaps; so it takes the
@@ -3023,8 +3036,6 @@ function registerLoopMethods(): void {
       // caches, so the role file is read once per run however many nodes name it. Its
       // anchor is the definition's resource root, not the folder being worked on.
       const resolveRole = chosen.resolveRole;
-      // No `connectedTargets`: a graph's target is a label of the drawing and does not
-      // decide which agent runs it (DSP-138).
       const loaded = loadLoopGraph(graphText, {
         resolveRole,
       });
@@ -3262,6 +3273,7 @@ function registerLoopMethods(): void {
           modelRequested,
           // DSP-209 S19: a step naming no model runs with the person's model, not the entry's.
           personModel: agent.personModel,
+          ...withRequirementsNote(requirementsNote(loaded.graph, agent.provider, resolveRole)),
           workspacePath,
           workingRoots,
           keepWorkspace: true,

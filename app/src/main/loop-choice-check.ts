@@ -55,10 +55,9 @@ export type LoopChoiceJudgement =
  * 2. the graph does not validate — the definition's name and `formatFindings`;
  * 3. the runner will not walk this drawing — the binding's own reason.
  *
- * No `connectedTargets` is given, as none is given by the runs (DSP-138): a graph's
- * `target` is a label of the drawing and does not decide which agent runs it, and the
- * check only ever produced a notice, never a refusal. Which agent runs it is decided by
- * `prepareLoopRun` when the run starts.
+ * A graph's `target` decides nothing here (DSP-138, DSP-219): it names the frameworks its
+ * roles are exported for, not the agent. Which agent runs it is decided by `prepareLoopRun`
+ * when the run starts, and the steps' requirements are checked against that agent.
  *
  * `consequence` is the caller's half of the one sentence that has one — *there is
  * nothing to show*, *it was not chosen*. Passed in rather than fixed, because the

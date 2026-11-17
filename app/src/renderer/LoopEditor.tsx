@@ -3364,7 +3364,7 @@ export function LoopEditor(): React.JSX.Element {
           onApply={() => {
             apply(
               withTarget(graph, pendingTarget.to),
-              `The roles are now checked for ${pendingTarget.to}. Nothing was removed.`,
+              `The roles' export format is now ${pendingTarget.to}. Nothing was removed, and runs are unaffected.`,
             );
             setPendingTarget(null);
           }}
@@ -3580,34 +3580,15 @@ function RefusalPanel({
  * - **limited** — something acts on it, with a boundary worth knowing. `archive` is
  *   honoured and a dry run still files nothing; `role` is sent by the chat loop and not
  *   by the editor's Run.
- * - **stated** — in force as an instruction the agent is expected to follow, and not as
- *   anything the platform applies. This is the one the requirements list needs, because
- *   the format calls every requirement "required" while what holds one varies: on a run
- *   DSpatch walks, `no-file-writes` and `no-subagent-delegation` are both sentences in a
- *   role file. `readonly: true` enforces the first only for an agent Cursor starts from a
- *   generated definition, which is not this path — the badge takes that from
- *   `requirementStandings`, which asks the capability table which path it is on.
+ * - **stated** — in force only as an instruction. Requirements have their own badge since
+ *   DSP-219 ({@link RequirementBadge}), answered for the agent that runs the loop.
  *
  * The backlog number stays in the tooltip. A person reading the panel wants to know
  * whether the box does anything, not which card will make it.
  */
-function Unhonoured({
-  attribute,
-  stated,
-}: {
-  readonly attribute?: string;
-  /** Set to the mechanism — or to its absence — where the thing holds only by instruction. */
-  readonly stated?: string;
-}): React.JSX.Element | null {
-  // DSP-209 S26 (R7): the stated badge's full text is the setting's own detail line beside
-  // it, so its hover is a label. The other two open to their full text, which stays shown.
-  if (stated !== undefined) {
-    return (
-      <span className="support support-stated" title="Held by instruction only">
-        stated, not enforced
-      </span>
-    );
-  }
+function Unhonoured({ attribute }: { readonly attribute?: string }): React.JSX.Element | null {
+  // DSP-219: a requirement's standing has its own badge, `RequirementBadge`; this one is
+  // about attributes. It opens to its full text, which stays shown.
   const support = attribute === undefined ? null : attributeSupport(attribute);
   if (support === null) {
     return null;
@@ -3630,6 +3611,31 @@ function Unhonoured({
         {support.by} {support.caveat}
       </span>
     </details>
+  );
+}
+
+/**
+ * DSP-219: how the agent that runs the loop holds one requirement, in four words a person
+ * can tell apart: enforced by something outside the agent, an instruction the agent is
+ * trusted with, not supported at all (the run is refused), or not established.
+ */
+function RequirementBadge({
+  enforcement,
+}: {
+  readonly enforcement: 'enforced' | 'other-means' | 'unmet' | 'unknown';
+}): React.JSX.Element {
+  const [label, className, title] =
+    enforcement === 'enforced'
+      ? ['enforced', 'support-limited', 'Applied by the agent’s integration, not left to the agent']
+      : enforcement === 'other-means'
+        ? ['instruction only', 'support-stated', 'Held by instruction only: the agent is told and trusted to follow it']
+        : enforcement === 'unmet'
+          ? ['not supported', 'support-inert', 'The agent that runs the loop cannot meet this, so a run is refused']
+          : ['not established', 'support-stated', 'Nobody has established what the agent does about this'];
+  return (
+    <span className={`support ${className}`} data-ev={`requirement-${enforcement}`} title={title}>
+      {label}
+    </span>
   );
 }
 
@@ -3897,10 +3903,12 @@ function NodeInspector({
                 {role.summary === undefined
                   ? 'The file states no one-line summary of itself.'
                   : role.summary}{' '}
-                Supports {role.targets.join(', ')}
+                {/* DSP-219: an export form, not a condition on who runs the step here. */}
+                Any agent chosen in the chat runs it here; its agent files can be exported for{' '}
+                {role.targets.join(', ')}
                 {role.targetsDeclared
-                  ? ', declared in the file'
-                  : ', inferred from the kind of file it is rather than declared'}
+                  ? ' (declared in the file)'
+                  : ' (inferred from the kind of file it is rather than declared)'}
                 .
               </p>
               {instructions === '' ? (
@@ -4385,10 +4393,8 @@ function NodeInspector({
               <span className="setting-name">
                 {standing.help.name} <code>{standing.requirement}</code>
                 {standing.fromRole ? <span className="inherited">already required by the role</span> : null}
-                {standing.inForce &&
-                standing.enforcement !== 'enforced' &&
-                standing.enforcement !== 'not-applicable' ? (
-                  <Unhonoured stated={standing.howItHolds} />
+                {standing.inForce && standing.enforcement !== 'not-applicable' ? (
+                  <RequirementBadge enforcement={standing.enforcement} />
                 ) : null}
               </span>
               <span className="setting-detail">
@@ -4848,14 +4854,15 @@ function GraphInspector({
       </p>
 
       {/*
-        DSP-218: the drawing's target is not the agent. It is what the roles and the steps'
-        requirements are checked against (a role needs a form for it), so it stays in the
-        file and is changed here, through the same report as before, out of the way of Run.
+        DSP-219: the drawing's target is an export format. It names the framework whose agent
+        files this loop's roles are generated for, for tools outside DSpatch; DSpatch's own
+        runs read the roles' common instructions and use the agent chosen in the chat. It
+        stays in the file, so older files mean what they meant, and is changed only here.
       */}
       <details className="graph-advanced" data-ev="graph-target">
-        <summary>Advanced: framework the roles are checked for</summary>
+        <summary>Advanced: export format for agent files</summary>
         <label>
-          Role framework
+          Export format
           <select
             value={graph.target}
             disabled={targetLocked}
@@ -4869,9 +4876,10 @@ function GraphInspector({
           </select>
         </label>
         <p className="muted">
-          Each role is checked for a form for this framework, and it is stored in the file. It
-          does not choose the agent or the model that runs the loop, and the steps' requirements
-          are checked against that agent, chosen in the chat.
+          Which framework's agent files this loop's roles would be generated for, for use
+          outside DSpatch. Stored in the file. DSpatch's own runs do not use it: they read the
+          roles' common instructions and run with the agent and model chosen in the chat, and
+          the steps' requirements are checked against that agent.
         </p>
       </details>
 
@@ -4993,24 +5001,23 @@ function TargetChangeDialog({
     <div className="dialog-backdrop">
       <div className="dialog">
         <h2>
-          Check the roles for {to} instead of {graph.target}?
+          Export this loop's roles for {to} instead of {graph.target}?
         </h2>
         <p>
-          This report is all that happens until you apply it. Nothing is removed either way. The
-          framework decides which form the roles are checked for; the agent and model that run
-          the loop are chosen in the chat, and the steps' requirements are checked against that
-          agent whatever this says.
+          This report is all that happens until you apply it. Nothing is removed either way. It
+          changes only which agent-file format the roles are exported for; DSpatch's own runs
+          are unaffected and use the agent and model chosen in the chat.
         </p>
         {report.rolesChecked
-          ? section('Roles with no form for the new framework', report.rolesWithoutSupport)
+          ? section('Roles with no export form for it yet', report.rolesWithoutSupport)
           : null}
-        {report.rolesChecked && report.rolesWithoutSupport.length === 0 ? <p>Every role this graph uses has a {to} form.</p> : null}
+        {report.rolesChecked && report.rolesWithoutSupport.length === 0 ? <p>Every role this graph uses has a {to} export form.</p> : null}
         <div className="dialog-actions">
           <button type="button" onClick={onCancel}>
             Keep {graph.target}
           </button>
           <button type="button" onClick={onApply}>
-            Check the roles for {to}
+            Export for {to}
           </button>
         </div>
       </div>

@@ -361,36 +361,38 @@ Two ways of getting the second one wrong, which fail differently and are worth t
 
 <a id="grafen-är-ritad-för-ett-ramverk"></a>
 
-## A graph is drawn for a framework
+## A graph's target is an export format
 
-`target` is one of `cursor`, `copilot`, `claude-code`. Only Cursor is described from behaviour anyone has seen; what the table in `loop-graph.ts` says about the other two is that **nothing has been run against them from this repository**, recorded as `unknown` rather than guessed. That is deliberate: a table that guessed on their behalf would be the degraded artefact that reads as though a requirement held.
+`target` is one of `cursor`, `copilot`, `claude-code`. Since DSP-219 it names the framework whose agent files this loop's roles would be generated for, for tools outside DSpatch, and nothing more. DSpatch's own loops are provider-agnostic: a run uses the agent and model chosen in the chat (Cursor, Claude or Copilot), each step is told its role's common instructions (the role source's sections, never a target block), and the target decides nothing about whether a loop can be opened, chosen, validated or run. It shows in the editor only under the graph's *Advanced: export format for agent files*.
 
-Two constraints make the target safe rather than treacherous.
+**It is stored in the file and never migrated.** A graph written before DSP-219 keeps its target and needs no change; it means what it meant, as an export format. The connected account may supply a default when a graph is first *created*. A stored graph must not change meaning because it was opened on another machine. DSP-12's survey recorded the cost of getting this wrong outside our field: Word's Simple Markup let the reader's installation decide what the reader saw.
 
-**It is stored in the file.** The connected account may supply a default when a graph is first *created*, and nothing more. A stored graph must not change meaning because it was opened on another machine. DSP-12's survey recorded the cost of getting this wrong outside our field: Word's Simple Markup let the reader's installation decide what the reader saw, and editors reported recipients missing changes without knowing changes existed.
-
-**Not runnable here is reported, never refused.** A graph drawn for a framework this machine is not connected to opens and edits normally; `runnableHere` says so in a sentence. An environment nobody established is *unknown*, which is also not a refusal.
+**A role without a form for the target is not an error for DSpatch.** What a run reads of a role is its common prose, so that is what validation checks: the reference resolves, the source parses, and it says something (`role-has-no-instructions` is a warning when it says nothing). A role source whose only problems are with its export form (its `targets`, a target block) is read for a run all the same, with a notice (`role-export-form`); generating agent files still refuses it, as [ROLE_FORMAT.md](ROLE_FORMAT.md) says. The former `role-does-not-support-target` error and the `not-runnable-here` notice are gone.
 
 <a id="krav-är-portabla-mekanismer-inte"></a>
 
-### Requirements are portable; mechanisms are not
+### Requirements are portable; the agent that runs the loop answers them
 
-A node or a role says it must not be able to write files. It does not say `readonly: true`, which is Cursor's word for it. The known requirements are `no-file-writes`, `background-execution`, `fixed-model-selection`, `no-subagent-delegation` and `tool-restriction`, and each target answers each of them in one of four ways:
+A node or a role says it must not be able to write files. It does not say `readonly: true`, which is Cursor's word for it. The known requirements are `no-file-writes`, `background-execution`, `fixed-model-selection`, `no-subagent-delegation` and `tool-restriction`. On a run DSpatch walks they are answered by **the agent the run uses** (`RUN_PROVIDER_CAPABILITIES`, DSP-139 and DSP-218), never by the target, with the same check in the editor's preview and when a run starts (`checkLoopGraph` with `runProvider`, `checkRunRequirements`). Each answer is one of four, said in its own words:
 
-| Answer | What validation does |
-| --- | --- |
-| `enforced` | nothing; the framework enforces it |
-| `other-means` | a notice naming the mechanism, because it is *not enforced* |
-| `unmet` | an **error**: running there would produce a step that reads as though the requirement held |
-| `unknown` | a warning; nobody established it either way, which is not a pass |
+| Answer | Said as | What happens |
+| --- | --- | --- |
+| `enforced` | *enforced* | nothing; something outside the agent applies it |
+| `other-means` | *Instruction only* | a notice: the agent is told and trusted to follow it, never shown as guaranteed |
+| `unmet` | *Not supported* | an **error** naming the step, the requirement and the limit; the run is refused before anything starts, and no other provider or model is chosen instead |
+| `unknown` | *Not established* | a warning; nobody established it either way, which is not a pass |
 
-Our own loop produces a real instance of the third column being avoided and the second being needed. Every specialist requires `no-subagent-delegation`, and Cursor's answer is `other-means`: it is stated in the role instructions and honoured by the agent, not by the platform — Cursor's documentation says subagents may launch child subagents from 2.5. The loop is valid and the notice says out loud that this particular requirement holds by instruction only. That is the distinction the whole design exists for, found by expressing a loop that genuinely runs.
+When the agent is not known yet the editor says once that the requirements wait for it (`requirements-await-agent`). A run records the answers other than *enforced* on its `run-started` entry (`requirements`), with the agent (`agent`), so a requirement held only by instruction is never weakened without a word. A requirement stays what its author declared: an instruction in a role's prose is not turned into a hard requirement, and a declared one is not quietly turned into prose.
+
+Our own loops produce a real instance. Every specialist requires `no-subagent-delegation`. Copilot and Claude enforce it (the tool list DSpatch passes has no agent-starting tool); with Cursor it is *instruction only*: Cursor's documentation says subagents may launch child subagents from 2.5.
+
+**`no-subagent-delegation` is about the agent, not about DSpatch.** A fan-out's branches are DSpatch's own sessions, which it starts and coordinates; the requirement never stops them. How many run at once is the adapter's real limit (`FAN_OUT_ADAPTER_CAPS`: Claude 3, Copilot 3, Cursor 1, read from code), and where a fan-out asks for more the check says so (`fan-out-limited-by-agent`): with Cursor the branches run one after another, with the same branches and results. No provider-specific copy of a graph is needed.
 
 <a id="att-byta-ramverk"></a>
 
-### Changing the target is reported, never migrated
+### Changing the export format is reported, never migrated
 
-`describeTargetChange(graph, to)` returns prose and **no graph**: what stops being enforced, what becomes available, what is unestablished, what the new target cannot meet at all, and which roles have no form for it. `withTarget(graph, to)` sets the field and does nothing else — no node dropped, no requirement removed, even where the new target cannot meet it. The result may fail validation, which is the honest outcome and the author's to resolve with the report in front of them. A requirement silently dropped during a target change is the failure this design exists to prevent.
+`describeTargetChange(graph, to)` returns prose and **no graph**: which roles have no export form for the new target. `withTarget(graph, to)` sets the field and does nothing else. Neither touches a run.
 
 <a id="validering"></a>
 
@@ -405,8 +407,8 @@ Two passes, and the split matters for the editor.
 Each finding carries a severity, a stable `code`, a `pointer` into the file, the `nodeId` or `edgeId` it concerns, and a message written for the author:
 
 - **error** — the file would mean something nobody drew. Refused.
-- **warning** — probably a mistake, normal while drawing: an unreachable node, a role that could not be checked, a requirement nobody has established for this target.
-- **notice** — true and worth knowing: an attribute nothing honours yet, a requirement that holds by instruction only, a graph that cannot run here.
+- **warning** — probably a mistake, normal while drawing: an unreachable node, a role that could not be checked or says nothing, a requirement nobody has established for the agent that runs the loop.
+- **notice** — true and worth knowing: an attribute nothing honours yet, a requirement that holds by instruction only, a fan-out the agent runs fewer at a time, a role whose export form has problems.
 
 A newer `formatVersion` is refused and **must not be saved by this build**: a newer DSpatch may have written fields this one would drop. That is the same rule the project store already follows for the user's own data.
 

@@ -26,7 +26,6 @@ export function runLiveLoop(
   const graphText = fs.readFileSync(options.graphPath, 'utf8');
   const loaded = loadLoopGraph(graphText, {
     resolveRole: createFileRoleResolver(options.repoRoot),
-    connectedTargets: ['cursor'],
   });
   if (!loaded.ok) {
     throw new Error(

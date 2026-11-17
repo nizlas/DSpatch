@@ -100,4 +100,6 @@ Without `--target`, `npm run roles:generate` generates each role for every imple
 
 Roles that may write files get Edit, Write and Bash with no path limit; a narrower write scope in their prose is an instruction. Claude Code's files use CRLF like Cursor's, because this repository is checked out with `core.autocrlf` and an LF file would come back as CRLF and compare as changed. A `<!-- target: claude-code -->` block carries what only a Claude Code agent needs to be told — today, that the read-only roles have no shell.
 
-**On DSpatch's own path, every Claude Code answer is still `unknown`.** Each cell carries an explicit `whenDSpatchWalksTheRun` of *nothing has been run*, because no adapter opens a Claude Code session and every run is checked against `connectedTargets: ['cursor']`. Generating these files makes Claude Code usable for the external loop; it does not make it a runtime provider for DSpatch.
+**On DSpatch's own path, every Claude Code answer is still `unknown`.** Each cell carries an explicit `whenDSpatchWalksTheRun` of *nothing has been run*, because no adapter opens a Claude Code session. Generating these files makes Claude Code usable for the external loop; it does not make it a runtime provider for DSpatch.
+
+**Targets are for export (DSP-219).** `targets`, target blocks and their checks govern generating agent files. DSpatch's own runs read a role's sections, whichever agent the chat chose, and a source whose only problems are with its targets or target blocks is still read for a run, with a notice; generation refuses it as before.

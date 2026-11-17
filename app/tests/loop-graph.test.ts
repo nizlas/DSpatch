@@ -34,7 +34,6 @@ import {
   attributeSupport,
   describeTargetChange,
   namesARuntimeFault,
-  runnableHere,
   withTarget,
   writeReachOf,
 } from '../src/shared/loop-graph.ts';
@@ -110,7 +109,6 @@ test('the example graph is our own loop, and it loads and validates against the 
 
   assert.equal(result.graph.id, 'dspatch-development-loop');
   assert.equal(result.graph.target, 'cursor');
-  assert.equal(result.runnable.runnable, true);
   assert.equal(hasErrors(result.findings), false);
 
   // The six real roles, one of them referenced by two nodes.
@@ -771,7 +769,7 @@ test('without a resolver, a role is reported as unchecked rather than as fine', 
   assert.equal(errorsOf(findings).length, 0, 'unchecked is not invalid');
 });
 
-test('a role that does not support the graph target is an error', () => {
+test('DSP-219: a role without a form for the graph target is read and run all the same', () => {
   const graph: LoopGraph = {
     ...minimal(),
     target: 'claude-code',
@@ -783,6 +781,7 @@ test('a role that does not support the graph target is an error', () => {
           id: 'cursor-only',
           source: { kind: 'cursor-agent-file', path: '.cursor/agents/cursor-only.md' },
         },
+        report: { writtenBy: 'done' },
       },
       { id: 'done', kind: 'terminal' },
     ],
@@ -794,12 +793,11 @@ test('a role that does not support the graph target is an error', () => {
     targetsDeclared: true,
     requirements: [],
     requirementsDeclared: true,
+    instructions: 'Do the work.',
   };
-  const finding = checkLoopGraph(graph, { resolveRole: () => role }).find(
-    (item) => item.code === 'role-does-not-support-target',
-  );
-  assert.ok(finding);
-  assert.match(finding?.message ?? '', /supports cursor/);
+  const findings = checkLoopGraph(graph, { resolveRole: () => role });
+  assert.equal(errorsOf(findings).length, 0, formatFindings(findings));
+  assert.equal(findings.some((item) => /target|claude-code/.test(item.code)), false);
 });
 
 test('the role files in .cursor are read as Cursor-only, and the inference is labelled', () => {
@@ -887,22 +885,12 @@ test('a step that must not write files may leave a stored result: the runner bin
 // The target lives in the file.
 // ---------------------------------------------------------------------------
 
-test('a graph for a framework this machine is not connected to is reported, not refused', () => {
+test('DSP-219: a graph drawn for any framework loads, and its target is kept', () => {
   const graph = withTarget(minimal(), 'copilot');
-  const result = loadLoopGraph(JSON.stringify(graph), { connectedTargets: ['cursor'] });
-  assert.equal(result.ok, true, 'not runnable here is not invalid');
-  if (!result.ok) {
-    return;
-  }
-  assert.equal(result.runnable.runnable, false);
-  assert.match(result.runnable.reason, /cannot be run here/);
-  assert.ok(result.findings.some((finding) => finding.code === 'not-runnable-here'));
-});
-
-test('an unestablished environment is unknown rather than not-runnable', () => {
-  const answer = runnableHere(minimal(), null);
-  assert.equal(answer.runnable, false);
-  assert.match(answer.reason, /unknown/);
+  const result = loadLoopGraph(JSON.stringify(graph));
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.graph.target, 'copilot');
+  assert.equal(result.findings.some((finding) => finding.pointer === '/target'), false);
 });
 
 test('the same file means the same thing whoever opens it', () => {
@@ -990,9 +978,9 @@ test('DSP-218: a requirement the run\'s agent cannot meet is an error, whatever 
   // And the label does not stop a run whose agent can meet it, nor pass one that cannot.
   const viaCursor = checkLoopGraph({ ...graph, target: 'copilot' }, { resolveRole: () => ({ ...resolveRole(), targets: ['copilot'] }), runProvider: 'cursor', runProviderCapabilities: table });
   assert.equal(viaCursor.some((item) => item.severity === 'error'), false);
-  // The role's form is still checked against the target, apart from the requirements.
+  // DSP-219: nor does a role without the target's export form stop it.
   const noForm = checkLoopGraph({ ...graph, target: 'claude-code' }, { resolveRole, runProvider: 'cursor' });
-  assert.ok(noForm.some((item) => item.code === 'role-does-not-support-target'));
+  assert.equal(noForm.some((item) => item.severity === 'error'), false);
 });
 
 test('DSP-218: requirements wait for the agent when it is not known, and are not judged by the target', () => {

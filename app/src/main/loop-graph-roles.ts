@@ -121,10 +121,13 @@ export function resolveRoleText(text: string, reference: RoleReference, requeste
  */
 function resolveRoleSource(text: string, reference: RoleReference): ResolvedRole | null {
   const parsed = parseRoleSource(text);
-  if (!parsed.ok) {
+  // DSP-219: a problem only with the role's export form (its targets and target blocks)
+  // does not stop DSpatch reading the portable sections; it travels as `exportProblems`.
+  const source = parsed.ok ? parsed.source : (parsed.portable ?? null);
+  if (source === null) {
     return null;
   }
-  const { source } = parsed;
+  const exportProblems = parsed.ok ? [] : parsed.problems.map((problem) => problem.message);
   const instructions = sectionBodies(source)
     .filter((body) => body.trim() !== '')
     .join('\n\n');
@@ -137,6 +140,7 @@ function resolveRoleSource(text: string, reference: RoleReference): ResolvedRole
     requirementsDeclared: true,
     summary: source.summary,
     ...(instructions === '' ? {} : { instructions }),
+    ...(exportProblems.length === 0 ? {} : { exportProblems }),
   };
 }
 

@@ -80,6 +80,8 @@ export interface LiveCliOptions {
    * `modelRequested`, as for the CLI, where the two are the same.
    */
   readonly personModel?: string;
+  /** DSP-219: the start's requirement check for the agent, recorded on `run-started`. */
+  readonly requirementsNote?: string;
   readonly workspacePath?: string;
   /**
    * Every folder this run works with, the working directory first (DSP-72).
@@ -404,6 +406,7 @@ async function driveLive(
             }),
           }),
       fanOutAdapterCap: FAN_OUT_ADAPTER_CAPS[options.provider],
+      ...(options.requirementsNote === undefined ? {} : { requirementsNote: options.requirementsNote }),
       // DSP-209 S19: what a step naming no model runs with, for its `node-entered` record.
       runModel: { provider: options.provider, model: options.personModel ?? options.modelRequested },
       ...(options.takeInstructions === undefined ? {} : { takeInstructions: options.takeInstructions }),

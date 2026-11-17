@@ -106,7 +106,7 @@ describe('DSP-218: a cursor-labelled loop run through Copilot', () => {
     // Copilot enforces no-subagent-delegation (its tool list has no `task`), so that one says
     // nothing; background-execution is achieved by other means, in Copilot's own words.
     assert.equal(requirementText.length, 1, requirementText.join('\n'));
-    assert.match(requirementText[0] ?? '', /background-execution .*Copilot, which runs this loop, does not enforce it: DSpatch answers Copilot’s permission requests/);
+    assert.match(requirementText[0] ?? '', /Instruction only: .*background-execution .*Copilot, which runs this loop, does not enforce it, so the agent is told and trusted to follow it: DSpatch answers Copilot’s permission requests/);
     assert.doesNotMatch(requirementText[0] ?? '', /Cursor|cursor/);
     const reach = writeReachOf(graph, resolveRole, 'copilot');
     assert.equal(reach.mayWrite, true, 'Copilot\'s tools can write, so the working folder is measured');

@@ -153,7 +153,7 @@ export const WALK_LOOP_SUMMARY_FILE = 'summary.json';
 
 export async function runWalkLoop(input: WalkLoopInput): Promise<WalkLoopOutcome> {
   const now = input.now ?? (() => Date.now());
-  const loaded = loadLoopGraph(input.graphText, { resolveRole: input.resolveRole, connectedTargets: null });
+  const loaded = loadLoopGraph(input.graphText, { resolveRole: input.resolveRole });
   if (!loaded.ok || loaded.graph === null) {
     const errors = loaded.findings.filter((finding) => finding.severity === 'error').map((finding) => finding.message);
     return { kind: 'failed', note: 'The walk loop\'s drawing could not be loaded, so nothing was sent.', detail: errors.join(' '), summary: null };

@@ -290,7 +290,6 @@ if (options.live) {
     if (options.mandate !== null) {
       const loaded = loadLoopGraph(fs.readFileSync(graphPath, 'utf8'), {
         resolveRole: createFileRoleResolver(repoRoot),
-        connectedTargets: ['cursor'],
       });
       if (!loaded.ok) {
         process.stderr.write(
@@ -371,7 +370,6 @@ if (!scenario) {
 const graphPath = path.resolve(process.cwd(), options.graph);
 const loaded = loadLoopGraph(fs.readFileSync(graphPath, 'utf8'), {
   resolveRole: createFileRoleResolver(repoRoot),
-  connectedTargets: ['cursor'],
 });
 
 if (!loaded.ok) {
@@ -414,7 +412,7 @@ const clock = createClock();
 process.stdout.write(
   `graph      ${path.relative(repoRoot, graphPath)}\n` +
     `scenario   ${options.scenario} — ${scenario.why}\n` +
-    `validation ${loaded.findings.length} findings, no errors; ${loaded.runnable.reason}\n` +
+    `validation ${loaded.findings.length} findings, no errors\n` +
     (scenario.limits ? `limits     overridden for the demonstration: ${JSON.stringify(scenario.limits)}\n` : '') +
     '\n',
 );
