@@ -408,13 +408,12 @@ export function LoopEditor(): React.JSX.Element {
 
   // Which agent a run would use now, read from the main process by the same preparation
   // the Run makes (DSP-138). A read: nothing is started or constructed. Asked again when
-  // the drawing's target or entry step changes and when the window comes back to the
+  // the entry step changes and when the window comes back to the
   // front, which is when the agent choice made in the chat window can have changed. The
   // entry step goes with it so the line applies the Run's model rule (review B2).
   const [runAgent, setRunAgent] = useState<LoopRunAgentInfo | null>(null);
   const entryNode = graph?.nodes.find((node) => node.id === graph.entry);
   const agentQueryKey = JSON.stringify({
-    target: graph?.target ?? null,
     entry:
       entryNode === undefined
         ? null
@@ -446,6 +445,12 @@ export function LoopEditor(): React.JSX.Element {
       window.removeEventListener('focus', read);
     };
   }, [agentQueryKey]);
+
+  // DSP-218: what the window says about the agent - the watched run's own account (the
+  // provider and model it actually uses), else what a run started now would use. An
+  // announcement from a host before DSP-218 has the line and no summary.
+  const agentLine = watch?.run.agent ?? runAgent?.line ?? null;
+  const agentSummary = watch === null ? (runAgent?.summary ?? null) : (watch.run.agentSummary ?? null);
 
   // A refused file has no graph to check, and its refusal is what the counters count: the
   // panel lists those findings, and a row of zeros beside it would say the file is fine.
@@ -2727,20 +2732,17 @@ export function LoopEditor(): React.JSX.Element {
           <button type="button" disabled={!runBusy && !watchedChatRun} onClick={() => void cancelRun()}>
             Cancel run
           </button>
-          <label className="editor-target">
-            Target framework
-            <select
-              value={graph?.target ?? 'cursor'}
-              disabled={graph === null || editingOff}
-              onChange={(event) => changeTarget(event.target.value as LoopTarget)}
-            >
-              {LOOP_TARGETS.map((target) => (
-                <option key={target} value={target}>
-                  {target}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/*
+            DSP-218: the agent and model the watched run uses, else a run started now - read,
+            never chosen here. The chat is where they are chosen, so the editor has no second
+            control that could say otherwise. The drawing's target is not this; it is under
+            the graph's Advanced section.
+          */}
+          {agentSummary === null ? null : (
+            <span className="editor-agent" data-ev="editor-run-agent" title={`${agentLine ?? ''}\n\nChosen in the chat: change the agent or its model there.`}>
+              {watch?.run.phase === 'ready' || watch === null ? 'Runs with' : 'Running with'} <strong>{agentSummary}</strong>
+            </span>
+          )}
           {/*
             DSP-150: review is reached from here as from the chat. It opens the review
             window, which chooses a repository and two commits; nothing here changes.
@@ -3241,7 +3243,9 @@ export function LoopEditor(): React.JSX.Element {
             <GraphInspector
               graph={graph}
               findings={findings}
-              agentLine={watch?.run.agent ?? runAgent?.line ?? null}
+              agentLine={agentLine}
+              targetLocked={editingOff}
+              onChangeTarget={changeTarget}
               onChange={(next) => apply(next)}
               onSelect={(target) => setSelection(target)}
             />
@@ -4736,6 +4740,8 @@ function GraphInspector({
   graph,
   findings,
   agentLine,
+  targetLocked,
+  onChangeTarget,
   onChange,
   onSelect,
 }: {
@@ -4743,6 +4749,9 @@ function GraphInspector({
   readonly findings: readonly Finding[];
   /** Which agent runs this loop (DSP-138): the watched run's own line, else a fresh read. */
   readonly agentLine: string | null;
+  /** DSP-218: the drawing's target, changed only here, under Advanced, through its report. */
+  readonly targetLocked: boolean;
+  readonly onChangeTarget: (to: LoopTarget) => void;
   readonly onChange: (next: LoopGraph) => void;
   readonly onSelect: (selection: Selection) => void;
 }): React.JSX.Element {
@@ -4776,16 +4785,40 @@ function GraphInspector({
           ))}
         </select>
       </label>
-      <p className="muted">
-        Target <strong>{graph.target}</strong>, stored in the file. It is a label of the drawing
-        and does not choose the agent; the line below says which agent runs it.
-      </p>
       <p className="muted" data-ev="loop-run-agent">
-        {agentLine ?? 'Which agent runs this loop is being read.'}
+        {agentLine ?? 'Which agent runs this loop is being read.'} The agent and its model are
+        chosen in the chat.
       </p>
       <p className="muted">
         On a runtime fault: <strong>{graph.onRuntimeFault}</strong> <Unhonoured attribute="onRuntimeFault" />
       </p>
+
+      {/*
+        DSP-218: the drawing's target is not the agent. It is what the roles and the steps'
+        requirements are checked against (a role needs a form for it), so it stays in the
+        file and is changed here, through the same report as before, out of the way of Run.
+      */}
+      <details className="graph-advanced" data-ev="graph-target">
+        <summary>Advanced: framework the roles are checked for</summary>
+        <label>
+          Role framework
+          <select
+            value={graph.target}
+            disabled={targetLocked}
+            onChange={(event) => onChangeTarget(event.target.value as LoopTarget)}
+          >
+            {LOOP_TARGETS.map((target) => (
+              <option key={target} value={target}>
+                {target}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted">
+          The roles and the steps' requirements are checked against this framework, and it is
+          stored in the file. It does not choose the agent or the model that runs the loop.
+        </p>
+      </details>
 
       <fieldset>
         <legend>

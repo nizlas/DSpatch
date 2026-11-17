@@ -196,6 +196,12 @@ export interface LiveRunAnnouncement extends LoopRunIdentity {
    * announcement written before this field existed must keep meaning what it meant.
    */
   readonly agent?: string;
+  /**
+   * DSP-218: the same provider and model in a few words ("Copilot · claude-opus-5.5"), shown
+   * read-only beside Run in the loop view. Absent in older announcements and where no run
+   * would start.
+   */
+  readonly agentSummary?: string;
 }
 
 export type LoopRunPhase = 'ready' | 'running';

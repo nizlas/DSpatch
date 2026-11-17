@@ -451,7 +451,7 @@ describe('the check before a run starts', () => {
     const unread = prepareLoopRun({ ...request(graph(), []), sessionProvider: 'copilot', copilotModel: 'gpt-x', copilotModels: null });
     assert.ok(unread.ok);
     assert.match(unread.modelCheck ?? '', /model-s, model-l\) could not be checked: Copilot's model list has not been read in this launch, so Copilot decides/);
-    const info = loopRunAgentInfo({ ...request(graph(), []), sessionProvider: 'copilot', copilotModel: 'gpt-x', copilotModels: null }, null);
+    const info = loopRunAgentInfo({ ...request(graph(), []), sessionProvider: 'copilot', copilotModel: 'gpt-x', copilotModels: null });
     assert.ok(info.line.includes('could not be checked'), info.line);
     // Listed: checked, and nothing more is said.
     const listed = prepareLoopRun({ ...request(graph(), []), sessionProvider: 'copilot', copilotModels: ['model-s', 'model-l'] });
@@ -465,10 +465,10 @@ describe('the check before a run starts', () => {
 
   it('names a select entry step’s default model on the "Runs with" line, and leaves a fixed entry’s line as it was', () => {
     const selectEntry = { id: 'build', label: 'Build', model: SELECT };
-    const info = loopRunAgentInfo({ ...request(undefined, ['model-s', 'model-l']), entryNode: selectEntry }, null);
+    const info = loopRunAgentInfo({ ...request(undefined, ['model-s', 'model-l']), entryNode: selectEntry });
     assert.ok(info.line.startsWith('Runs with Claude (model-l, option “large” by default; an edge may select another)'), info.line);
     const fixedEntry = { id: 'plan', label: 'Plan', model: { policy: 'fixed', model: 'model-s' } } as const;
-    const fixedInfo = loopRunAgentInfo({ ...request(undefined, ['model-s', 'model-l']), entryNode: fixedEntry }, null);
+    const fixedInfo = loopRunAgentInfo({ ...request(undefined, ['model-s', 'model-l']), entryNode: fixedEntry });
     assert.ok(fixedInfo.line.startsWith('Runs with Claude (model-s):'), fixedInfo.line);
   });
 });

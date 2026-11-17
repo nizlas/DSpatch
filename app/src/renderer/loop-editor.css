@@ -115,7 +115,8 @@
   --grow-field-edges: calc(8px + 2px);
 }
 
-.editor-target {
+/* DSP-218: which agent and model run the loop, read-only beside Run; chosen in the chat. */
+.editor-agent {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -124,14 +125,15 @@
   white-space: nowrap;
 }
 
-.editor-target select {
-  width: auto;
+.editor-agent strong {
+  color: var(--text, #e6edf3);
+  font-weight: 600;
 }
 
 /*
   Where a loop is chosen (DSP-85).
 
-  Built on `.editor-target`'s shape because it is the same kind of thing — a labelled
+  Built on `.editor-agent`'s shape because it is the same kind of thing — a labelled
   control in the header — and given the header's own text colour rather than the muted
   one. This is the window's statement of which loop will run, and a caption a shade
   quieter than the buttons beside it would be the wrong emphasis for the one control on

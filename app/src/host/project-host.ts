@@ -67,7 +67,7 @@ import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/
 import { handoffAnswerFrom } from '../shared/loop-control';
 import { describeLiveBinding } from '../shared/loop-editor-run';
 import { formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
-import type { LoopGraph, LoopNode, LoopTarget, RoleReference, RoleResolver } from '../shared/loop-graph';
+import type { LoopGraph, LoopNode, RoleReference, RoleResolver } from '../shared/loop-graph';
 import { earlierInstructionsContext, instructionPreamble } from '../shared/loop-instruction';
 import {
   describeRunOutcome,
@@ -78,7 +78,7 @@ import {
   type RecordedRunMessage,
   type RunWalkEnding,
 } from '../shared/loop-record';
-import { describeLoopRunAgent, type LoopRunAgentInfo } from '../shared/loop-run-agent-text';
+import { describeLoopRunAgent, loopRunAgentSummary, type LoopRunAgentInfo } from '../shared/loop-run-agent-text';
 import type { RunResult, RunStatus } from '../shared/loop-run';
 import type { LiveRunAnnouncement } from '../shared/loop-run-view';
 import { REVIEW_DISCUSSION_CHANNELS, type DiscussionIdentity, type DiscussionTarget } from '../shared/review-discussion';
@@ -144,7 +144,7 @@ import { openedFromProposal } from './graph-proposal-preview';
 import { type LiveInspection, type SteerableStep } from '../main/loop-live';
 import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock';
 import type { DisposalRecord } from '../adapter/claude-agent-sdk-adapter';
-import { defaultLiveModel, runLiveGraph } from '../main/loop-live-run';
+import { runLiveGraph } from '../main/loop-live-run';
 import { LoopRunAudience } from '../main/loop-run-audience';
 import { loopRunAgentInfo, prepareLoopRun, resolveLoopProvider, type LoopRunAgentRequest } from '../main/loop-run-agent';
 import { ownRepositoryRoot } from '../main/own-repository';
@@ -528,19 +528,22 @@ function loopRunRequest(input: {
   };
 }
 
-/** The editor's Run: one generated folder, Cursor's live model, no node model read. */
+/**
+ * The editor's Run: one generated folder, and the chat's agent and model (DSP-218). The
+ * provider is the open session's, else the chosen agent, as for *Use loop*; Cursor's model
+ * is the session's, else the one chosen for Cursor in the chat, so there is one choice.
+ */
 function editorLoopRunRequest(
   entryNode: Pick<LoopNode, 'id' | 'label' | 'model'> | undefined,
   // DSP-209 S19: the drawing the run walks, so every step's model is checked first.
   graph?: LoopRunAgentRequest['graph'],
 ): LoopRunAgentRequest {
-  // The entry step goes in so the Claude model rule applies here as in *Use loop*
-  // (DSP-138 review B2). A Cursor run is unchanged: it asks for `defaultLiveModel()`.
+  // The entry step goes in so the model rule applies here as in *Use loop* (DSP-138 review B2).
   return loopRunRequest({
     rootCount: 1,
     ...(entryNode === undefined ? {} : { entryNode }),
     ...(graph === undefined ? {} : { graph }),
-    cursorModel: defaultLiveModel(),
+    cursorModel: modelForChatNode(entryNode, chatService.openSession()?.modelRequested ?? chatService.modelFor('cursor')),
   });
 }
 
@@ -614,10 +617,7 @@ function chatLoopAgentInfo(graph: LoopGraph): LoopRunAgentInfo {
       : workingRootsFrom(openWorkspaceFolders(), session.workspacePath, pathsAreCaseInsensitive)
           .length;
   const entryNode = graph.nodes.find((node) => node.id === graph.entry);
-  return loopRunAgentInfo(
-    chatLoopRunRequest(rootCount, entryNode, session?.modelRequested ?? ''),
-    graph.target,
-  );
+  return loopRunAgentInfo(chatLoopRunRequest(rootCount, entryNode, session?.modelRequested ?? ''));
 }
 /**
  * The chat service owns the chat's adapter (Cursor, or Claude when this launch
@@ -2756,8 +2756,9 @@ function registerLoopMethods(): void {
           agent: describeLoopRunAgent({
             provider: agent.provider,
             modelRequested: agent.modelRequested,
-            drawnFor: loaded.graph.target,
           }),
+          // DSP-218: the same provider and model in a few words, for the loop view beside Run.
+          agentSummary: loopRunAgentSummary(agent.provider, agent.modelRequested),
           // Read from the same bytes the run is walking, so the bindings that travel
           // are the bindings of the drawing that travels.
           roles: resolvedRolesWith(referencedRoles(request.text), resolveEditorRole),
@@ -2900,17 +2901,11 @@ function registerLoopMethods(): void {
    * Which agent the graph editor's Run would use now, as one line (DSP-138).
    *
    * **A read.** The same preparation the Run makes, without starting, recording or
-   * constructing anything. `target` is the drawing's label, named when it differs.
+   * constructing anything. The drawing's `target` is not asked for: it chooses nothing (DSP-218).
    */
   handle('loop.readRunAgent', (_event, query: unknown): LoopRunAgentInfo => {
-    const asked = (typeof query === 'object' && query !== null ? query : {}) as {
-      target?: unknown;
-      entry?: unknown;
-    };
-    const target = asked.target;
-    const drawnFor: LoopTarget | null =
-      target === 'cursor' || target === 'copilot' || target === 'claude-code' ? target : null;
-    return loopRunAgentInfo(editorLoopRunRequest(entryFromQuery(asked.entry)), drawnFor);
+    const asked = (typeof query === 'object' && query !== null ? query : {}) as { entry?: unknown };
+    return loopRunAgentInfo(editorLoopRunRequest(entryFromQuery(asked.entry)));
   });
 
   /**
@@ -3227,8 +3222,9 @@ function registerLoopMethods(): void {
           agent: describeLoopRunAgent({
             provider: agent.provider,
             modelRequested: agent.modelRequested,
-            drawnFor: loaded.graph.target,
           }),
+          // DSP-218: the same provider and model in a few words, for the loop view beside Run.
+          agentSummary: loopRunAgentSummary(agent.provider, agent.modelRequested),
           // The bindings this run is actually using, announced with the drawing.
           // `resolveRole` above has already read every one of them in order to build
           // the prompts, so this costs a cache lookup and closes the defect where a
@@ -3791,6 +3787,7 @@ function registerLoopMethods(): void {
     }
     const chosen = judged.chosen;
     const graphText = chosen.graphText;
+    const agent = chatLoopAgentInfo(judged.graph);
     return {
       run: {
         // Its own id, and never one a run will reuse. The address has to be unique or
@@ -3805,7 +3802,8 @@ function registerLoopMethods(): void {
         startedAtUtc: new Date().toISOString(),
         phase: 'ready',
         // DSP-138: which agent *Use loop* would run this with now, or why it would not.
-        agent: chatLoopAgentInfo(judged.graph).line,
+        agent: agent.line,
+        ...(agent.summary === null ? {} : { agentSummary: agent.summary }),
         roles: resolvedRolesWith(referencedRoles(graphText), chosen.resolveRole),
       },
     };

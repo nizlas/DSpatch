@@ -300,7 +300,7 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
         claudeModels: ['claude-haiku-4-5'],
       });
     assert.match(refusal(prepareLoopRun(editor('claude'))), /fixes the model composer-2/);
-    assert.match(loopRunAgentInfo(editor('claude'), duration.graph.target).line, /^No loop run can start: .*fixes the model/);
+    assert.match(loopRunAgentInfo(editor('claude')).line, /^No loop run can start: .*fixes the model/);
     assert.deepEqual(built.claudePermissions, []);
     assert.deepEqual(built.cursorPolicies, []);
     assert.equal(prepared(editor('cursor')).modelRequested, 'composer-2');
@@ -308,7 +308,8 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
 
   it('shows the refusal as the window line, without the closing sentence', () => {
     const { factory } = adapters(null);
-    const info = loopRunAgentInfo(request(factory, { sessionProvider: null }), 'cursor');
+    const info = loopRunAgentInfo(request(factory, { sessionProvider: null }));
+    assert.equal(info.summary, null);
     assert.equal(info.provider, null);
     assert.match(info.line, /^No loop run can start: No agent is chosen/);
   });
@@ -317,9 +318,9 @@ describe('a loop run that cannot start says why, and constructs nothing', () => 
 // --- What the window says, and Cursor unbroken -----------------------------------------
 
 describe('the agent line, the policy text and Cursor', () => {
-  it('names Claude, its model, that steps run commands through DSpatch, and the drawing label', () => {
+  it('names Claude, its model, and that steps run commands through DSpatch, never the drawing label', () => {
     const { factory, built } = adapters(null);
-    const info = loopRunAgentInfo(request(factory), 'cursor');
+    const info = loopRunAgentInfo(request(factory));
     assert.equal(info.provider, 'claude');
     assert.match(
       info.line,
@@ -327,7 +328,9 @@ describe('the agent line, the policy text and Cursor', () => {
     );
     assert.match(info.line, /A gate step's command is run by DSpatch itself\./);
     assert.doesNotMatch(info.line, /cannot run commands/);
-    assert.match(info.line, /Drawn for cursor/);
+    // DSP-218: the drawing's target is not named beside the agent, and the summary is the run's.
+    assert.doesNotMatch(info.line, /Drawn for|cursor/);
+    assert.equal(info.summary, 'Claude · claude-haiku-4-5');
     assert.deepEqual(built.claudePermissions, [], 'reading the line constructs nothing');
   });
 
@@ -355,9 +358,32 @@ describe('the agent line, the policy text and Cursor', () => {
     run.createAdapter();
     assert.deepEqual(built.cursorPolicies, ['provider-default']);
     assert.deepEqual(built.claudePermissions, []);
-    const info = loopRunAgentInfo(request(factory, { sessionProvider: 'cursor' }), 'cursor');
+    const info = loopRunAgentInfo(request(factory, { sessionProvider: 'cursor' }));
     assert.match(info.line, /^Runs with Cursor \(composer-2\)/);
     assert.doesNotMatch(info.line, /Drawn for/);
+  });
+
+  it('DSP-218: a loop started with Copilot builds Copilot and names its model in the line and the summary', () => {
+    const asked: { provider: string; purpose: string }[] = [];
+    const factory: LoopRunAgentRequest['adapters'] = {
+      preflight: () => null,
+      createAdapter: (req) => {
+        asked.push({ provider: req.provider, purpose: req.purpose });
+        return {} as ReturnType<LoopRunAgentRequest['adapters']['createAdapter']>;
+      },
+    };
+    // The chat's choice: a Copilot session with Claude Opus 5.5; the drawing says nothing about it.
+    const copilot = request(factory, { sessionProvider: 'copilot', chosenAgent: 'cursor', copilotModel: 'claude-opus-5.5', copilotModels: ['claude-opus-5.5'] });
+    const run = prepared(copilot);
+    assert.equal(run.provider, 'copilot');
+    assert.equal(run.modelRequested, 'claude-opus-5.5');
+    run.createAdapter();
+    assert.deepEqual(asked, [{ provider: 'copilot', purpose: 'loop' }]);
+    const info = loopRunAgentInfo(copilot);
+    assert.equal(info.provider, 'copilot');
+    assert.equal(info.summary, 'Copilot · claude-opus-5.5');
+    assert.match(info.line, /^Runs with Copilot \(claude-opus-5\.5\)/);
+    assert.doesNotMatch(info.line, /cursor/i);
   });
 
   it('resolves the open session first, then the stored choice', () => {
@@ -410,7 +436,18 @@ describe('both run handlers decide the agent before anything is recorded or clai
   it("the editor's Run and its read channel both pass the drawing's entry step", () => {
     const body = handler('START_EDITOR_LOOP_RUN');
     assert.match(body, /prepareLoopRun\(\s*editorLoopRunRequest\(loaded\.graph\.nodes\.find\(/);
-    assert.match(main, /loopRunAgentInfo\(editorLoopRunRequest\(entryFromQuery\(asked\.entry\)\), drawnFor\)/);
+    assert.match(main, /loopRunAgentInfo\(editorLoopRunRequest\(entryFromQuery\(asked\.entry\)\)\)/);
+  });
+
+  it("DSP-218: the editor's Run takes the chat's model, and the announcements carry the run's own summary", () => {
+    const start = main.indexOf('function editorLoopRunRequest(');
+    const body = main.slice(start, main.indexOf('\n}\n', start));
+    assert.doesNotMatch(body, /defaultLiveModel/);
+    assert.match(body, /chatService\.openSession\(\)\?\.modelRequested \?\? chatService\.modelFor\('cursor'\)/);
+    for (const channel of ['START_EDITOR_LOOP_RUN', 'START_CHAT_LOOP_RUN']) {
+      assert.match(handler(channel), /agentSummary: loopRunAgentSummary\(agent\.provider, agent\.modelRequested\)/);
+    }
+    assert.doesNotMatch(main, /drawnFor/);
   });
 
   it('the product run module imports no provider adapter', () => {

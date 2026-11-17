@@ -25,10 +25,11 @@
  */
 
 import type { StoredSessionProvider } from '../shared/bridge';
-import { modelsNamedBy, stepModelChoice, type LoopGraph, type LoopNode, type LoopTarget } from '../shared/loop-graph';
+import { modelsNamedBy, stepModelChoice, type LoopGraph, type LoopNode } from '../shared/loop-graph';
 import {
   describeLoopRunAgent,
   describeLoopRunRefused,
+  loopRunAgentSummary,
   type LoopRunAgentInfo,
 } from '../shared/loop-run-agent-text';
 import type { ChatAdapter } from './chat-service';
@@ -231,13 +232,10 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
  * The "Runs with ..." line for a window: the same preparation the run makes, read
  * without starting anything. Nothing is constructed - `createAdapter` is not called.
  */
-export function loopRunAgentInfo(
-  request: LoopRunAgentRequest,
-  drawnFor: LoopTarget | null,
-): LoopRunAgentInfo {
+export function loopRunAgentInfo(request: LoopRunAgentRequest): LoopRunAgentInfo {
   const prepared = prepareLoopRun(request);
   if (!prepared.ok) {
-    return { provider: null, line: describeLoopRunRefused(prepared.why) };
+    return { provider: null, line: describeLoopRunRefused(prepared.why), summary: null };
   }
   // DSP-209 S19b: a `select` entry runs its default option unless the arriving edge selects
   // another; the line names that model and says so. The run's `modelRequested` is unchanged.
@@ -246,9 +244,11 @@ export function loopRunAgentInfo(
     entryChoice?.policy === 'select' && entryChoice.model !== null
       ? `${entryChoice.model === '' ? 'the provider’s default' : entryChoice.model}, option “${entryChoice.option ?? ''}” by default; an edge may select another`
       : prepared.modelRequested;
-  const line = describeLoopRunAgent({ provider: prepared.provider, modelRequested: shown, drawnFor });
+  const line = describeLoopRunAgent({ provider: prepared.provider, modelRequested: shown });
+  const summaryModel = entryChoice?.policy === 'select' && entryChoice.model !== null ? entryChoice.model : prepared.modelRequested;
   return {
     provider: prepared.provider,
     line: prepared.modelCheck === null ? line : `${line} ${prepared.modelCheck}`,
+    summary: loopRunAgentSummary(prepared.provider, summaryModel),
   };
 }
