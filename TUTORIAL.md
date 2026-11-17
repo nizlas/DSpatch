@@ -22,7 +22,7 @@ The expected benefit is the ability to carry a larger, open-ended assignment fur
 
 **What the application offers today:** the research example above illustrates the concept; DSpatch does not ship a research workflow. What it does ship is the machinery to run and build such loops:
 
-- **Four bundled loops:** a work/check loop, a larger implementation/verification/review loop, a **Parallel loop** that splits an assignment into slices and works on them at the same time, and the mission loop DSpatch's own development uses for long assignments across several runs.
+- **Five bundled loops:** a work/check loop, a larger implementation/verification/review loop, a **Parallel loop** that splits an assignment into slices and works on them at the same time, the mission loop DSpatch's own development uses for long assignments across several runs, and the **Generic agent network**, a multi-role planning, work, verification and review network for any project.
 - **Loops built in conversation:** describe the workflow you want in the project chat and the agent proposes a graph, which you inspect, open in the editor and apply.
 - **Parallel work:** a step can split its task into smaller, independent slices that run concurrently in separate worktrees, and a later step combines them.
 - **Adaptive routes:** a step can skip a later step with a stated reason, and recommend that the rest be done interactively, in the same conversation.
@@ -301,6 +301,7 @@ The bundled loops:
 | **DSpatch development loop (runnable subset)** | Implement, verify, review and rework. The default until you choose another loop. It is not the full external process used to develop DSpatch. |
 | **Parallel loop** | A slicer splits the assignment into two or three independent slices; they are worked on at the same time, each in its own worktree; an integrator combines them; a check reviews the whole. |
 | **DSpatch mission loop** | A long assignment carried across many sub-goals and several runs, with planning, research, implementation, review and an assessment of the whole. Built for DSpatch's own repository. |
+| **Generic agent network** | For any project. An Executive takes the mandate; a Tech Lead plans and a Planner and a small Reviewer make the plan ready; Backlog records it. Tech Lead then dispatches each slice to an Implementer, Explorer or Researcher (small, medium or large), a Data Curator, Infrastructure or an Experiment Analyst. QA checks the work, a Reviewer and a Skeptic challenge it, Tech Lead accepts or sends it back, and the Executive continues or wraps up; a Documenter and the Executive deliver the report. The project's own instructions come from the open project. Its limits are listed in `docs/loop/graphs/generic-agent-network.README.md`. |
 
 For example:
 

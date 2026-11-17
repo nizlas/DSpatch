@@ -250,6 +250,20 @@ function placedAt(graph: LoopGraph, layout: Positions): LoopGraph {
 /** How many times the layout may make more room for labels that found no clear place. */
 const LABEL_ROOM_TRIES = 4;
 
+export interface LayoutFallbackScore {
+  readonly mainCrossings: number;
+  readonly labelConflicts: number;
+  readonly dogLegs: number;
+  readonly narrowed: boolean;
+}
+
+export function shouldUsePlainLayout(best: LayoutFallbackScore, plain: LayoutFallbackScore): boolean {
+  return plain.mainCrossings < best.mainCrossings &&
+    plain.labelConflicts <= best.labelConflicts &&
+    plain.dogLegs <= best.dogLegs &&
+    (!plain.narrowed || best.narrowed);
+}
+
 /**
  * The layered layout to use (Niclas, 14 November 2026: side paths outside the main flow where
  * possible, and room for every edge's label from the start). Two candidates: the endings only
@@ -259,7 +273,9 @@ const LABEL_ROOM_TRIES = 4;
  * when the label's edge goes into it, every gap grows otherwise — and it is routed again, up to
  * {@link LABEL_ROOM_TRIES} times. Then the candidate with fewer such labels wins, and between
  * equals the one whose routes cross fewer times, the first on a tie; a drawing with no side
- * path has one candidate. That is a few routings, which is why it happens on **Arrange** and
+ * path has one candidate. The plain layout replaces the chosen candidate only when it reduces
+ * main-flow crossings without increasing label conflicts, dog-legs or narrowed routing. That is
+ * a few routings, which is why it happens on **Arrange** and
  * when unplaced nodes are laid out, never while a node is dragged. Labels are placed the same
  * whether they are shown or not, so a selection that shows some of them moves nothing.
  */
@@ -270,7 +286,9 @@ function bestLayout(graph: LoopGraph): Positions {
     const edge = edges.get(edgeId);
     return edge === undefined ? '' : edgeLabelText(edge);
   };
-  type Scored = { readonly positions: Positions; readonly conflicts: number; readonly crossings: number };
+  type Scored = { readonly positions: Positions; readonly conflicts: number; readonly crossings: number; readonly quality: LayoutFallbackScore };
+  const mainCrossings = (routes: ReturnType<typeof routeLoopEdges>): number =>
+    countRouteCrossings(new Map([...routes].filter(([id, route]) => !side.has(id) && !route.back)));
   let best: Scored | null = null;
   for (const besideEndings of side.size === 0 ? [false] : [true, false]) {
     let chosen: Scored | null = null;
@@ -279,12 +297,18 @@ function bestLayout(graph: LoopGraph): Positions {
     for (let attempt = 0; attempt <= LABEL_ROOM_TRIES; attempt += 1) {
       const layout = layeredLayout(graph, { sidePaths: side, besideEndings, labelOf, widen, widenBeside });
       let conflicts: readonly string[] = [];
+      let dogLegs: readonly string[] = [];
+      let narrowed = false;
       const routes = routeLoopEdges(placedAt(graph, layout.positions), {
         labelOf: edgeLabelText,
-        report: (report) => (conflicts = report.labelConflicts),
+        report: (report) => {
+          conflicts = report.labelConflicts;
+          dogLegs = report.dogLegs;
+          narrowed = report.narrowed;
+        },
       });
       if (chosen === null || conflicts.length < chosen.conflicts) {
-        chosen = { positions: layout.positions, conflicts: conflicts.length, crossings: countRouteCrossings(routes) };
+        chosen = { positions: layout.positions, conflicts: conflicts.length, crossings: countRouteCrossings(routes), quality: { mainCrossings: mainCrossings(routes), labelConflicts: conflicts.length, dogLegs: dogLegs.length, narrowed } };
       }
       if (conflicts.length === 0) {
         break;
@@ -302,7 +326,23 @@ function bestLayout(graph: LoopGraph): Positions {
       best = chosen;
     }
   }
-  return best?.positions ?? new Map();
+  if (best === null) {
+    return new Map();
+  }
+  const plain = layeredLayout(graph).positions;
+  const placedPlain = placedAt(graph, plain);
+  const plainMainCrossings = mainCrossings(routeLoopEdges(placedPlain));
+  if (plainMainCrossings >= best.quality.mainCrossings) {
+    return best.positions;
+  }
+  let quality: LayoutFallbackScore = { mainCrossings: plainMainCrossings, labelConflicts: 0, dogLegs: 0, narrowed: false };
+  routeLoopEdges(placedPlain, {
+    labelOf: edgeLabelText,
+    report: (report) => {
+      quality = { mainCrossings: plainMainCrossings, labelConflicts: report.labelConflicts.length, dogLegs: report.dogLegs.length, narrowed: report.narrowed };
+    },
+  });
+  return shouldUsePlainLayout(best.quality, quality) ? plain : best.positions;
 }
 
 /**

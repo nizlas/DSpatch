@@ -163,7 +163,7 @@ describe('DSP-219: one loop, three providers, the target unchanged', () => {
   }
 
   it('every bundled runnable loop checks out with each of the three, with no error', () => {
-    for (const file of ['dspatch-chat-loop.graph.json', 'dspatch-parallel-loop.graph.json', 'dspatch-mission-loop.graph.json', 'dspatch-walk-loop.graph.json', 'dspatch-development-loop-runnable.graph.json']) {
+    for (const file of ['dspatch-chat-loop.graph.json', 'dspatch-parallel-loop.graph.json', 'dspatch-mission-loop.graph.json', 'dspatch-walk-loop.graph.json', 'dspatch-development-loop-runnable.graph.json', 'generic-agent-network.graph.json']) {
       const graph = graphNamed(file);
       for (const provider of PROVIDERS) {
         const errors = checkLoopGraph(graph, { resolveRole, runProvider: provider }).filter((finding) => finding.severity === 'error');
