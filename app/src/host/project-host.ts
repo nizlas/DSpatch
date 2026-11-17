@@ -27,6 +27,7 @@ import type {
   LoopGraphSaveOutcome,
   LoopGraphSaveRequest,
   LoopInstructionEventPayload,
+  ModelClassSettings,
   ModelListing,
   ProviderLoginStep,
   ProviderSetupState,
@@ -67,8 +68,9 @@ import type { LoopControlOutcome, LoopControlReport, LoopMode } from '../shared/
 import { handoffAnswerFrom } from '../shared/loop-control';
 import { describeLiveBinding } from '../shared/loop-editor-run';
 import { checkRunRequirements, formatFindings, loadLoopGraph } from '../shared/loop-graph-load';
-import type { LoopGraph, LoopNode, ModelClassMap, RoleReference, RoleResolver, RunProvider } from '../shared/loop-graph';
-import { MODEL_CLASSES, parseModelClasses } from '../shared/loop-graph';
+import type { LoopGraph, LoopNode, ModelClassMap, ModelOption, RoleReference, RoleResolver, RunProvider } from '../shared/loop-graph';
+import { MODEL_CLASSES } from '../shared/loop-graph';
+import { readModelChoiceFile, writeModelChoiceFile, writeModelClass } from '../main/model-choice-file';
 import { earlierInstructionsContext, instructionPreamble } from '../shared/loop-instruction';
 import {
   describeRunOutcome,
@@ -587,11 +589,18 @@ function entryFromQuery(value: unknown): Pick<LoopNode, 'id' | 'label' | 'model'
   // can name the model it runs by default. Options that are not `{ id, model }` strings are dropped.
   const options =
     model?.policy === 'select' && Array.isArray(model.options)
-      ? model.options.flatMap((option: unknown) => {
-          const item = option as { id?: unknown; model?: unknown } | null;
-          return item !== null && typeof item === 'object' && typeof item.id === 'string' && typeof item.model === 'string'
-            ? [{ id: item.id, model: item.model }]
-            : [];
+      ? model.options.flatMap((option: unknown): ModelOption[] => {
+          const item = option as { id?: unknown; model?: unknown; modelClass?: unknown } | null;
+          if (item === null || typeof item !== 'object' || typeof item.id !== 'string') {
+            return [];
+          }
+          // DSP-222: an option naming a model class keeps it, checked against the known classes.
+          const modelClass = MODEL_CLASSES.find((name) => name === item.modelClass);
+          return modelClass !== undefined
+            ? [{ id: item.id, modelClass }]
+            : typeof item.model === 'string'
+              ? [{ id: item.id, model: item.model }]
+              : [];
         })
       : [];
   const policy: LoopNode['model'] =
@@ -727,19 +736,7 @@ const modelChoiceStore = {
     return path.join(userDataDir(), 'dspatch-model-choice.json');
   },
   readAll(): Partial<Record<StoredSessionProvider, string>> {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(modelChoiceStore.file(), 'utf8')) as { models?: Record<string, unknown> };
-      const models: Partial<Record<StoredSessionProvider, string>> = {};
-      for (const provider of ['cursor', 'claude', 'copilot'] as const) {
-        const value = parsed.models?.[provider];
-        if (typeof value === 'string' && value !== '') {
-          models[provider] = value;
-        }
-      }
-      return models;
-    } catch {
-      return {};
-    }
+    return readModelChoiceFile(modelChoiceStore.file()).models;
   },
   read(provider: StoredSessionProvider): string | null {
     return modelChoiceStore.readAll()[provider] ?? null;
@@ -750,27 +747,19 @@ const modelChoiceStore = {
    * Only what is written there; nothing is assumed for a class or provider left out.
    */
   readClasses(): Partial<Record<StoredSessionProvider, ModelClassMap>> {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(modelChoiceStore.file(), 'utf8')) as { modelClasses?: Record<string, unknown> };
-      return parseModelClasses(parsed.modelClasses);
-    } catch {
-      return {};
-    }
+    return readModelChoiceFile(modelChoiceStore.file()).modelClasses;
   },
   write(provider: StoredSessionProvider, modelId: string | null): void {
-    const models = { ...modelChoiceStore.readAll() };
+    const current = readModelChoiceFile(modelChoiceStore.file());
+    const models = { ...current.models };
     if (modelId === null) {
       delete models[provider];
     } else {
       models[provider] = modelId;
     }
     try {
-      const file = modelChoiceStore.file();
-      fs.mkdirSync(path.dirname(file), { recursive: true });
       // DSP-222: the class mapping in the same file is kept as it is.
-      const modelClasses = modelChoiceStore.readClasses();
-      fs.writeFileSync(file, `${JSON.stringify({ formatVersion: 1, models, ...(Object.keys(modelClasses).length === 0 ? {} : { modelClasses }) }, null, 2)}
-`, 'utf8');
+      writeModelChoiceFile(modelChoiceStore.file(), { models, modelClasses: current.modelClasses });
     } catch (error) {
       log(`[model] the choice could not be remembered: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -2950,15 +2939,29 @@ function registerLoopMethods(): void {
    * **A read.** The same preparation the Run makes, without starting, recording or
    * constructing anything. The drawing's `target` is not asked for: it chooses nothing (DSP-218).
    */
+  // DSP-223: the app-wide model class setting, in the same file as the chat's model choice.
+  handle('loop.readModelClasses', (): ModelClassSettings => ({ mappings: modelChoiceStore.readClasses() }));
+  handle('loop.setModelClass', (_event, provider: unknown, modelClass: unknown, model: unknown): ModelClassSettings => {
+    const chosenClass = MODEL_CLASSES.find((name) => name === modelClass);
+    if ((provider !== 'cursor' && provider !== 'claude' && provider !== 'copilot') || chosenClass === undefined || (model !== null && typeof model !== 'string')) {
+      throw new Error('Unknown agent, model class or model.');
+    }
+    const mappings = writeModelClass(modelChoiceStore.file(), provider, chosenClass, model);
+    log(`[model] class ${chosenClass} for ${provider}: ${model === null || model.trim() === '' ? 'the chat’s model' : model.trim()}`);
+    return { mappings };
+  });
+
   handle('loop.readRunAgent', (_event, query: unknown): LoopRunAgentInfo => {
-    const asked = (typeof query === 'object' && query !== null ? query : {}) as { entry?: unknown; classes?: unknown };
-    // DSP-222: the classes the drawing offers, as one stand-in step, so the line says which
-    // the provider maps and which run the chat's model; checked, as they came from a renderer.
-    const classes = Array.isArray(asked.classes) ? MODEL_CLASSES.filter((name) => (asked.classes as unknown[]).includes(name)) : [];
-    const offered: LoopRunAgentRequest['graph'] =
-      classes.length === 0
-        ? undefined
-        : { nodes: [{ id: 'classes', kind: 'agent', model: { policy: 'select', options: classes.map((name) => ({ id: name, modelClass: name })), default: classes[0] } }] };
+    const asked = (typeof query === 'object' && query !== null ? query : {}) as { entry?: unknown; classSteps?: unknown };
+    // DSP-222/223: the drawing's steps that offer model classes, each checked as the entry is,
+    // so the line says which classes the agent maps and names the real step when one is refused.
+    const steps = Array.isArray(asked.classSteps)
+      ? asked.classSteps.flatMap((step: unknown) => {
+          const read = entryFromQuery(step);
+          return read === undefined || read.model?.policy !== 'select' ? [] : [{ ...read, kind: 'agent' as const }];
+        })
+      : [];
+    const offered: LoopRunAgentRequest['graph'] = steps.length === 0 ? undefined : { nodes: steps };
     return loopRunAgentInfo(editorLoopRunRequest(entryFromQuery(asked.entry), offered));
   });
 

@@ -132,6 +132,28 @@ export function resolveLoopProvider(input: {
   return input.sessionProvider ?? input.chosenAgent;
 }
 
+/**
+ * Why a step's model is refused before a run: the agent does not list it. DSP-223: a model a
+ * class is mapped to is mended in the model class setting, not in the graph.
+ */
+function unlistedModel(
+  missing: { readonly label: string; readonly model: string; readonly option: string | null; readonly modelClass?: string },
+  agent: string,
+): string {
+  if (missing.modelClass !== undefined) {
+    return (
+      `The step "${missing.label}" runs class ${missing.modelClass}, set to the model ${missing.model}, which ${agent} does not ` +
+      `offer this account. Choose another model for that class in Model classes, or Use chat model.`
+    );
+  }
+  return (
+    `The step "${missing.label}" ${
+      missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
+    } the model ${missing.model}, which ${agent} does not offer this account. Change that ` +
+    "step's model, or run the graph with the agent that offers it."
+  );
+}
+
 function refused(why: string): LoopRunPreparation {
   return { ok: false, why, reason: `${why} ${NOTHING_WAS_STARTED}` };
 }
@@ -178,12 +200,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     const listed = request.claudeModels;
     const missing = modelsNamedBy(request.graph, classes).find((named) => !listed.includes(named.model));
     if (missing !== undefined) {
-      return refused(
-        `The step "${missing.label}" ${
-          missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
-        } the model ${missing.model}, which Claude does not offer this account. Change that ` +
-          "step's model, or run the graph with the agent that offers it.",
-      );
+      return refused(unlistedModel(missing, 'Claude'));
     }
   }
   // DSP-209 S19b: Cursor and Copilot by the same rule, against their own lists. Where no list
@@ -202,12 +219,7 @@ export function prepareLoopRun(request: LoopRunAgentRequest): LoopRunPreparation
     if (listed != null) {
       const missing = named.find((item) => !listed.includes(item.model));
       if (missing !== undefined) {
-        return refused(
-          `The step "${missing.label}" ${
-            missing.option === null ? 'fixes' : `offers, as option "${missing.option}",`
-          } the model ${missing.model}, which ${name} does not offer this account. Change that ` +
-            "step's model, or run the graph with the agent that offers it.",
-        );
+        return refused(unlistedModel(missing, name));
       }
     } else if (named.length > 0) {
       const models = [...new Set(named.map((item) => item.model))].join(', ');

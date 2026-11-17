@@ -26,7 +26,7 @@ import type { RecordedRunLookup } from './run-inspection';
 import type { GraphEditProposal, ProposalStatus } from './graph-proposal';
 import type { HandoffAnswerAction, LoopControlOutcome, LoopControlReport, LoopMode } from './loop-control';
 import type { DefinitionRowDisplay } from './loop-definition';
-import type { ResolvedRole, RoleReference } from './loop-graph';
+import type { ModelClass, ModelClassMap, ResolvedRole, RoleReference } from './loop-graph';
 import type { ParsedRunRecord, RecordedDrawnStep, RecordedRunEnding } from './loop-record';
 import type { RunJournalEntry, RunResult } from './loop-run';
 import type { LiveRunAnnouncement, LoopRunEvent, RunView } from './loop-run-view';
@@ -173,6 +173,14 @@ export interface ModelChoice {
  * (DSP-149), and the one chosen. `chosen` `''` means no choice: the provider's own
  * default model is used, not a model DSpatch picked.
  */
+/**
+ * DSP-223: the app-wide model class setting: for each agent, the model each class runs, from
+ * `modelClasses` in DSpatch's model configuration. A class left out uses the chat's model.
+ */
+export interface ModelClassSettings {
+  readonly mappings: Readonly<Partial<Record<StoredSessionProvider, ModelClassMap>>>;
+}
+
 export interface ModelListing {
   readonly provider: StoredSessionProvider;
   readonly models: readonly ModelChoice[];
@@ -2719,6 +2727,13 @@ export interface DspatchBridge {
    * drawing's entry step, so the line applies the Run's model rule to the same drawing.
    */
   readLoopRunAgent(query: LoopRunAgentQuery): Promise<LoopRunAgentInfo>;
+  /** DSP-223: the model class setting as saved. A read. */
+  readModelClasses(): Promise<ModelClassSettings>;
+  /**
+   * DSP-223: set one class of one agent to a model from that agent's list, or to `null` for
+   * the chat's model. Saved at once; a run already going keeps the mapping it started with.
+   */
+  setModelClass(provider: StoredSessionProvider, modelClass: ModelClass, model: string | null): Promise<ModelClassSettings>;
   /**
    * Walk the chosen loop definition on the project already open in chat.
    *
@@ -3559,6 +3574,8 @@ export type BridgeChannel =
   | 'dspatch:get-connection'
   | 'dspatch:set-model'
   | 'dspatch:list-models'
+  | 'dspatch:read-model-classes'
+  | 'dspatch:set-model-class'
   | 'dspatch:choose-agent'
   | 'dspatch:menu-command'
   | 'dspatch:pick-project'

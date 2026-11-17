@@ -533,6 +533,21 @@ export function parseModelClasses(raw: unknown): Partial<Record<RunProvider, Mod
   return mapped;
 }
 
+/**
+ * DSP-223: the models two or more classes of one agent share, each with its classes in
+ * class order, so the setting can say so. A class left on the chat's model shares nothing.
+ */
+export function sharedClassModels(map: ModelClassMap): readonly { readonly model: string; readonly classes: readonly ModelClass[] }[] {
+  const byModel = new Map<string, ModelClass[]>();
+  for (const modelClass of MODEL_CLASSES) {
+    const model = map[modelClass];
+    if (model !== undefined && model !== '') {
+      byModel.set(model, [...(byModel.get(model) ?? []), modelClass]);
+    }
+  }
+  return [...byModel].filter(([, classes]) => classes.length > 1).map(([model, classes]) => ({ model, classes }));
+}
+
 /** DSP-222: the classes a drawing's `select` options name that `classes` does not map, once each. */
 export function unmappedClassesOf(graph: Pick<LoopGraph, 'nodes'>, classes: ModelClassMap): readonly ModelClass[] {
   const named = new Set<ModelClass>();
@@ -552,8 +567,8 @@ export function unmappedClassesOf(graph: Pick<LoopGraph, 'nodes'>, classes: Mode
  * DSP-209 S19: every model a drawing's agent steps may ask for — fixed models and every
  * `select` option — once each, for the check before a run starts.
  */
-export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>, classes: ModelClassMap = {}): readonly { readonly nodeId: string; readonly label: string; readonly model: string; readonly option: string | null }[] {
-  const named: { nodeId: string; label: string; model: string; option: string | null }[] = [];
+export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>, classes: ModelClassMap = {}): readonly { readonly nodeId: string; readonly label: string; readonly model: string; readonly option: string | null; readonly modelClass?: ModelClass }[] {
+  const named: { nodeId: string; label: string; model: string; option: string | null; modelClass?: ModelClass }[] = [];
   for (const node of graph.nodes) {
     if (node.kind !== 'agent' || node.model === undefined) {
       continue;
@@ -567,7 +582,7 @@ export function modelsNamedBy(graph: Pick<LoopGraph, 'nodes'>, classes: ModelCla
         // DSP-222: a class names the model its provider maps it to; an unmapped class names none.
         const model = option.modelClass === undefined ? option.model : classes[option.modelClass];
         if (model !== undefined && model !== '') {
-          named.push({ nodeId: node.id, label, model, option: option.id });
+          named.push({ nodeId: node.id, label, model, option: option.id, ...(option.modelClass === undefined ? {} : { modelClass: option.modelClass }) });
         }
       }
     }

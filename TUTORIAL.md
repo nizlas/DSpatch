@@ -364,7 +364,7 @@ Continuity means the visible work and conversation stay together. It does not me
 
 - **Arrange** lays the graph out in layers; edges route around nodes, and back and rework edges are drawn apart.
 - Renaming a node updates every reference to it in the drawing.
-- Each agent step can have its own model: a fixed one, or one chosen by the route that leads to it. The choice is recorded in the run.
+- Each agent step can have its own model: a fixed one, or one chosen by the route that leads to it. A step can also ask for a model class, small, medium or large; **Model classes…** in the graph editor sets which model each class runs for each agent, from the same list the chat offers, or the chat's model. A change applies from the next run. The choice is recorded in the run.
 - **Save** writes graph changes. A running workflow keeps the graph version it started with.
 - **Dry-run** exercises graph routing without contacting a provider. It does not demonstrate that a real agent will solve the task.
 - **Open graph…** loads a `.loop.json` declaration and makes its workflow selectable.

@@ -1573,3 +1573,64 @@
   white-space: pre-wrap;
 }
 
+
+/* DSP-223: the model class setting and the ways into it. */
+.editor-model-classes {
+  white-space: nowrap;
+}
+
+.editor .editor-model-classes--unmapped,
+.editor-model-classes.editor-model-classes--unmapped {
+  border-color: #d9b25f;
+  color: #d9b25f;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #7fa8c4;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.model-classes p {
+  color: #c3cedb;
+  font-size: 12px;
+}
+
+.model-classes__tabs {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.model-classes__tab {
+  padding: 4px 10px;
+}
+
+.dialog.model-classes .model-classes__tab--on {
+  background: #232a33;
+  border-color: #7fa8c4;
+  color: var(--text, #e6edf3);
+  font-weight: 600;
+}
+
+.model-classes__row {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  gap: 10px;
+  align-items: center;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.model-classes__name {
+  font-weight: 600;
+}
+
+.model-classes__shared {
+  border-left: 3px solid #d9b25f;
+  padding-left: 8px;
+}

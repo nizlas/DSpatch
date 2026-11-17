@@ -22,8 +22,8 @@ export interface LoopRunAgentQuery {
     readonly label?: string;
     readonly model?: ModelPolicy;
   } | null;
-  /** DSP-222: the model classes the drawing's steps offer, so the line can say which are unmapped. */
-  readonly classes?: readonly string[];
+  /** DSP-222/223: the drawing's steps that offer model classes, so the line can say which are unmapped. */
+  readonly classSteps?: readonly { readonly id: string; readonly label?: string; readonly model?: ModelPolicy }[];
 }
 
 /** What the main process answers when a window asks which agent a loop run would use. */

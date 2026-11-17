@@ -136,6 +136,7 @@ import {
   type RunView,
 } from '../shared/loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
+import { ModelClassDialog } from './ModelClassDialog';
 import { runningStep, stepStanding } from '../shared/loop-activity';
 import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind } from '../shared/loop-chat';
 import { successRoutesOf } from '../shared/loop-results';
@@ -414,6 +415,9 @@ export function LoopEditor(): React.JSX.Element {
   // front, which is when the agent choice made in the chat window can have changed. The
   // entry step goes with it so the line applies the Run's model rule (review B2).
   const [runAgent, setRunAgent] = useState<LoopRunAgentInfo | null>(null);
+  // DSP-223: the model class setting, opened from the model line; a save re-reads the line.
+  const [modelClassesOpen, setModelClassesOpen] = useState(false);
+  const [agentReadTick, setAgentReadTick] = useState(0);
   const entryNode = graph?.nodes.find((node) => node.id === graph.entry);
   const agentQueryKey = JSON.stringify({
     entry:
@@ -424,10 +428,10 @@ export function LoopEditor(): React.JSX.Element {
             ...(entryNode.label === undefined ? {} : { label: entryNode.label }),
             ...(entryNode.model === undefined ? {} : { model: entryNode.model }),
           },
-    // DSP-222: the classes any step offers, once each, in their own order.
-    classes: MODEL_CLASSES.filter((name) =>
-      (graph?.nodes ?? []).some((node) => node.model?.policy === 'select' && (node.model.options ?? []).some((option) => option.modelClass === name)),
-    ),
+    // DSP-222/223: the steps that offer a model class, so the line can speak of them.
+    classSteps: (graph?.nodes ?? [])
+      .filter((node) => node.kind === 'agent' && node.model?.policy === 'select' && (node.model.options ?? []).some((option) => option.modelClass !== undefined))
+      .map((node) => ({ id: node.id, ...(node.label === undefined ? {} : { label: node.label }), ...(node.model === undefined ? {} : { model: node.model }) })),
   });
   useEffect(() => {
     let cancelled = false;
@@ -450,7 +454,10 @@ export function LoopEditor(): React.JSX.Element {
       cancelled = true;
       window.removeEventListener('focus', read);
     };
-  }, [agentQueryKey]);
+  }, [agentQueryKey, agentReadTick]);
+  // DSP-223: whether the line says the drawing's classes are not all mapped for the agent.
+  // A class the agent does not list is refused before a run, which the same button mends.
+  const unmappedClasses = /no model configured for|in Model classes/.test(runAgent?.line ?? '');
 
   // DSP-218: what the window says about the agent - the watched run's own account (the
   // provider and model it actually uses), else what a run started now would use. An
@@ -2805,6 +2812,16 @@ export function LoopEditor(): React.JSX.Element {
               ) : null}
             </span>
           )}
+          {/* DSP-223: the app-wide model class setting, from the model line it governs. */}
+          <button
+            type="button"
+            className={unmappedClasses ? 'button editor-model-classes editor-model-classes--unmapped' : 'button button--quiet editor-model-classes'}
+            data-ev="editor-model-classes"
+            title={unmappedClasses ? 'Some model classes this graph uses run the chat’s model: choose a model for them' : 'Which model each model class runs, per agent'}
+            onClick={() => setModelClassesOpen(true)}
+          >
+            {unmappedClasses ? 'Set model classes…' : 'Model classes…'}
+          </button>
           {/*
             DSP-150: review is reached from here as from the chat. It opens the review
             window, which chooses a repository and two commits; nothing here changes.
@@ -3285,6 +3302,7 @@ export function LoopEditor(): React.JSX.Element {
               resourceRoot={file?.projectRoot ?? null}
               runProvider={runAgent?.provider ?? null}
               liveModel={watch === null ? null : latestModelSelection(watch.entries, selectedNode.id)}
+              onOpenModelClasses={() => setModelClassesOpen(true)}
               onNote={setNote}
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
               onDelete={() => {
@@ -3308,6 +3326,7 @@ export function LoopEditor(): React.JSX.Element {
               graph={graph}
               findings={findings}
               agentLine={agentLine}
+              onOpenModelClasses={() => setModelClassesOpen(true)}
               targetLocked={editingOff}
               onChangeTarget={changeTarget}
               onChange={(next) => apply(next)}
@@ -3365,6 +3384,13 @@ export function LoopEditor(): React.JSX.Element {
         )}
       </footer>
 
+      {modelClassesOpen ? (
+        <ModelClassDialog
+          initialProvider={runAgent?.provider ?? null}
+          onClose={() => setModelClassesOpen(false)}
+          onChanged={() => setAgentReadTick((tick) => tick + 1)}
+        />
+      ) : null}
       {pendingTarget === null || graph === null ? null : (
         <TargetChangeDialog
           graph={graph}
@@ -3718,6 +3744,7 @@ function NodeInspector({
   resourceRoot,
   runProvider,
   liveModel,
+  onOpenModelClasses,
   onNote,
   onChange,
   onDelete,
@@ -3726,6 +3753,8 @@ function NodeInspector({
   readonly node: LoopNode;
   /** DSP-209 S19: the model the watched run's latest visit to this step runs with, or `null`. */
   readonly liveModel: ModelSelectionRecord | null;
+  /** DSP-223: opens the model class setting. */
+  readonly onOpenModelClasses: () => void;
   readonly role: ResolvedRole | null;
   readonly findings: readonly Finding[];
   readonly help: boolean;
@@ -4306,6 +4335,14 @@ function NodeInspector({
                     : `Chosen by: ${choosing.map((edge) => `${edge.id} → ${edge.selectsModel ?? ''}`).join('; ')}. Any other arrival runs the default.`;
                 })()}
               </p>
+              {(model.options ?? []).some((option) => option.modelClass !== undefined) ? (
+                <p className="muted" data-ev="node-model-classes">
+                  A class runs the model set for it, per agent, in the model class setting, not in this graph.{' '}
+                  <button type="button" className="link-button" data-ev="node-model-classes-open" onClick={onOpenModelClasses}>
+                    Model classes…
+                  </button>
+                </p>
+              ) : null}
             </div>
           ) : null}
           {model.policy === 'fixed' ? (
@@ -4831,6 +4868,7 @@ function GraphInspector({
   graph,
   findings,
   agentLine,
+  onOpenModelClasses,
   targetLocked,
   onChangeTarget,
   onChange,
@@ -4840,6 +4878,8 @@ function GraphInspector({
   readonly findings: readonly Finding[];
   /** Which agent runs this loop (DSP-138): the watched run's own line, else a fresh read. */
   readonly agentLine: string | null;
+  /** DSP-223: opens the model class setting. */
+  readonly onOpenModelClasses: () => void;
   /** DSP-218: the drawing's target, changed only here, under Advanced, through its report. */
   readonly targetLocked: boolean;
   readonly onChangeTarget: (to: LoopTarget) => void;
@@ -4879,6 +4919,14 @@ function GraphInspector({
       <p className="muted" data-ev="loop-run-agent">
         {agentLine ?? 'Which agent runs this graph is being read.'} The agent and its model are
         chosen in the chat.
+        {/no model configured for|in Model classes/.test(agentLine ?? '') ? (
+          <>
+            {' '}
+            <button type="button" className="link-button" data-ev="loop-run-agent-model-classes" onClick={onOpenModelClasses}>
+              Set model classes…
+            </button>
+          </>
+        ) : null}
       </p>
       <p className="muted">
         On a runtime fault: <strong>{graph.onRuntimeFault}</strong> <Unhonoured attribute="onRuntimeFault" />
@@ -5032,7 +5080,7 @@ function TargetChangeDialog({
     <div className="dialog-backdrop">
       <div className="dialog">
         <h2>
-          Export this loop's roles for {to} instead of {graph.target}?
+          Export this graph's roles for {to} instead of {graph.target}?
         </h2>
         <p>
           This report is all that happens until you apply it. Nothing is removed either way. It

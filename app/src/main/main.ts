@@ -172,6 +172,8 @@ const STEP_OUTPUT_RUN_VIEW: BridgeChannel = 'dspatch:step-output-run-view';
 /** The latest recorded run of a loop, for the editor's Run mode after a restart. */
 const LATEST_RECORDED_RUN: BridgeChannel = 'dspatch:latest-recorded-run';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
+const READ_MODEL_CLASSES: BridgeChannel = 'dspatch:read-model-classes';
+const SET_MODEL_CLASS: BridgeChannel = 'dspatch:set-model-class';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
 const PREPARE_CHAT_LOOP: BridgeChannel = 'dspatch:prepare-chat-loop';
@@ -5317,6 +5319,11 @@ function registerLoopGraphIpc(): void {
   });
   ipcMain.handle(READ_LOOP_RUN_AGENT, (_event, query: unknown): Promise<LoopRunAgentInfo> =>
     hostCall('loop.readRunAgent', NO_SENDER, query),
+  );
+  // DSP-223: the model class setting, kept by the host beside the chat's model choice.
+  ipcMain.handle(READ_MODEL_CLASSES, () => hostCall('loop.readModelClasses', NO_SENDER));
+  ipcMain.handle(SET_MODEL_CLASS, (_event, provider: unknown, modelClass: unknown, model: unknown) =>
+    hostCall('loop.setModelClass', NO_SENDER, provider, modelClass, model),
   );
   ipcMain.handle(REQUEST_LOOP_PAUSE, (): Promise<LoopControlOutcome> => hostCall('loop.requestPause', NO_SENDER));
   ipcMain.handle(CONTINUE_LOOP, (): Promise<LoopControlOutcome> => hostCall('loop.continue', NO_SENDER));

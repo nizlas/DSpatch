@@ -81,6 +81,8 @@ import type { RoleReference } from '../shared/loop-graph';
 import type { RunJournalEntry } from '../shared/loop-run';
 import type { LiveRunAnnouncement, LoopRunEvent, RunView } from '../shared/loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
+import type { ModelClass } from '../shared/loop-graph';
+import type { ModelClassSettings } from '../shared/bridge';
 import type { DirectoryPage, FileView, WorkspaceView } from '../shared/workspace-folders';
 
 // Sandboxed preload: only Electron modules may be imported as values.
@@ -162,6 +164,8 @@ const CURRENT_LOOP_RUN_VIEW: BridgeChannel = 'dspatch:current-loop-run-view';
 const STEP_OUTPUT_RUN_VIEW: BridgeChannel = 'dspatch:step-output-run-view';
 const LATEST_RECORDED_RUN: BridgeChannel = 'dspatch:latest-recorded-run';
 const READ_LOOP_RUN_AGENT: BridgeChannel = 'dspatch:read-loop-run-agent';
+const READ_MODEL_CLASSES: BridgeChannel = 'dspatch:read-model-classes';
+const SET_MODEL_CLASS: BridgeChannel = 'dspatch:set-model-class';
 const START_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:start-chat-loop-run';
 const CANCEL_CHAT_LOOP_RUN: BridgeChannel = 'dspatch:cancel-chat-loop-run';
 const CHAT_LOOP_JOURNAL: BridgeChannel = 'dspatch:chat-loop-journal';
@@ -210,6 +214,9 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(CHOOSE_AGENT, provider) as Promise<StoredSessionProvider | null>,
   readLoopRunAgent: (query: LoopRunAgentQuery) =>
     ipcRenderer.invoke(READ_LOOP_RUN_AGENT, query) as Promise<LoopRunAgentInfo>,
+  readModelClasses: () => ipcRenderer.invoke(READ_MODEL_CLASSES) as Promise<ModelClassSettings>,
+  setModelClass: (provider: StoredSessionProvider, modelClass: ModelClass, model: string | null) =>
+    ipcRenderer.invoke(SET_MODEL_CLASS, provider, modelClass, model) as Promise<ModelClassSettings>,
   onMenuCommand: (listener: (command: MenuCommand) => void) => {
     const handler = (_event: unknown, payload: MenuCommand): void => {
       listener(payload);

@@ -15,6 +15,8 @@ import { routeLoopEdges, routingBox, segmentCrossesBox } from '../src/shared/loo
 import { createMemoryResultStore } from '../src/shared/loop-results';
 import { modelSelectionData, modelSelectionFromData, runLoopGraph, type StepContext, type StepExecution } from '../src/shared/loop-run';
 import { prepareBundled } from '../scripts/prepare-bundled.mjs';
+import { readModelChoiceFile, writeModelChoiceFile, writeModelClass } from '../src/main/model-choice-file';
+import { sharedClassModels } from '../src/shared/loop-graph';
 import type { AgentEvent, AgentEventListener } from '../src/adapter/types';
 import type { ChatAdapter } from '../src/main/chat-service';
 import { runLiveGraph } from '../src/main/loop-live-run';
@@ -432,13 +434,15 @@ class NetworkAgent {
   private readonly provider: RunProvider;
   private readonly nodeIds: readonly string[];
   private readonly outcomes: Readonly<Record<string, string>>;
+  private readonly onSend: ((node: string, visit: number) => void) | undefined;
   /** DSP-222: the model each turn of a node was sent with, in order. */
   private readonly sessionModel = new Map<string, string>();
   private readonly turnModels = new Map<string, string[]>();
-  constructor(provider: RunProvider, nodeIds: readonly string[], outcomes: Readonly<Record<string, string>> = {}) {
+  constructor(provider: RunProvider, nodeIds: readonly string[], outcomes: Readonly<Record<string, string>> = {}, onSend?: (node: string, visit: number) => void) {
     this.provider = provider;
     this.nodeIds = nodeIds;
     this.outcomes = outcomes;
+    this.onSend = onSend;
   }
   modelsOf(node: string): readonly string[] {
     return this.turnModels.get(node) ?? [];
@@ -465,6 +469,7 @@ class NetworkAgent {
     this.prompts.set(node, [...(this.prompts.get(node) ?? []), prompt]);
     this.turnModels.set(node, [...(this.turnModels.get(node) ?? []), this.sessionModel.get(sessionId) ?? '']);
     const visit = this.prompts.get(node)?.length ?? 0;
+    this.onSend?.(node, visit);
     const outcome = this.outcomes[`${node}#${String(visit)}`] ?? defaultOutcomes[node] ?? 'succeeded';
     const runId = `${sessionId}-${String(this.prompts.get(node)?.length ?? 0)}`;
     const emit = (event: Partial<AgentEvent>): void => {
@@ -697,4 +702,108 @@ test('DSP-222: an option names a model or a known class, never both and never an
     assert.equal(loaded.ok, false, bad);
     assert.ok(!loaded.ok && loaded.findings.some((finding) => finding.code === 'bad-model-option'), bad);
   }
+});
+
+/* DSP-223: the app-wide model class setting, in the chat's model configuration file. */
+
+test('DSP-223: a class is set and cleared in the model configuration, the chat\'s choice kept, shared models found', (context) => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-model-classes-'));
+  context.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const file = path.join(scratch, 'dspatch-model-choice.json');
+  writeModelChoiceFile(file, { models: { copilot: 'chat-model' }, modelClasses: {} });
+  writeModelClass(file, 'copilot', 'medium', 'model-b');
+  writeModelClass(file, 'copilot', 'small', 'model-a');
+  writeModelClass(file, 'claude', 'large', 'claude-big');
+  let read = readModelChoiceFile(file);
+  assert.deepEqual(read.models, { copilot: 'chat-model' }, 'the chat\'s model choice is kept');
+  assert.deepEqual(read.modelClasses, { copilot: { small: 'model-a', medium: 'model-b' }, claude: { large: 'claude-big' } });
+  assert.deepEqual(Object.keys(read.modelClasses.copilot ?? {}), ['small', 'medium'], 'written in class order');
+  writeModelClass(file, 'copilot', 'medium', 'model-a');
+  assert.deepEqual(sharedClassModels(readModelChoiceFile(file).modelClasses.copilot ?? {}), [{ model: 'model-a', classes: ['small', 'medium'] }]);
+  // "Use chat model" removes the class; with none left the agent's entry goes too.
+  writeModelClass(file, 'claude', 'large', null);
+  read = readModelChoiceFile(file);
+  assert.equal(read.modelClasses.claude, undefined);
+  assert.deepEqual(read.models, { copilot: 'chat-model' });
+});
+
+test('DSP-223: a mapping changed during a run applies from the next run, not to the run in progress', async (context) => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-model-classes-run-'));
+  context.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const file = path.join(scratch, 'dspatch-model-choice.json');
+  writeModelClass(file, 'copilot', 'small', 'first-small');
+  writeModelClass(file, 'copilot', 'medium', 'first-medium');
+  const project = path.join(scratch, 'project');
+  fs.mkdirSync(project);
+  const graph = load(root);
+  const resolveRole = createFileRoleResolver(root);
+  const prepare = (agent: unknown) =>
+    prepareLoopRun({
+      sessionProvider: 'copilot',
+      chosenAgent: null,
+      rootCount: 1,
+      entryNode: graph.nodes.find((node) => node.id === graph.entry),
+      graph,
+      cursorModel: 'composer-2',
+      claudeModel: '',
+      copilotModel: 'chat-model',
+      copilotModels: null,
+      // As the host does: the setting as saved when the run is prepared.
+      modelClasses: readModelChoiceFile(file).modelClasses,
+      adapters: { preflight: () => null, createAdapter: () => agent as ChatAdapter },
+    });
+  // The setting is changed while the first implementer visit is in flight.
+  const agent = new NetworkAgent('copilot', graph.nodes.map((node) => node.id), {
+    'tl-dispatch#1': 'implementer-s',
+    'tl-dispatch#2': 'implementer-m',
+    'executive-continue#1': 'next-slice',
+  }, (node, visit) => {
+    if (node === 'implementer' && visit === 1) {
+      writeModelClass(file, 'copilot', 'medium', 'second-medium');
+    }
+  });
+  const prepared = prepare(agent);
+  assert.ok(prepared.ok);
+  const delivery = await runLiveGraph(graph, {
+    runId: 'classes-snapshot',
+    repoRoot: root,
+    outDir: null,
+    resultsDir: path.join(scratch, 'results'),
+    modelRequested: prepared.modelRequested,
+    personModel: prepared.personModel,
+    modelClasses: prepared.modelClasses,
+    workspacePath: project,
+    keepWorkspace: true,
+    bindingKind: 'chat-loop',
+    provider: prepared.provider,
+    createAdapter: prepared.createAdapter,
+    promptFor: (node, step) => chatPromptFor(node, { entryId: graph.entry, mandate: 'Two slices.', step, role: (() => { const resolved = node.role === undefined ? null : resolveRole(node.role); return resolved === null ? null : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null }; })(), skipping: skippingRoutesOf(graph, node.id) }),
+  });
+  assert.equal(delivery.result.status, 'completed', delivery.journalText);
+  assert.deepEqual(agent.modelsOf('implementer'), ['first-small', 'first-medium'], 'the run keeps the mapping it started with');
+  assert.equal(readModelChoiceFile(file).modelClasses.copilot?.medium, 'second-medium');
+  const next = prepare(agent);
+  assert.ok(next.ok);
+  assert.equal(next.modelClasses.medium, 'second-medium', 'the next run reads the changed mapping');
+  assert.equal(next.provider, 'copilot', 'the agent is the chat\'s, whatever the mapping');
+});
+
+test('DSP-223: a class mapped to a model the agent does not list refuses the run, naming the step, and swaps nothing', () => {
+  const graph = load(root);
+  const prepared = prepareLoopRun({
+    sessionProvider: 'copilot',
+    chosenAgent: null,
+    rootCount: 1,
+    entryNode: graph.nodes.find((node) => node.id === graph.entry),
+    // As the editor's line asks: only the steps that offer a class.
+    graph: { nodes: graph.nodes.filter((node) => node.model?.policy === 'select') },
+    cursorModel: 'composer-2',
+    claudeModel: '',
+    copilotModel: 'copilot-default',
+    copilotModels: ['copilot-default'],
+    modelClasses: { copilot: { small: 'gpt-5.5-mini' } },
+    adapters: { preflight: () => null, createAdapter: () => { throw new Error('not built'); } },
+  });
+  assert.equal(prepared.ok, false);
+  assert.match(prepared.ok ? '' : prepared.why, /The step "Implementer: implementer" runs class small, set to the model gpt-5\.5-mini, which Copilot does not offer this account\. Choose another model for that class in Model classes/);
 });
