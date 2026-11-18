@@ -20,7 +20,8 @@
  *
  *     node --import ./scripts/ts-resolve.mjs scripts/delegation-trial.mjs [<evidence folder>]
  *
- * Needs `npm run build`. On Linux without DISPLAY, Xvfb is started here.
+ * Needs `npm run build`. On Linux without DISPLAY, Xvfb is started here; with
+ * DSPATCH_TRIAL_HEADLESS=1 Electron runs headless instead and no display is used.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -49,7 +50,8 @@ const simulated = {
 const results = [];
 const pages = [];
 const owned = { xvfb: null };
-let display = onWindows ? '' : (process.env.DISPLAY ?? '');
+const headless = process.env.DSPATCH_TRIAL_HEADLESS === '1';
+let display = onWindows || headless ? '' : (process.env.DISPLAY ?? '');
 let stage = 'preflight';
 let profile = '';
 let project = '';
@@ -261,8 +263,8 @@ async function launch(label) {
   client.inspect = await freePort();
   client.log = path.join(evidence, `client-${label}.log`);
   const output = fs.openSync(client.log, 'a');
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('DSPATCH_')));
-  const child = spawn(electron, [`--inspect=${String(client.inspect)}`, '.', `--user-data-dir=${profile}`, `--remote-debugging-port=${String(client.cdp)}`], {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('DSPATCH_') && !(headless && (key === 'DISPLAY' || key === 'WAYLAND_DISPLAY'))));
+  const child = spawn(electron, [`--inspect=${String(client.inspect)}`, '.', ...(headless ? ['--ozone-platform=headless'] : []), `--user-data-dir=${profile}`, `--remote-debugging-port=${String(client.cdp)}`], {
     cwd: appDir,
     env: { ...env, ...(display === '' ? {} : { DISPLAY: display }), DSPATCH_EXPECT_USERDATA: profile, ...simulated },
     stdio: ['ignore', output, output],
@@ -377,7 +379,7 @@ const DIFF_STATE = `(()=>{const strips=[...document.querySelectorAll('.rv-pair-d
 async function main() {
   stage = 'preflight';
   check('the build is there', fs.existsSync(path.join(appDir, 'dist')));
-  if (!onWindows && display === '') {
+  if (!onWindows && !headless && display === '') {
     display = ':97';
     owned.xvfb = spawn('Xvfb', [display, '-screen', '0', '1920x1080x24'], { stdio: 'ignore' });
     await delay(1200);
@@ -489,15 +491,40 @@ async function main() {
   const PANEL_STATE = `(()=>{const step=document.querySelector('.rv-step-panel');const review=document.querySelector('[data-ev="walk-review-section"]');const reports=[...document.querySelectorAll('[data-ev="agent-review"]')];const before=reports.filter((r)=>step!==null&&(r.compareDocumentPosition(step)&Node.DOCUMENT_POSITION_FOLLOWING)!==0).length;const scrollers=[...document.querySelectorAll('*')].filter((e)=>e.scrollHeight>e.clientHeight+2&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).sort((a,b)=>b.clientHeight-a.clientHeight).slice(0,1).map((e)=>e.scrollTop);return JSON.stringify({tab:document.querySelector('[data-ev="right-tab-step"]')?.getAttribute('aria-selected'),stepFirst:step!==null&&before===0,reviewOpen:review?.getAttribute('aria-expanded'),reports:reports.length,reportsOpen:reports.filter((r)=>r.open).length,reportsInReview:reports.filter((r)=>r.closest('[data-ev="walk-delegation"]')!==null).length,here:document.querySelectorAll('[data-ev="walk-threads-here"] [data-ev="review-thread"]').length,hereOpen:document.querySelectorAll('[data-ev="walk-threads-here"] .rv-thread-body').length,elsewhere:document.querySelector('[data-ev="walk-threads-elsewhere"]')?.textContent??'',stepId:document.querySelector('.rv-step-panel h2 .rv-step-id')?.textContent??'',scrollers,activeElement:document.activeElement?.getAttribute('data-ev')??document.activeElement?.tagName??''})})()`;
   let panelState = JSON.parse(await pc.ev(PANEL_STATE));
   check('Step shows the step\'s explanation first and its Review section folded, with no report above the explanation', panelState.stepFirst && panelState.reviewOpen === 'false' && panelState.reports === 0, JSON.stringify(panelState));
-  await pc.click('walk-review-section');
-  await pc.until('the delegate control in Review', `${q('walk-delegate')}!==null`, 20_000);
-  check('the delegation of the walk is offered inside the Review section', (await pc.ev(`${q('walk-delegate')}.closest('[data-ev="walk-delegation"]')!==null && ${q('walk-delegate')}.closest('.rv-collapsible')!==null`)) === true);
-  await pc.click('walk-delegate');
+  // The walk's delegation: one button in the fixed row above the explanation, which stays put.
+  const BAR = `(()=>{const b=document.querySelector('[data-ev="walk-delegate"]');if(!b)return JSON.stringify(null);const r=b.getBoundingClientRect();return JSON.stringify({buttons:document.querySelectorAll('[data-ev="walk-delegate"]').length,label:b.textContent.trim(),disabled:b.disabled,state:b.dataset.state,status:document.querySelector('[data-ev="walk-delegate-status"]')?.textContent??'',scope:document.querySelector('[data-ev="walk-delegate-scope"]')?.textContent??'',top:Math.round(r.top),left:Math.round(r.left),inView:r.top>=0&&r.bottom<=innerHeight&&r.width>0,inHeader:b.closest('.rv-right-tabs')!==null,inReview:b.closest('[data-ev="walk-review-section"]')!==null||b.closest('.rv-collapsible')!==null,notes:document.body.innerText.includes('could not be started')})})()`;
+  const SCROLL_END = `(()=>{const s=[...document.querySelectorAll('*')].filter((e)=>e.scrollHeight>e.clientHeight+2&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).sort((a,b)=>b.clientHeight-a.clientHeight)[0];if(s){s.scrollTop=s.scrollHeight}return s?s.scrollTop:-1})()`;
+  const SCROLL_TOP = `(()=>{for(const s of document.querySelectorAll('*')){if(s.scrollTop>0)s.scrollTop=0}return true})()`;
+  await pc.until('the delegate button', `${q('walk-delegate')}!==null`, 20_000);
+  const barBefore = JSON.parse(await pc.ev(BAR));
+  check('before: one "Delegate to agent" button, enabled, in the fixed row above the explanation, not in Review', barBefore.buttons === 1 && barBefore.label === 'Delegate to agent' && !barBefore.disabled && barBefore.inHeader && !barBefore.inReview && barBefore.inView, JSON.stringify(barBefore));
+  check('before: the button says it delegates the whole walk, with its changed lines', /^Scope: the whole walk “.+”, \d+ changed lines?/.test(barBefore.scope), barBefore.scope);
+  const scrolled = await pc.ev(SCROLL_END);
+  await delay(300);
+  const barScrolled = JSON.parse(await pc.ev(BAR));
+  check('scrolled to the end of a long explanation, the button is where it was and visible', scrolled > 0 && barScrolled.top === barBefore.top && barScrolled.left === barBefore.left && barScrolled.inView, JSON.stringify({ scrolled, top: [barBefore.top, barScrolled.top] }));
+  await pc.ev(SCROLL_TOP);
+  await client.main.capture(panel.view.contentsId, '02a-delegate-button-before');
+  // A double press opens the choice once.
+  await pc.ev(`(()=>{const b=${q('walk-delegate')};b.click();b.click();return true})()`);
+  // With every line already decided nothing is preselected, as before: the trial asks for all lines.
+  await pc.until('the walk\'s choice', `${q('walk-delegate-basis')}!==null`, 20_000);
+  if ((await pc.ev(`${q('walk-delegate-agent-start')}===null`)) === true) await pc.click('walk-basis-all');
   await pc.until('the walk\'s agent picker', `${q('walk-delegate-agent-start')}!==null`, 20_000);
+  const choosing = JSON.parse(await pc.ev(BAR));
+  check('choosing: one choice open below the button, the button disabled while it is open and in the same place', (await pc.ev(`document.querySelectorAll('[data-ev="walk-delegate-choose"]').length`)) === 1 && choosing.disabled && choosing.state === 'choosing' && choosing.top === barBefore.top, JSON.stringify(choosing));
+  // The report will be read in Review, opened before the result arrives.
+  await pc.click('walk-review-section');
+  // A double press of Start: one delegation.
+  await pc.ev(`(()=>{const b=${q('walk-delegate-agent-start')};b.click();b.click();return true})()`);
+  await delay(150);
+  const barDuring = JSON.parse(await pc.ev(BAR));
+  check('during: the button says the delegation is starting or in progress, disabled, in the same place', barDuring.disabled && /^(Starting delegation…|Delegation in progress…)$/.test(barDuring.label) && barDuring.top === barBefore.top, JSON.stringify(barDuring));
+  await client.main.capture(panel.view.contentsId, '02b-delegate-button-during');
   // Reading while the result arrives: the tab, the scroll positions and the focus must not move.
+  // Measured once the choice has closed, which the person's own Start does, above the text.
   await pc.ev(`(()=>{const s=[...document.querySelectorAll('*')].find((e)=>e.scrollHeight>e.clientHeight+2&&['auto','scroll'].includes(getComputedStyle(e).overflowY));if(s)s.scrollTop=40;return true})()`);
   const beforeArrival = JSON.parse(await pc.ev(PANEL_STATE));
-  await pc.click('walk-delegate-agent-start');
   await pc.until('the walk\'s review done, inside Review', `document.querySelector('[data-ev="walk-delegation"] [data-ev="agent-review"]')?.dataset.state === 'done'`, 120_000);
   await delay(800);
   panelState = JSON.parse(await pc.ev(PANEL_STATE));
@@ -508,6 +535,29 @@ async function main() {
   check('the report is in the Review section, once, folded; the explanation stays first', panelState.reports === 1 && panelState.reportsInReview === 1 && panelState.stepFirst, JSON.stringify(panelState));
   const reportState = await pc.ev(`${q('agent-review-state')}?.textContent ?? ''`);
   check('the walk\'s report awaits the person\'s assessment', /awaiting your assessment/.test(reportState), reportState);
+  await pc.ev(SCROLL_TOP);
+  await delay(300);
+  const barAfter = JSON.parse(await pc.ev(BAR));
+  check('after: the button says the walk is already delegated, offers delegating again, says the assessment awaits a decision, in the same place', barAfter.label === 'Already delegated · Delegate again…' && !barAfter.disabled && /awaits your decision/.test(barAfter.status) && barAfter.top === barBefore.top && barAfter.buttons === 1, JSON.stringify(barAfter));
+  const walkJobs = (() => {
+    let count = 0;
+    const visit = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) visit(full);
+        else if (entry.name.endsWith('.json')) {
+          try {
+            const record = JSON.parse(fs.readFileSync(full, 'utf8'));
+            if (Array.isArray(record?.jobs)) count += record.jobs.filter((job) => job.kind === 'review' && job.scope?.kind === 'walk').length;
+          } catch {}
+        }
+      }
+    };
+    visit(profile);
+    return count;
+  })();
+  check('two presses of Start made one delegation of the walk, and no refusal was shown', walkJobs === 1 && !barAfter.notes, JSON.stringify({ walkJobs, refusalShown: barAfter.notes }));
+  await client.main.capture(panel.view.contentsId, '02c-delegate-button-after');
   // The step's own findings: folded, and the walk's others reachable through the report.
   // The walk window lists steps under their walk's head once the head is opened.
   const heads = JSON.parse(await walk.ev(`JSON.stringify([...document.querySelectorAll('[data-ev^="walk-head-"]')].map((h)=>h.dataset.ev.slice('walk-head-'.length)))`));
@@ -524,6 +574,8 @@ async function main() {
     if (here.here > 0 && withThreads === null) withThreads = { id, here };
     // The report belongs to the delegated walk (W1): once and folded at each of its steps, and not at another walk's.
     const expected = id.startsWith('W1.') ? 1 : 0;
+    const bar = JSON.parse(await pc.ev(BAR));
+    check(`step ${id}: the button is in its place and follows this step's walk`, bar.buttons === 1 && bar.top === barBefore.top && (expected === 1 ? bar.state === 'delegated' : bar.state === 'other-running' || bar.state === 'ready'), JSON.stringify({ state: bar.state, label: bar.label, top: bar.top }));
     check(`step ${id}: the report is ${expected === 1 ? 'once and folded' : 'not shown, since another walk was delegated'}, the explanation first`, here.reports === expected && here.reportsOpen === 0 && here.stepFirst, JSON.stringify(here));
   }
   check('some step shows the agent\'s findings at its places, folded', withThreads !== null && withThreads.here.hereOpen === 0, JSON.stringify(withThreads));
@@ -559,6 +611,11 @@ async function main() {
     await pc.click('walk-review-section').catch(() => undefined);
     if ((await pc.ev(`${q('walk-threads-here')}!==null`)) !== true) await pc.click('walk-review-section');
     await narrowCheck('floating panel at 420 px');
+    await pc.ev(SCROLL_END);
+    const narrowBar = JSON.parse(await pc.ev(BAR));
+    check('floating panel at 420 px, scrolled to the end: the one button is in the fixed row and visible, its label whole', narrowBar !== null && narrowBar.buttons === 1 && narrowBar.inHeader && narrowBar.inView && narrowBar.label === 'Already delegated · Delegate again…', JSON.stringify(narrowBar));
+    await pc.ev(SCROLL_TOP);
+    await client.main.capture(panel.view.contentsId, '04a-delegate-button-narrow-floating');
     await client.main.capture(panel.view.contentsId, '04-step-panel-narrow-floating');
     await client.main.size(panel.frame.id, 760, 900);
   }
@@ -576,6 +633,10 @@ async function main() {
     if ((await pd.ev(`${q('walk-threads-here')}!==null`)) !== true) await pd.click('walk-review-section');
     const reading = JSON.parse(await pd.ev(`(()=>{const h=document.querySelector('[data-ev="walk-threads-here"] .rv-thread-head')??document.querySelector('.rv-thread-head');if(!h)return JSON.stringify(null);const t=h.querySelector('.rv-thread-title');const s=h.querySelector('.rv-thread-status');const tb=t.getBoundingClientRect();const sb=s.getBoundingClientRect();const line=parseFloat(getComputedStyle(t).lineHeight)||18;return JSON.stringify({width:Math.round(h.getBoundingClientRect().width),titleLines:Math.round(tb.height/line),titleWidth:Math.round(tb.width),metaBelowTitle:sb.top>tb.top+tb.height-1||tb.width>h.getBoundingClientRect().width*0.6,overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1})})()`));
     check('docked narrow panel: the title is readable and nothing overflows sideways', reading !== null && reading.titleLines <= 3 && reading.titleWidth > reading.width * 0.6 && !reading.overflow, JSON.stringify(reading));
+    await pd.ev(SCROLL_END);
+    const dockedBar = JSON.parse(await pd.ev(BAR));
+    check('docked narrow panel, scrolled to the end: the one button is in the fixed row and visible', dockedBar !== null && dockedBar.buttons === 1 && dockedBar.inHeader && dockedBar.inView, JSON.stringify(dockedBar));
+    await pd.ev(SCROLL_TOP);
     await client.main.capture(walkWindow.contentsId, '05-walk-docked-narrow');
     await client.main.capture(docked.view.contentsId, '06-step-panel-docked-narrow');
   } else {

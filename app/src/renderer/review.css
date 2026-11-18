@@ -4455,3 +4455,57 @@
 .rv-pane-uncertain {
   font-style: italic;
 }
+
+/*
+ * The walk's delegation action: a full-width row in the sticky tab header of Step, so it stays in
+ * one place above the scrolling explanation. Its state is in the button's words and the line below,
+ * never in colour alone.
+ */
+.rv-step-actions {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.45rem 0 0.4rem;
+  border-top: 1px solid var(--line);
+  margin-top: 0.3rem;
+}
+
+.rv-step-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.7rem;
+}
+
+.rv-step-actions-row .rv-sub {
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.rv .rv-delegate-button {
+  font-weight: 600;
+  padding: 0.3rem 0.8rem;
+  border-color: var(--text);
+  flex: 0 0 auto;
+}
+
+.rv .rv-delegate-button:disabled {
+  cursor: default;
+  font-weight: 500;
+  border-style: dashed;
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.rv-step-actions-status {
+  margin: 0;
+}
+
+.rv-walk-delegate-choose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 45vh;
+  overflow: auto;
+}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { walkDelegationAction } from '../shared/walk-delegation-action';
 import type { CSSProperties, JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -1019,6 +1020,9 @@ function OpenReview({
   const dockSlot = useRef<HTMLDivElement | null>(null);
   const [checkReturn, setCheckReturn] = useState<{ readonly stepId: string | null; readonly refIndex: number; readonly away: CodeLocation | null } | null>(null);
   const [delegatingWalk, setDelegatingWalk] = useState(false);
+  // A start asked for and not yet answered: the button says so and a second press starts nothing.
+  const [startingWalk, setStartingWalk] = useState(false);
+  const startingWalkRef = useRef(false);
   const [liveWidth, setLiveWidth] = useState(explanationWidth);
   useEffect(() => {
     setLiveWidth(explanationWidth);
@@ -2040,6 +2044,22 @@ function OpenReview({
     current === null || pair === null
       ? null
       : ([...pair.record.jobs].reverse().find((job) => job.kind === 'review' && job.scope?.kind === 'walk' && job.scope.label.startsWith(`walk ${current.walk.id} `)) ?? null);
+  // The delegation action follows the walk of the step shown: choosing is closed when the walk changes.
+  const shownWalkId = current?.walk.id ?? null;
+  useEffect(() => {
+    setDelegatingWalk(false);
+  }, [shownWalkId]);
+  const walkAction = walkDelegationAction({
+    available: pair !== null && pairBridge !== undefined,
+    walkTitle: current === null ? '' : pick(current.walk.title, lang),
+    lineCount: lineCount(walkLines),
+    remainingCount: lineCount(walkRemaining),
+    job: walkJob === null || pair === null ? null : { state: walkJob.state, decision: delegationDecisionOf(pair.record, walkJob.id)?.op ?? null },
+    otherRunning:
+      pair !== null && pair.record.jobs.some((job) => job.kind === 'review' && job.id !== walkJob?.id && (job.state === 'running' || job.state === 'cancelling')),
+    starting: startingWalk,
+    choosing: delegatingWalk,
+  });
 
   /*
    * What is worth checking, asked for on its own (Niclas's decision of 30 October 2026): the
@@ -2206,6 +2226,109 @@ function OpenReview({
                 </button>
               )}
             </span>
+            {/*
+              The walk's delegation, in one fixed place while a walk step is shown: outside the
+              scrolling explanation, the same button before, during and after a delegation, its state
+              in words, and the scope it delegates, which is the whole walk and never the step alone.
+            */}
+            {rightTab === 'step' && !noWalks && current !== null && (
+              <div className="rv-step-actions" data-ev="walk-delegate-bar">
+                <div className="rv-step-actions-row">
+                  <button
+                    type="button"
+                    className="rv-delegate-button"
+                    data-ev="walk-delegate"
+                    data-state={walkAction.state}
+                    disabled={!walkAction.enabled}
+                    aria-expanded={delegatingWalk}
+                    aria-describedby="walk-delegate-status"
+                    onClick={() => {
+                      if (delegatingWalk || startingWalkRef.current) {
+                        return;
+                      }
+                      setWalkBasis(walkRemaining.length > 0 ? 'remaining' : null);
+                      setDelegatingWalk(true);
+                    }}
+                  >
+                    {walkAction.label}
+                  </button>
+                  <span className="rv-sub" data-ev="walk-delegate-scope">
+                    {walkAction.scope}
+                  </span>
+                </div>
+                {walkAction.status !== null && (
+                  <p className="rv-sub rv-step-actions-status" id="walk-delegate-status" data-ev="walk-delegate-status">
+                    {walkAction.status}
+                  </p>
+                )}
+                {pair !== null && pairBridge !== undefined && delegatingWalk && (
+                  <div className="rv-walk-delegate-choose" data-ev="walk-delegate-choose">
+                    {delegatingWalk && (
+                      // DSP-203: the two mandates, each with its count, before anything starts; remaining is the default.
+                      <fieldset className="rv-walk-basis" data-ev="walk-delegate-basis">
+                        <label>
+                          <input
+                            type="radio"
+                            name="walk-basis"
+                            data-ev="walk-basis-remaining"
+                            data-lines={lineCount(walkRemaining)}
+                            checked={walkBasis === 'remaining'}
+                            disabled={walkRemaining.length === 0}
+                            onChange={() => setWalkBasis('remaining')}
+                          />{' '}
+                          Review remaining lines in this walk ({lineCount(walkRemaining)} of {lineCount(walkLines)} changed lines)
+                        </label>
+                        <label>
+                          <input type="radio" name="walk-basis" data-ev="walk-basis-all" data-lines={lineCount(walkLines)} checked={walkBasis === 'all'} onChange={() => setWalkBasis('all')} />{' '}
+                          Review all lines in this walk ({lineCount(walkLines)} changed lines)
+                        </label>
+                        <p className="rv-sub" data-ev="walk-basis-note">
+                          {walkRemaining.length === 0
+                            ? 'Every changed line of this walk already has your decision or an assessment you accepted. Reviewing all lines asks for a complementary review.'
+                            : walkBasis === 'all'
+                              ? 'A complementary review: your decisions stay as they are, and the agent\'s assessment is kept beside them.'
+                              : 'The lines you have not decided, and no assessment you accepted covers.'}{' '}
+                          The agent may read whole files, callers and tests; only these lines are its mandate.
+                        </p>
+                      </fieldset>
+                    )}
+                    {delegatingWalk && walkScope !== null ? (
+                      <AgentPicker
+                        pairKey={pair.key}
+                        action="Delegate this walk"
+                        busy={startingWalk}
+                        testId="walk-delegate-agent"
+                        onCancel={() => setDelegatingWalk(false)}
+                        onStart={(choice) => {
+                          // One start per press, however fast the second press comes.
+                          if (startingWalkRef.current) {
+                            return;
+                          }
+                          startingWalkRef.current = true;
+                          setStartingWalk(true);
+                          void pairBridge
+                            .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
+                            .catch((error: unknown) => ({ error: requestFailure(error) }))
+                            .then((answer) => {
+                              startingWalkRef.current = false;
+                              setStartingWalk(false);
+                              if (isPairError(answer)) {
+                                setDiffNote(`The review could not be started: ${answer.error}`);
+                              } else {
+                                setDelegatingWalk(false);
+                              }
+                            });
+                        }}
+                      />
+                    ) : delegatingWalk ? (
+                      <button type="button" className="rv-quiet" onClick={() => setDelegatingWalk(false)}>
+                        Cancel
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <ReviewDiscussion
             bundle={bundle}
@@ -2419,7 +2542,7 @@ function OpenReview({
                   of Step, the report is in one place for the whole walk, and an arriving result
                   changes no tab, focus or scroll position and opens nothing.
                 */}
-                {pair !== null && pairBridge !== undefined && current !== null && away === null && walkLines.length > 0 && (
+                {pair !== null && pairBridge !== undefined && current !== null && away === null && walkJob !== null && (
                   <div className="rv-walk-delegate" data-ev="walk-delegation">
                     {walkJob !== null && (!delegatingWalk || isRunning(walkJob)) && (
                       <AgentReviewResult
@@ -2442,75 +2565,6 @@ function OpenReview({
                             .then((answer) => setDiffNote(answer.ok ? '' : answer.note));
                         }}
                       />
-                    )}
-                    {delegatingWalk && (
-                      // DSP-203: the two mandates, each with its count, before anything starts; remaining is the default.
-                      <fieldset className="rv-walk-basis" data-ev="walk-delegate-basis">
-                        <label>
-                          <input
-                            type="radio"
-                            name="walk-basis"
-                            data-ev="walk-basis-remaining"
-                            data-lines={lineCount(walkRemaining)}
-                            checked={walkBasis === 'remaining'}
-                            disabled={walkRemaining.length === 0}
-                            onChange={() => setWalkBasis('remaining')}
-                          />{' '}
-                          Review remaining lines in this walk ({lineCount(walkRemaining)} of {lineCount(walkLines)} changed lines)
-                        </label>
-                        <label>
-                          <input type="radio" name="walk-basis" data-ev="walk-basis-all" data-lines={lineCount(walkLines)} checked={walkBasis === 'all'} onChange={() => setWalkBasis('all')} />{' '}
-                          Review all lines in this walk ({lineCount(walkLines)} changed lines)
-                        </label>
-                        <p className="rv-sub" data-ev="walk-basis-note">
-                          {walkRemaining.length === 0
-                            ? 'Every changed line of this walk already has your decision or an assessment you accepted. Reviewing all lines asks for a complementary review.'
-                            : walkBasis === 'all'
-                              ? 'A complementary review: your decisions stay as they are, and the agent\'s assessment is kept beside them.'
-                              : 'The lines you have not decided, and no assessment you accepted covers.'}{' '}
-                          The agent may read whole files, callers and tests; only these lines are its mandate.
-                        </p>
-                      </fieldset>
-                    )}
-                    {delegatingWalk && walkScope !== null ? (
-                      <AgentPicker
-                        pairKey={pair.key}
-                        action="Delegate this walk"
-                        busy={false}
-                        testId="walk-delegate-agent"
-                        onCancel={() => setDelegatingWalk(false)}
-                        onStart={(choice) => {
-                          void pairBridge
-                            .startJob(pair.key, { kind: 'review', ...choice, scope: walkScope })
-                            .catch((error: unknown) => ({ error: requestFailure(error) }))
-                            .then((answer) => {
-                              if (isPairError(answer)) {
-                                setDiffNote(`The review could not be started: ${answer.error}`);
-                              } else {
-                                setDelegatingWalk(false);
-                              }
-                            });
-                        }}
-                      />
-                    ) : delegatingWalk ? (
-                      <button type="button" className="rv-quiet" onClick={() => setDelegatingWalk(false)}>
-                        Cancel
-                      </button>
-                    ) : (
-                      walkJob?.state !== 'running' &&
-                      walkJob?.state !== 'cancelling' && (
-                        <button
-                          type="button"
-                          className="rv-quiet"
-                          data-ev="walk-delegate"
-                          onClick={() => {
-                            setWalkBasis(walkRemaining.length > 0 ? 'remaining' : null);
-                            setDelegatingWalk(true);
-                          }}
-                        >
-                          Delegate this walk to the agent…
-                        </button>
-                      )
                     )}
                   </div>
                 )}
