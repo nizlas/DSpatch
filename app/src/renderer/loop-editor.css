@@ -1654,3 +1654,60 @@
 .node-class-badge--compact text {
   font-size: 14px;
 }
+
+/* DSP-227: the reusable sections' forms, in the graph panel and on a fan-out step. */
+.inspector .section-form {
+  border-left: 2px solid #2c3540;
+  padding: 4px 0 6px 10px;
+  margin: 8px 0;
+}
+.inspector .section-form > summary {
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.inspector .section-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.inspector .section-option {
+  display: grid;
+  grid-template-columns: 1fr 9em auto;
+  gap: 4px 6px;
+  align-items: end;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #1c222b;
+}
+.inspector .section-option .section-option-meaning {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.inspector .section-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 6px 0;
+}
+.inspector .section-nodes > .setting-name,
+.inspector .section-nodes > p {
+  flex-basis: 100%;
+}
+.inspector .section-applies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  flex-basis: 100%;
+}
+.inspector .section-applies label.check.small {
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+.inspector .section-outcomes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.inspector .parallel-form h4 {
+  margin: 10px 0 4px;
+}

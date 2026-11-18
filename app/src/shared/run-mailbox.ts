@@ -56,6 +56,8 @@ export interface MailboxPort {
   }): { readonly ok: true; readonly id: string } | { readonly ok: false; readonly reason: string };
   /** The undelivered messages for this branch, now marked delivered to it. */
   check(): readonly MailboxMessage[];
+  /** DSP-227: how many messages for this branch are waiting, without delivering them. */
+  waiting?(): number;
   acknowledge(id: string): { readonly ok: true } | { readonly ok: false; readonly reason: string };
 }
 
@@ -215,6 +217,9 @@ export function createRunMailbox(input: {
             });
           }
           return now;
+        },
+        waiting() {
+          return all.filter((message) => message.recipients.includes(sliceId) && !deliveredTo(message.id).has(sliceId)).length;
         },
         acknowledge(id) {
           if (!deliveredTo(id).has(sliceId)) {

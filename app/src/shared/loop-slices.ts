@@ -312,7 +312,7 @@ function readSlice(
             code: 'bad-branch-choice',
             message:
               def === undefined
-                ? `Slice "${id}" sets "${choiceId}", which is not a choice of this graph.`
+                ? `Slice "${id}" sets "${choiceId}", which is not a choice this fan-out lets a slice set (${(options.choices ?? []).map((choice) => `"${choice.id}"`).join(', ') || 'none'}).`
                 : `Slice "${id}" sets ${choiceId} "${String(value)}", which is not one of ${def.options.map((option) => `"${option.id}"`).join(', ')}.`,
             sliceId: id,
           });

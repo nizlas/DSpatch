@@ -36,8 +36,17 @@ import { parseRoleSource, ROLE_SECTIONS } from '../main/role-source';
 import { proposedRoleResolver } from './graph-proposal-preview';
 import { NODE_HELP_LABEL_MAX } from '../shared/loop-chat';
 import {
+  applyChoiceSection,
+  applyParallelSection,
+  readSectionSettings,
+  SECTION_SETTINGS_HELP,
+  type ChoiceSectionSettings,
+  type ParallelSectionSettings,
+} from '../shared/loop-graph-sections';
+import {
   createProposal,
   describeChangeLines,
+  isNewLoopTarget,
   manualEditsSince,
   targetGraphPath,
   type GraphEditProposal,
@@ -290,7 +299,98 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
       readOnly: false,
       execute: (args) => Promise.resolve(propose(host, rows, args)),
     },
+    {
+      name: 'propose_graph_section',
+      description:
+        'Add or change a reusable section of a graph from its settings, and propose the result for the person to review and apply, ' +
+        'exactly as propose_loop_graph does: it writes nothing and runs nothing. section "choice" is a choice made per task, such as the ' +
+        'model class the work needs or its review route; section "parallel" splits independent parts into parallel branches and ' +
+        'integrates them, beside the sequential path. The same settings are what the graph editor shows. The section is applied to the ' +
+        "latest open proposal for that graph in this conversation, so a new graph proposed a moment ago can be given sections before it " +
+        'is applied, else to the graph on disk. DSpatch writes the deciding and proposing steps\' instructions from these settings, so ' +
+        'put no CHOICE or slice format in a purpose or role. ' +
+        `Choice settings: ${SECTION_SETTINGS_HELP.choice} Parallel settings: ${SECTION_SETTINGS_HELP.parallel}`,
+      parameters: {
+        target: { type: 'string', description: 'A graph id from list_loops, or "new:<id>" for a new graph proposed earlier in this conversation.' },
+        section: { type: 'string', description: '"choice" or "parallel".' },
+        settings: { type: 'string', description: "The section's settings, as one JSON object." },
+        explanation: { type: 'string', description: 'Why this section, and what it changes for a run, in your words. Shown to the person as yours.' },
+      },
+      readOnly: false,
+      execute: (args) => Promise.resolve(proposeSection(host, rows, args)),
+    },
   ];
+}
+
+/**
+ * DSP-227: a section applied to the graph the agent is working on — the latest open proposal for
+ * the target in this conversation, else the file on disk — and proposed through {@link propose},
+ * with the roles that proposal adds, so the person reviews one whole graph as always.
+ */
+function proposeSection(
+  host: GraphAuthoringHost,
+  rows: () => readonly { readonly row: LoopDefinitionRow }[],
+  args: Readonly<Record<string, unknown>>,
+): AppToolResult {
+  const targetArg = typeof args['target'] === 'string' ? args['target'].trim() : '';
+  const section = args['section'];
+  const explanation = typeof args['explanation'] === 'string' ? args['explanation'].trim() : '';
+  const conversationId = host.conversationId();
+  if (section !== 'choice' && section !== 'parallel') {
+    return refuse('section is "choice" or "parallel". Nothing was proposed.');
+  }
+  if (conversationId === null) {
+    return refuse('There is no saved conversation for this turn to keep a proposal on, so nothing was proposed.');
+  }
+  let settingsValue: unknown;
+  try {
+    settingsValue = JSON.parse(typeof args['settings'] === 'string' ? args['settings'] : '');
+  } catch (error) {
+    return refuse(`settings is not JSON: ${error instanceof Error ? error.message : String(error)}. Nothing was proposed.`);
+  }
+  const newId = targetArg.startsWith('new:') ? targetArg.slice(4).trim() : null;
+  const row = newId === null ? (rows().find((entry) => entry.row.definition?.id === targetArg)?.row ?? null) : null;
+  const open = [...host.proposals(conversationId)].reverse().find((proposal) => {
+    if (proposal.status !== 'proposed') {
+      return false;
+    }
+    const graphPath = targetGraphPath(proposal.target);
+    return newId !== null
+      ? isNewLoopTarget(proposal.target) && path.basename(graphPath) === `${newId}.graph.json`
+      : row?.graphPath !== null && row?.graphPath !== undefined && samePath(graphPath, row.graphPath);
+  });
+  const baseText = open?.graphText ?? (row?.graphPath === null || row?.graphPath === undefined ? null : readText(row.graphPath));
+  if (baseText === null) {
+    return refuse(
+      newId !== null
+        ? `There is no open proposal for the new graph "${newId}" in this conversation. Propose the graph first with propose_loop_graph. Nothing was proposed.`
+        : `No graph "${targetArg}" with a readable graph file is declared; list_loops names them. Nothing was proposed.`,
+    );
+  }
+  const base = parseLoopGraph(baseText);
+  if (!base.ok) {
+    return refuse(`The graph to add the section to does not read as a graph:\n${describeFindings(base.findings)}\nNothing was proposed.`);
+  }
+  const read = readSectionSettings(base.graph, section, settingsValue);
+  if (!read.ok) {
+    return refuse(`${read.problem} Nothing was proposed.`);
+  }
+  const applied =
+    section === 'choice'
+      ? applyChoiceSection(base.graph, read.settings as ChoiceSectionSettings)
+      : applyParallelSection(base.graph, read.settings as ParallelSectionSettings);
+  const blocking = applied.problems.filter((problem) => !/^No step decides/.test(problem));
+  if (blocking.length > 0 || applied.graph === base.graph) {
+    return refuse(`The section could not be applied, so nothing was proposed:\n${(blocking.length > 0 ? blocking : applied.problems).map((problem) => `- ${problem}`).join('\n')}`);
+  }
+  const result = propose(host, rows, {
+    target: targetArg,
+    graphText: serialiseLoopGraph(applied.graph, { newline: '\n' }),
+    explanation,
+    roleFiles: (open?.roleFiles ?? []).map((file) => file.text),
+  });
+  const notes = applied.problems.filter((problem) => !blocking.includes(problem));
+  return notes.length === 0 || result.isError ? result : ok(`${result.text}\n\nNote: ${notes.join(' ')}`);
 }
 
 function samePath(left: string, right: string): boolean {
@@ -509,6 +609,10 @@ function buildingBlocks(): string {
     `Node kinds:\n${kinds.join('\n')}`,
     `Settings on a node or edge:\n${settings.join('\n')}`,
     `What DSpatch honours, attribute by attribute:\n${attributes.join('\n')}`,
+    'Reusable sections. propose_graph_section adds or changes a choice made per task (such as the model class the work needs, or its review route) ' +
+      'or a parallel section (split independent parts into branches, integrate them, keep the sequential path) from settings, the same settings ' +
+      "the graph editor shows. DSpatch writes the instructions for deciding a choice and for writing the slices from the graph's settings. " +
+      `Choice: ${SECTION_SETTINGS_HELP.choice}\nParallel: ${SECTION_SETTINGS_HELP.parallel}`,
     `Requirements, by agent provider ("unmet" means that provider cannot hold it; "other-means" means it is an instruction, not a restriction):\n${providers.join('\n')}`,
   ].join('\n\n');
 }

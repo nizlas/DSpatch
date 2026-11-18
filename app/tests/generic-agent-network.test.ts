@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { describeVisitChoices } from '../src/shared/loop-choices';
+import { describeSplitInstructions } from '../src/shared/loop-split-instructions';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -665,7 +667,12 @@ test('DSP-224: the size variants are one node per role, each choosing its class 
   // The Implementer's continuation is chosen by the review route.
   const success = graph.edges.filter((edge) => edge.from === 'implementer' && edge.when.on === 'success').map((edge) => `${edge.whenChosen?.['review'] ?? ''}->${edge.to}`).sort();
   assert.deepEqual(success, ['standard->qa', 'thorough->qa-design']);
-  assert.match(graph.nodes.find((node) => node.id === 'tl-dispatch')?.purpose ?? '', /CHOICE line/);
+  // DSP-227: the CHOICE and slice formats are DSpatch's, written from the graph; the purpose keeps the criteria.
+  const dispatch = graph.nodes.find((node) => node.id === 'tl-dispatch')!;
+  assert.doesNotMatch(dispatch.purpose ?? '', /CHOICE|dspatch-slices/);
+  assert.match(dispatch.purpose ?? '', /The Implementer runs any class, the Researcher medium or large/);
+  assert.match(describeVisitChoices(graph, dispatch, {}), /CHOICE: class small — A straightforward[\s\S]*CHOICE: review thorough/);
+  assert.match(describeSplitInstructions(graph, dispatch), /choose the outcome "parallel"[\s\S]*```dspatch-slices/);
 });
 
 test('DSP-222: the class varies between slices and each visit records class, model and reason', async () => {
@@ -773,11 +780,20 @@ test('DSP-222: an option names a model or a known class, never both and never an
   const resolveRole = createFileRoleResolver(root);
   for (const bad of ['{ "id": "small", "modelClass": "small", "model": "x" }', '{ "id": "small", "modelClass": "tiny" }', '{ "id": "small" }']) {
     const json = JSON.parse(text);
-    json.nodes.find((node: { id: string }) => node.id === 'implementer').model.options[0] = JSON.parse(bad);
+    // A policy chosen by no choice must say its class itself.
+    const model = json.nodes.find((node: { id: string }) => node.id === 'implementer').model;
+    delete model.chosenBy;
+    model.options = model.options.map((option: { id: string }) => ({ ...option, modelClass: option.id }));
+    model.options[0] = JSON.parse(bad);
     const loaded = loadLoopGraph(JSON.stringify(json), { resolveRole });
     assert.equal(loaded.ok, false, bad);
     assert.ok(!loaded.ok && loaded.findings.some((finding) => finding.code === 'bad-model-option'), bad);
   }
+  // DSP-227: chosen by the class choice, the id alone takes the choice's class, and another class is refused.
+  const json = JSON.parse(text);
+  json.nodes.find((node: { id: string }) => node.id === 'implementer').model.options[0] = { id: 'small', modelClass: 'large' };
+  const contradicted = loadLoopGraph(JSON.stringify(json), { resolveRole });
+  assert.ok(!contradicted.ok && contradicted.findings.some((finding) => finding.code === 'model-option-contradicts-choice'));
 });
 
 /* DSP-223: the app-wide model class setting, in the chat's model configuration file. */

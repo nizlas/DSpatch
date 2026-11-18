@@ -1,0 +1,10 @@
+[
+  { "id": "A-1001", "placed": "2024-01-09", "customer": "C-07", "source": "web", "amount": 42900 },
+  { "id": "A-1002", "placed": "2024-01-23", "customer": "C-02", "source": "till-v1", "amount": 180 },
+  { "id": "A-1003", "placed": "2024-02-02", "customer": "C-11", "source": "web", "amount": 125000 },
+  { "id": "A-1004", "placed": "2024-02-14", "customer": "C-07", "source": "till-v1", "amount": 75 },
+  { "id": "A-1005", "placed": "2024-02-27", "customer": "C-04", "source": "web", "amount": 39990 },
+  { "id": "A-1006", "placed": "2024-03-05", "customer": "C-02", "source": "web", "amount": 56000 },
+  { "id": "A-1007", "placed": "2024-03-18", "customer": "C-11", "source": "till-v1", "amount": 310 },
+  { "id": "A-1008", "placed": "2024-03-30", "customer": "C-04", "source": "web", "amount": 87550 }
+]

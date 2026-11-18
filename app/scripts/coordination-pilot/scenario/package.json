@@ -1,0 +1,9 @@
+{
+  "name": "orders-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Order records and the shop's ledger.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

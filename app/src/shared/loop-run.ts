@@ -36,8 +36,9 @@
  * provider to call, so it *cannot* spend a turn rather than being trusted not to.
  */
 
+import { sliceChoicesOf } from './loop-split-instructions';
 import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ModelClassMap, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
-import { BRANCH_FAILED, stepModelChoice } from './loop-graph';
+import { BRANCH_FAILED, MODEL_CLASSES, stepModelChoice } from './loop-graph';
 import {
   applyEdgeSets,
   choiceData,
@@ -301,6 +302,11 @@ export interface FanOutInstance {
    * delivery happens only when the branch checks.
    */
   readonly mailbox: MailboxPort;
+  /**
+   * DSP-227: the other slices of the same visit, so a branch knows who works beside it and on
+   * what, and can judge whether something it finds concerns them.
+   */
+  readonly siblings?: readonly Slice[];
 }
 
 /**
@@ -751,7 +757,8 @@ function fanOutModelMark(
         `${typeof entry.data?.['runsAs'] === 'string' && entry.data['runsAs'] !== nodeId ? `, as ${entry.data['runsAs']}` : ''}`,
     );
   }
-  const names = [...counts.keys()];
+  // In class order, so the tag reads S·M·L whatever order the slices came in (DSP-227).
+  const names = [...MODEL_CLASSES.filter((name) => counts.has(name)), ...[...counts.keys()].filter((name) => !(MODEL_CLASSES as readonly string[]).includes(name))];
   const summary = names.map((name) => `${capitalised(name)} ×${String(counts.get(name) ?? 0)}`).join(' · ');
   const letters = names.map((name) => name.slice(0, 1).toUpperCase());
   return {
@@ -1796,7 +1803,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     const reading = readSlices(source.body, {
       isolation: fanOut.isolation,
       branchAs: fanOut.branchAs ?? [],
-      choices: graph.choices ?? [],
+      // DSP-227: the choices this fan-out lets a slice set.
+      choices: sliceChoicesOf(graph, fanOut),
     });
     if (!reading.ok) {
       return failed(
@@ -1988,6 +1996,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             branch,
             base: base?.commit ?? null,
             mailbox: mailbox.portFor(slice.id, { base: base?.commit ?? null, branch }),
+            siblings: slices.filter((other) => other.id !== slice.id),
           },
         });
       } catch (error) {

@@ -88,13 +88,17 @@ export const SELECTS_MODEL_HELP: SettingHelp = {
 export const VISIT_CHOICES_HELP: SettingHelp = {
   name: 'Choices made per visit',
   detail:
-    'The graph declares "choices", each with an id, a meaning, options and a default, such as a ' +
-    'model class and a review route. A node that "decides" a choice states it each visit on a ' +
-    'whole line CHOICE: <choice> <option> <reason>, independently of its outcome; an invalid or ' +
-    'missing line takes the default, and the journal says so. An edge "sets" a choice for the ' +
-    'visit it leads to, and may be taken only "whenChosen" by a value, which is how one node is ' +
-    'followed by different continuations. A "select" model policy "chosenBy" a choice takes the ' +
-    'option whose id is the value. Values travel with the work through revisits until a step or ' +
+    'The graph declares "choices", each with an id, a meaning, options with their criteria and a default, such as a ' +
+    'model class and a review route; they are independent of each other. A node that "decides" a choice states it each ' +
+    'visit on a whole line CHOICE: <choice> <option> <reason>, independently of its outcome; DSpatch writes that ' +
+    'instruction, with the options and their criteria, from the choice, so no purpose or role needs to. An invalid or ' +
+    'missing line takes the default, or with "whenMissing": "strongest" the last option, and the journal says so. An ' +
+    'option may name a "modelClass" (small, medium, large), on every option or none: a "select" model policy "chosenBy" ' +
+    'such a choice may list its options by id alone, or none to run every class, and the concrete model of each class is ' +
+    "the agent's Model classes setting. An edge \"sets\" a choice for the visit it leads to, and may be taken only " +
+    '"whenChosen" by a value, which is how one node is followed by different continuations. "order": "weakest-first" ' +
+    'says the options are listed weakest first; only then may a choice "joins": "strongest", so the work after parallel ' +
+    'branches carries the strongest value any branch had. Values travel with the work through revisits until a step or ' +
     'an edge changes them. A step is not offered an outcome whose edges all exclude its visit.',
   whenEmpty: 'The graph declares no choices; edges route on outcomes alone.',
 };
@@ -134,14 +138,17 @@ export const DECLARES_SUBGOAL_HELP: SettingHelp = {
 export const FAN_OUT_HELP: SettingHelp = {
   name: 'Split this step over parallel branches',
   detail:
-    'The step named in "slicesFrom" writes a dspatch-slices block: up to six slices, each with its ' +
-    'result, the paths it owns, its allowed actions, contracts and check. This step then runs as ' +
-    'one branch per slice, at most "maxConcurrent" at a time (1 to 3, and Cursor runs one at a ' +
-    'time), each in its own session and, with "worktree" isolation, its own worktree from one ' +
-    'recorded base commit. It ends in success, or in "branch-failed" when a branch or the slice ' +
-    'block fails. The next step integrates: the engine does not merge. Cancel stops every branch ' +
-    'together, and steering reaches no branch while they run. The step\'s "maxMinutes" bounds the ' +
-    'whole visit, every branch included, not each branch on its own.',
+    'The step named in "slicesFrom" proposes the split: DSpatch writes its instructions from these settings, so it writes ' +
+    'one dspatch-slices block of up to six slices, each with its result, the paths it owns, its allowed actions, contracts, ' +
+    'acceptance and check. A slice may name, in "as", one of the steps in "branchAs" to run its branch with that step\'s ' +
+    'role, purpose, requirements and model policy, and set its own "choices" among "sliceChoices". A branch is a separate ' +
+    'agent task, not a subgraph: it never takes the routes of the step it runs as, and its result returns to this step. This ' +
+    'step runs one branch per slice, at most "maxConcurrent" at a time (1 to 3, and Cursor runs one at a time), each in its ' +
+    'own session and, with "worktree" isolation, its own worktree from one recorded base commit. Overlapping ownership and ' +
+    'dependencies between slices are refused before any branch starts. It ends in success, or in "branch-failed" when a ' +
+    'branch or the slice block fails. The next step integrates: the engine does not merge. Cancel stops every branch ' +
+    'together, and steering reaches no branch while they run. The step\'s "maxMinutes" bounds the whole visit, every branch ' +
+    'included, not each branch on its own. "splitWhen" adds the graph\'s own criteria for when to split.',
   whenEmpty: 'The step runs once, as one agent, like any other step.',
 };
 

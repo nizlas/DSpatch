@@ -100,6 +100,7 @@ import type {
 } from '../shared/loop-run';
 import { CONTINUED_IN_LOOP_LINE } from '../shared/loop-run';
 import { choiceValuesOf, describeVisitChoices, statedChoicesFrom } from '../shared/loop-choices';
+import { describeSplitInstructions } from '../shared/loop-split-instructions';
 import type { MailboxPort } from '../shared/run-mailbox';
 import {
   DEFAULT_GATE_COMMAND_TIMEOUT_MS,
@@ -411,6 +412,13 @@ export interface SteerableStep {
 }
 
 export interface LiveExecutorOptions {
+  /**
+   * DSP-227: whether fan-out branches get the mailbox. Left out or `true`, each branch is
+   * offered send_message, check_messages and acknowledge_message and told how they work;
+   * `false` offers none and says nothing of them. An experiment control for comparing the same
+   * split with and without messaging (the coordination pilot); the window never sets it.
+   */
+  readonly branchMessaging?: boolean;
   readonly workspacePath: string;
   /**
    * Every root this run works with, the working directory first.
@@ -1029,7 +1037,7 @@ export function stepSessionId(runId: string, nodeId: string): DspatchSessionId {
  * DSP-209 S10b: what a fan-out branch is told about its own slice, after the node's brief.
  * Its slice entry verbatim, where it works, and what DSpatch does with what it leaves.
  */
-export function describeBranchAssignment(instance: FanOutInstance): string {
+export function describeBranchAssignment(instance: FanOutInstance, options: { readonly messaging?: boolean } = {}): string {
   const slice = instance.slice;
   const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.map((item) => `\`${item}\``).join(', '));
   return [
@@ -1047,16 +1055,27 @@ export function describeBranchAssignment(instance: FanOutInstance): string {
     // DSP-226: what it must meet, when the slice says.
     ...(slice.acceptance === undefined ? [] : [`- Acceptance: ${slice.acceptance}`]),
     '',
+    // DSP-227: who works beside it, so it can tell whether what it finds concerns them. Observed in
+    // the coordination pilot: a branch that knew only its own slice found a rule the other branch
+    // needed and told no one.
+    ...((instance.siblings ?? []).length === 0
+      ? []
+      : [
+          'The other branches of this step, working at the same time from the same base:',
+          ...(instance.siblings ?? []).map(
+            (other) =>
+              `- ${other.id}: ${other.result} Owns ${list(other.ownedPaths)}.`,
+          ),
+          '',
+        ]),
     // DSP-226: when to read the mailbox, what delivery means, and what a contract change is.
-    'Other branches may send you messages, and you may send them. A message is delivered only when its ' +
-      'recipient calls check_messages, so check before you start, after any significant change and ' +
-      'before you finish, and acknowledge each message you have acted on. Sent, delivered and ' +
-      'acknowledged are different things: do not assume another branch has read what you sent. ' +
-      'A proposed change to a shared contract is a proposal, not an agreement, whether you sent it or ' +
-      'received it. If your slice cannot be finished without such a decision, do not wait for one and do ' +
-      'not assume it: finish what you can inside your slice, then end your turn with a section headed ' +
-      '"Open decision" that names the contract, what you need decided and why, so the integrating step ' +
-      'returns it for coordination.',
+    // Without the mailbox (an experiment control), the same rule for a contract change, without the mail.
+    options.messaging === false
+      ? 'A change to a shared contract is a proposal, not an agreement. If your slice cannot be finished without such a ' +
+        'decision, do not wait for one and do not assume it: finish what you can inside your slice, then end your turn ' +
+        'with a section headed "Open decision" that names the contract, what you need decided and why, so the ' +
+        'integrating step returns it for coordination.'
+      : mailboxGuidance(),
     '',
     instance.workspacePath === null
       ? 'You work in the run\'s working folder and only read: write no file there.'
@@ -1064,6 +1083,26 @@ export function describeBranchAssignment(instance: FanOutInstance): string {
         `base commit ${instance.base ?? ''}. Do not commit, push, switch or create branches: when you end your turn, ` +
         'DSpatch commits what you leave in the worktree to your branch, and the integrating step combines the branches.',
   ].join('\n');
+}
+
+/** DSP-226: when to read the mailbox, what delivery means, and what a contract change is. */
+function mailboxGuidance(): string {
+  return (
+    // DSP-227: when to send, not only when to read.
+    'When you find something about the existing system or a shared contract that another branch\'s task depends on — ' +
+      'for example that the stored data, an existing interface or a documented rule does not behave as a contract says — ' +
+      'send it to that branch with send_message as soon as you have established it, saying what you found and where, before ' +
+      'you go on with your own work. Send only what changes another branch\'s work. ' +
+      'Other branches may send you messages, and you may send them. A message is delivered only when its ' +
+      'recipient calls check_messages, so check before you start, after any significant change and ' +
+      'before you finish, and acknowledge each message you have acted on. Sent, delivered and ' +
+      'acknowledged are different things: do not assume another branch has read what you sent. ' +
+      'A proposed change to a shared contract is a proposal, not an agreement, whether you sent it or ' +
+      'received it. If your slice cannot be finished without such a decision, do not wait for one and do ' +
+      'not assume it: finish what you can inside your slice, then end your turn with a section headed ' +
+      '"Open decision" that names the contract, what you need decided and why, so the integrating step ' +
+      'returns it for coordination.'
+  );
 }
 
 /**
@@ -1924,7 +1963,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       workspacePath: instance.workspacePath ?? options.workspacePath,
       workspacePaths: instance.workspacePath === null ? providerRootPathsFor(rootsOfRun) : [instance.workspacePath],
       // DSP-209 S11: the mailbox tools, and no other DSpatch tool.
-      appTools: createMailboxTools(instance.mailbox),
+      appTools: options.branchMessaging === false ? [] : createMailboxTools(instance.mailbox),
     });
     if (runProvider !== undefined && session.provider !== runProvider) {
       throw new Error(`The adapter opened branch "${instance.sliceId}" for ${session.provider}, but this run is bound to ${runProvider}.`);
@@ -1957,24 +1996,22 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       receivedText +
       // DSP-226: the branch's own choices, as task parameters, like any visit's.
       describeVisitChoices(context.graph, {}, context.choices ?? {}) +
-      describeBranchAssignment(instance);
+      describeBranchAssignment(instance, { messaging: options.branchMessaging !== false });
     // DSP-209 S20: the branch's live output, addressed to its visit and slice, on the run's
     // ordinary activity path. Display only: nothing here reaches a prompt, a stored result or
     // the shared inspection (decision 27, R4).
     const branchAddress = { runId: context.runId, nodeId: node.id, occurrence: context.occurrence, sliceId: instance.sliceId };
     const emitBranch = options.onStepActivity;
-    const turn = waitForTurn(
-      options.adapter,
-      session.dspatchSessionId,
+    const onBranchEvent =
       emitBranch === undefined
         ? undefined
-        : (event) => {
+        : (event: AgentEvent): void => {
             const activity = activityFromEvent(event, branchAddress);
             if (activity !== null) {
               emitBranch(activity);
             }
-          },
-    );
+          };
+    let turn = waitForTurn(options.adapter, session.dspatchSessionId, onBranchEvent);
     emitBranch?.({
       ...branchAddress,
       atUtc: new Date(now()).toISOString(),
@@ -1982,52 +2019,60 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       roleId: node.role?.id ?? null,
       roleSourcePath: node.role?.source.path ?? null,
     });
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const cancel = (): void => {
       void options.adapter.cancel(session.dspatchSessionId).catch(() => {
         // The run's cancel stands either way; files are left as they are.
       });
     };
-    options.abortSignal?.addEventListener('abort', cancel, { once: true });
-    try {
-      await options.adapter.send(session.dspatchSessionId, prompt);
-      await Promise.race([
-        turn.finished,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(() => {
-            timedOut = true;
-            cancel();
-            resolve();
-          }, waitMs);
-        }),
-      ]);
-    } catch (error) {
-      return fault('no-outcome-delivered', `The provider refused the branch's turn: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      if (timer !== undefined) {
-        clearTimeout(timer);
+    // One turn of the branch's session: sent, awaited within the visit's time, and recorded.
+    const takeTurn = async (message: string, within: number): Promise<string | null> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      options.abortSignal?.addEventListener('abort', cancel, { once: true });
+      try {
+        await options.adapter.send(session.dspatchSessionId, message);
+        await Promise.race([
+          turn.finished,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              cancel();
+              resolve();
+            }, within);
+          }),
+        ]);
+      } catch (error) {
+        return `The provider refused the branch's turn: ${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        options.abortSignal?.removeEventListener('abort', cancel);
       }
-      options.abortSignal?.removeEventListener('abort', cancel);
+      options.onAgentReply?.({
+        nodeId: node.id,
+        occurrence: context.occurrence,
+        text: turn.assistantText(),
+        terminalStatus: turn.terminalStatus(),
+        terminalEnd: turn.terminalEnd(),
+        prompt: message,
+        role: node.role === undefined ? null : { id: node.role.id, sourcePath: node.role.source.path },
+        sliceId: instance.sliceId,
+        sessionId: session.dspatchSessionId,
+      });
+      const readings = turn.readings();
+      inspection.usageReadings.push(...readings);
+      const cents = centsIn(readings);
+      if (cents !== null) {
+        sessionRef.costCents = (sessionRef.costCents ?? 0) + cents;
+      }
+      return null;
+    };
+    const refused = await takeTurn(prompt, waitMs);
+    if (refused !== null) {
+      return fault('no-outcome-delivered', refused);
     }
-    const text = turn.assistantText();
-    options.onAgentReply?.({
-      nodeId: node.id,
-      occurrence: context.occurrence,
-      text,
-      terminalStatus: turn.terminalStatus(),
-      terminalEnd: turn.terminalEnd(),
-      prompt,
-      role: node.role === undefined ? null : { id: node.role.id, sourcePath: node.role.source.path },
-      sliceId: instance.sliceId,
-      sessionId: session.dspatchSessionId,
-    });
-    const readings = turn.readings();
-    inspection.usageReadings.push(...readings);
-    const cents = centsIn(readings);
-    if (cents !== null) {
-      sessionRef.costCents = cents;
-    }
+    let text = turn.assistantText();
     // Read again, not narrowed: the cancel may have arrived while the turn was awaited.
     if (cancelledNow()) {
       return fault('no-outcome-delivered', 'The run was cancelled while this branch was working. Its worktree keeps what it had done.', 1);
@@ -2040,6 +2085,46 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     }
     if (text.trim() === '') {
       return fault('no-outcome-delivered', 'The branch finished its turn and wrote nothing, which is not a result.', 1);
+    }
+    // DSP-227: a branch that ends with messages still waiting for it is asked, once, in the same
+    // session, to check them before it finishes. Delivery is still at its check_messages call;
+    // DSpatch only says that something is waiting. Observed in the coordination pilot: branches
+    // sent findings to each other and both ended without checking, so neither was delivered.
+    const waiting = options.branchMessaging === false ? 0 : (instance.mailbox.waiting?.() ?? 0);
+    if (waiting > 0) {
+      const left = remainingMs(context.deadlineAt, now, fallbackMs);
+      if (left > 0 && !cancelledNow()) {
+        turn = waitForTurn(options.adapter, session.dspatchSessionId, onBranchEvent);
+        const reminder =
+          `Before you finish: ${String(waiting)} message${waiting === 1 ? '' : 's'} from other branches ${waiting === 1 ? 'is' : 'are'} waiting for you ` +
+          'and not yet delivered. Call check_messages, decide whether each one changes your slice, act on those that do inside the paths ' +
+          'you own and run your check again, acknowledge what you acted on, and then end your turn with your whole result again: what ' +
+          'you changed, the checks you ran and their results, what you did with each message, and any open decision.';
+        const again = await takeTurn(reminder, left);
+        const second = turn.assistantText();
+        if (again === null && !cancelledNow() && !timedOut && turn.terminalStatus() === 'finished' && second.trim() !== '') {
+          text = second;
+          return {
+            product: { kind: 'success' },
+            summary:
+              `Branch "${instance.sliceId}": two provider turns in session ${session.dspatchSessionId}; the second because ` +
+              `${String(waiting)} message${waiting === 1 ? ' was' : 's were'} waiting for it when it ended its first.`,
+            providerTurns: 2,
+            resultBody: text,
+          };
+        }
+        if (cancelledNow()) {
+          return fault('no-outcome-delivered', 'The run was cancelled while this branch was reading its messages. Its worktree keeps what it had done.', 2);
+        }
+        return {
+          product: { kind: 'success' },
+          summary:
+            `Branch "${instance.sliceId}": its first turn's result stands; asked to check ${String(waiting)} waiting ` +
+            `message${waiting === 1 ? '' : 's'}, its second turn ${timedOut ? 'ran out of time' : `ended as ${turn.terminalStatus() ?? 'nothing reported'}`}.`,
+          providerTurns: 2,
+          resultBody: text,
+        };
+      }
     }
     return {
       product: { kind: 'success' },
@@ -2725,6 +2810,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       }) +
       // DSP-224: the visit's choices, as task parameters, and the lines to decide any it decides.
       describeVisitChoices(context.graph, node, context.choices ?? {}) +
+      // DSP-227: for a step that proposes a split, the slice format and rules, from the graph.
+      describeSplitInstructions(context.graph, node) +
       receivedText +
       evidenceText +
       changeText +

@@ -203,10 +203,11 @@ test('each branch runs as its own capability with its own choices; the strongest
     ['a', 'branches', 'generic-implementer', 'small', 'model-small'],
     ['b', 'researcher', 'generic-researcher', 'large', 'model-large'],
   ]);
-  // Joined: thorough and large, so the integrated work takes design QA and the thorough review.
+  // Joined: thorough, so the integrated work takes design QA and the thorough review. The class
+  // does not join (DSP-227): the integrator keeps the class its own policy takes, the lead's.
   const integrator = visited(seen, 'integrator')[0]!;
   assert.equal(integrator.choices?.['review']?.value, 'thorough');
-  assert.equal(integrator.choices?.['class']?.value, 'large');
+  assert.equal(integrator.choices?.['class']?.value, 'medium');
   assert.ok(result.edgesTaken.includes('e146'));
   assert.ok(!seen.some((item) => item.node.id === 'qa'));
   assert.equal(visited(seen, 'reviewer')[0]?.choices?.['review']?.value, 'thorough');

@@ -1519,7 +1519,9 @@ export interface BriefPart {
     | 'run-change'
     | 'required-result'
     | 'declarations'
-    | 'outcomes';
+    | 'outcomes'
+    | 'choices'
+    | 'split';
   /** What to call it in the window. */
   readonly heading: string;
   /** Whether the text itself is inside the message the agent receives. */

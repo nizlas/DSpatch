@@ -1,0 +1,180 @@
+{
+  "format": "dspatch-loop-graph",
+  "formatVersion": 1,
+  "id": "workshop",
+  "name": "Workshop",
+  "purpose": "A small workshop: a coordinator assigns a request to a maker or a scout, and a check judges the result.",
+  "target": "cursor",
+  "entry": "coordinator",
+  "onRuntimeFault": "stop-and-reconcile",
+  "failureKinds": [
+    {
+      "id": "branch-failed",
+      "label": "A branch failed",
+      "meaning": "A parallel branch faulted, timed out or produced nothing, or the split could not be run. Every branch's work is kept on its temporary branch or in its kept worktree."
+    }
+  ],
+  "choices": [
+    {
+      "id": "size",
+      "label": "Work size",
+      "meaning": "The model capacity the work needs. It picks the model class of the steps that follow it, and nothing else.",
+      "options": [
+        { "id": "small", "meaning": "A straightforward, localized task with an obvious approach.", "modelClass": "small" },
+        { "id": "medium", "meaning": "A task that follows established patterns across several places.", "modelClass": "medium" },
+        { "id": "large", "meaning": "A complex task: an uncertain design, a wide impact or conflicting evidence.", "modelClass": "large" }
+      ],
+      "default": "medium",
+      "order": "weakest-first"
+    },
+    {
+      "id": "review",
+      "label": "Review route",
+      "meaning": "Which checks the work goes through, independently of its model class.",
+      "options": [
+        { "id": "standard", "meaning": "The usual checks for well-understood work." },
+        { "id": "thorough", "meaning": "A deeper review of design and correctness, for risky or uncertain work." }
+      ],
+      "default": "standard",
+      "order": "weakest-first",
+      "joins": "strongest",
+      "whenMissing": "strongest"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "coordinator",
+      "kind": "agent",
+      "label": "Coordinator",
+      "purpose": "Decide how the request is done. Choose make for a change, scout for a question to answer first, or stop when it cannot be done.",
+      "role": {
+        "id": "coordinator",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-coordinator.role.md" }
+      },
+      "outcomes": ["make", "scout", "stop", "split"],
+      "decides": ["size", "review"],
+      "produces": { "required": true, "form": "stored-result" },
+      "view": { "x": 365, "y": 40 }
+    },
+    {
+      "id": "maker",
+      "kind": "agent",
+      "label": "Maker",
+      "purpose": "Make the change the coordinator assigned and run its check.",
+      "role": {
+        "id": "maker",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-maker.role.md" }
+      },
+      "model": { "policy": "select", "options": [{ "id": "small" }, { "id": "medium" }, { "id": "large" }], "default": "medium", "chosenBy": "size" },
+      "produces": { "required": true, "form": "stored-result" },
+      "view": { "x": 48, "y": 170 }
+    },
+    {
+      "id": "scout",
+      "kind": "agent",
+      "label": "Scout",
+      "purpose": "Answer the question the coordinator assigned from the existing material, with where you found it.",
+      "role": {
+        "id": "scout",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-scout.role.md" }
+      },
+      "model": { "policy": "select", "options": [{ "id": "medium" }, { "id": "large" }], "default": "medium", "chosenBy": "size" },
+      "produces": { "required": true, "form": "stored-result" },
+      "view": { "x": 272, "y": 170 }
+    },
+    {
+      "id": "quick-check",
+      "kind": "agent",
+      "label": "Quick check",
+      "purpose": "Check the work against the request and its own check. Choose pass or fix.",
+      "role": {
+        "id": "checker",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-checker.role.md" }
+      },
+      "outcomes": ["pass", "fix"],
+      "consumes": ["maker"],
+      "view": { "x": 219, "y": 466 }
+    },
+    {
+      "id": "deep-check",
+      "kind": "agent",
+      "label": "Deep check",
+      "purpose": "Check the design and the correctness of the work, and run the checks that show it works. Choose pass or fix.",
+      "role": {
+        "id": "checker",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-checker.role.md" }
+      },
+      "outcomes": ["pass", "fix"],
+      "view": { "x": 443, "y": 466 }
+    },
+    {
+      "id": "done",
+      "kind": "terminal",
+      "label": "Done",
+      "ending": "success",
+      "view": { "x": 331, "y": 596 }
+    },
+    {
+      "id": "stopped",
+      "kind": "terminal",
+      "label": "Stopped",
+      "ending": "not-success",
+      "view": { "x": 644, "y": 596 }
+    },
+    {
+      "id": "crew",
+      "kind": "agent",
+      "label": "Crew: parallel parts",
+      "purpose": "Do your slice of the work in your own branch, inside the paths your slice owns, and run your slice's check. Report what you changed, the checks you ran and their results, what you could not do, and any open decision about a shared contract. On a later visit you are given the integrator's findings: act on those that concern your slice.",
+      "role": {
+        "id": "maker",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-maker.role.md" }
+      },
+      "model": { "policy": "select", "options": [{ "id": "small" }, { "id": "medium" }, { "id": "large" }], "default": "medium", "chosenBy": "size" },
+      "declaredFailures": ["branch-failed"],
+      "fanOut": { "slicesFrom": "coordinator", "maxConcurrent": 3, "isolation": "worktree", "branchAs": ["maker", "scout"], "sliceChoices": ["size", "review"], "splitWhen": "The request names several independent files or features." },
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Written by DSpatch: per branch, its role, choices, ending, temporary branch and commit, and its reply, clipped; and the messages between the branches with their delivery." },
+      "view": { "x": 496, "y": 170 }
+    },
+    {
+      "id": "assembler",
+      "kind": "agent",
+      "label": "Assembler",
+      "purpose": "Combine the branches into the working copy: read each branch's result and ending, its open decisions and the messages between the branches; check each against the shared contracts; merge the temporary branches in the order listed, resolve conflicts and name each merge and resolution; run the checks that show the parts work together. A merge is not proof that they do. Choose integrated only when every branch finished and was combined and checked and no contract proposal is left open. Choose rework, with concrete findings per branch, when the branches can fix what is wrong in another round. Choose needs-decision when a branch failed or was cancelled, a shared contract needs a decision, or the work must be split differently or done in sequence; name each such branch and where its work is kept. Never delete a temporary branch.",
+      "role": {
+        "id": "assembler",
+        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-assembler.role.md" }
+      },
+      "model": { "policy": "select", "options": [{ "id": "steady", "modelClass": "medium" }], "default": "steady" },
+      "outcomes": ["integrated", "rework", "needs-decision"],
+      "whenUndeclared": "needs-decision",
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "What was merged, from which branch and commit, what conflicted and how it was resolved, what was checked, and each branch's ending and open decision." },
+      "consumes": ["crew"],
+      "view": { "x": 414, "y": 318 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": "coordinator", "to": "maker", "when": { "on": "outcome", "outcome": "make" } },
+    { "id": "e2", "from": "coordinator", "to": "scout", "when": { "on": "outcome", "outcome": "scout" } },
+    { "id": "e3", "from": "coordinator", "to": "stopped", "when": { "on": "outcome", "outcome": "stop" } },
+    { "id": "e4", "from": "maker", "to": "quick-check", "when": { "on": "success" } },
+    { "id": "e5", "from": "scout", "to": "coordinator", "when": { "on": "success" } },
+    { "id": "e6", "from": "quick-check", "to": "done", "when": { "on": "outcome", "outcome": "pass" } },
+    { "id": "e7", "from": "quick-check", "to": "coordinator", "when": { "on": "outcome", "outcome": "fix" } },
+    { "id": "e8", "from": "deep-check", "to": "done", "when": { "on": "outcome", "outcome": "pass" } },
+    { "id": "e9", "from": "deep-check", "to": "coordinator", "when": { "on": "outcome", "outcome": "fix" } },
+    { "id": "e-crew-1", "from": "coordinator", "to": "crew", "when": { "on": "outcome", "outcome": "split" }, "label": "split into parallel branches" },
+    { "id": "e-crew-2", "from": "crew", "to": "assembler", "when": { "on": "success" }, "label": "every branch finished" },
+    { "id": "e-crew-3", "from": "crew", "to": "assembler", "when": { "on": "declared-failure", "failure": "branch-failed" }, "label": "a branch failed" },
+    { "id": "e-crew-4", "from": "assembler", "to": "quick-check", "when": { "on": "outcome", "outcome": "integrated" }, "whenChosen": {
+      "review": "standard"
+    } },
+    { "id": "e-crew-5", "from": "assembler", "to": "deep-check", "when": { "on": "outcome", "outcome": "integrated" }, "whenChosen": {
+      "review": "thorough"
+    } },
+    { "id": "e-crew-6", "from": "assembler", "to": "crew", "when": { "on": "outcome", "outcome": "rework" }, "label": "another round of the branches" },
+    { "id": "e-crew-7", "from": "assembler", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" } }
+  ]
+}

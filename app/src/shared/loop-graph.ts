@@ -536,16 +536,51 @@ export interface VisitChoiceDef {
   readonly label: string;
   /** What the choice decides, for the step that makes it and the person reading the drawing. */
   readonly meaning: string;
-  readonly options: readonly { readonly id: string; readonly meaning: string }[];
-  /** Taken when a deciding step states no valid value, and before anything has decided. */
+  readonly options: readonly VisitChoiceOption[];
+  /** Taken before anything has decided, and when a deciding step states no valid value (see {@link whenMissing}). */
   readonly default: string;
   /**
-   * DSP-226: how the branches of a fan-out join on this choice. `strongest`: the options are
-   * listed weakest first, and after the fan-out the work carries the strongest value the visit
-   * or any of its branches had, so joining never weakens it (a thorough review stays thorough).
-   * Absent: the visit's own value goes on, whatever its branches carried.
+   * DSP-227: the options have a meaningful order, listed weakest first. Only an ordered choice
+   * can join on its strongest value or fall back to it. Absent: the order means nothing.
+   */
+  readonly order?: 'weakest-first';
+  /**
+   * DSP-226: how the branches of a fan-out join on this choice. `strongest`: after the fan-out
+   * the work carries the strongest value the visit or any of its branches had, so joining never
+   * weakens it (a thorough review stays thorough). Needs {@link order} (DSP-227); a file from
+   * before it that joins without one is read as ordered, with a warning. Absent: the visit's own
+   * value goes on, whatever its branches carried.
    */
   readonly joins?: 'strongest';
+  /**
+   * DSP-227: what a visit carries when its deciding step states no value, or one that is not an
+   * option: `default` (absent) takes {@link default}; `strongest` takes the last option, so a
+   * missing review route is never a weaker one. `strongest` needs {@link order}.
+   */
+  readonly whenMissing?: 'default' | 'strongest';
+}
+
+/** DSP-224: one option of a choice. */
+export interface VisitChoiceOption {
+  readonly id: string;
+  /** What the option means: the criteria a deciding step reads to choose it. */
+  readonly meaning: string;
+  /**
+   * DSP-227: the model class this option means. A choice whose options name classes is a
+   * model-class choice: a `select` policy `chosenBy` it may list its options by id alone and
+   * take their class from here, so the class is written once.
+   */
+  readonly modelClass?: ModelClass;
+}
+
+/** DSP-227: whether every option of a choice names a model class. */
+export function isModelClassChoice(choice: Pick<VisitChoiceDef, 'options'>): boolean {
+  return choice.options.length > 0 && choice.options.every((option) => option.modelClass !== undefined);
+}
+
+/** DSP-227: whether a choice's options have an order a join or a fallback can use. */
+export function isOrderedChoice(choice: Pick<VisitChoiceDef, 'order' | 'joins'>): boolean {
+  return choice.order === 'weakest-first' || choice.joins === 'strongest';
 }
 
 /** DSP-224: a visit's value per choice id, as routing and model selection read it. */
@@ -811,6 +846,16 @@ export interface FanOutPolicy {
    * node. The branch is still this node's instance: its id, limits, failures and routes.
    */
   readonly branchAs?: readonly string[];
+  /**
+   * DSP-227: the graph's choices a slice may set for its own branch, such as its model class
+   * and review route. Absent: every choice of the graph (as DSP-226 read it); empty: none.
+   */
+  readonly sliceChoices?: readonly string[];
+  /**
+   * DSP-227: the graph builder's own criteria for when the proposing step should split the
+   * work, added to the instructions DSpatch generates for it. Absent: the general rule only.
+   */
+  readonly splitWhen?: string;
 }
 
 /** DSP-209 S5a: the capabilities a drawing may give an agent node. */

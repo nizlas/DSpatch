@@ -1,0 +1,8 @@
+{
+  "format": "dspatch-loop-definition",
+  "formatVersion": 1,
+  "id": "workshop",
+  "name": "Workshop",
+  "resourceRoot": "../..",
+  "graph": ".dspatch/loops/workshop.graph.json"
+}

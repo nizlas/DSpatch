@@ -44,6 +44,7 @@ import {
   RUN_PROVIDER_NAMES,
   TERMINAL_ENDINGS,
   effectiveRequirements,
+  isModelClassChoice,
   namesARuntimeFault,
 } from './loop-graph';
 import type {
@@ -73,6 +74,7 @@ import type {
   StepLimits,
   TerminalEnding,
   VisitChoiceDef,
+  VisitChoiceOption,
 } from './loop-graph';
 
 export type FindingSeverity = 'error' | 'warning' | 'notice';
@@ -318,7 +320,8 @@ export function parseLoopGraph(text: string): ParseResult {
   const choices = parseChoices(parsed['choices'], findings);
   const limits = parseLimits(parsed['limits'], '/limits', findings);
   const archive = parseArchive(parsed['archive'], findings);
-  const nodes = parseNodes(parsed['nodes'], findings);
+  // DSP-227: a node whose model is chosen by a model-class choice takes the classes from it.
+  const nodes = withChoiceModelOptions(parseNodes(parsed['nodes'], findings), choices ?? [], findings);
   const edges = parseEdges(parsed['edges'], findings);
 
   const entry = nonEmptyString(parsed['entry']);
@@ -457,19 +460,37 @@ function parseChoices(value: unknown, findings: Findings): readonly VisitChoiceD
       findings.error('duplicate-choice', `${pointer}/id`, `Choice "${id}" is declared more than once.`);
       return;
     }
-    const options: { id: string; meaning: string }[] = [];
+    const options: VisitChoiceOption[] = [];
     for (const option of rawOptions) {
       const optionId = isRecord(option) ? nonEmptyString(option['id']) : null;
       const optionMeaning = isRecord(option) ? nonEmptyString(option['meaning']) : null;
-      if (optionId === null || /\s/.test(optionId) || optionMeaning === null || options.some((known) => known.id === optionId)) {
+      // DSP-227: an option may name the model class it means.
+      const rawClass = isRecord(option) ? option['modelClass'] : undefined;
+      const modelClass = MODEL_CLASSES.find((name) => name === rawClass);
+      if (
+        optionId === null ||
+        /\s/.test(optionId) ||
+        optionMeaning === null ||
+        options.some((known) => known.id === optionId) ||
+        (rawClass !== undefined && modelClass === undefined)
+      ) {
         findings.error(
           'bad-choice-option',
           `${pointer}/options`,
-          `Choice "${id}": each option needs a unique "id" without spaces and a "meaning".`,
+          `Choice "${id}": each option needs a unique "id" without spaces and a "meaning", and an optional ` +
+            `"modelClass" (${quoteList(MODEL_CLASSES)}).`,
         );
         return;
       }
-      options.push({ id: optionId, meaning: optionMeaning });
+      options.push({ id: optionId, meaning: optionMeaning, ...(modelClass === undefined ? {} : { modelClass }) });
+    }
+    if (options.some((option) => option.modelClass !== undefined) && !options.every((option) => option.modelClass !== undefined)) {
+      findings.error(
+        'choice-partly-model-class',
+        `${pointer}/options`,
+        `Choice "${id}": either every option names a "modelClass" or none does, so a step that takes its model from it always gets one.`,
+      );
+      return;
     }
     const fallback = isRecord(entry) ? nonEmptyString(entry['default']) : null;
     if (fallback === null || !options.some((option) => option.id === fallback)) {
@@ -488,9 +509,111 @@ function parseChoices(value: unknown, findings: Findings): readonly VisitChoiceD
       findings.error('bad-choice-joins', `${pointer}/joins`, `Choice "${id}": "joins" can only be "strongest" (options listed weakest first).`);
       return;
     }
-    choices.push({ id, label, meaning, options, default: fallback, ...(joins === 'strongest' ? { joins } : {}) });
+    // DSP-227: the order a join or a fallback reads, said in so many words.
+    const order = isRecord(entry) ? entry['order'] : undefined;
+    if (order !== undefined && order !== 'weakest-first') {
+      findings.error('bad-choice-order', `${pointer}/order`, `Choice "${id}": "order" can only be "weakest-first", the options listed weakest first.`);
+      return;
+    }
+    const whenMissing = isRecord(entry) ? entry['whenMissing'] : undefined;
+    if (whenMissing !== undefined && whenMissing !== 'default' && whenMissing !== 'strongest') {
+      findings.error('bad-choice-when-missing', `${pointer}/whenMissing`, `Choice "${id}": "whenMissing" is "default" or "strongest".`);
+      return;
+    }
+    if (whenMissing === 'strongest' && order === undefined) {
+      findings.error(
+        'choice-strongest-without-order',
+        `${pointer}/whenMissing`,
+        `Choice "${id}" falls back to its strongest option, which only an ordered choice has: add "order": "weakest-first" if its options are listed weakest first, or fall back to the default.`,
+      );
+      return;
+    }
+    choices.push({
+      id,
+      label,
+      meaning,
+      options,
+      default: fallback,
+      ...(order === 'weakest-first' ? { order } : {}),
+      ...(joins === 'strongest' ? { joins } : {}),
+      ...(whenMissing === 'strongest' || whenMissing === 'default' ? { whenMissing } : {}),
+    });
   });
   return choices;
+}
+
+/**
+ * DSP-227: the select policies chosen by a model-class choice, filled from it: an option given
+ * by id alone takes the class of the choice's option of that id, a policy without options takes
+ * every option, and one without a default takes the choice's default (else its first option).
+ * An option that names another class than the choice's, or a model, is refused: the class is
+ * written once, in the choice, so the two cannot disagree.
+ */
+function withChoiceModelOptions(nodes: readonly LoopNode[], choices: readonly VisitChoiceDef[], findings: Findings): readonly LoopNode[] {
+  return nodes.map((node, index) => {
+    const model = node.model;
+    if (model?.policy !== 'select' || model.chosenBy === undefined) {
+      return node;
+    }
+    const pointer = `/nodes/${String(index)}/model`;
+    const choice = choices.find((candidate) => candidate.id === model.chosenBy);
+    const deferred = (model.options ?? []).filter((option) => option.model === undefined && option.modelClass === undefined);
+    const empty = (model.options ?? []).length === 0;
+    if (choice === undefined || !isModelClassChoice(choice)) {
+      if (deferred.length > 0 || empty || model.default === undefined) {
+        findings.error(
+          'select-model-without-options',
+          `${pointer}/options`,
+          `Node "${node.id}" leaves its model options to choice "${model.chosenBy}", which ` +
+            (choice === undefined ? 'is not one of the graph\'s choices.' : 'does not name a model class for each option. Give the options their "modelClass" in the choice, or give this node its own options.'),
+          { nodeId: node.id },
+        );
+      }
+      return node;
+    }
+    const byId = new Map(choice.options.map((option) => [option.id, option] as const));
+    const options: ModelOption[] = [];
+    for (const option of empty ? choice.options.map((each) => ({ id: each.id })) : (model.options ?? [])) {
+      const own = byId.get(option.id);
+      const given = option as ModelOption;
+      if (own === undefined) {
+        if (given.model === undefined && given.modelClass === undefined) {
+          findings.error(
+            'model-option-not-in-choice',
+            `${pointer}/options`,
+            `Node "${node.id}" lists model option "${option.id}", which is not an option of choice "${choice.id}" (${quoteList(choice.options.map((each) => each.id))}).`,
+            { nodeId: node.id },
+          );
+          continue;
+        }
+        options.push(given);
+        continue;
+      }
+      if (given.model !== undefined || (given.modelClass !== undefined && given.modelClass !== own.modelClass)) {
+        findings.error(
+          'model-option-contradicts-choice',
+          `${pointer}/options`,
+          `Node "${node.id}" gives option "${option.id}" ${given.model === undefined ? `class "${String(given.modelClass)}"` : `model "${given.model}"`}, ` +
+            `and choice "${choice.id}" says "${option.id}" is class "${String(own.modelClass)}". Name the option by its id alone; the choice decides its class.`,
+          { nodeId: node.id },
+        );
+        continue;
+      }
+      options.push({ ...given, modelClass: own.modelClass });
+    }
+    const fallback =
+      model.default ?? (options.some((option) => option.id === choice.default) ? choice.default : options[0]?.id);
+    if (fallback === undefined || !options.some((option) => option.id === fallback)) {
+      findings.error(
+        'select-model-bad-default',
+        `${pointer}/default`,
+        `Node "${node.id}": "default" must name one of its model options (${quoteList(options.map((option) => option.id))}).`,
+        { nodeId: node.id },
+      );
+      return node;
+    }
+    return { ...node, model: { ...model, options, default: fallback } };
+  });
 }
 
 /** DSP-224: an edge's `sets` or `whenChosen`: choice id to option id, both non-empty. */
@@ -951,6 +1074,14 @@ function parseModelSelect(
   findings: Findings,
 ): ModelPolicy | null {
   const raw = value['options'];
+  // DSP-227: a policy chosen by a model-class choice may leave its options, their classes and
+  // its default to the choice; `withChoiceModelOptions` fills and checks them with the graph.
+  const chosenByRaw = nonEmptyString(value['chosenBy']);
+  const fromChoice = chosenByRaw !== null;
+  if (fromChoice && raw === undefined) {
+    const fallbackOnly = nonEmptyString(value['default']);
+    return { policy: 'select', options: [], ...(fallbackOnly === null ? {} : { default: fallbackOnly }), chosenBy: chosenByRaw };
+  }
   if (!Array.isArray(raw) || raw.length === 0) {
     findings.error(
       'select-model-without-options',
@@ -970,12 +1101,13 @@ function parseModelSelect(
     // DSP-222: or a model class, which the run's provider maps to a model.
     const rawClass = isRecord(entry) ? entry['modelClass'] : undefined;
     const modelClass = MODEL_CLASSES.find((name) => name === rawClass) ?? null;
-    if (id === null || (model === null) === (modelClass === null) || (rawClass !== undefined && modelClass === null)) {
+    const idOnly = fromChoice && id !== null && model === null && rawClass === undefined;
+    if (!idOnly && (id === null || (model === null) === (modelClass === null) || (rawClass !== undefined && modelClass === null))) {
       findings.error(
         'bad-model-option',
         at,
         `Node "${nodeId}": each model option needs an "id" and either a "model" or a "modelClass" ` +
-          `(${MODEL_CLASSES.map((name) => `"${name}"`).join(', ')}), not both.`,
+          `(${MODEL_CLASSES.map((name) => `"${name}"`).join(', ')}), not both; under "chosenBy" a model-class choice, the "id" alone takes the choice's class.`,
         { nodeId },
       );
       ok = false;
@@ -987,9 +1119,13 @@ function parseModelSelect(
       return;
     }
     const note = isRecord(entry) ? nonEmptyString(entry['note']) : null;
-    options.push({ id, ...(model === null ? {} : { model }), ...(modelClass === null ? {} : { modelClass }), ...(note === null ? {} : { note }) });
+    options.push({ id: id as string, ...(model === null ? {} : { model }), ...(modelClass === null ? {} : { modelClass }), ...(note === null ? {} : { note }) });
   });
   const fallback = nonEmptyString(value['default']);
+  if (fromChoice && ok && (fallback === null || options.some((option) => option.id === fallback))) {
+    // Checked, and the default filled, against the choice with the whole graph.
+    return { policy: 'select', options, ...(fallback === null ? {} : { default: fallback }), chosenBy: chosenByRaw };
+  }
   if (fallback === null || !options.some((option) => option.id === fallback)) {
     findings.error(
       'select-model-bad-default',
@@ -1324,6 +1460,21 @@ function parseFanOut(
   const maxConcurrent = record?.['maxConcurrent'];
   const isolation = record?.['isolation'];
   const branchAs = record?.['branchAs'];
+  // DSP-227: which choices a slice may set, and the builder's own criteria for a split.
+  const sliceChoices = record?.['sliceChoices'];
+  const splitWhen = record?.['splitWhen'];
+  if (
+    (sliceChoices !== undefined && (!Array.isArray(sliceChoices) || !sliceChoices.every((id) => typeof id === 'string' && id.trim() !== ''))) ||
+    (splitWhen !== undefined && typeof splitWhen !== 'string')
+  ) {
+    findings.error(
+      'bad-fan-out',
+      pointer,
+      `Node "${nodeId}": "fanOut.sliceChoices" is a list of the graph's choice ids, and "fanOut.splitWhen" is text.`,
+      { nodeId },
+    );
+    return null;
+  }
   if (
     (branchAs !== undefined &&
       (!Array.isArray(branchAs) || branchAs.length === 0 || !branchAs.every((id) => typeof id === 'string' && id.trim() !== ''))) ||
@@ -1350,6 +1501,8 @@ function parseFanOut(
     maxConcurrent,
     isolation: isolation as FanOutIsolation,
     ...(Array.isArray(branchAs) ? { branchAs: branchAs as string[] } : {}),
+    ...(Array.isArray(sliceChoices) ? { sliceChoices: sliceChoices as string[] } : {}),
+    ...(typeof splitWhen === 'string' && splitWhen.trim() !== '' ? { splitWhen: splitWhen.trim() } : {}),
   };
 }
 
@@ -1740,6 +1893,17 @@ function checkChoices(
 ): void {
   const defs = new Map((graph.choices ?? []).map((choice) => [choice.id, choice] as const));
   const known = quoteList([...defs.keys()]);
+  // DSP-227: a join reads the options' order, which a file from before "order" leaves unsaid.
+  (graph.choices ?? []).forEach((choice, index) => {
+    if (choice.joins === 'strongest' && choice.order === undefined) {
+      findings.warning(
+        'choice-joins-without-order',
+        `/choices/${String(index)}/order`,
+        `Choice "${choice.id}" joins on its strongest option and does not say its options are ordered. It is read as ` +
+          `listed weakest first (${quoteList(choice.options.map((option) => option.id))}); add "order": "weakest-first" to say so, or remove "joins" if the order means nothing.`,
+      );
+    }
+  });
   for (const node of graph.nodes) {
     const pointer = pointerOf.get(node.id) ?? '/nodes';
     for (const id of node.decides ?? []) {
@@ -2498,6 +2662,17 @@ function checkResultFlow(
           `remove "suggest-interactive" from this node.`,
         ids,
       );
+    }
+    // DSP-227: the choices a slice may set are the graph's.
+    for (const id of fanOut.sliceChoices ?? []) {
+      if (!(graph.choices ?? []).some((choice) => choice.id === id)) {
+        findings.error(
+          'fan-out-slice-choice-unknown',
+          `${pointer}/sliceChoices`,
+          `Node "${node.id}" lets a slice set "${id}", which is not one of the graph's choices.`,
+          ids,
+        );
+      }
     }
     // DSP-226: the nodes a branch may run as are agent steps that do not fan out themselves.
     for (const id of fanOut.branchAs ?? []) {

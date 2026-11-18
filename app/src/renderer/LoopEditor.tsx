@@ -138,7 +138,10 @@ import {
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import { ModelClassDialog } from './ModelClassDialog';
 import { runningStep, stepStanding } from '../shared/loop-activity';
-import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind } from '../shared/loop-chat';
+import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind, type BriefPart } from '../shared/loop-chat';
+import { describeVisitChoices } from '../shared/loop-choices';
+import { describeSplitInstructions } from '../shared/loop-split-instructions';
+import { ChoiceSections, ParallelSectionPanel, ParallelSections, SplitInstructionsPreview } from './GraphSectionForms';
 import { successRoutesOf } from '../shared/loop-results';
 import {
   failureStandings,
@@ -3306,6 +3309,7 @@ export function LoopEditor(): React.JSX.Element {
               onOpenModelClasses={() => setModelClassesOpen(true)}
               onNote={setNote}
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
+              onGraphChange={(next) => apply(next)}
               onDelete={() => {
                 apply(withoutNode(graph, selectedNode.id), `Removed "${selectedNode.id}" and every edge that touched it.`);
                 setSelection(null);
@@ -3749,10 +3753,13 @@ function NodeInspector({
   onOpenModelClasses,
   onNote,
   onChange,
+  onGraphChange,
   onDelete,
 }: {
   readonly graph: LoopGraph;
   readonly node: LoopNode;
+  /** DSP-227: a change that reaches beyond this node, such as its parallel section. */
+  readonly onGraphChange: (next: LoopGraph) => void;
   /** DSP-209 S19: the model the watched run's latest visit to this step runs with, or `null`. */
   readonly liveModel: ModelSelectionRecord | null;
   /** DSP-224: the same visit's class, visit number and resolution, as the canvas badge's hover says it. */
@@ -3807,6 +3814,18 @@ function NodeInspector({
     // DSP-145: the outcomes whose edge ends the run in success, for the approval rule.
     successRoutes: successRoutesOf(graph, node),
   }).filter((part) => part.present);
+  // DSP-227: what DSpatch writes from the graph's choices and parallel sections, as it is sent.
+  const choiceText = describeVisitChoices(graph, node, {}).trim();
+  const splitText = describeSplitInstructions(graph, node).trim();
+  const generatedParts: BriefPart[] = [
+    ...(choiceText === ''
+      ? []
+      : [{ id: 'choices' as const, heading: 'The choices this step decides', carried: true, present: true, detail: 'Written by DSpatch from the graph’s choices: their options, criteria and the line to state them on.', text: [choiceText] }]),
+    ...(splitText === ''
+      ? []
+      : [{ id: 'split' as const, heading: 'How to propose a split', carried: true, present: true, detail: 'Written by DSpatch from the parallel section this step proposes for.', text: [splitText] }]),
+  ];
+  const allParts = [...parts, ...generatedParts];
 
   return (
     <div className="inspector">
@@ -3973,6 +3992,9 @@ function NodeInspector({
         </section>
       ) : null}
 
+      {/* DSP-227: a fan-out step's section and a proposing step's generated instructions, in view, not under Advanced. */}
+      {node.fanOut === undefined ? null : <ParallelSectionPanel graph={graph} node={node} onChange={onGraphChange} />}
+      <SplitInstructionsPreview graph={graph} node={node} />
       {effect.callsAnAgent ? (
         <section className="brief-block">
           <h3>What the message to this step contains</h3>
@@ -3994,7 +4016,7 @@ function NodeInspector({
             sent”.
           </p>
           <dl className="brief" data-ev="node-brief">
-            {parts.map((part) => (
+            {allParts.map((part) => (
               <div key={part.id} className={part.carried ? 'brief-in' : 'brief-named'}>
                 <dt>
                   {part.heading}
@@ -4206,9 +4228,10 @@ function NodeInspector({
                 return `${choice?.label ?? id} (${(choice?.options ?? []).map((option) => option.id).join(', ')}; default ${choice?.default ?? '?'})`;
               })
               .join(' and ')}
-            , independently of its result. Edited in the graph file.
+            , independently of its result. Edited under the graph’s Choices made per task, with nothing selected.
           </p>
         )}
+
         <fieldset>
           <legend>
             Which model runs it{' '}
@@ -5037,6 +5060,9 @@ function GraphInspector({
           );
         })}
       </fieldset>
+
+      <ChoiceSections graph={graph} onChange={onChange} />
+      <ParallelSections graph={graph} onChange={onChange} onSelectNode={(id) => onSelect({ kind: 'node', id })} />
 
       <fieldset>
         <legend>Failures this graph routes on</legend>

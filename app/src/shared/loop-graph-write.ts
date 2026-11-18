@@ -29,7 +29,7 @@
  * validation is refused before it reaches a writer.
  */
 
-import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION } from './loop-graph';
+import { LOOP_GRAPH_FORMAT, LOOP_GRAPH_FORMAT_VERSION, isModelClassChoice } from './loop-graph';
 import type { LoopGraph } from './loop-graph';
 
 /** What a graph looks like once it is plain data, before it is text. */
@@ -70,8 +70,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/archive': ['path', 'entryPerNode', 'referenceReturned', 'notes'],
   '/failureKinds/*': ['id', 'label', 'meaning'],
-  '/choices/*': ['id', 'label', 'meaning', 'options', 'default', 'joins'],
-  '/choices/*/options/*': ['id', 'meaning'],
+  '/choices/*': ['id', 'label', 'meaning', 'options', 'default', 'order', 'joins', 'whenMissing'],
+  '/choices/*/options/*': ['id', 'meaning', 'modelClass'],
   '/nodes/*': [
     'id',
     'kind',
@@ -115,7 +115,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/nodes/*/report': ['writtenBy', 'path'],
   '/nodes/*/produces': ['required', 'form', 'note'],
   '/nodes/*/view': ['x', 'y'],
-  '/nodes/*/fanOut': ['slicesFrom', 'maxConcurrent', 'isolation', 'branchAs'],
+  '/nodes/*/fanOut': ['slicesFrom', 'maxConcurrent', 'isolation', 'branchAs', 'sliceChoices', 'splitWhen'],
   // `delivers` sits next to `when`, because the two together are what an arrival is:
   // when it is taken, and what travels along it.
   // `skips` follows them: what taking the edge passes by (DSP-209 S3).
@@ -262,12 +262,43 @@ export function detectNewline(text: string): '\n' | '\r\n' {
  * from the graph: a file this build is allowed to save is a file of this version,
  * and `loop-graph-load.ts` already refuses to load a newer one.
  */
+/**
+ * DSP-227: a select policy chosen by a model-class choice is written with its options by id
+ * alone, because the loader takes their classes from the choice; an option the choice does not
+ * have, or one with a model, is written whole. So the class is in the file once.
+ */
+function withChoiceClassesOnce(graph: LoopGraph): LoopGraph {
+  const classful = new Map(
+    (graph.choices ?? []).filter((choice) => isModelClassChoice(choice)).map((choice) => [choice.id, choice] as const),
+  );
+  if (classful.size === 0) {
+    return graph;
+  }
+  let changed = false;
+  const nodes = graph.nodes.map((node) => {
+    const model = node.model;
+    const choice = model?.policy === 'select' && model.chosenBy !== undefined ? classful.get(model.chosenBy) : undefined;
+    if (model === undefined || choice === undefined) {
+      return node;
+    }
+    changed = true;
+    const options = (model.options ?? []).map((option) => {
+      const own = choice.options.find((candidate) => candidate.id === option.id);
+      return own !== undefined && option.model === undefined && option.modelClass === own.modelClass
+        ? { id: option.id, ...(option.note === undefined ? {} : { note: option.note }) }
+        : option;
+    });
+    return { ...node, model: { ...model, options } };
+  });
+  return changed ? { ...graph, nodes } : graph;
+}
+
 export function serialiseLoopGraph(
   graph: LoopGraph,
   options: { readonly newline?: '\n' | '\r\n' } = {},
 ): string {
   const value = withoutAbsent({
-    ...graph,
+    ...withChoiceClassesOnce(graph),
     format: LOOP_GRAPH_FORMAT,
     formatVersion: LOOP_GRAPH_FORMAT_VERSION,
   });

@@ -149,6 +149,8 @@ export interface LiveCliOptions {
   readonly takeInstructions?: RunOptions['takeInstructions'];
   /** DSP-173: may DSpatch's own command observations run now; see `LiveExecutorOptions`. */
   readonly resourceGovernor?: LiveExecutorOptions['resourceGovernor'];
+  /** DSP-227: see {@link LiveExecutorOptions.branchMessaging}; an experiment control. */
+  readonly branchMessaging?: boolean;
   /**
    * Who decides that the next work step starts (DSP-29, DSP-30). Left out — as the
    * CLI leaves it out — the run is autonomous and never waits.
@@ -434,6 +436,7 @@ async function driveLive(
         ...(options.onCommand === undefined ? {} : { onCommand: options.onCommand }),
         ...(options.onSteerableStep === undefined ? {} : { onSteerableStep: options.onSteerableStep }),
         ...(options.resourceGovernor === undefined ? {} : { resourceGovernor: options.resourceGovernor }),
+        ...(options.branchMessaging === undefined ? {} : { branchMessaging: options.branchMessaging }),
       }),
     });
 

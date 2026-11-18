@@ -104,16 +104,21 @@ export function decideChoices(
     }
     const said = stated?.[id];
     const offered = said !== undefined && choice.options.some((option) => option.id === said.value);
+    // DSP-227: a missing or invalid value is the default, or the strongest option where the
+    // choice says so, so a missing review route is never a weaker one.
+    const strongest = choice.whenMissing === 'strongest' ? choice.options[choice.options.length - 1]?.id : undefined;
+    const fallback = strongest ?? choice.default;
+    const fallbackWords = strongest === undefined ? 'the default applies' : `its strongest option, ${strongest}, applies`;
     const value: ChoiceValue = offered
       ? { value: said.value, by: 'step', decidedBy: node.id, reason: said.reason ?? 'no reason given' }
       : {
-          value: choice.default,
+          value: fallback,
           by: 'default',
           decidedBy: node.id,
           reason:
             said === undefined
-              ? `the step stated no ${id}, so the default applies`
-              : `the step stated ${id} "${said.value}", which is not one of its options, so the default applies`,
+              ? `the step stated no ${id}, so ${fallbackWords}`
+              : `the step stated ${id} "${said.value}", which is not one of its options, so ${fallbackWords}`,
         };
     next[id] = value;
     made.push({ id, ...value });
@@ -227,16 +232,23 @@ export function describeVisitChoices(
     lines.push(
       '',
       'This step also decides the following, independently of its result and of each other. For each, ' +
-        `write a whole line ${CHOICE_TOKEN} <name> <option> followed by a short reason. Without a valid line the default applies.`,
+        `write a whole line ${CHOICE_TOKEN} <name> <option> followed by a short reason.`,
     );
     for (const choice of deciding) {
-      lines.push(`${choice.id} — ${choice.meaning} Default: ${choice.default}.`);
+      lines.push(`${choice.id} — ${choice.meaning} ${missingWords(choice)}`);
       for (const option of choice.options) {
         lines.push(`  ${CHOICE_TOKEN} ${choice.id} ${option.id} — ${option.meaning}`);
       }
     }
   }
   return lines.length === 0 ? '' : `\n${lines.join('\n')}`;
+}
+
+/** DSP-227: what a missing or invalid line gives, for the deciding step's instructions. */
+function missingWords(choice: VisitChoiceDef): string {
+  return choice.whenMissing === 'strongest'
+    ? `Without a valid line the strongest option, ${choice.options[choice.options.length - 1]?.id ?? ''}, applies.`
+    : `Without a valid line the default, ${choice.default}, applies.`;
 }
 
 /**
@@ -274,6 +286,8 @@ export function joinBranchChoices(
   const next: Record<string, ChoiceValue> = { ...carried };
   const made: ChoiceMade[] = [];
   for (const choice of graph.choices ?? []) {
+    // DSP-227: only a choice that joins says its options are ordered; the loader warns where a
+    // file joins without "order" and reads it as weakest first.
     if (choice.joins !== 'strongest') {
       continue;
     }
