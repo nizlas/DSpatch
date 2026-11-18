@@ -21,7 +21,7 @@ import {
 /** How a message is delivered, said once beside the counts. */
 export const BRANCH_MESSAGES_NOTE =
   'A message is delivered when the receiving branch next checks its messages, not when it is sent. ' +
-  'Acknowledged is separate: the branch said it acted on it. Undelivered means the branch ended without checking.';
+  'Acknowledged is separate: the branch says it read and handled it, which is its own statement; what it actually changed is in its result and its commit. Undelivered means the branch ended without checking.';
 
 const STATE_WORDS: Readonly<Record<BranchState, string>> = {
   queued: 'queued',

@@ -1069,13 +1069,10 @@ export function describeBranchAssignment(instance: FanOutInstance, options: { re
           '',
         ]),
     // DSP-226: when to read the mailbox, what delivery means, and what a contract change is.
-    // Without the mailbox (an experiment control), the same rule for a contract change, without the mail.
-    options.messaging === false
-      ? 'A change to a shared contract is a proposal, not an agreement. If your slice cannot be finished without such a ' +
-        'decision, do not wait for one and do not assume it: finish what you can inside your slice, then end your turn ' +
-        'with a section headed "Open decision" that names the contract, what you need decided and why, so the ' +
-        'integrating step returns it for coordination.'
-      : mailboxGuidance(),
+    // DSP-228: with the mailbox, when to send and check without waiting; in either variant, what to
+    // do when an answer is missing. Without the mailbox (an experiment control) only the second.
+    ...(options.messaging === false ? [] : [mailboxGuidance(), '']),
+    OPEN_DECISION_RULE,
     '',
     instance.workspacePath === null
       ? 'You work in the run\'s working folder and only read: write no file there.'
@@ -1090,20 +1087,31 @@ function mailboxGuidance(): string {
   return (
     // DSP-227: when to send, not only when to read.
     'When you find something about the existing system or a shared contract that another branch\'s task depends on — ' +
-      'for example that the stored data, an existing interface or a documented rule does not behave as a contract says — ' +
-      'send it to that branch with send_message as soon as you have established it, saying what you found and where, before ' +
-      'you go on with your own work. Send only what changes another branch\'s work. ' +
-      'Other branches may send you messages, and you may send them. A message is delivered only when its ' +
-      'recipient calls check_messages, so check before you start, after any significant change and ' +
-      'before you finish, and acknowledge each message you have acted on. Sent, delivered and ' +
-      'acknowledged are different things: do not assume another branch has read what you sent. ' +
-      'A proposed change to a shared contract is a proposal, not an agreement, whether you sent it or ' +
-      'received it. If your slice cannot be finished without such a decision, do not wait for one and do ' +
-      'not assume it: finish what you can inside your slice, then end your turn with a section headed ' +
-      '"Open decision" that names the contract, what you need decided and why, so the integrating step ' +
-      'returns it for coordination.'
+    'for example that the stored data, an existing interface or a documented rule does not behave as a contract says — ' +
+    'send it to that branch with send_message as soon as you have established it, saying what you found and where. ' +
+    'Send only what changes another branch\'s work. ' +
+    // DSP-228: a message sent is no reason to stop; observed in the pilot as a decision put off, never as idling.
+    'Sending a question or a finding is no reason to stop working. A message is delivered only when its recipient calls ' +
+    'check_messages, and a reply may never come: go on with the work that does not depend on it, and use a reply if one ' +
+    'arrives while you work. Check your messages at natural work boundaries — before you start, after you finish a part or ' +
+    'run a check, and before you end your turn — and acknowledge each message you have handled. Do not call check_messages ' +
+    'again and again, and do not sleep or poll, only to wait for a reply. Sent, delivered and acknowledged are different ' +
+    'things: do not assume another branch has read what you sent.'
   );
 }
+
+/**
+ * DSP-228: what a branch does when something it needs is missing, with or without the mailbox. It
+ * may depend on other work; it never invents the missing part, and its open question goes on to the
+ * integrating step rather than ending with the branch.
+ */
+export const OPEN_DECISION_RULE =
+  'Do not guess an answer you need, and do not treat a proposed change to a shared contract as agreed, whether you sent ' +
+  'it or received it; where your work rests on something unconfirmed, say so. If information you need is missing and no ' +
+  'meaningful work independent of it is left, stop there: report what is done, then end your turn with a section headed ' +
+  '"Open decision" (or "Blocked", when you cannot go on at all) that names what is needed, from whom, why, and what is left ' +
+  'to do once it is known. Ending your branch does not finish the task: the integrating step receives every open decision ' +
+  'and blocker, and resolves it or returns it for coordination.';
 
 /**
  * DSP-209 S11: the three mailbox tools a fan-out branch is offered, and the only DSpatch tools
@@ -1148,8 +1156,9 @@ export function createMailboxTools(port: MailboxPort): readonly AppTool[] {
       name: 'check_messages',
       description:
         'Read the messages sent to you since you last checked, from other branches and from the ' +
-        'person. Call it before you start, after a significant change and before you finish. It ' +
-        'returns at once; it never waits.',
+        'person. Call it at natural work boundaries: before you start, after you finish a part or run a ' +
+        'check, and before you finish. It returns at once and never waits; calling it again and again, or ' +
+        'sleeping between calls, does not bring a reply sooner, so go on with your work instead.',
       parameters: {},
       readOnly: true,
       execute: () => {
@@ -1172,7 +1181,9 @@ export function createMailboxTools(port: MailboxPort): readonly AppTool[] {
     },
     {
       name: 'acknowledge_message',
-      description: 'Say that you have read a message and acted on it, by its id. Returns at once.',
+      description:
+        'Say, by its id, that you have read a message and handled it (acted on it, or decided it does not change ' +
+        'your slice). Your result says which. Returns at once.',
       parameters: { id: { type: 'string', description: 'The message id check_messages gave.' } },
       readOnly: true,
       execute: (args) => {
@@ -2098,8 +2109,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         const reminder =
           `Before you finish: ${String(waiting)} message${waiting === 1 ? '' : 's'} from other branches ${waiting === 1 ? 'is' : 'are'} waiting for you ` +
           'and not yet delivered. Call check_messages, decide whether each one changes your slice, act on those that do inside the paths ' +
-          'you own and run your check again, acknowledge what you acted on, and then end your turn with your whole result again: what ' +
-          'you changed, the checks you ran and their results, what you did with each message, and any open decision.';
+          'you own and run your check again, acknowledge what you handled, and then end your turn with your whole result again: what ' +
+          'you changed, the checks you ran and their results, what you did with each message, and any open decision. This is the ' +
+          'only reminder: a message that needs a decision you cannot make goes under "Open decision" for the integrating step.';
         const again = await takeTurn(reminder, left);
         const second = turn.assistantText();
         if (again === null && !cancelledNow() && !timedOut && turn.terminalStatus() === 'finished' && second.trim() !== '') {

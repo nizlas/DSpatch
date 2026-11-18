@@ -2093,6 +2093,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         '',
         clipReply(outcome.reply),
       ]),
+      // DSP-228: every branch's open decision or blocker, whole, however its reply was clipped above.
+      ...openDecisionSection(ordered.map((outcome) => ({ sliceId: outcome.slice.id, reply: outcome.reply }))),
       ...mailboxSection(mailbox.messages(), mailbox.openProposals(), (id) => mailbox.statusOf(id)),
     ].join('\n');
     if (options.signal?.aborted === true) {
@@ -2896,6 +2898,61 @@ function mailboxSection(
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** DSP-228: a heading that opens an open decision or a blocker: `## Open decision`, `**Blocked:**`, `Open decision (contract):`. */
+const OPEN_DECISION_HEADING = /^\s*(?:#{1,6}\s*|\*\*|__)?\s*(?:open decisions?|blocked|blockers?)\b[^\n]*$/i;
+/** Any other heading, which ends the section: a Markdown heading or a line that opens in bold. */
+const ANY_HEADING = /^\s*(?:#{1,6}\s+\S|\*\*[^*\n]{1,80}\*\*|__[^_\n]{1,80}__)/;
+
+/**
+ * DSP-228: the sections of a branch's reply headed "Open decision" or "Blocked", whole, in order,
+ * each to the next heading. A section that says only "none" is left out.
+ */
+export function openDecisionsIn(reply: string): readonly string[] {
+  const lines = reply.split(/\r?\n/);
+  const found: string[] = [];
+  let current: string[] | null = null;
+  const close = (): void => {
+    if (current !== null) {
+      const text = current.join('\n').trim();
+      // What follows the label, on its line and after it: "**Open decision:** none for my slice." says none.
+      const rest = text.replace(/^\s*(?:#{1,6}\s*|\*\*|__)?\s*(?:open decisions?|blocked|blockers?)\b[^:\n]*:?(?:\*\*|__)?\s*/i, '').trim();
+      if (!/^(?:\**\s*)?none\b/i.test(rest) && text !== '') {
+        found.push(text);
+      }
+    }
+    current = null;
+  };
+  for (const line of lines) {
+    if (OPEN_DECISION_HEADING.test(line)) {
+      close();
+      current = [line];
+    } else if (current !== null && ANY_HEADING.test(line)) {
+      close();
+    } else if (current !== null) {
+      current.push(line);
+    }
+  }
+  close();
+  return found;
+}
+
+/** DSP-228: the fan-out result's section of open decisions and blockers, by branch. */
+function openDecisionSection(replies: readonly { readonly sliceId: string; readonly reply: string }[]): readonly string[] {
+  const found = replies.flatMap((entry) => openDecisionsIn(entry.reply).map((text) => ({ sliceId: entry.sliceId, text })));
+  return [
+    '',
+    '## Open decisions and blockers from the branches',
+    '',
+    ...(found.length === 0
+      ? ['None was stated.']
+      : [
+          'Quoted whole from each branch\'s reply. A branch that ended finished its slice, not the task: each of these is the ' +
+            'integrating step\'s to resolve, or to return for coordination, and none is settled because a branch ended.',
+          ...found.flatMap((entry) => ['', `From ${entry.sliceId}:`, '', ...entry.text.split(/\r?\n/).map((line) => `> ${line}`)]),
+        ]),
+  ];
 }
 
 /** DSP-209 S10b: a branch's reply in the fan-out node's result, cut with the cut stated. */

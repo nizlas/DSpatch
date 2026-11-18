@@ -37,8 +37,11 @@ import type { RunJournalEntry } from '../../src/shared/loop-run';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const variant = process.argv[2];
 const outDir = path.resolve(process.argv[3] ?? '');
+// DSP-228: `independent` gives the export branch a second part that needs nothing from anyone, so
+// the trial shows whether it works on while a question is open.
+const independent = process.argv[4] === 'independent';
 if ((variant !== 'mailbox' && variant !== 'none') || process.argv[3] === undefined) {
-  throw new Error('usage: pilot.ts mailbox|none <outDir>');
+  throw new Error('usage: pilot.ts mailbox|none <outDir> [independent]');
 }
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -130,7 +133,10 @@ const LEAD_REPLY = [
         {
           id: 'export',
           result:
-            'Add src/export.js with ordersCsv(orders): the CSV the accounting team imports, with the header id,month,amount_ore, one row per order, and a last row TOTAL,,<the sum of amount_ore>. Add a test in test/export.test.js.',
+            'Add src/export.js with ordersCsv(orders): the CSV the accounting team imports, with the header id,month,amount_ore, one row per order, and a last row TOTAL,,<the sum of amount_ore>. Add a test in test/export.test.js.' +
+            (independent
+              ? ' Also add customersCsv(customers) to src/export.js: the header id,name and one row per customer of data/customers.json, sorted by id, with a test in test/export.test.js.'
+              : ''),
           ownedPaths: ['src/export.js', 'test/export.test.js'],
           allowedActions: ['edit', 'run tests'],
           contractRefs: ['README.md: amounts are in öre', 'src/orders.js: loadOrders() returns the stored order records'],
