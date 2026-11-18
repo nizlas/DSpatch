@@ -64,6 +64,7 @@ import {
   REQUIRED_HELP,
   REQUIREMENT_HELP,
   SELECTS_MODEL_HELP,
+  VISIT_CHOICES_HELP,
   SKIPS_HELP,
   SUGGEST_INTERACTIVE_HELP,
   kindEffect,
@@ -473,6 +474,7 @@ function buildingBlocks(): string {
     ['required', REQUIRED_HELP],
     ['edge skips', SKIPS_HELP],
     ['edge selectsModel', SELECTS_MODEL_HELP],
+    ['choices, decides, edge sets and whenChosen, model chosenBy', VISIT_CHOICES_HELP],
   ].map(([field, help]) => {
     const setting = help as { readonly name: string; readonly detail: string };
     return `- ${String(field)} (${setting.name}): ${setting.detail}`;

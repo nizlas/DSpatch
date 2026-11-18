@@ -99,6 +99,7 @@ import type {
   StepProduct,
 } from '../shared/loop-run';
 import { CONTINUED_IN_LOOP_LINE } from '../shared/loop-run';
+import { choiceValuesOf, describeVisitChoices, statedChoicesFrom } from '../shared/loop-choices';
 import type { MailboxPort } from '../shared/run-mailbox';
 import {
   DEFAULT_GATE_COMMAND_TIMEOUT_MS,
@@ -1725,7 +1726,9 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       context.arrivedBy === null
         ? null
         : (context.graph.edges.find((candidate) => candidate.id === context.arrivedBy?.edgeId) ?? null);
-    return stepModelChoice(context.node, edge, options.modelClasses).model ?? options.personModel ?? options.modelRequested;
+    // DSP-224: and by the visit's choices, for a policy `chosenBy` one.
+    const values = choiceValuesOf(context.graph, context.choices ?? {});
+    return stepModelChoice(context.node, edge, options.modelClasses, values).model ?? options.personModel ?? options.modelRequested;
   };
   /**
    * Which code each gate visit's command ran against, keyed `node#visit` (DSP-139).
@@ -2705,6 +2708,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
           runChange: changeText !== '',
         },
       }) +
+      // DSP-224: the visit's choices, as task parameters, and the lines to decide any it decides.
+      describeVisitChoices(context.graph, node, context.choices ?? {}) +
       receivedText +
       evidenceText +
       changeText +
@@ -3038,7 +3043,10 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     // DSP-209 S5a: read after the turn has settled, so a tool call still in flight when the
     // reply text arrived has been accounted for. From the tool, never from the reply.
     const handoffReason = offersHandoff(node) ? handoff.requested : null;
+    // DSP-224: the step's `CHOICE:` lines, for the choices its node decides; the runner checks them.
+    const stated = (node.decides ?? []).length === 0 ? {} : statedChoicesFrom(turn.assistantText(), node.decides ?? []);
     return remember(context, {
+      ...(Object.keys(stated).length === 0 ? {} : { choices: stated }),
       product,
       ...(resultBody === undefined ? {} : { resultBody }),
       ...(reason === null ? {} : { reason }),

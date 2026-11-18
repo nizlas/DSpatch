@@ -104,7 +104,7 @@ import {
   summariseEditorRun,
 } from '../shared/loop-editor-run';
 import type { EditorRunSummary } from '../shared/loop-editor-run';
-import { formatJournalEntry, latestModelSelection, modelSelectionFromData, nodeModelLine, type RunJournalEntry, type RunResult } from '../shared/loop-run';
+import { formatJournalEntry, latestModelSelection, modelSelectionFromData, nodeModelMark, type NodeModelMark, type RunJournalEntry, type RunResult } from '../shared/loop-run';
 import type { ModelSelectionRecord } from '../shared/run-presentation';
 import { LoopControlBar, useLoopControl } from './LoopControlBar';
 import { announceLoopStopRequested } from './loop-stop-signal';
@@ -3302,6 +3302,7 @@ export function LoopEditor(): React.JSX.Element {
               resourceRoot={file?.projectRoot ?? null}
               runProvider={runAgent?.provider ?? null}
               liveModel={watch === null ? null : latestModelSelection(watch.entries, selectedNode.id)}
+              liveMark={watch === null ? null : nodeModelMark(selectedNode, watch.entries)}
               onOpenModelClasses={() => setModelClassesOpen(true)}
               onNote={setNote}
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
@@ -3744,6 +3745,7 @@ function NodeInspector({
   resourceRoot,
   runProvider,
   liveModel,
+  liveMark,
   onOpenModelClasses,
   onNote,
   onChange,
@@ -3753,6 +3755,8 @@ function NodeInspector({
   readonly node: LoopNode;
   /** DSP-209 S19: the model the watched run's latest visit to this step runs with, or `null`. */
   readonly liveModel: ModelSelectionRecord | null;
+  /** DSP-224: the same visit's class, visit number and resolution, as the canvas badge's hover says it. */
+  readonly liveMark?: NodeModelMark | null;
   /** DSP-223: opens the model class setting. */
   readonly onOpenModelClasses: () => void;
   readonly role: ResolvedRole | null;
@@ -4192,6 +4196,19 @@ function NodeInspector({
           </fieldset>
         )}
 
+        {(node.decides ?? []).length === 0 ? null : (
+          // DSP-224: the visit choices this step states on CHOICE lines, as the file declares them.
+          <p className="muted" data-ev="node-decides">
+            Each visit, this step also decides{' '}
+            {(node.decides ?? [])
+              .map((id) => {
+                const choice = (graph.choices ?? []).find((candidate) => candidate.id === id);
+                return `${choice?.label ?? id} (${(choice?.options ?? []).map((option) => option.id).join(', ')}; default ${choice?.default ?? '?'})`;
+              })
+              .join(' and ')}
+            , independently of its result. Edited in the graph file.
+          </p>
+        )}
         <fieldset>
           <legend>
             Which model runs it{' '}
@@ -4216,6 +4233,11 @@ function NodeInspector({
               {liveModel.option === null ? '' : ` (option “${liveModel.option}”${liveModel.modelClass === undefined ? '' : `, class ${liveModel.modelClass}`})`} on {liveModel.provider} —{' '}
               {liveModel.source === 'policy' ? 'chosen by the policy' : liveModel.source === 'fixed' ? 'fixed by the step' : 'the run’s model'}
               , because: {liveModel.reason}
+            </p>
+          ) : null}
+          {liveMark?.badge !== null && liveMark?.badge !== undefined ? (
+            <p className="muted" data-ev="node-model-live-visit">
+              {liveMark.detail}
             </p>
           ) : null}
           <label>
@@ -4330,9 +4352,17 @@ function NodeInspector({
               <p className="muted" data-ev="node-model-select-edges">
                 {(() => {
                   const choosing = graph.edges.filter((edge) => edge.to === node.id && edge.selectsModel !== undefined);
+                  // DSP-224: a policy chosen by a visit choice says which, and who decides it.
+                  const choice = model.chosenBy === undefined ? undefined : (graph.choices ?? []).find((candidate) => candidate.id === model.chosenBy);
+                  const deciders = graph.nodes.filter((candidate) => (candidate.decides ?? []).includes(model.chosenBy ?? '')).map((candidate) => candidate.label ?? candidate.id);
+                  const byChoice =
+                    model.chosenBy === undefined
+                      ? ''
+                      : `Each visit takes the option named by its choice “${choice?.label ?? model.chosenBy}”` +
+                        `${deciders.length === 0 ? '' : `, decided by ${deciders.join(', ')}`}, or set by a connection on the way. A value no option has runs the default. `;
                   return choosing.length === 0
-                    ? 'No connection into this step chooses an option, so every visit runs the default.'
-                    : `Chosen by: ${choosing.map((edge) => `${edge.id} → ${edge.selectsModel ?? ''}`).join('; ')}. Any other arrival runs the default.`;
+                    ? `${byChoice}${byChoice === '' ? 'No connection into this step chooses an option, so every visit runs the default.' : ''}`
+                    : `${byChoice}Chosen by: ${choosing.map((edge) => `${edge.id} → ${edge.selectsModel ?? ''}`).join('; ')}. Any other arrival runs the default.`;
                 })()}
               </p>
               {(model.options ?? []).some((option) => option.modelClass !== undefined) ? (
@@ -4812,6 +4842,19 @@ function EdgeInspector({
           : `Skips ${edge.skips.map((id) => nodeById(graph, id)?.label ?? id).join(', ')}. ${SKIPS_HELP.detail}`}
       </p>
 
+      {edge.whenChosen === undefined && edge.sets === undefined ? null : (
+        // DSP-224: the visit choices this connection is taken on and sets, as the file states them.
+        <p className="muted" data-ev="edge-choices">
+          {edge.whenChosen === undefined
+            ? ''
+            : `Taken only when ${Object.entries(edge.whenChosen).map(([id, value]) => `${id} is ${value}`).join(' and ')}. `}
+          {edge.sets === undefined
+            ? ''
+            : `Sets ${Object.entries(edge.sets).map(([id, value]) => `${id} to ${value}`).join(' and ')} for the visit it leads to and the work after it. `}
+          Edited in the graph file.
+        </p>
+      )}
+
       {(() => {
         // DSP-209 S19: offered only where the target chooses its model from a list.
         const target = nodeById(graph, edge.to);
@@ -5105,10 +5148,10 @@ function TargetChangeDialog({
 }
 
 /** DSP-222: the canvas's model line for every step whose model is chosen per visit. */
-function modelLinesOf(graph: LoopGraph | null, entries: readonly RunJournalEntry[] | null): ReadonlyMap<string, string> {
-  const lines = new Map<string, string>();
+function modelLinesOf(graph: LoopGraph | null, entries: readonly RunJournalEntry[] | null): ReadonlyMap<string, NodeModelMark> {
+  const lines = new Map<string, NodeModelMark>();
   for (const node of graph?.nodes ?? []) {
-    const line = nodeModelLine(node, entries);
+    const line = nodeModelMark(node, entries);
     if (line !== null) {
       lines.set(node.id, line);
     }

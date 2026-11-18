@@ -1634,3 +1634,23 @@
   border-left: 3px solid #d9b25f;
   padding-left: 8px;
 }
+
+/* DSP-224: the model class the latest visit runs with, as a tag on the node's top edge. Word
+   and border carry it; the fill is the canvas's own dark, so colour is never the only cue. */
+.node-class-badge rect {
+  fill: #1d2833;
+  stroke: #7fa8c4;
+  stroke-width: 1;
+}
+
+.node-class-badge text {
+  fill: #e6edf3;
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+/* DSP-224: zoomed out, the letter is drawn larger so it stays readable at the smaller scale. */
+.node-class-badge--compact text {
+  font-size: 14px;
+}

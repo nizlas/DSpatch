@@ -167,6 +167,10 @@ export interface ModelSelectionRecord {
   readonly option: string | null;
   /** DSP-222: the option's model class, when it named one. */
   readonly modelClass?: string;
+  /** DSP-224: the class had no model of its own for the provider (Use chat model), so the chat's model ran. */
+  readonly classUsesChatModel?: boolean;
+  /** DSP-224: the visit choice that picked the option, when the policy is `chosenBy` one. */
+  readonly chosenBy?: string;
   readonly reason: string;
   /** Who chose: the drawing's fixed model, the policy, or the person. */
   readonly source: 'fixed' | 'policy' | 'person';

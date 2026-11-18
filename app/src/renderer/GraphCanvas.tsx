@@ -27,6 +27,10 @@ import {
 import { edgeLabelText, LABEL_LINE_HEIGHT } from '../shared/loop-edge-labels';
 import { routeExtent, routeLoopEdges, sidePathEdges, type EdgeRoute } from '../shared/loop-edge-routing';
 import { NODE_RUN_STATE_MARKS, endingMarkFor, nodeRunStateFor, type EndingMark, type FinishedRunMarks, type NodeRunState } from '../shared/loop-run-view';
+import type { NodeModelMark } from '../shared/loop-run';
+
+/** DSP-224: below this zoom a node's class badge shows the class's letter rather than its name. */
+const MODEL_BADGE_FULL_ZOOM = 0.75;
 
 export type GraphSelection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
 
@@ -74,8 +78,8 @@ export interface GraphCanvasProps {
   readonly branchSummaries?: ReadonlyMap<string, string>;
   /** DSP-209 S20: the node's branch line was pressed; open its Branches list. */
   readonly onOpenBranches?: (nodeId: string) => void;
-  /** DSP-222: a step's model line, by node id: its per-visit choice, or the model a run chose. */
-  readonly modelSummaries?: ReadonlyMap<string, string>;
+  /** DSP-222, DSP-224: a step's model mark, by node id: its per-visit choice, or the class and model a run's visit chose. */
+  readonly modelSummaries?: ReadonlyMap<string, NodeModelMark>;
   /**
    * The roles map may lack a reference the drawing makes (Niclas, 15 November 2026: a run's
    * own drawing, whose roles the window never resolved). A missing entry then reads as not
@@ -182,7 +186,8 @@ export function GraphCanvas(props: GraphCanvasProps): React.JSX.Element {
           severity={props.severityOfNode?.(node.id) ?? null}
           helpTitle={props.helpTitleOf?.(node, node.role ? (props.roles.get(roleKey(node.role)) ?? null) : null)}
           branches={props.branchSummaries?.get(node.id) ?? null}
-          modelLine={props.modelSummaries?.get(node.id) ?? null}
+          modelMark={props.modelSummaries?.get(node.id) ?? null}
+          compact={props.zoom < MODEL_BADGE_FULL_ZOOM}
           {...(props.onOpenBranches === undefined ? {} : { onOpenBranches: () => props.onOpenBranches?.(node.id) })}
           roleUnknown={props.rolesMayBeUnknown === true && node.role !== undefined && !props.roles.has(roleKey(node.role))}
           onMouseDown={(event) => props.onNodeMouseDown(event, node)}
@@ -294,7 +299,8 @@ function NodeShape({
   severity,
   helpTitle,
   branches,
-  modelLine,
+  modelMark,
+  compact,
   onOpenBranches,
   roleUnknown,
   onMouseDown,
@@ -318,8 +324,10 @@ function NodeShape({
   readonly severity: Finding['severity'] | null;
   readonly helpTitle?: string;
   readonly branches: string | null;
-  /** DSP-222: the third line of a step whose model is chosen per visit. */
-  readonly modelLine?: string | null;
+  /** DSP-222, DSP-224: the third line and class badge of a step whose model is chosen per visit. */
+  readonly modelMark?: NodeModelMark | null;
+  /** DSP-224: the drawing is zoomed out far enough that the badge shows the class's letter. */
+  readonly compact?: boolean;
   /** DSP-209 S20: opens the node's Branches list; the branch line is its control. */
   readonly onOpenBranches?: () => void;
   /** The role was never resolved here, so it is neither shown as resolved nor as broken. */
@@ -482,16 +490,36 @@ function NodeShape({
         Branches list, where every branch's task, state, model and messages are written out.
         A long line is fitted to the node rather than cut off.
       */}
-      {modelLine === null || modelLine === undefined || node.fanOut !== undefined ? null : (
+      {modelMark === null || modelMark === undefined || node.fanOut !== undefined ? null : (
         <text
           x={NODE_WIDTH / 2}
           y={53}
           className="node-model"
           data-ev="node-model-line"
-          {...(modelLine.length > 30 ? { textLength: NODE_WIDTH - 12, lengthAdjust: 'spacingAndGlyphs' } : {})}
+          {...(modelMark.line.length > 30 ? { textLength: NODE_WIDTH - 12, lengthAdjust: 'spacingAndGlyphs' } : {})}
         >
-          {modelLine}
+          <title>{modelMark.detail}</title>
+          {modelMark.line}
         </text>
+      )}
+      {/*
+        DSP-224: the class the latest visit runs with, as a tag on the node's top edge: the word,
+        or its letter when the drawing is zoomed out. A word and a border, never colour alone;
+        its hover says the model, the visit and why.
+      */}
+      {modelMark?.badge === null || modelMark?.badge === undefined || node.fanOut !== undefined ? null : (
+        <g
+          className={`node-class-badge${compact === true ? ' node-class-badge--compact' : ''}`}
+          data-ev="node-class-badge"
+          data-class={modelMark.badge.full}
+          transform={`translate(${String(NODE_WIDTH - (compact === true ? 26 : 54) - 6)} ${compact === true ? -10 : -8})`}
+        >
+          <title>{modelMark.detail}</title>
+          <rect width={compact === true ? 26 : 54} height={compact === true ? 20 : 16} rx={compact === true ? 10 : 8} />
+          <text x={(compact === true ? 26 : 54) / 2} y={compact === true ? 15 : 12}>
+            {compact === true ? modelMark.badge.short : modelMark.badge.full}
+          </text>
+        </g>
       )}
       {branches === null || node.fanOut === undefined ? null : (
         <text

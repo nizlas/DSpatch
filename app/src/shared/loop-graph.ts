@@ -414,6 +414,12 @@ export interface ModelPolicy {
   readonly options?: readonly ModelOption[];
   /** DSP-209 S19: required when `policy` is `select`. The option id taken when the arrival names none. */
   readonly default?: string;
+  /**
+   * DSP-224: a `select` policy may take its option from the visit's value of this choice
+   * ({@link VisitChoiceDef}): the option whose id is that value. An arriving edge's
+   * `selectsModel` still decides first; a value no option has falls to the default.
+   */
+  readonly chosenBy?: string;
 }
 
 /**
@@ -463,8 +469,16 @@ export interface StepModelChoice {
   readonly policy: ModelPolicy['policy'] | null;
   /** The `select` option taken, or `null`. */
   readonly option: string | null;
-  /** `edge`: the arrival's `selectsModel`; `default`: the policy's default; `null` otherwise. */
-  readonly by: 'edge' | 'default' | null;
+  /**
+   * `edge`: the arrival's `selectsModel`; `choice` (DSP-224): the visit's value of the policy's
+   * `chosenBy`; `default`: the policy's default; `null` otherwise.
+   */
+  readonly by: 'edge' | 'choice' | 'default' | null;
+  /**
+   * DSP-224: the visit's value of the policy's `chosenBy` choice, whether or not an option took
+   * it; `null` when the policy names no choice.
+   */
+  readonly choice: { readonly id: string; readonly value: string } | null;
 }
 
 /**
@@ -478,9 +492,10 @@ export function stepModelChoice(
   node: Pick<LoopNode, 'model'>,
   arrival: Pick<LoopEdge, 'selectsModel'> | null,
   classes: ModelClassMap = {},
+  choices: ChoiceValues = {},
 ): StepModelChoice {
   const policy = node.model;
-  const plain = { modelClass: null, classUnmapped: false } as const;
+  const plain = { modelClass: null, classUnmapped: false, choice: null } as const;
   if (policy === undefined) {
     return { model: null, policy: null, option: null, by: null, ...plain };
   }
@@ -491,19 +506,43 @@ export function stepModelChoice(
     const options = policy.options ?? [];
     const named = arrival?.selectsModel;
     const byEdge = named === undefined ? undefined : options.find((option) => option.id === named);
-    const taken = byEdge ?? options.find((option) => option.id === policy.default) ?? options[0];
+    // DSP-224: the visit's own choice, after an edge that names an option and before the default.
+    const chosenValue = policy.chosenBy === undefined ? undefined : choices[policy.chosenBy];
+    const choice = policy.chosenBy === undefined || chosenValue === undefined ? null : { id: policy.chosenBy, value: chosenValue };
+    const byChoice = byEdge === undefined && choice !== null ? options.find((option) => option.id === choice.value) : undefined;
+    const taken = byEdge ?? byChoice ?? options.find((option) => option.id === policy.default) ?? options[0];
     if (taken !== undefined) {
-      const by = byEdge !== undefined ? 'edge' : 'default';
+      const by = byEdge !== undefined ? 'edge' : byChoice !== undefined ? 'choice' : 'default';
       if (taken.modelClass !== undefined) {
         const mapped = classes[taken.modelClass];
         const known = mapped !== undefined && mapped !== '';
-        return { model: known ? mapped : null, policy: 'select', option: taken.id, by, modelClass: taken.modelClass, classUnmapped: !known };
+        return { model: known ? mapped : null, policy: 'select', option: taken.id, by, modelClass: taken.modelClass, classUnmapped: !known, choice };
       }
-      return { model: taken.model ?? null, policy: 'select', option: taken.id, by, ...plain };
+      return { model: taken.model ?? null, policy: 'select', option: taken.id, by, modelClass: null, classUnmapped: false, choice };
     }
   }
   return { model: null, policy: policy.policy, option: null, by: null, ...plain };
 }
+
+/**
+ * DSP-224: a choice the run makes per visit, independently of the others — which model class
+ * the work needs, which review route it takes. Declared once per graph, like `failureKinds`;
+ * a node that `decides` it states a value each visit, an edge may `sets` it, an edge may be
+ * taken only `whenChosen`, and a `select` model policy may be `chosenBy` it. The value travels
+ * with the work from visit to visit until a step or an edge changes it.
+ */
+export interface VisitChoiceDef {
+  readonly id: string;
+  readonly label: string;
+  /** What the choice decides, for the step that makes it and the person reading the drawing. */
+  readonly meaning: string;
+  readonly options: readonly { readonly id: string; readonly meaning: string }[];
+  /** Taken when a deciding step states no valid value, and before anything has decided. */
+  readonly default: string;
+}
+
+/** DSP-224: a visit's value per choice id, as routing and model selection read it. */
+export type ChoiceValues = Readonly<Record<string, string>>;
 
 /**
  * DSP-222: the per-provider class mapping as configured (`modelClasses` in DSpatch's model
@@ -796,6 +835,12 @@ export interface LoopNode {
    */
   readonly declares?: readonly NodeDeclaration[];
   /**
+   * DSP-224: the graph's choices ({@link LoopGraph.choices}) this step states a value for on
+   * each visit, on `CHOICE:` lines. A value it does not state, or one the choice does not
+   * offer, is the choice's default, and the journal says so.
+   */
+  readonly decides?: readonly string[];
+  /**
    * DSP-209 S10a: this agent step's work is split over parallel branch instances, one per
    * slice in the slice block `slicesFrom`'s result holds. Format and validation only in this
    * build: a run that reaches such a node refuses it, and S10b runs it. See GRAPH_FORMAT.md,
@@ -963,6 +1008,17 @@ export interface LoopEdge {
    * line (decision 3). Validation refuses it on an edge whose target has no such option.
    */
   readonly selectsModel?: string;
+  /**
+   * DSP-224: choice values this arrival sets for the visit it leads to and the work after it,
+   * by choice id. Validation refuses an unknown choice or option.
+   */
+  readonly sets?: Readonly<Record<string, string>>;
+  /**
+   * DSP-224: the edge is taken only when the visit's choices have these values. Edges sharing a
+   * condition are told apart by it; a step is not offered an outcome whose edges all exclude
+   * its visit by a choice it does not decide itself.
+   */
+  readonly whenChosen?: Readonly<Record<string, string>>;
   /** What the figure writes on the arrow. Falls back to the condition. */
   readonly label?: string;
   readonly notes?: string;
@@ -1016,6 +1072,8 @@ export interface LoopGraph {
   readonly entry: string;
   readonly onRuntimeFault: RuntimeFaultPolicy;
   readonly failureKinds: readonly FailureKind[];
+  /** DSP-224: the choices made per visit. Absent is none, as in every graph before it. */
+  readonly choices?: readonly VisitChoiceDef[];
   /** Bounds on the whole run. */
   readonly limits?: StepLimits;
   readonly archive?: ArchivePolicy;

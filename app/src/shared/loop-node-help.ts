@@ -81,6 +81,24 @@ export const SELECTS_MODEL_HELP: SettingHelp = {
   whenEmpty: 'The step it leads to runs its own default option, or its own model.',
 };
 
+/**
+ * DSP-224: the graph's per-visit choices and the four places they are used, as the authoring
+ * building blocks explain them.
+ */
+export const VISIT_CHOICES_HELP: SettingHelp = {
+  name: 'Choices made per visit',
+  detail:
+    'The graph declares "choices", each with an id, a meaning, options and a default, such as a ' +
+    'model class and a review route. A node that "decides" a choice states it each visit on a ' +
+    'whole line CHOICE: <choice> <option> <reason>, independently of its outcome; an invalid or ' +
+    'missing line takes the default, and the journal says so. An edge "sets" a choice for the ' +
+    'visit it leads to, and may be taken only "whenChosen" by a value, which is how one node is ' +
+    'followed by different continuations. A "select" model policy "chosenBy" a choice takes the ' +
+    'option whose id is the value. Values travel with the work through revisits until a step or ' +
+    'an edge changes them. A step is not offered an outcome whose edges all exclude its visit.',
+  whenEmpty: 'The graph declares no choices; edges route on outcomes alone.',
+};
+
 /** DSP-209 S3: a node's `required`, as the node panel explains it. */
 export const REQUIRED_HELP: SettingHelp = {
   name: 'Required — never skipped',

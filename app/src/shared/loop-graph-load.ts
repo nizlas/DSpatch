@@ -72,6 +72,7 @@ import type {
   RunProviderCapabilities,
   StepLimits,
   TerminalEnding,
+  VisitChoiceDef,
 } from './loop-graph';
 
 export type FindingSeverity = 'error' | 'warning' | 'notice';
@@ -313,6 +314,8 @@ export function parseLoopGraph(text: string): ParseResult {
   }
 
   const failureKinds = parseFailureKinds(parsed['failureKinds'], findings);
+  // DSP-224: the choices made per visit; absent is none.
+  const choices = parseChoices(parsed['choices'], findings);
   const limits = parseLimits(parsed['limits'], '/limits', findings);
   const archive = parseArchive(parsed['archive'], findings);
   const nodes = parseNodes(parsed['nodes'], findings);
@@ -342,6 +345,7 @@ export function parseLoopGraph(text: string): ParseResult {
     entry: entry as string,
     onRuntimeFault: 'stop-and-reconcile',
     failureKinds,
+    ...(choices === null ? {} : { choices }),
     ...(limits ? { limits } : {}),
     ...(archive ? { archive } : {}),
     nodes,
@@ -419,6 +423,92 @@ function parseFailureKinds(value: unknown, findings: Findings): readonly Failure
     kinds.push({ id: kindId, label, meaning });
   });
   return kinds;
+}
+
+/**
+ * DSP-224: the graph's per-visit choices. `null` when the field is absent, so every graph
+ * before it parses as it did. Each needs an id, a meaning, options with meanings, unique ids,
+ * and a default among them.
+ */
+function parseChoices(value: unknown, findings: Findings): readonly VisitChoiceDef[] | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    findings.error('bad-choices', '/choices', '"choices" must be a list.');
+    return null;
+  }
+  const choices: VisitChoiceDef[] = [];
+  value.forEach((entry, index) => {
+    const pointer = `/choices/${String(index)}`;
+    const id = isRecord(entry) ? nonEmptyString(entry['id']) : null;
+    const meaning = isRecord(entry) ? nonEmptyString(entry['meaning']) : null;
+    const rawOptions = isRecord(entry) ? entry['options'] : undefined;
+    if (id === null || /\s/.test(id) || meaning === null || !Array.isArray(rawOptions) || rawOptions.length < 2) {
+      findings.error(
+        'bad-choice',
+        pointer,
+        'Each choice needs an "id" without spaces, a "meaning", and at least two "options", each ' +
+          '{"id":"...","meaning":"..."}.',
+      );
+      return;
+    }
+    if (choices.some((choice) => choice.id === id)) {
+      findings.error('duplicate-choice', `${pointer}/id`, `Choice "${id}" is declared more than once.`);
+      return;
+    }
+    const options: { id: string; meaning: string }[] = [];
+    for (const option of rawOptions) {
+      const optionId = isRecord(option) ? nonEmptyString(option['id']) : null;
+      const optionMeaning = isRecord(option) ? nonEmptyString(option['meaning']) : null;
+      if (optionId === null || /\s/.test(optionId) || optionMeaning === null || options.some((known) => known.id === optionId)) {
+        findings.error(
+          'bad-choice-option',
+          `${pointer}/options`,
+          `Choice "${id}": each option needs a unique "id" without spaces and a "meaning".`,
+        );
+        return;
+      }
+      options.push({ id: optionId, meaning: optionMeaning });
+    }
+    const fallback = isRecord(entry) ? nonEmptyString(entry['default']) : null;
+    if (fallback === null || !options.some((option) => option.id === fallback)) {
+      findings.error(
+        'choice-bad-default',
+        `${pointer}/default`,
+        `Choice "${id}" needs a "default" among its options (${quoteList(options.map((option) => option.id))}): ` +
+          'it is the value before anything decides, and when a deciding step states none.',
+      );
+      return;
+    }
+    const label = (isRecord(entry) ? nonEmptyString(entry['label']) : null) ?? id;
+    choices.push({ id, label, meaning, options, default: fallback });
+  });
+  return choices;
+}
+
+/** DSP-224: an edge's `sets` or `whenChosen`: choice id to option id, both non-empty. */
+function parseChoiceMap(
+  value: unknown,
+  pointer: string,
+  edgeId: string,
+  field: 'sets' | 'whenChosen',
+  findings: Findings,
+): Readonly<Record<string, string>> | null {
+  if (value === undefined) {
+    return null;
+  }
+  const entries = isRecord(value) ? Object.entries(value) : [];
+  if (!isRecord(value) || entries.length === 0 || entries.some(([, option]) => nonEmptyString(option) === null)) {
+    findings.error(
+      'bad-choice-map',
+      pointer,
+      `Edge "${edgeId}": "${field}" must map at least one choice id to one of its options, such as {"review":"thorough"}.`,
+      { edgeId },
+    );
+    return null;
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
 function parseLimits(value: unknown, pointer: string, findings: Findings): StepLimits | null {
@@ -594,6 +684,17 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
     const capabilities = parseCapabilities(entry['capabilities'], `${pointer}/capabilities`, nodeId, kind as NodeKind, findings);
     // DSP-209 S21. A list of known declaration names, on an agent node only.
     const declares = parseDeclares(entry['declares'], `${pointer}/declares`, nodeId, kind as NodeKind, findings);
+    // DSP-224. Names only here; checked against the graph's choices in `checkLoopGraph`.
+    const rawDecides = entry['decides'];
+    const decides =
+      rawDecides === undefined
+        ? null
+        : Array.isArray(rawDecides) && rawDecides.length > 0 && rawDecides.every((name) => nonEmptyString(name) !== null)
+          ? (rawDecides as string[])
+          : null;
+    if (rawDecides !== undefined && decides === null) {
+      findings.error('bad-decides', `${pointer}/decides`, `Node "${nodeId}": "decides" must be a non-empty list of choice ids.`, { nodeId });
+    }
     // DSP-209 S10a. The shape here; what it points at is checked with the whole graph.
     const fanOut = parseFanOut(entry['fanOut'], `${pointer}/fanOut`, nodeId, kind as NodeKind, findings);
 
@@ -605,6 +706,7 @@ function parseNodes(value: unknown, findings: Findings): readonly LoopNode[] {
       ...(required === true ? { required: true as const } : {}),
       ...(capabilities === null ? {} : { capabilities }),
       ...(declares === null ? {} : { declares }),
+      ...(decides === null ? {} : { decides }),
       ...(fanOut === null ? {} : { fanOut }),
       ...(ending ? { ending } : {}),
       ...(role ? { role } : {}),
@@ -893,7 +995,15 @@ function parseModelSelect(
     );
     return null;
   }
-  return ok ? { policy: 'select', options, default: fallback } : null;
+  // DSP-224: which visit choice picks the option; checked against the graph in `checkLoopGraph`.
+  const chosenBy = value['chosenBy'];
+  if (chosenBy !== undefined && nonEmptyString(chosenBy) === null) {
+    findings.error('bad-chosen-by', `${pointer}/chosenBy`, `Node "${nodeId}": "chosenBy" must name one of the graph's choices.`, { nodeId });
+    return null;
+  }
+  return ok
+    ? { policy: 'select', options, default: fallback, ...(chosenBy === undefined ? {} : { chosenBy: chosenBy as string }) }
+    : null;
 }
 
 function parseRequirements(
@@ -1154,6 +1264,9 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
         { edgeId },
       );
     }
+    // DSP-224. Shapes here; choices and options are checked with the whole graph.
+    const sets = parseChoiceMap(entry['sets'], `${pointer}/sets`, edgeId, 'sets', findings);
+    const whenChosen = parseChoiceMap(entry['whenChosen'], `${pointer}/whenChosen`, edgeId, 'whenChosen', findings);
     edges.push({
       id: edgeId,
       from,
@@ -1162,6 +1275,8 @@ function parseEdges(value: unknown, findings: Findings): readonly LoopEdge[] {
       ...(delivers === null ? {} : { delivers }),
       ...(skips === null ? {} : { skips }),
       ...(nonEmptyString(selectsModel) ? { selectsModel: selectsModel as string } : {}),
+      ...(sets === null ? {} : { sets }),
+      ...(whenChosen === null ? {} : { whenChosen }),
       ...(nonEmptyString(entry['label']) ? { label: entry['label'] as string } : {}),
       ...(nonEmptyString(entry['notes']) ? { notes: entry['notes'] as string } : {}),
     });
@@ -1582,9 +1697,109 @@ export function checkLoopGraph(graph: LoopGraph, options: CheckOptions = {}): re
       );
     }
   }
+  checkChoices(graph, pointerOf, edgePointerOf, findings);
   reportNotYetHonoured(graph, findings);
 
   return findings.all;
+}
+
+/** The condition an edge is taken on, as one key: edges sharing it compete for one product. */
+function conditionKey(edge: LoopEdge): string {
+  return edge.when.on === 'outcome'
+    ? `outcome "${edge.when.outcome}"`
+    : edge.when.on === 'declared-failure'
+      ? `failure "${edge.when.failure}"`
+      : 'success';
+}
+
+/**
+ * DSP-224: every use of a choice names a declared choice and option, and edges that share a
+ * condition are told apart by `whenChosen` without overlap or gap. An outcome guarded only by a
+ * choice its node does not decide may leave values uncovered: the step is not offered it then.
+ */
+function checkChoices(
+  graph: LoopGraph,
+  pointerOf: ReadonlyMap<string, string>,
+  edgePointerOf: ReadonlyMap<string, string>,
+  findings: Findings,
+): void {
+  const defs = new Map((graph.choices ?? []).map((choice) => [choice.id, choice] as const));
+  const known = quoteList([...defs.keys()]);
+  for (const node of graph.nodes) {
+    const pointer = pointerOf.get(node.id) ?? '/nodes';
+    for (const id of node.decides ?? []) {
+      if (!defs.has(id)) {
+        findings.error('decides-unknown-choice', `${pointer}/decides`, `Node "${node.id}" decides "${id}", which is not one of the graph's choices (${known || 'none'}).`, { nodeId: node.id });
+      }
+    }
+    const chosenBy = node.model?.policy === 'select' ? node.model.chosenBy : undefined;
+    if (chosenBy !== undefined && !defs.has(chosenBy)) {
+      findings.error('chosen-by-unknown-choice', `${pointer}/model/chosenBy`, `Node "${node.id}" takes its model by choice "${chosenBy}", which is not one of the graph's choices (${known || 'none'}).`, { nodeId: node.id });
+    }
+  }
+  for (const edge of graph.edges) {
+    const pointer = edgePointerOf.get(edge.id) ?? '/edges';
+    for (const field of ['sets', 'whenChosen'] as const) {
+      for (const [id, value] of Object.entries(edge[field] ?? {})) {
+        const choice = defs.get(id);
+        if (choice === undefined || !choice.options.some((option) => option.id === value)) {
+          findings.error(
+            'edge-names-unknown-choice',
+            `${pointer}/${field}`,
+            choice === undefined
+              ? `Edge "${edge.id}" names choice "${id}", which is not one of the graph's choices (${known || 'none'}).`
+              : `Edge "${edge.id}" names ${id} "${value}", which is not one of its options (${quoteList(choice.options.map((option) => option.id))}).`,
+            { edgeId: edge.id },
+          );
+        }
+      }
+    }
+  }
+  for (const node of graph.nodes) {
+    const groups = new Map<string, LoopEdge[]>();
+    for (const edge of graph.edges.filter((candidate) => candidate.from === node.id)) {
+      groups.set(conditionKey(edge), [...(groups.get(conditionKey(edge)) ?? []), edge]);
+    }
+    for (const [condition, edges] of groups) {
+      const guarded = edges.filter((edge) => edge.whenChosen !== undefined);
+      if (guarded.length === 0) {
+        continue;
+      }
+      const ids: Ids = { nodeId: node.id };
+      const pointer = pointerOf.get(node.id) ?? '/nodes';
+      const unguarded = edges.length - guarded.length;
+      const keys = new Set(guarded.flatMap((edge) => Object.keys(edge.whenChosen ?? {})));
+      const choiceId = [...keys][0] ?? '';
+      if (unguarded > 0 || keys.size !== 1 || guarded.some((edge) => Object.keys(edge.whenChosen ?? {}).length !== 1)) {
+        findings.error(
+          'choice-routes-ambiguous',
+          pointer,
+          `Node "${node.id}" has ${String(edges.length)} edges on ${condition} (${quoteList(edges.map((edge) => edge.id))}). ` +
+            'Edges sharing a condition must each be taken "whenChosen" by the same one choice, with nothing left unguarded.',
+          ids,
+        );
+        continue;
+      }
+      const values = guarded.map((edge) => edge.whenChosen?.[choiceId] ?? '');
+      const repeated = values.find((value, index) => values.indexOf(value) !== index);
+      if (repeated !== undefined) {
+        findings.error('choice-routes-ambiguous', pointer, `Node "${node.id}" has two edges on ${condition} taken when ${choiceId} is "${repeated}".`, ids);
+        continue;
+      }
+      const isOutcome = edges[0]?.when.on === 'outcome';
+      const withheldIsFine = isOutcome && !(node.decides ?? []).includes(choiceId) && !condition.endsWith(`"${node.whenUndeclared ?? ''}"`);
+      const missing = (defs.get(choiceId)?.options ?? []).filter((option) => !values.includes(option.id)).map((option) => option.id);
+      if (missing.length > 0 && !withheldIsFine) {
+        findings.error(
+          'choice-route-gap',
+          pointer,
+          `Node "${node.id}" routes ${condition} only when ${choiceId} is ${quoteList(values)}; when it is ` +
+            `${quoteList(missing)} the run would have nowhere to go. Add an edge for ${missing.length === 1 ? 'it' : 'them'}.`,
+          ids,
+        );
+      }
+    }
+  }
 }
 
 function checkNodeShape(
@@ -1689,7 +1904,8 @@ function checkNodeRouting(
       ids,
     );
   }
-  if (successEdges.length > 1) {
+  // DSP-224: success edges told apart by `whenChosen` are checked in `checkChoices`.
+  if (successEdges.filter((edge) => edge.whenChosen === undefined).length > 1) {
     findings.error(
       'two-success-edges',
       pointer,

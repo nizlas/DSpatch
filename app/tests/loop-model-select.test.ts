@@ -240,8 +240,8 @@ describe('the select policy in the drawing', () => {
 
   it('chooses by the arriving edge, else the default, and leaves inherit to the run', () => {
     const node = { model: SELECT };
-    assert.deepEqual(stepModelChoice(node, { selectsModel: 'small' }), { model: 'model-s', policy: 'select', option: 'small', by: 'edge', modelClass: null, classUnmapped: false });
-    assert.deepEqual(stepModelChoice(node, null), { model: 'model-l', policy: 'select', option: 'large', by: 'default', modelClass: null, classUnmapped: false });
+    assert.deepEqual(stepModelChoice(node, { selectsModel: 'small' }), { model: 'model-s', policy: 'select', option: 'small', by: 'edge', modelClass: null, classUnmapped: false, choice: null });
+    assert.deepEqual(stepModelChoice(node, null), { model: 'model-l', policy: 'select', option: 'large', by: 'default', modelClass: null, classUnmapped: false, choice: null });
     assert.deepEqual(stepModelChoice({ model: { policy: 'inherit' } }, { selectsModel: 'small' }), {
       model: null,
       policy: 'inherit',
@@ -249,13 +249,14 @@ describe('the select policy in the drawing', () => {
       by: null,
       modelClass: null,
       classUnmapped: false,
+      choice: null,
     });
   });
 
   it('DSP-222: resolves a model class through the provider\'s mapping, and an unmapped class to the run\'s model', () => {
     const node = { model: { policy: 'select' as const, options: [{ id: 'small', modelClass: 'small' as const }, { id: 'large', modelClass: 'large' as const }], default: 'large' } };
-    assert.deepEqual(stepModelChoice(node, { selectsModel: 'small' }, { small: 'mapped-small' }), { model: 'mapped-small', policy: 'select', option: 'small', by: 'edge', modelClass: 'small', classUnmapped: false });
-    assert.deepEqual(stepModelChoice(node, null, { small: 'mapped-small' }), { model: null, policy: 'select', option: 'large', by: 'default', modelClass: 'large', classUnmapped: true });
+    assert.deepEqual(stepModelChoice(node, { selectsModel: 'small' }, { small: 'mapped-small' }), { model: 'mapped-small', policy: 'select', option: 'small', by: 'edge', modelClass: 'small', classUnmapped: false, choice: null });
+    assert.deepEqual(stepModelChoice(node, null, { small: 'mapped-small' }), { model: null, policy: 'select', option: 'large', by: 'default', modelClass: 'large', classUnmapped: true, choice: null });
   });
 });
 

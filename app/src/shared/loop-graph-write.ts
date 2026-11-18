@@ -62,12 +62,16 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'limits',
     'archive',
     'failureKinds',
+    // DSP-224: the choices made per visit, beside the failures, before the nodes that use them.
+    'choices',
     'nodes',
     'edges',
   ],
   '/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/archive': ['path', 'entryPerNode', 'referenceReturned', 'notes'],
   '/failureKinds/*': ['id', 'label', 'meaning'],
+  '/choices/*': ['id', 'label', 'meaning', 'options', 'default'],
+  '/choices/*/options/*': ['id', 'meaning'],
   '/nodes/*': [
     'id',
     'kind',
@@ -91,6 +95,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'capabilities',
     // DSP-209 S21: what the step is asked to declare in its reply, beside what it may do.
     'declares',
+    // DSP-224: the choices the step states each visit.
+    'decides',
     // DSP-209 S10a: how the step's work is split, beside what else it may do.
     'fanOut',
     'report',
@@ -103,7 +109,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/nodes/*/role/source': ['kind', 'path'],
   // DSP-209 S19: a `select` policy's options and default follow the older fields, so a graph
   // without them is written exactly as before.
-  '/nodes/*/model': ['policy', 'model', 'description', 'options', 'default'],
+  '/nodes/*/model': ['policy', 'model', 'description', 'options', 'default', 'chosenBy'],
   '/nodes/*/model/options/*': ['id', 'model', 'modelClass', 'note'],
   '/nodes/*/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/nodes/*/report': ['writtenBy', 'path'],
@@ -114,7 +120,8 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   // when it is taken, and what travels along it.
   // `skips` follows them: what taking the edge passes by (DSP-209 S3).
   // `selectsModel` after them: which model the visit it leads to runs (DSP-209 S19).
-  '/edges/*': ['id', 'from', 'to', 'when', 'delivers', 'skips', 'selectsModel', 'label', 'notes'],
+  // `sets` and `whenChosen` (DSP-224) beside it: the choices the arrival carries, and when it is taken.
+  '/edges/*': ['id', 'from', 'to', 'when', 'whenChosen', 'delivers', 'skips', 'selectsModel', 'sets', 'label', 'notes'],
   '/edges/*/when': ['on', 'outcome', 'failure'],
 };
 
@@ -147,6 +154,7 @@ const INLINE_PATHS: ReadonlySet<string> = new Set([
   // false, and the next one after that would look for the bug here.
   '/edges/*',
   '/edges/*/when',
+  '/choices/*/options/*',
 ]);
 
 function canonicalPath(path: readonly (string | number)[]): string {

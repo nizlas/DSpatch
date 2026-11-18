@@ -13,7 +13,8 @@ import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import { nodeSize } from '../src/shared/loop-edge-geometry';
 import { routeLoopEdges, routingBox, segmentCrossesBox } from '../src/shared/loop-edge-routing';
 import { createMemoryResultStore } from '../src/shared/loop-results';
-import { modelSelectionData, modelSelectionFromData, runLoopGraph, type StepContext, type StepExecution } from '../src/shared/loop-run';
+import { modelSelectionData, modelSelectionFromData, nodeModelMark, runLoopGraph, type RunJournalEntry, type RunModel, type StepContext, type StepExecution } from '../src/shared/loop-run';
+import { statedChoicesFrom } from '../src/shared/loop-choices';
 import { prepareBundled } from '../scripts/prepare-bundled.mjs';
 import { readModelChoiceFile, writeModelChoiceFile, writeModelClass } from '../src/main/model-choice-file';
 import { sharedClassModels } from '../src/shared/loop-graph';
@@ -51,9 +52,9 @@ test('generic network loads, resolves its roles and retains its result and routi
   assert.equal(choice.preselected, false);
   const graph = load(root);
   const agents = graph.nodes.filter((node) => node.kind === 'agent');
-  assert.equal(agents.length, 34);
-  assert.equal(graph.edges.length, 130);
-  assert.equal(new Set(agents.map((node) => node.role?.id)).size, 19);
+  assert.equal(agents.length, 30);
+  assert.equal(graph.edges.length, 111);
+  assert.equal(new Set(agents.map((node) => node.role?.id)).size, 15);
   assert.ok(agents.every((node) => node.produces?.required && node.produces.form === 'stored-result'));
   assert.ok(graph.nodes.some((node) => node.kind === 'terminal' && node.ending === 'report-delivered'));
   assert.ok(graph.edges.every((edge) => edge.delivers?.includes('executive-intake')));
@@ -129,7 +130,7 @@ test('client bundling carries the definition, graph and every role', (context) =
   prepareBundled(app);
   const bundled = path.join(app, 'build/bundled');
   const graph = load(bundled);
-  assert.equal(graph.nodes.filter((node) => node.kind === 'agent').length, 34);
+  assert.equal(graph.nodes.filter((node) => node.kind === 'agent').length, 30);
   for (const file of [definitionPath, graphPath, ...fs.readdirSync(path.join(root, roleDirectory)).map((name) => `${roleDirectory}/${name}`)]) {
     assert.deepEqual(fs.readFileSync(path.join(bundled, file)), fs.readFileSync(path.join(root, file)), file);
   }
@@ -138,14 +139,12 @@ test('client bundling carries the definition, graph and every role', (context) =
 const defaultOutcomes: Record<string, string> = {
   'executive-intake': 'select-slice',
   'tl-select': 'slice-selected',
-  'reviewer-s-plan-gate': 'accept',
-  'tl-dispatch': 'implementer-s',
+  'reviewer-plan-gate': 'accept',
+  'tl-dispatch': 'implementer',
   infra: 'done',
   qa: 'pass',
   'qa-design': 'pass',
-  'reviewer-s': 'accept',
-  'reviewer-l': 'accept',
-  'skeptic-s': 'pass',
+  reviewer: 'accept',
   skeptic: 'pass',
   'tl-accept': 'accept',
   'executive-continue': 'wrap-up',
@@ -158,9 +157,13 @@ async function scriptedRun(options: {
   maxCalls?: number;
   maxReworkRounds?: number;
   routeLimit?: boolean;
+  /** DSP-224: what a step states on its CHOICE lines, by node or node#visit. */
+  choices?: Record<string, Record<string, string>>;
+  runModel?: RunModel;
 } = {}) {
   const graph = load(root);
   const seen: StepContext[] = [];
+  const entries: RunJournalEntry[] = [];
   const store = createMemoryResultStore((text) => createHash('sha256').update(text).digest('hex'));
   const result = await runLoopGraph({
     ...graph,
@@ -174,11 +177,14 @@ async function scriptedRun(options: {
     dryRun: false,
     maxTransitions: 100,
     ...(options.routeLimit ? { routeLimitAs: 'limit-reached' } : {}),
+    ...(options.runModel === undefined ? {} : { runModel: options.runModel }),
+    onJournalEntry: (entry) => entries.push(entry),
     resultStore: store,
     executor: async (context): Promise<StepExecution> => {
       seen.push(context);
       const node = context.node.id;
       const key = `${node}#${context.occurrence}`;
+      const stated = options.choices?.[key] ?? options.choices?.[node];
       const failure = options.failures?.[key] ?? options.failures?.[node];
       const outcome = options.outcomes?.[key] ?? options.outcomes?.[node] ?? defaultOutcomes[node];
       const product: StepExecution['product'] = failure !== undefined
@@ -188,6 +194,7 @@ async function scriptedRun(options: {
           : { kind: 'success' };
       const received = [...new Set(context.received.flatMap((item) => item.body.split('\n')).filter((line) => /^[a-z-]+#\d+ evidence$/.test(line) || Object.values(options.bodies ?? {}).includes(line)))].join('\n');
       return {
+        ...(stated === undefined ? {} : { choices: Object.fromEntries(Object.entries(stated).map(([id, value]) => [id, { value, reason: `scripted ${id}` }])) }),
         product,
         summary: `Scripted ${node}`,
         providerTurns: 0,
@@ -195,7 +202,14 @@ async function scriptedRun(options: {
       };
     },
   });
-  return { result, seen };
+  return { result, seen, entries };
+}
+
+/** The context of one visit to a node. */
+function visitOf(seen: StepContext[], node: string, occurrence: number): StepContext {
+  const context = seen.find((item) => item.node.id === node && item.occurrence === occurrence);
+  assert.ok(context, `expected ${node}#${occurrence} to run`);
+  return context;
 }
 
 function receivedBy(seen: StepContext[], node: string) {
@@ -221,19 +235,39 @@ test('a backlog start limit delivers the existing plan to wrap-up', async () => 
   assert.deepEqual(receivedBy(seen, 'documenter-wrapup').map((item) => item.nodeId), ['executive-intake', 'planner', 'backlog-start']);
 });
 
-/** DSP-222: the node a dispatch outcome runs: the small and medium variants are one node each. */
-function workerNode(outcome: string): string {
-  return outcome === 'implementer-s' || outcome === 'implementer-m' ? 'implementer' : outcome === 'explorer-s' || outcome === 'explorer-m' ? 'explorer' : outcome;
+/**
+ * DSP-224: what each former dispatch variant is now: one capability outcome, with the model class
+ * and the review route stated on the dispatch's CHOICE lines. The original pairing is kept: the
+ * large implementer went through design QA, the large review and the full skeptic.
+ */
+const VARIANTS: Record<string, { readonly worker: string; readonly choices?: Record<string, string> }> = {
+  'implementer-s': { worker: 'implementer', choices: { class: 'small', review: 'standard' } },
+  'implementer-m': { worker: 'implementer', choices: { class: 'medium', review: 'standard' } },
+  'implementer-l': { worker: 'implementer', choices: { class: 'large', review: 'thorough' } },
+  'researcher-m': { worker: 'researcher', choices: { class: 'medium', review: 'standard' } },
+  'researcher-l': { worker: 'researcher', choices: { class: 'large', review: 'thorough' } },
+  'explorer-s': { worker: 'explorer', choices: { class: 'small' } },
+  'explorer-m': { worker: 'explorer', choices: { class: 'medium' } },
+  'data-curator': { worker: 'data-curator' },
+  'experiment-analyst': { worker: 'experiment-analyst' },
+  infra: { worker: 'infra' },
+};
+
+function dispatching(variant: string): { outcomes: Record<string, string>; choices: Record<string, Record<string, string>> } {
+  const chosen = VARIANTS[variant]!;
+  return { outcomes: { 'tl-dispatch': chosen.worker }, choices: chosen.choices === undefined ? {} : { 'tl-dispatch': chosen.choices } };
 }
 
-for (const outcome of ['implementer-s', 'implementer-m', 'implementer-l']) {
-  const worker = workerNode(outcome);
-  test(`${outcome} passes its actual contract and work through QA, review, challenge and acceptance`, async () => {
-    const { result, seen } = await scriptedRun({ outcomes: { 'tl-dispatch': outcome } });
+for (const variant of ['implementer-s', 'implementer-m', 'implementer-l']) {
+  const worker = VARIANTS[variant]!.worker;
+  const thorough = VARIANTS[variant]!.choices?.['review'] === 'thorough';
+  test(`${variant} (one Implementer node) passes its actual contract and work through QA, review, challenge and acceptance`, async () => {
+    const { result, seen } = await scriptedRun(dispatching(variant));
     assert.equal(result.status, 'completed', result.fault?.detail ?? '');
-    const qa = worker === 'implementer-l' ? 'qa-design' : 'qa';
-    const reviewer = worker === 'implementer-l' ? 'reviewer-l' : 'reviewer-s';
-    const skeptic = worker === 'implementer-l' ? 'skeptic' : 'skeptic-s';
+    const qa = thorough ? 'qa-design' : 'qa';
+    const reviewer = 'reviewer';
+    const skeptic = 'skeptic';
+    assert.ok(!seen.some((item) => item.node.id === (thorough ? 'qa' : 'qa-design')), 'only the visit\'s review route runs');
     const qaInputs = receivedBy(seen, qa);
     assert.deepEqual(qaInputs.map((item) => item.nodeId), ['executive-intake', 'planner', worker]);
     const reviewInputs = receivedBy(seen, reviewer);
@@ -248,13 +282,17 @@ for (const outcome of ['implementer-s', 'implementer-m', 'implementer-l']) {
         assert.ok(body.includes(marker), `${stage} is missing ${marker}`);
       }
     }
+    // The review and the challenge run on the visit's route: standard is offered its escalation, thorough is not.
+    assert.equal(visitOf(seen, reviewer, 1).choices?.['review']?.value, thorough ? 'thorough' : 'standard');
+    assert.equal(visitOf(seen, reviewer, 1).node.outcomes?.includes('design-review'), !thorough);
+    assert.equal(visitOf(seen, skeptic, 1).node.outcomes?.includes('escalate'), !thorough);
   });
 }
 
-for (const outcome of ['researcher-m', 'researcher-l', 'explorer-s', 'explorer-m', 'data-curator', 'experiment-analyst', 'infra']) {
-  const worker = workerNode(outcome);
-  test(`${outcome} delivers only its executed branch to acceptance`, async () => {
-    const { result, seen } = await scriptedRun({ outcomes: { 'tl-dispatch': outcome } });
+for (const variant of ['researcher-m', 'researcher-l', 'explorer-s', 'explorer-m', 'data-curator', 'experiment-analyst', 'infra']) {
+  const worker = VARIANTS[variant]!.worker;
+  test(`${variant} delivers only its executed branch to acceptance`, async () => {
+    const { result, seen } = await scriptedRun(dispatching(variant));
     assert.equal(result.status, 'completed', result.fault?.detail ?? '');
     const body = receivedBy(seen, 'tl-accept').map((item) => item.body).join('\n');
     assert.match(body, /planner#1 evidence/);
@@ -262,6 +300,25 @@ for (const outcome of ['researcher-m', 'researcher-l', 'explorer-s', 'explorer-m
     assert.ok(!body.includes('implementer#1 evidence'));
   });
 }
+
+test('DSP-224: each worker keeps its former challenge depth: by the dispatch for the researcher, fixed for the others', async () => {
+  const expected: Record<string, string> = {
+    'researcher-m': 'standard',
+    'researcher-l': 'thorough',
+    'explorer-s': 'standard',
+    'explorer-m': 'standard',
+    'experiment-analyst': 'thorough',
+    infra: 'thorough',
+  };
+  for (const [variant, review] of Object.entries(expected)) {
+    const { result, seen } = await scriptedRun(dispatching(variant));
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    assert.equal(visitOf(seen, 'skeptic', 1).choices?.['review']?.value, review, variant);
+  }
+  const curated = await scriptedRun(dispatching('data-curator'));
+  assert.equal(visitOf(curated.seen, 'reviewer', 1).choices?.['review']?.value, 'standard');
+  assert.ok(curated.result.edgesTaken.includes('e87'));
+});
 
 test('a job gate request is reviewed only as a plan and stops before acceptance', async () => {
   const { result, seen } = await scriptedRun({
@@ -277,19 +334,29 @@ test('a job gate request is reviewed only as a plan and stops before acceptance'
   assert.match(receivedBy(seen, 'executive-report').find((item) => item.nodeId === 'tl-report')?.body ?? '', /Authorization and verification pending; no launch observed/);
 });
 
-test('design review and skeptic escalation carry the actual prior evidence', async () => {
-  const { result, seen } = await scriptedRun({ outcomes: { 'reviewer-s': 'design-review', 'skeptic': 'pass' } });
+test('design review and skeptic escalation carry the actual prior evidence, on the thorough route', async () => {
+  const { result, seen } = await scriptedRun({ outcomes: { 'reviewer#1': 'design-review' } });
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
-  const design = receivedBy(seen, 'reviewer-l').map((item) => item.body).join('\n');
-  for (const marker of ['planner#1 evidence', 'implementer#1 evidence', 'qa#1 evidence', 'reviewer-s#1 evidence']) {
+  const designVisit = visitOf(seen, 'reviewer', 2);
+  const design = designVisit.received.map((item) => item.body).join('\n');
+  for (const marker of ['planner#1 evidence', 'implementer#1 evidence', 'qa#1 evidence', 'reviewer#1 evidence']) {
     assert.ok(design.includes(marker));
   }
-  const escalated = await scriptedRun({ outcomes: { 'skeptic-s': 'escalate' } });
+  // The escalation set the route: the design review is thorough, is not offered the escalation
+  // again, and its acceptance goes to the full challenge.
+  assert.equal(designVisit.choices?.['review']?.value, 'thorough');
+  assert.equal(designVisit.choices?.['review']?.decidedBy, 'e111');
+  assert.ok(!designVisit.node.outcomes?.includes('design-review'));
+  assert.equal(visitOf(seen, 'skeptic', 1).choices?.['review']?.value, 'thorough');
+  const escalated = await scriptedRun({ outcomes: { 'skeptic#1': 'escalate' } });
   assert.equal(escalated.result.status, 'completed', escalated.result.fault?.detail ?? '');
-  const skeptic = receivedBy(escalated.seen, 'skeptic').map((item) => item.body).join('\n');
-  for (const marker of ['planner#1 evidence', 'implementer#1 evidence', 'qa#1 evidence', 'reviewer-s#1 evidence', 'skeptic-s#1 evidence']) {
+  const full = visitOf(escalated.seen, 'skeptic', 2);
+  const skeptic = full.received.map((item) => item.body).join('\n');
+  for (const marker of ['planner#1 evidence', 'implementer#1 evidence', 'qa#1 evidence', 'reviewer#1 evidence', 'skeptic#1 evidence']) {
     assert.ok(skeptic.includes(marker));
   }
+  assert.equal(full.choices?.['review']?.value, 'thorough');
+  assert.ok(!full.node.outcomes?.includes('escalate'));
 });
 
 test('QA rework carries the failure forward and later review receives the new worker visit', async () => {
@@ -297,7 +364,7 @@ test('QA rework carries the failure forward and later review receives the new wo
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
   const dispatch = seen.filter((item) => item.node.id === 'tl-dispatch')[1];
   assert.ok(dispatch?.received.some((item) => item.nodeId === 'qa' && item.body.includes('qa#1 evidence')));
-  const reviewer = receivedBy(seen, 'reviewer-s').find((item) => item.nodeId === 'qa');
+  const reviewer = receivedBy(seen, 'reviewer').find((item) => item.nodeId === 'qa');
   assert.ok(reviewer?.body.includes('implementer#2 evidence'));
   assert.equal(reviewer?.occurrence, 2);
 });
@@ -323,10 +390,10 @@ test('QA failures consume calls but not default rework rounds', async () => {
 });
 
 test('a rework bound routes to finite reporting when requested', async () => {
-  const { result, seen } = await scriptedRun({ outcomes: { 'reviewer-s': 'rework' }, maxReworkRounds: 1, routeLimit: true });
+  const { result, seen } = await scriptedRun({ outcomes: { reviewer: 'rework' }, maxReworkRounds: 1, routeLimit: true });
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
   assert.deepEqual(result.limitsReached, ['maxReworkRounds']);
-  assert.equal(seen.filter((item) => item.node.id === 'reviewer-s').length, 2);
+  assert.equal(seen.filter((item) => item.node.id === 'reviewer').length, 2);
   assert.ok(seen.some((item) => item.node.id === 'executive-report'));
 });
 
@@ -561,75 +628,56 @@ for (const provider of ['cursor', 'claude', 'copilot'] as const) {
     const executive = resolveRole({ id: 'generic-executive', source: { kind: 'role-source', path: 'docs/loop/roles/generic/executive.role.md' } });
     assert.ok(executive !== null && fs.existsSync(path.resolve(installed, executive.sourcePath)), 'roles are read from the installed copy');
     assert.ok(entry.includes((executive?.instructions ?? '').split('\n').find((line) => line.trim() !== '') ?? '\u0000'));
-    for (const node of ['tl-dispatch', 'implementer', 'qa', 'reviewer-s', 'tl-accept', 'documenter-wrapup', 'executive-report']) {
+    for (const node of ['tl-dispatch', 'implementer', 'qa', 'reviewer', 'tl-accept', 'documenter-wrapup', 'executive-report']) {
       assert.ok(agent.prompts.has(node), `${node} ran`);
     }
   });
 }
 
-/* DSP-222: the small and medium variants as one node each, with a model class per visit. */
+/* DSP-222, DSP-224: one node per role, with the model class chosen per visit. */
 
-test('DSP-222: implementer and explorer variants run as one node each, the class chosen by the dispatch route', () => {
+/** The dispatch's reply text for a capability with its CHOICE lines, as a live step writes it. */
+function dispatchReply(worker: string, choices: Record<string, string>): string {
+  return [worker, ...Object.entries(choices).map(([id, value]) => `CHOICE: ${id} ${value} because the slice needs it`)].join('\n');
+}
+
+test('DSP-224: the size variants are one node per role, each choosing its class per visit', () => {
   const graph = load(root);
   const ids = graph.nodes.map((node) => node.id);
-  for (const gone of ['implementer-s', 'implementer-m', 'explorer-s', 'explorer-m']) {
+  for (const gone of ['implementer-s', 'implementer-m', 'implementer-l', 'explorer-s', 'explorer-m', 'researcher-m', 'researcher-l', 'reviewer-s', 'reviewer-l', 'skeptic-s']) {
     assert.ok(!ids.includes(gone), `${gone} is merged`);
   }
-  for (const id of ['implementer', 'explorer']) {
-    const node = graph.nodes.find((item) => item.id === id);
-    assert.equal(node?.model?.policy, 'select');
-    assert.deepEqual(node?.model?.options?.map((option) => option.modelClass), ['small', 'medium']);
-    assert.ok(node?.model?.options?.every((option) => option.model === undefined), 'the generic graph names no concrete model');
+  const classesOf = (id: string) => graph.nodes.find((item) => item.id === id)?.model;
+  assert.deepEqual(classesOf('implementer')?.options?.map((option) => option.modelClass), ['small', 'medium', 'large']);
+  assert.deepEqual(classesOf('explorer')?.options?.map((option) => option.modelClass), ['small', 'medium']);
+  assert.deepEqual(classesOf('researcher')?.options?.map((option) => option.modelClass), ['medium', 'large']);
+  for (const id of ['implementer', 'explorer', 'researcher']) assert.equal(classesOf(id)?.chosenBy, 'class', id);
+  for (const id of ['reviewer', 'skeptic']) {
+    assert.equal(classesOf(id)?.chosenBy, 'review', id);
+    assert.deepEqual(classesOf(id)?.options?.map((option) => `${option.id}:${option.modelClass ?? ''}`), ['standard:small', 'thorough:large']);
   }
-  const outcomeOf = (edge: (typeof graph.edges)[number]): string => ('outcome' in edge.when ? String(edge.when.outcome) : edge.when.on);
-  const chosen = graph.edges
-    .filter((edge) => edge.from === 'tl-dispatch' && edge.selectsModel !== undefined)
-    .map((edge) => `${outcomeOf(edge)}->${edge.to}:${edge.selectsModel ?? ''}`)
-    .sort();
-  assert.deepEqual(chosen, ['explorer-m->explorer:medium', 'explorer-s->explorer:small', 'implementer-m->implementer:medium', 'implementer-s->implementer:small']);
-  // The large implementer keeps its own path through design QA and the large review.
-  assert.ok(graph.edges.some((edge) => edge.from === 'implementer-l' && edge.to === 'qa-design'));
-  // A merged node's routes are those of either variant, once.
-  for (const id of ['implementer', 'explorer']) {
-    const routes = graph.edges.filter((edge) => edge.from === id).map((edge) => `${outcomeOf(edge)}${'failure' in edge.when ? String(edge.when.failure) : ''}->${edge.to}`);
-    assert.equal(new Set(routes).size, routes.length, `${id}: ${routes.join(', ')}`);
-    assert.equal(routes.length, 5);
-  }
-  assert.match(graph.nodes.find((node) => node.id === 'tl-dispatch')?.purpose ?? '', /Model class policy/);
+  assert.ok(graph.nodes.every((node) => (node.model?.options ?? []).every((option) => option.model === undefined)), 'the generic graph names no concrete model');
+  // Class and review route are two choices, decided by the dispatch and by nothing else.
+  assert.deepEqual(graph.choices?.map((choice) => choice.id), ['class', 'review']);
+  assert.deepEqual(graph.nodes.filter((node) => node.decides !== undefined).map((node) => [node.id, node.decides]), [['tl-dispatch', ['class', 'review']]]);
+  assert.ok(!graph.edges.some((edge) => edge.selectsModel !== undefined), 'no route stands in for a class');
+  // The Implementer's continuation is chosen by the review route.
+  const success = graph.edges.filter((edge) => edge.from === 'implementer' && edge.when.on === 'success').map((edge) => `${edge.whenChosen?.['review'] ?? ''}->${edge.to}`).sort();
+  assert.deepEqual(success, ['standard->qa', 'thorough->qa-design']);
+  assert.match(graph.nodes.find((node) => node.id === 'tl-dispatch')?.purpose ?? '', /CHOICE line/);
 });
 
 test('DSP-222: the class varies between slices and each visit records class, model and reason', async () => {
-  const graph = load(root);
-  const entries: { nodeId?: string; kind: string; data?: Readonly<Record<string, string | number | boolean>> }[] = [];
-  const store = createMemoryResultStore((text) => createHash('sha256').update(text).digest('hex'));
-  const result = await runLoopGraph(graph, {
-    runId: 'model-classes',
-    dryRun: false,
-    maxTransitions: 100,
-    resultStore: store,
+  const { result, entries } = await scriptedRun({
+    outcomes: { 'executive-continue#1': 'next-slice' },
+    choices: { 'tl-dispatch#1': { class: 'small' }, 'tl-dispatch#2': { class: 'medium' } },
     runModel: { provider: 'copilot', model: 'person-model', classes: { small: 'model-for-small', medium: 'model-for-medium' } },
-    onJournalEntry: (entry) => entries.push(entry),
-    executor: async (context): Promise<StepExecution> => {
-      const node = context.node.id;
-      const outcome =
-        node === 'tl-dispatch' ? (context.occurrence === 1 ? 'implementer-s' : 'implementer-m')
-          : node === 'executive-continue' && context.occurrence === 1 ? 'next-slice'
-            : defaultOutcomes[node];
-      return {
-        product: outcome === undefined ? { kind: 'success' } : { kind: 'outcome', outcome, source: 'step-declared' },
-        summary: node,
-        providerTurns: 0,
-        resultBody: `${node}#${context.occurrence}`,
-        ...(node === 'tl-dispatch' ? { reason: context.occurrence === 1 ? 'one localized fix' : 'the same pattern in four places' } : {}),
-      };
-    },
   });
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
   const visits = entries.filter((entry) => entry.kind === 'node-entered' && entry.nodeId === 'implementer').map((entry) => modelSelectionFromData(entry.data));
   assert.equal(visits.length, 2);
-  assert.deepEqual(visits.map((visit) => [visit?.modelClass, visit?.model, visit?.source]), [['small', 'model-for-small', 'policy'], ['medium', 'model-for-medium', 'policy']]);
-  assert.match(visits[0]?.reason ?? '', /one localized fix/);
-  assert.match(visits[1]?.reason ?? '', /the same pattern in four places/);
+  assert.deepEqual(visits.map((visit) => [visit?.modelClass, visit?.model, visit?.source, visit?.chosenBy]), [['small', 'model-for-small', 'policy', 'class'], ['medium', 'model-for-medium', 'policy', 'class']]);
+  assert.match(visits[0]?.reason ?? '', /class small, decided by tl-dispatch: scripted class/);
 });
 
 test('DSP-222: an unmapped class runs the chat\'s model and says so, before the run and on the visit', async () => {
@@ -648,16 +696,22 @@ test('DSP-222: an unmapped class runs the chat\'s model and says so, before the 
     adapters: { preflight: () => null, createAdapter: () => { throw new Error('not built'); } },
   });
   assert.ok(prepared.ok);
-  assert.match(prepared.classNote ?? '', /Model class small has no model configured for Copilot, so that class runs with person-model/);
+  assert.match(prepared.classNote ?? '', /Model classes small, large have no model configured for Copilot, so those classes run with person-model/);
   const data = modelSelectionData(
     graph.nodes.find((node) => node.id === 'implementer')!,
-    graph.edges.find((edge) => edge.from === 'tl-dispatch' && edge.selectsModel === 'small') ?? null,
-    'one localized fix',
+    null,
+    undefined,
     { provider: 'copilot', model: 'person-model', classes: prepared.modelClasses },
+    { class: { value: 'small', by: 'step', decidedBy: 'tl-dispatch', reason: 'one localized fix' } },
+    graph,
   );
   assert.equal(data['model'], 'person-model');
   assert.equal(data['modelClass'], 'small');
-  assert.match(String(data['modelReason']), /class small has no model configured for copilot, so the model chosen for the run ran/);
+  assert.match(String(data['modelReason']), /class small, decided by tl-dispatch: one localized fix; class small uses the chat model for copilot/);
+  const mark = nodeModelMark(graph.nodes.find((node) => node.id === 'implementer')!, [{ seq: 1, atIso: '', sinceStartMs: 0, kind: 'node-entered', nodeId: 'implementer', detail: '', data: { ...data, occurrence: 1 } }]);
+  assert.equal(mark?.badge?.full, 'Small');
+  assert.equal(mark?.line, 'visit 1 · chat model person-model');
+  assert.match(mark?.detail ?? '', /Use chat model, so it resolved to the chat's model person-model/);
 });
 
 test('DSP-222: on the live path the class\'s model reaches the adapter, and a revisit with another class gets its model', async (context) => {
@@ -667,10 +721,18 @@ test('DSP-222: on the live path the class\'s model reaches the adapter, and a re
   fs.mkdirSync(project);
   const graph = load(root);
   const resolveRole = createFileRoleResolver(root);
+  const entries: RunJournalEntry[] = [];
+  // DSP-224: the badge as the canvas would draw it while each Implementer visit runs.
+  const badges: string[] = [];
   const agent = new NetworkAgent('copilot', graph.nodes.map((node) => node.id), {
-    'tl-dispatch#1': 'implementer-s',
-    'tl-dispatch#2': 'implementer-m',
+    'tl-dispatch#1': dispatchReply('implementer', { class: 'small', review: 'standard' }),
+    'tl-dispatch#2': dispatchReply('implementer', { class: 'large', review: 'thorough' }),
     'executive-continue#1': 'next-slice',
+  }, (node) => {
+    if (node === 'implementer') {
+      const mark = nodeModelMark(graph.nodes.find((item) => item.id === 'implementer')!, entries);
+      badges.push(`${mark?.badge?.full ?? ''}/${mark?.badge?.short ?? ''} ${mark?.line ?? ''}`);
+    }
   });
   const delivery = await runLiveGraph(graph, {
     runId: 'generic-classes',
@@ -679,17 +741,30 @@ test('DSP-222: on the live path the class\'s model reaches the adapter, and a re
     resultsDir: path.join(scratch, 'results'),
     modelRequested: 'person-model',
     personModel: 'person-model',
-    modelClasses: { small: 'model-for-small', medium: 'model-for-medium' },
+    modelClasses: { small: 'model-for-small', medium: 'model-for-medium', large: 'model-for-large' },
     workspacePath: project,
     keepWorkspace: true,
     bindingKind: 'chat-loop',
     provider: 'copilot',
     createAdapter: () => agent as unknown as ChatAdapter,
+    onJournalEntry: (entry) => entries.push(entry),
     promptFor: (node, step) => chatPromptFor(node, { entryId: graph.entry, mandate: 'Two slices.', step, role: (() => { const resolved = node.role === undefined ? null : resolveRole(node.role); return resolved === null ? null : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null }; })(), skipping: skippingRoutesOf(graph, node.id) }),
   });
   assert.equal(delivery.result.status, 'completed', delivery.journalText);
-  assert.deepEqual(agent.modelsOf('implementer'), ['model-for-small', 'model-for-medium']);
+  // What the adapter was sent, what the journal says and what the node shows agree, visit by visit.
+  assert.deepEqual(agent.modelsOf('implementer'), ['model-for-small', 'model-for-large']);
+  const journal = entries.filter((entry) => entry.kind === 'node-entered' && entry.nodeId === 'implementer').map((entry) => modelSelectionFromData(entry.data));
+  assert.deepEqual(journal.map((visit) => `${visit?.modelClass ?? ''}:${visit?.model ?? ''}`), ['small:model-for-small', 'large:model-for-large']);
+  assert.deepEqual(badges, ['Small/S visit 1 · model-for-small', 'Large/L visit 2 · model-for-large']);
+  // The review route is the visit's own: QA the first slice, design QA the second, and the
+  // reviewer's and skeptic's class follows it.
+  assert.equal(agent.modelsOf('qa').length, 1);
+  assert.equal(agent.modelsOf('qa-design').length, 1);
+  assert.deepEqual(agent.modelsOf('reviewer'), ['model-for-small', 'model-for-large'], 'the standard review runs class small, the thorough one large');
   assert.ok(agent.modelsOf('qa').every((model) => model === 'person-model'), 'a step without a policy keeps the chat\'s model');
+  // The dispatch was told to decide both, and the implementer was told what it was assigned.
+  assert.match(agent.prompts.get('tl-dispatch')?.[0] ?? '', /CHOICE: review thorough — Design QA/);
+  assert.match(agent.prompts.get('implementer')?.[1] ?? '', /- Review route: thorough — Design QA[^\n]*decided by tl-dispatch: because the slice needs it/);
 });
 
 test('DSP-222: an option names a model or a known class, never both and never an unknown class', () => {
@@ -754,8 +829,8 @@ test('DSP-223: a mapping changed during a run applies from the next run, not to 
     });
   // The setting is changed while the first implementer visit is in flight.
   const agent = new NetworkAgent('copilot', graph.nodes.map((node) => node.id), {
-    'tl-dispatch#1': 'implementer-s',
-    'tl-dispatch#2': 'implementer-m',
+    'tl-dispatch#1': dispatchReply('implementer', { class: 'small' }),
+    'tl-dispatch#2': dispatchReply('implementer', { class: 'medium' }),
     'executive-continue#1': 'next-slice',
   }, (node, visit) => {
     if (node === 'implementer' && visit === 1) {
@@ -806,4 +881,94 @@ test('DSP-223: a class mapped to a model the agent does not list refuses the run
   });
   assert.equal(prepared.ok, false);
   assert.match(prepared.ok ? '' : prepared.why, /The step "Implementer: implementer" runs class small, set to the model gpt-5\.5-mini, which Copilot does not offer this account\. Choose another model for that class in Model classes/);
+});
+
+/* DSP-224: model class and review route, chosen per visit and independently. */
+
+test('DSP-224: the same Implementer node takes any class on either review route, the two chosen independently', async () => {
+  const runModel = { provider: 'copilot', model: 'chat', classes: { small: 'm-small', medium: 'm-medium', large: 'm-large' } };
+  for (const [klass, review] of [['small', 'thorough'], ['large', 'standard'], ['medium', 'thorough'], ['small', 'standard']] as const) {
+    const { result, seen, entries } = await scriptedRun({ choices: { 'tl-dispatch': { class: klass, review } }, runModel });
+    assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+    const implementer = entries.find((entry) => entry.kind === 'node-entered' && entry.nodeId === 'implementer');
+    assert.equal(modelSelectionFromData(implementer?.data)?.model, `m-${klass}`, `${klass}/${review}`);
+    assert.equal(implementer?.data?.['choice.review'], review);
+    assert.ok(result.edgesTaken.includes(review === 'thorough' ? 'e62' : 'e52'), `${klass}/${review}`);
+    assert.ok(!seen.some((item) => item.node.id === (review === 'thorough' ? 'qa' : 'qa-design')));
+    const reviewer = entries.find((entry) => entry.kind === 'node-entered' && entry.nodeId === 'reviewer');
+    assert.equal(modelSelectionFromData(reviewer?.data)?.model, review === 'thorough' ? 'm-large' : 'm-small', `the review's class follows the route, not the worker's class (${klass}/${review})`);
+    const decided = entries.find((entry) => entry.kind === 'edge-taken' && entry.nodeId === 'tl-dispatch');
+    assert.match(String(decided?.data?.['choicesDecided']), new RegExp(`class ${klass} \\(tl-dispatch: scripted class\\); review ${review} \\(tl-dispatch: scripted review\\)`));
+  }
+});
+
+test('DSP-224: a revisit after rework runs the new dispatch\'s choices, never the earlier subtask\'s', async () => {
+  const runModel = { provider: 'copilot', model: 'chat', classes: { small: 'm-small', large: 'm-large' } };
+  const { result, seen, entries } = await scriptedRun({
+    outcomes: { 'qa-design#1': 'fail' },
+    // The second dispatch states only the class: the route is the default, not the first subtask's.
+    choices: { 'tl-dispatch#1': { class: 'large', review: 'thorough' }, 'tl-dispatch#2': { class: 'small' } },
+    runModel,
+  });
+  assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+  const second = visitOf(seen, 'implementer', 2);
+  assert.equal(second.choices?.['class']?.value, 'small');
+  assert.equal(second.choices?.['review']?.value, 'standard');
+  assert.equal(second.choices?.['review']?.by, 'default');
+  assert.match(second.choices?.['review']?.reason ?? '', /stated no review, so the default applies/);
+  assert.equal(seen.filter((item) => item.node.id === 'qa').length, 1, 'the second visit goes through standard QA');
+  const visits = entries.filter((entry) => entry.kind === 'node-entered' && entry.nodeId === 'implementer').map((entry) => modelSelectionFromData(entry.data)?.model);
+  assert.deepEqual(visits, ['m-large', 'm-small']);
+  // A choice the step could not make counts as not made: an unknown value takes the default too.
+  const odd = await scriptedRun({ choices: { 'tl-dispatch': { class: 'huge', review: 'thorough' } } });
+  assert.equal(visitOf(odd.seen, 'implementer', 1).choices?.['class']?.value, 'medium');
+  assert.match(visitOf(odd.seen, 'implementer', 1).choices?.['class']?.reason ?? '', /stated class "huge", which is not one of its options/);
+});
+
+test('DSP-224: a class a role does not offer runs its default and the journal says why', async () => {
+  const { result, entries } = await scriptedRun({
+    outcomes: { 'tl-dispatch': 'researcher' },
+    choices: { 'tl-dispatch': { class: 'small', review: 'standard' } },
+    runModel: { provider: 'copilot', model: 'chat', classes: { small: 'm-small', medium: 'm-medium' } },
+  });
+  assert.equal(result.status, 'completed', result.fault?.detail ?? '');
+  const visit = modelSelectionFromData(entries.find((entry) => entry.kind === 'node-entered' && entry.nodeId === 'researcher')?.data);
+  assert.equal(visit?.modelClass, 'medium');
+  assert.match(visit?.reason ?? '', /^default: class small, decided by tl-dispatch: scripted class, which is not an option of this step/);
+});
+
+test('DSP-224: the canvas says the class is chosen per visit before a run, and shows the visit\'s class during one', () => {
+  const graph = load(root);
+  const implementer = graph.nodes.find((node) => node.id === 'implementer')!;
+  const before = nodeModelMark(implementer, null);
+  assert.equal(before?.badge, null, 'no class is shown as chosen before a visit');
+  assert.equal(before?.line, 'class chosen per visit: S · M · L');
+  assert.match(before?.detail ?? '', /chosen per visit by class/);
+  assert.equal(nodeModelMark(graph.nodes.find((node) => node.id === 'qa')!, null), null);
+});
+
+test('DSP-224: CHOICE lines are read per choice the node decides, first line wins, reason kept', () => {
+  const text = 'Work.\n**CHOICE: class large** the design is open\nCHOICE: review thorough — needs design QA\nCHOICE: class small\nCHOICE: other x\nRESULT: implementer';
+  assert.deepEqual(statedChoicesFrom(text, ['class', 'review']), {
+    class: { value: 'large', reason: 'the design is open' },
+    review: { value: 'thorough', reason: 'needs design QA' },
+  });
+});
+
+test('DSP-224: validation refuses an unknown choice, an uncovered route and two routes for one value', () => {
+  const text = fs.readFileSync(path.join(root, graphPath), 'utf8');
+  const resolveRole = createFileRoleResolver(root);
+  const codes = (mutate: (json: { nodes: { id: string; decides?: string[] }[]; edges: { id: string; sets?: Record<string, string>; whenChosen?: Record<string, string> }[] }) => void) => {
+    const json = JSON.parse(text);
+    mutate(json);
+    const loaded = loadLoopGraph(JSON.stringify(json), { resolveRole });
+    return loaded.ok ? [] : loaded.findings.filter((finding) => finding.severity === 'error').map((finding) => finding.code);
+  };
+  assert.deepEqual(codes(() => {}), []);
+  assert.ok(codes((json) => { json.edges = json.edges.filter((edge) => edge.id !== 'e62'); }).includes('choice-route-gap'));
+  assert.ok(codes((json) => { json.edges.find((edge) => edge.id === 'e62')!.whenChosen = { review: 'standard' }; }).includes('choice-routes-ambiguous'));
+  assert.ok(codes((json) => { json.edges.find((edge) => edge.id === 'e77')!.sets = { review: 'deep' }; }).includes('edge-names-unknown-choice'));
+  assert.ok(codes((json) => { json.nodes.find((node) => node.id === 'tl-dispatch')!.decides = ['size']; }).includes('decides-unknown-choice'));
+  // An escalation offered only on the standard route needs no thorough edge: the step is not offered it then.
+  assert.deepEqual(codes((json) => { delete json.edges.find((edge) => edge.id === 'e111')!.sets; }), []);
 });

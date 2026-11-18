@@ -38,6 +38,18 @@
 
 import type { FanOutIsolation, LoopEdge, LoopGraph, LoopNode, ModelClassMap, ResultForm, StepLimits, TerminalEnding } from './loop-graph';
 import { BRANCH_FAILED, stepModelChoice } from './loop-graph';
+import {
+  applyEdgeSets,
+  choiceData,
+  choiceValuesOf,
+  decideChoices,
+  describeChoices,
+  edgeAdmits,
+  nodeForVisit,
+  type ChoiceMade,
+  type StatedChoices,
+  type VisitChoices,
+} from './loop-choices';
 import type { ModelSelectionRecord } from './run-presentation';
 import { readSlices, type Slice } from './loop-slices';
 import { createRunMailbox, type MailboxMessage, type MailboxPort } from './run-mailbox';
@@ -167,6 +179,11 @@ export interface ArrivalRef {
   readonly label: string | null;
   /** What the edge says it delivers, or `null` where it says nothing and the node decides. */
   readonly delivers: readonly string[] | null;
+  /**
+   * DSP-224: the choices this arrival carries to the visit, decided by the steps before it and
+   * set by edges on the way. Absent is none.
+   */
+  readonly choices?: VisitChoices;
 }
 
 /** Which earlier steps this step is given, and what decided. */
@@ -222,6 +239,11 @@ export interface StepContext {
    * How the run got here, or `null` at the entry node. See {@link ArrivalRef}.
    */
   readonly arrivedBy: ArrivalRef | null;
+  /**
+   * DSP-224: the choices this visit carries, the arrival's; absent at the entry and in a graph
+   * without choices. `node` is already the node as the visit sees it (see `nodeForVisit`).
+   */
+  readonly choices?: VisitChoices;
   /**
    * The earlier results this step was given, in the order the deciding declaration
    * lists them.
@@ -368,6 +390,11 @@ export interface StepExecution {
    * Read only when the edge taken skips steps; never used to choose the edge.
    */
   readonly reason?: string;
+  /**
+   * DSP-224: what the step stated on its `CHOICE:` lines for the choices its node decides, read
+   * by the executor and held to the choices' options by the runner.
+   */
+  readonly choices?: StatedChoices;
   /**
    * DSP-209 S5a: the step called DSpatch's `request_interactive_handoff` tool during its
    * turn, with this reason. Set by the executor from the tool call, never from reply text.
@@ -537,29 +564,44 @@ export function modelSelectionData(
   arrival: Pick<LoopEdge, 'selectsModel'> | null,
   reason: string | undefined,
   run: RunModel | undefined,
+  // DSP-224: the visit's choices, for a policy `chosenBy` one.
+  carried: VisitChoices = {},
+  graph: Pick<LoopGraph, 'choices'> = {},
 ): Readonly<Record<string, string>> {
   if (node.kind !== 'agent') {
     return {};
   }
-  const choice = stepModelChoice(node, arrival, run?.classes);
+  const choice = stepModelChoice(node, arrival, run?.classes, choiceValuesOf(graph, carried));
   const policy: Record<string, string> = choice.policy === null ? {} : { modelPolicy: choice.policy };
   const classData: Record<string, string> = choice.modelClass === null ? {} : { modelClass: choice.modelClass };
   const model = choice.model ?? run?.model ?? null;
   if (model === null) {
     return { ...policy, ...classData };
   }
+  const decided = choice.choice === null ? undefined : carried[choice.choice.id];
+  const chosenByChoice =
+    choice.choice === null
+      ? ''
+      : `${choice.choice.id} ${choice.choice.value}, ${
+          decided === undefined || decided.by === 'default' ? 'the default' : `decided by ${decided.decidedBy}`
+        }${decided === undefined ? '' : `: ${oneLineReason(decided.reason)}`}`;
   const chosen =
     choice.by === 'edge'
       ? oneLineReason(reason)
+      : choice.by === 'choice'
+        ? chosenByChoice
       : choice.by === 'default'
-        ? MODEL_DEFAULT_REASON
+        ? choice.choice === null
+          ? MODEL_DEFAULT_REASON
+          : `${MODEL_DEFAULT_REASON}: ${chosenByChoice}, which is not an option of this step`
         : choice.policy === 'fixed'
           ? 'fixed by the step'
           : `the model chosen for ${run?.provider ?? 'the run'}${model === '' ? ' (the provider’s default)' : ''}`;
   // DSP-222: an unmapped class runs the run's own model, and the record says so rather than
   // letting that model pass as the class's.
+  // DSP-224: which is what "Use chat model" under Model classes means, so it is said in those words.
   const why = choice.classUnmapped
-    ? `${chosen}; class ${choice.modelClass ?? ''} has no model configured for ${run?.provider ?? 'the run'}, so the model chosen for the run ran`
+    ? `${chosen}; class ${choice.modelClass ?? ''} uses the chat model for ${run?.provider ?? 'the run'} (no model of its own under Model classes), so the model chosen for the run ran`
     : chosen;
   return {
     model,
@@ -567,6 +609,8 @@ export function modelSelectionData(
     ...policy,
     ...(choice.option === null ? {} : { modelOption: choice.option }),
     ...classData,
+    ...(choice.choice === null ? {} : { modelChosenBy: choice.choice.id }),
+    ...(choice.classUnmapped ? { modelClassUsesChat: 'yes' } : {}),
     modelReason: why,
     modelSource: choice.policy === 'fixed' ? 'fixed' : choice.policy === 'select' ? 'policy' : 'person',
   };
@@ -590,22 +634,64 @@ export function latestModelSelection(
 }
 
 /**
- * DSP-222: the line a step whose model is chosen per visit carries on the canvas: the class or
- * option and model its latest visit in `entries` ran with, else the choices its policy offers.
- * `null` for any other step.
+ * DSP-224: what a step whose model is chosen per visit carries on the canvas. Before its first
+ * visit, that the choice is made per visit; after one, the latest visit's class as a badge (the
+ * word, or its letter where room is short), and its model, visit number and how it was decided
+ * for the hover and the node panel.
  */
-export function nodeModelLine(
+export interface NodeModelMark {
+  /** The node's third line. */
+  readonly line: string;
+  /** The latest visit's model class, written out and as one letter; `null` before a visit or for an option without a class. */
+  readonly badge: { readonly full: string; readonly short: string } | null;
+  /** The whole account, for the hover. */
+  readonly detail: string;
+}
+
+const capitalised = (word: string): string => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`;
+
+/** DSP-224 (DSP-222's line, now with the badge): `null` for a step whose model is not chosen per visit. */
+export function nodeModelMark(
   node: Pick<LoopNode, 'id' | 'kind' | 'model'>,
   entries: readonly RunJournalEntry[] | null,
-): string | null {
+): NodeModelMark | null {
   if (node.kind !== 'agent' || node.model?.policy !== 'select') {
     return null;
   }
-  const chosen = entries === null ? null : latestModelSelection(entries, node.id);
-  if (chosen !== null) {
-    return `${chosen.modelClass ?? chosen.option ?? 'model'}: ${chosen.model === '' ? 'provider default' : chosen.model}`;
+  let latest: RunJournalEntry | null = null;
+  for (const entry of entries ?? []) {
+    if (entry.kind === 'node-entered' && entry.nodeId === node.id) {
+      latest = entry;
+    }
   }
-  return `model by route: ${(node.model.options ?? []).map((option) => option.modelClass ?? option.id).join(' · ')}`;
+  const chosen = latest === null ? null : modelSelectionFromData(latest.data);
+  if (latest === null || chosen === null) {
+    const options = node.model.options ?? [];
+    const classes = [...new Set(options.map((option) => option.modelClass ?? option.id))];
+    const how =
+      node.model.chosenBy !== undefined ? `by ${node.model.chosenBy}` : 'by route';
+    return {
+      line: `class chosen per visit: ${classes.map((name) => name.slice(0, 1).toUpperCase()).join(' · ')}`,
+      badge: null,
+      detail:
+        `Model class chosen per visit ${how}, from ${classes.join(', ')}; ` +
+        `default ${node.model.default ?? options[0]?.id ?? ''}. No visit has chosen one yet.`,
+    };
+  }
+  const visit = typeof latest.data?.['occurrence'] === 'number' ? latest.data['occurrence'] : null;
+  const visitWords = visit === null ? 'latest visit' : `visit ${String(visit)}`;
+  const model = chosen.model === '' ? 'the provider’s default' : chosen.model;
+  const modelWords = chosen.classUsesChatModel === true ? `chat model ${model}` : model;
+  const name = chosen.modelClass ?? null;
+  return {
+    line: `${visitWords} · ${modelWords}`,
+    badge: name === null ? null : { full: capitalised(name), short: name.slice(0, 1).toUpperCase() },
+    detail:
+      `${visitWords === 'latest visit' ? 'Latest visit' : capitalised(visitWords)}: ` +
+      `${name === null ? `option ${chosen.option ?? ''}` : `model class ${capitalised(name)}`}, model ${model} on ${chosen.provider}` +
+      `${chosen.classUsesChatModel === true ? ` — the class is set to Use chat model, so it resolved to the chat's model ${model}` : ''}. ` +
+      `Chosen: ${chosen.reason}. A class names the capacity asked for, not a guarantee of the model's.`,
+  };
 }
 
 /** DSP-209 S19: {@link modelSelectionData} read back from a journal entry, or `null` when it has none. */
@@ -626,6 +712,8 @@ export function modelSelectionFromData(
     policy: policy === 'fixed' ? null : policy,
     option: text('modelOption'),
     ...(text('modelClass') === null ? {} : { modelClass: text('modelClass') as string }),
+    ...(text('modelClassUsesChat') === 'yes' ? { classUsesChatModel: true } : {}),
+    ...(text('modelChosenBy') === null ? {} : { chosenBy: text('modelChosenBy') as string }),
     reason,
     source,
   };
@@ -1224,8 +1312,10 @@ export function selectEdge(
   graph: LoopGraph,
   node: LoopNode,
   product: StepProduct,
+  // DSP-224: the visit's choice values; an edge whose `whenChosen` they do not meet is not a candidate.
+  values = choiceValuesOf(graph, {}),
 ): { readonly edge: LoopEdge; readonly why: string } | { readonly edge: null; readonly why: string } {
-  const outgoing = graph.edges.filter((edge) => edge.from === node.id);
+  const outgoing = graph.edges.filter((edge) => edge.from === node.id && edgeAdmits(edge, values));
   if (product.kind === 'success') {
     const edge = outgoing.find((candidate) => candidate.when.on === 'success');
     return edge
@@ -1894,13 +1984,26 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
   // DSP-209 S19: the deciding step's own reason for the outcome that took the arrival, for the
   // model choice an edge's `selectsModel` makes. Not the step's, and so none, after a bound route.
   let arrivalReason: string | undefined;
-  const arrivalOn = (edge: LoopEdge, fromNode: LoopNode, fromOccurrence: number): ArrivalRef => ({
-    edgeId: edge.id,
-    from: fromNode.id,
-    fromOccurrence,
-    label: edge.label ?? null,
-    delivers: edge.delivers ?? null,
-  });
+  // DSP-224: the arrival carries the choices as the step left them, with the edge's `sets` applied.
+  const arrivalOn = (edge: LoopEdge, fromNode: LoopNode, fromOccurrence: number, carried: VisitChoices): ArrivalRef => {
+    const choices = applyEdgeSets(carried, edge).choices;
+    return {
+      edgeId: edge.id,
+      from: fromNode.id,
+      fromOccurrence,
+      label: edge.label ?? null,
+      delivers: edge.delivers ?? null,
+      ...(Object.keys(choices).length === 0 ? {} : { choices }),
+    };
+  };
+  /** DSP-224: journal data for what a step decided and what the edge it took set. */
+  const choicesTaken = (decided: readonly ChoiceMade[], edge: LoopEdge): Readonly<Record<string, string>> => {
+    const set = applyEdgeSets({}, edge).made;
+    return {
+      ...(decided.length === 0 ? {} : { choicesDecided: describeChoices(decided) }),
+      ...(set.length === 0 ? {} : { choicesSet: describeChoices(set) }),
+    };
+  };
 
   for (;;) {
     const occurrence = (occurrences.get(current.id) ?? 0) + 1;
@@ -1994,7 +2097,10 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     const deadlineAt = limits.maxMinutes === undefined ? null : now() + limits.maxMinutes * 60_000;
     // DSP-209 S19: the model this visit runs with, by the same rule the executor opens its session by.
     const arrivedOnEdge = arrival === null ? null : (graph.edges.find((edge) => edge.id === arrival?.edgeId) ?? null);
-    const modelData = modelSelectionData(current, arrivedOnEdge, arrivalReason, options.runModel);
+    // DSP-224: the choices this visit carries, and the node as they let the visit see it.
+    const carried: VisitChoices = arrival?.choices ?? {};
+    const visitNode = nodeForVisit(graph, current, choiceValuesOf(graph, carried));
+    const modelData = modelSelectionData(current, arrivedOnEdge, arrivalReason, options.runModel, carried, graph);
 
     record(
       'node-entered',
@@ -2027,6 +2133,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           // the policy in `modelPolicy`. A non-agent step with a policy keeps its name there.
           ...(current.model && current.kind !== 'agent' ? { modelPolicy: current.model.policy } : {}),
           ...modelData,
+          // DSP-224: the choices the visit carries, with who decided each and why.
+          ...choiceData(carried),
+          ...(visitNode === current ? {} : { outcomesOffered: (visitNode.outcomes ?? []).join(', ') }),
           ...(limits.maxMinutes === undefined ? {} : { maxMinutes: limits.maxMinutes }),
           ...(placement
             ? { archive: placement.path, reportWrittenBy: placement.writtenBy }
@@ -2152,13 +2261,14 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         ...(continuedAfterHandoff === null ? {} : { continuedAfterHandoff }),
         runId: options.runId,
         graph,
-        node: current,
+        node: visitNode,
         occurrence,
         callId,
         limits,
         deadlineAt,
         archive: placement,
         arrivedBy: arrival,
+        ...(Object.keys(carried).length === 0 ? {} : { choices: carried }),
         received,
         note: (kind, detail, data) => {
           record(kind, detail, {
@@ -2396,7 +2506,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       );
     }
 
-    const undeclared = productIsDeclared(current, execution.product);
+    const undeclared = productIsDeclared(visitNode, execution.product);
     if (undeclared) {
       return fail({
         kind: 'undeclared-product',
@@ -2406,7 +2516,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       });
     }
 
-    const selected = selectEdge(graph, current, execution.product);
+    // DSP-224: the step's own choices first, because its edges may be taken by them.
+    const decided = decideChoices(graph, current, carried, execution.choices);
+    const selected = selectEdge(graph, current, execution.product, choiceValuesOf(graph, decided.choices));
     if (selected.edge === null) {
       return fail({
         kind: 'no-edge-for-product',
@@ -2491,10 +2603,11 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             declaredFailure: false,
             runtimeFault: false,
             transitions,
+            ...choicesTaken(decided.made, boundEdge),
           },
         },
       );
-      arrival = arrivalOn(boundEdge, current, occurrence);
+      arrival = arrivalOn(boundEdge, current, occurrence, decided.choices);
       arrivalReason = undefined;
       current = boundTarget;
     } else {
@@ -2517,7 +2630,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         'edge-taken',
         `Took edge "${productEdge.id}" from "${current.id}" to "${productEdge.to}"${
           productEdge.label ? ` (${productEdge.label})` : ''
-        }. ${selected.why}`,
+        }. ${selected.why}${
+          decided.made.length === 0 ? '' : ` Choices decided: ${describeChoices(decided.made)}.`
+        }${(productEdge.sets === undefined ? '' : ` Choices set by the edge: ${describeChoices(applyEdgeSets({}, productEdge).made)}.`)}`,
         {
           edgeId: productEdge.id,
           nodeId: current.id,
@@ -2539,6 +2654,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             ...(productEdge.delivers === undefined
               ? {}
               : { delivers: productEdge.delivers.join(', ') || '(nothing)' }),
+            ...choicesTaken(decided.made, productEdge),
           },
         },
       );
@@ -2558,7 +2674,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           },
         );
       }
-      arrival = arrivalOn(productEdge, current, occurrence);
+      arrival = arrivalOn(productEdge, current, occurrence, decided.choices);
       arrivalReason = execution.reason;
       current = target;
     }
@@ -2736,6 +2852,8 @@ export interface DryRunDecision {
   /** How long the step is to have taken. This is how a timeout is demonstrated. */
   readonly minutes?: number;
   readonly summary?: string;
+  /** DSP-224: what the step states on its `CHOICE:` lines, as a live step's reply would. */
+  readonly choices?: StatedChoices;
 }
 
 export interface DryRunOptions {
@@ -2801,6 +2919,7 @@ export function createDryRunExecutor(options: DryRunOptions = {}): StepExecutor 
         options.clock?.advanceMinutes(decision.minutes);
       }
       return {
+        ...(decision.choices === undefined ? {} : { choices: decision.choices }),
         product: fromTheDryRun(decision.produce),
         summary:
           decision.summary ??
