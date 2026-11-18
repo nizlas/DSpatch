@@ -70,6 +70,8 @@ export interface RunMailbox {
   messages(): readonly MailboxMessage[];
   /** Messages the integrator must resolve or reject: contract changes and messages to `integrator`. */
   openProposals(): readonly MailboxMessage[];
+  /** DSP-226: which recipients a message was delivered to and which acknowledged it; kept apart. */
+  statusOf(id: string): { readonly delivered: readonly string[]; readonly acknowledged: readonly string[] };
   /** Counts for the run view. */
   counts(): { readonly sent: number; readonly delivered: number; readonly acknowledged: number; readonly undelivered: number };
 }
@@ -257,6 +259,7 @@ export function createRunMailbox(input: {
       }
     },
     messages: () => all,
+    statusOf: (id) => ({ delivered: [...(delivered.get(id) ?? [])], acknowledged: [...(acknowledged.get(id) ?? [])] }),
     openProposals: () => all.filter((message) => message.purpose === 'contract-change' || message.to === 'integrator'),
     counts: () => ({
       sent: all.length,

@@ -1997,6 +1997,11 @@ textarea.grow-field:placeholder-shown {
   color: var(--muted);
 }
 
+/* DSP-226: a branch's own model class, beside its state. */
+.branch-list__class {
+  font-weight: 600;
+}
+
 .branch-list__facts {
   display: grid;
   grid-template-columns: max-content 1fr;

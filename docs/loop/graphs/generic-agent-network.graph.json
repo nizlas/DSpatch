@@ -29,6 +29,11 @@
       "meaning": "The work cannot proceed without access, authorization or a required decision."
     },
     {
+      "id": "branch-failed",
+      "label": "A branch failed",
+      "meaning": "A parallel branch faulted, timed out or produced nothing, or the split could not be run. Every branch's work is kept on its temporary branch or in its kept worktree."
+    },
+    {
       "id": "limit-reached",
       "label": "Run limit reached",
       "meaning": "The runtime reached a configured call or rework bound."
@@ -44,7 +49,8 @@
         { "id": "medium", "meaning": "A task that follows established patterns across several places." },
         { "id": "large", "meaning": "A complex task: an uncertain design, a wide impact or conflicting evidence." }
       ],
-      "default": "medium"
+      "default": "medium",
+      "joins": "strongest"
     },
     {
       "id": "review",
@@ -54,7 +60,8 @@
         { "id": "standard", "meaning": "QA, a bounded review and a bounded challenge; the review and the challenge may escalate to the thorough check." },
         { "id": "thorough", "meaning": "Design QA, a review of design and correctness, and a full challenge of the conclusions." }
       ],
-      "default": "standard"
+      "default": "standard",
+      "joins": "strongest"
     }
   ],
   "nodes": [
@@ -221,13 +228,13 @@
       "id": "tl-dispatch",
       "kind": "agent",
       "label": "Tech Lead (medium): tl-dispatch",
-      "purpose": "Choose the declared capability that best fits the slice, or choose replan, escalate, or stop-slice. Carry the current slice contract, original constraints and actual incoming work, verification and feedback into the handoff; identify missing or uncertain evidence and do not claim unobserved work. With a capability, also decide two things independently, each on its own CHOICE line with a short reason: the model class the work needs (class small, medium or large) and the review route it takes (review standard or thorough). The Implementer runs any class, the Researcher medium or large and the Explorer small or medium; a class a capability does not offer runs its default, and the run records that. The review route decides the Implementer's checks: standard goes through QA, the review and the challenge, either of which may escalate to the thorough check; thorough goes through design QA, a design and correctness review and a full challenge. It decides the Researcher's challenge the same way. Explorer and Data Curator work is always checked on the standard route, and Infrastructure and Experiment Analyst work on the thorough one.",
+      "purpose": "Choose the declared capability that best fits the slice, or choose replan, escalate, or stop-slice. Carry the current slice contract, original constraints and actual incoming work, verification and feedback into the handoff; identify missing or uncertain evidence and do not claim unobserved work. With a capability, also decide two things independently, each on its own CHOICE line with a short reason: the model class the work needs (class small, medium or large) and the review route it takes (review standard or thorough). The Implementer runs any class, the Researcher medium or large and the Explorer small or medium; a class a capability does not offer runs its default, and the run records that. The review route decides the Implementer's checks: standard goes through QA, the review and the challenge, either of which may escalate to the thorough check; thorough goes through design QA, a design and correctness review and a full challenge. It decides the Researcher's challenge the same way. Explorer and Data Curator work is always checked on the standard route, and Infrastructure and Experiment Analyst work on the thorough one. Choose parallel only when the work splits into two to six parts that can be done at the same time without writing the same files and without one part needing another's result; otherwise dispatch one capability, which stays the usual way. With parallel, write exactly one fenced block whose info string is dspatch-slices and whose body is JSON {\"slices\": [...]}, one entry per branch with: id (letters, digits, '.', '_' or '-'); result, the task and expected result; as, the capability it runs as (implementer, researcher, explorer or data-curator; the Implementer when absent); choices, its own class and review (for example {\"class\": \"small\", \"review\": \"thorough\"}; the CHOICE lines apply where it sets none); ownedPaths, the repository paths only it may change, never overlapping another branch's; allowedActions; contractRefs, the shared contracts and settled dependencies it works against; acceptance, what its result must meet; and verification, its smallest check. A part that depends on another part's result does not go beside it: list it in dependsOn and DSpatch refuses the split, so dispatch it in a later round after integration, or dispatch the work in sequence. The work goes on after the branches with the strongest class and review route any branch needed.",
       "role": {
         "id": "generic-tech-lead-m",
         "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
       },
       "model": { "policy": "inherit" },
-      "outcomes": ["implementer", "researcher", "explorer", "data-curator", "infra", "experiment-analyst", "replan", "escalate", "stop-slice"],
+      "outcomes": ["implementer", "researcher", "explorer", "data-curator", "infra", "experiment-analyst", "parallel", "replan", "escalate", "stop-slice"],
       "declaredFailures": ["limit-reached"],
       "decides": ["class", "review"],
       "report": { "writtenBy": "self" },
@@ -340,6 +347,41 @@
       "report": { "writtenBy": "self" },
       "produces": { "required": true, "form": "stored-result", "note": "Return the result in your reply for delivery along the configured edges. Result storage depends on the caller." },
       "view": { "x": 1880, "y": 1420 }
+    },
+    {
+      "id": "branches",
+      "kind": "agent",
+      "label": "Parallel: branches",
+      "purpose": "Do your slice of the subtask in your own branch, inside the paths your slice owns, and run your slice's check. Report what you changed, the checks you ran and their results, what you could not do, and any open decision about a shared contract. On a later visit you are given the integrator's findings: act on those that concern your slice.",
+      "role": {
+        "id": "generic-implementer",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/implementer.role.md" }
+      },
+      "model": { "policy": "select", "options": [{ "id": "small", "modelClass": "small", "note": "A straightforward, localized change with an obvious approach." }, { "id": "medium", "modelClass": "medium", "note": "A change that follows established patterns across several places." }, { "id": "large", "modelClass": "large", "note": "A complex change whose design is uncertain." }], "default": "medium", "chosenBy": "class" },
+      "declaredFailures": ["branch-failed", "limit-reached"],
+      "fanOut": { "slicesFrom": "tl-dispatch", "maxConcurrent": 3, "isolation": "worktree", "branchAs": ["implementer", "researcher", "explorer", "data-curator"] },
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Written by DSpatch: per branch, its role, choices, ending, temporary branch and commit, and its reply, clipped; and the messages between the branches with their delivery." },
+      "notes": "DSP-226. One node for every branch: each slice runs as the capability it names, with its own model class and review route, in its own session and worktree. The branches of a visit start from one base; a revisit makes new branches beside the earlier ones.",
+      "view": { "x": 2360, "y": 1420 }
+    },
+    {
+      "id": "integrator",
+      "kind": "agent",
+      "label": "Integrator: integrator",
+      "purpose": "Combine the branches into the working copy: read each branch's result and ending, its open decisions and the proposals and messages between the branches; check each branch against the shared contracts; merge the temporary branches in the order listed, resolve conflicts and name each merge and resolution; run the checks that show the parts work together. Choose integrated only when every branch finished and was combined and checked and no contract proposal is left open. Choose rework, with concrete findings per branch, when the branches can fix what is wrong in another round. Choose return-to-lead when a branch failed or was cancelled, a shared contract needs a decision, or the work must be split differently or done in sequence; name each such branch and where its work is kept. Never delete a temporary branch.",
+      "role": {
+        "id": "generic-integrator",
+        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/integrator.role.md" }
+      },
+      "model": { "policy": "select", "options": [{ "id": "medium", "modelClass": "medium", "note": "Branches that follow established patterns." }, { "id": "large", "modelClass": "large", "note": "Branches whose combination is complex or uncertain." }], "default": "medium", "chosenBy": "class" },
+      "outcomes": ["integrated", "rework", "return-to-lead"],
+      "whenUndeclared": "return-to-lead",
+      "declaredFailures": ["limit-reached"],
+      "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "What was merged, from which branch and commit, what conflicted and how it was resolved, what was checked, and each branch's ending and open decision." },
+      "consumes": ["branches"],
+      "view": { "x": 2360, "y": 1600 }
     },
     {
       "id": "qa",
@@ -670,6 +712,19 @@
     { "id": "e137", "from": "tl-report", "to": "executive-report", "when": { "on": "success" }, "delivers": ["executive-intake", "documenter-wrapup", "tl-report"] },
     { "id": "e138", "from": "executive-report", "to": "iteration-ended", "when": { "on": "success" }, "delivers": ["executive-intake", "tl-report", "executive-report"] },
     { "id": "e139", "from": "reviewer-job-gate", "to": "documenter-wrapup", "when": { "on": "success" }, "delivers": ["executive-intake", "reviewer-job-gate"] },
-    { "id": "e140", "from": "reviewer-job-gate", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-job-gate"] }
+    { "id": "e140", "from": "reviewer-job-gate", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "reviewer-job-gate"] },
+    { "id": "e141", "from": "tl-dispatch", "to": "branches", "when": { "on": "outcome", "outcome": "parallel" }, "delivers": ["executive-intake", "planner", "tl-dispatch"], "label": "parallel" },
+    { "id": "e142", "from": "branches", "to": "integrator", "when": { "on": "success" }, "delivers": ["executive-intake", "planner", "tl-dispatch", "branches"], "label": "every branch finished" },
+    { "id": "e143", "from": "branches", "to": "integrator", "when": { "on": "declared-failure", "failure": "branch-failed" }, "delivers": ["executive-intake", "planner", "tl-dispatch", "branches"], "label": "a branch failed" },
+    { "id": "e144", "from": "branches", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "branches"] },
+    { "id": "e145", "from": "integrator", "to": "qa", "when": { "on": "outcome", "outcome": "integrated" }, "whenChosen": {
+      "review": "standard"
+    }, "delivers": ["executive-intake", "planner", "integrator"], "label": "integrated" },
+    { "id": "e146", "from": "integrator", "to": "qa-design", "when": { "on": "outcome", "outcome": "integrated" }, "whenChosen": {
+      "review": "thorough"
+    }, "delivers": ["executive-intake", "planner", "integrator"], "label": "integrated" },
+    { "id": "e147", "from": "integrator", "to": "branches", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["executive-intake", "integrator"], "label": "back to the branches" },
+    { "id": "e148", "from": "integrator", "to": "tl-dispatch", "when": { "on": "outcome", "outcome": "return-to-lead" }, "delivers": ["executive-intake", "integrator"], "label": "return to the lead" },
+    { "id": "e149", "from": "integrator", "to": "documenter-wrapup", "when": { "on": "declared-failure", "failure": "limit-reached" }, "delivers": ["executive-intake", "integrator"] }
   ]
 }

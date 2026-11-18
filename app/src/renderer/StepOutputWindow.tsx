@@ -309,6 +309,8 @@ export function StepOutputWindow(): JSX.Element {
           {branch.state} · {branch.visitLabel} · {branch.model} · {branch.messages}
           <br />
           Task: {branch.task}
+          <br />
+          Role: {branch.role}
         </p>
       )}
       {!seeded ? (

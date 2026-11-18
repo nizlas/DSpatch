@@ -539,6 +539,13 @@ export interface VisitChoiceDef {
   readonly options: readonly { readonly id: string; readonly meaning: string }[];
   /** Taken when a deciding step states no valid value, and before anything has decided. */
   readonly default: string;
+  /**
+   * DSP-226: how the branches of a fan-out join on this choice. `strongest`: the options are
+   * listed weakest first, and after the fan-out the work carries the strongest value the visit
+   * or any of its branches had, so joining never weakens it (a thorough review stays thorough).
+   * Absent: the visit's own value goes on, whatever its branches carried.
+   */
+  readonly joins?: 'strongest';
 }
 
 /** DSP-224: a visit's value per choice id, as routing and model selection read it. */
@@ -798,6 +805,12 @@ export interface FanOutPolicy {
   /** 1 to {@link FAN_OUT_MAX_CONCURRENT}; the adapter's own cap may lower it. */
   readonly maxConcurrent: number;
   readonly isolation: FanOutIsolation;
+  /**
+   * DSP-226: the agent nodes a slice may name in its `as`, to run its branch with that node's
+   * role, purpose and model policy instead of this node's. Absent: every branch runs as this
+   * node. The branch is still this node's instance: its id, limits, failures and routes.
+   */
+  readonly branchAs?: readonly string[];
 }
 
 /** DSP-209 S5a: the capabilities a drawing may give an agent node. */

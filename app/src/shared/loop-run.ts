@@ -42,9 +42,11 @@ import {
   applyEdgeSets,
   choiceData,
   choiceValuesOf,
+  branchChoices,
   decideChoices,
   describeChoices,
   edgeAdmits,
+  joinBranchChoices,
   nodeForVisit,
   type ChoiceMade,
   type StatedChoices,
@@ -658,7 +660,7 @@ const capitalised = (word: string): string => `${word.slice(0, 1).toUpperCase()}
 
 /** DSP-224 (DSP-222's line, now with the badge): `null` for a step whose model is not chosen per visit. */
 export function nodeModelMark(
-  node: Pick<LoopNode, 'id' | 'kind' | 'model'>,
+  node: Pick<LoopNode, 'id' | 'kind' | 'model'> & { readonly fanOut?: unknown },
   entries: readonly RunJournalEntry[] | null,
 ): NodeModelMark | null {
   if (node.kind !== 'agent' || node.model?.policy !== 'select') {
@@ -676,6 +678,10 @@ export function nodeModelMark(
     } else if (entry.kind === 'run-ended') {
       closed = true;
     }
+  }
+  // DSP-226: a fan-out's visit runs several models; the node shows its branches' classes, never one.
+  if (node.fanOut !== undefined && latest !== null) {
+    return fanOutModelMark(node.id, latest, closed, entries ?? []);
   }
   const chosen = latest === null ? null : modelSelectionFromData(latest.data);
   if (latest === null || chosen === null) {
@@ -704,6 +710,61 @@ export function nodeModelMark(
       `${name === null ? `option ${chosen.option ?? ''}` : `model class ${capitalised(name)}`}, model ${model} on ${chosen.provider}` +
       `${chosen.classUsesChatModel === true ? ` — the class is set to Use chat model, so it resolved to the chat's model ${model}` : ''}. ` +
       `Chosen: ${chosen.reason}. A class names the capacity asked for, not a guarantee of the model's.`,
+  };
+}
+
+/**
+ * DSP-226: the mark of a fan-out node's latest visit: how many branches, and each model class
+ * with its count; the badge is the one class when all share it, else their letters. The
+ * hover names every branch with its class, model and the node it ran as.
+ */
+function fanOutModelMark(
+  nodeId: string,
+  latest: RunJournalEntry,
+  closed: boolean,
+  entries: readonly RunJournalEntry[],
+): NodeModelMark {
+  const visit = typeof latest.data?.['occurrence'] === 'number' ? latest.data['occurrence'] : null;
+  const visitWords = `${closed ? 'latest' : 'now'}: visit ${visit === null ? '?' : String(visit)}`;
+  const prefix = `${nodeId}#${visit === null ? '?' : String(visit)}/`;
+  const branches = entries.filter(
+    (entry) => entry.kind === 'branch-started' && entry.nodeId === nodeId && String(entry.data?.['instanceId'] ?? '').startsWith(prefix),
+  );
+  if (branches.length === 0) {
+    return {
+      line: `${visitWords} · no branch started yet`,
+      badge: null,
+      detail: `${closed ? 'Latest visit' : 'Visit running now'}: visit ${visit === null ? '?' : String(visit)}. Each branch runs its own model class; none has started.`,
+    };
+  }
+  const counts = new Map<string, number>();
+  const lines: string[] = [];
+  for (const entry of branches) {
+    const chosen = modelSelectionFromData(entry.data);
+    const name = chosen?.modelClass ?? null;
+    if (name !== null) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const model = chosen === null ? 'the run’s model' : chosen.model === '' ? 'the provider’s default' : chosen.model;
+    lines.push(
+      `${String(entry.data?.['sliceId'] ?? '?')}: ${name === null ? 'no class' : capitalised(name)}, ${model}` +
+        `${typeof entry.data?.['runsAs'] === 'string' && entry.data['runsAs'] !== nodeId ? `, as ${entry.data['runsAs']}` : ''}`,
+    );
+  }
+  const names = [...counts.keys()];
+  const summary = names.map((name) => `${capitalised(name)} ×${String(counts.get(name) ?? 0)}`).join(' · ');
+  const letters = names.map((name) => name.slice(0, 1).toUpperCase());
+  return {
+    line: `${visitWords} · ${String(branches.length)} branch${branches.length === 1 ? '' : 'es'}${summary === '' ? '' : `: ${summary}`}`,
+    badge:
+      names.length === 0
+        ? null
+        : names.length === 1
+          ? { full: capitalised(names[0] ?? ''), short: letters[0] ?? '' }
+          : { full: letters.join('·'), short: letters.join('') },
+    detail:
+      `${closed ? 'Latest visit' : 'Visit running now'}: visit ${visit === null ? '?' : String(visit)}, ` +
+      `${String(branches.length)} branch${branches.length === 1 ? '' : 'es'}, each with its own model class. ${lines.join('; ')}.`,
   };
 }
 
@@ -1692,9 +1753,20 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     readonly arrival: ArrivalRef | null;
     readonly received: readonly RecordedResult[];
     readonly placement: ArchivePlacement | null;
-    /** DSP-209 S19: the visit's model choice, recorded on every `branch-started` as on `node-entered`. */
-    readonly modelData: Readonly<Record<string, string>>;
-  }): Promise<{ readonly execution: StepExecution; readonly calls: number; readonly bound?: 'maxCalls' }> => {
+    /** DSP-224: the choices the visit carries. */
+    readonly carried: VisitChoices;
+    /**
+     * DSP-209 S19, DSP-226: a branch's model choice, recorded on its `branch-started` as on
+     * `node-entered`: by the node it runs as and its own choices.
+     */
+    readonly modelDataFor: (node: LoopNode, choices: VisitChoices) => Readonly<Record<string, string>>;
+  }): Promise<{
+    readonly execution: StepExecution;
+    readonly calls: number;
+    readonly bound?: 'maxCalls';
+    /** DSP-226: the choices the work carries on after the branches joined, and what the join changed. */
+    readonly joined?: { readonly choices: VisitChoices; readonly made: readonly ChoiceMade[] };
+  }> => {
     const { node, occurrence } = visit;
     const fanOut = node.fanOut;
     const failed = (summary: string, extra: Partial<StepExecution> = {}, spent = 0) => ({
@@ -1702,6 +1774,9 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         product: { kind: 'declared-failure' as const, failure: BRANCH_FAILED },
         summary,
         providerTurns: 0,
+        // DSP-226: a split refused before any branch started still leaves its reason as the
+        // step's result, so the step it routes to is told why rather than handed nothing.
+        resultBody: `# Fan-out of "${node.id}", visit ${String(occurrence)}\n\n${summary}`,
         ...extra,
       },
       calls: spent,
@@ -1718,7 +1793,11 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           'so no branch was started.',
       );
     }
-    const reading = readSlices(source.body, { isolation: fanOut.isolation });
+    const reading = readSlices(source.body, {
+      isolation: fanOut.isolation,
+      branchAs: fanOut.branchAs ?? [],
+      choices: graph.choices ?? [],
+    });
     if (!reading.ok) {
       return failed(
         `The slices in "${fanOut.slicesFrom}"'s result cannot be run, so no branch was started and no ` +
@@ -1758,6 +1837,28 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     }
 
     const effective = Math.max(1, Math.min(fanOut.maxConcurrent, options.fanOutAdapterCap ?? fanOut.maxConcurrent));
+    // DSP-226: when the agent running the loop, not the drawing, makes the branches wait their turn.
+    const limitedByAgent = effective < Math.min(fanOut.maxConcurrent, slices.length);
+    const concurrencyWords = limitedByAgent
+      ? ` The agent running this loop runs at most ${String(effective)} branch${effective === 1 ? '' : 'es'} at a time in DSpatch, so ` +
+        `these ${String(slices.length)} ran ${effective === 1 ? 'one after another' : `at most ${String(effective)} together`}; the branches and their results are the same.`
+      : '';
+    // DSP-226: each branch's own node (the one it runs as) and its own choices.
+    const branchNodeFor = (slice: Slice): LoopNode => {
+      const as = slice.as === undefined ? undefined : graph.nodes.find((candidate) => candidate.id === slice.as);
+      if (as === undefined) {
+        return node;
+      }
+      const { requirements: _ownRequirements, ...rest } = node;
+      return {
+        ...rest,
+        ...(as.role === undefined ? {} : { role: as.role }),
+        ...(as.model === undefined ? {} : { model: as.model }),
+        ...(as.purpose === undefined ? {} : { purpose: as.purpose }),
+        ...(as.requirements === undefined ? {} : { requirements: as.requirements }),
+      };
+    };
+    const joinedFrom: { sliceId: string; choices: VisitChoices }[] = [];
     // DSP-209 S11: one mailbox for this visit, recorded through the journal.
     const takeInstructions = options.takeInstructions;
     const mailbox = createRunMailbox({
@@ -1784,6 +1885,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
 
     const runOne = async (slice: Slice): Promise<void> => {
       const instanceId = `${node.id}#${String(occurrence)}/${slice.id}`;
+      const branchNode = branchNodeFor(slice);
+      const ownChoices = branchChoices(visit.carried, slice, fanOut.slicesFrom);
       const sessionId = instanceSessionId(options.runId, node.id, occurrence, slice.id);
       const ended = (outcome: BranchOutcome, detail: string, data: Record<string, string | number | boolean> = {}): void => {
         mailbox.branchEnded(slice.id);
@@ -1826,6 +1929,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         }
       }
       started += 1;
+      joinedFrom.push({ sliceId: slice.id, choices: ownChoices });
       mailbox.branchStarted(slice.id);
       record(
         'branch-started',
@@ -1846,7 +1950,13 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
             ownedPaths: slice.ownedPaths.join(', '),
             // DSP-209 S20: the slice's task as the planner wrote it, for the Branches view.
             task: slice.result,
-            ...visit.modelData,
+            // DSP-226: the node it runs as and its role, its own choices and model.
+            runsAs: slice.as ?? node.id,
+            ...(branchNode.role === undefined ? {} : { roleId: branchNode.role.id }),
+            ...(slice.acceptance === undefined ? {} : { acceptance: slice.acceptance }),
+            ...(limitedByAgent ? { concurrencyLimitedByAgent: true, concurrencyAsked: fanOut.maxConcurrent } : {}),
+            ...choiceData(ownChoices),
+            ...visit.modelDataFor(branchNode, ownChoices),
           },
         },
       );
@@ -1856,13 +1966,14 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         execution = await options.executor({
           runId: options.runId,
           graph,
-          node,
+          node: branchNode,
           occurrence,
           callId: visit.callId,
           limits: visit.limits,
           deadlineAt: visit.deadlineAt,
           archive: null,
           arrivedBy: visit.arrival,
+          ...(Object.keys(ownChoices).length === 0 ? {} : { choices: ownChoices }),
           received: visit.received,
           note: (kind, detail, data) => {
             record(kind, detail, { nodeId: node.id, ...(data === undefined ? {} : { data }) });
@@ -1953,7 +2064,7 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     const summary =
       `Fan-out of ${String(slices.length)} slice${slices.length === 1 ? '' : 's'}, at most ${String(effective)} at a time` +
       (base === null ? '' : `, from base ${base.commit} (${base.kind})`) +
-      `.${untracked} Steering reaches no branch while a fan-out runs.\n${lines.join('\n')}`;
+      `.${concurrencyWords}${untracked} Steering reaches no branch while a fan-out runs.\n${lines.join('\n')}`;
     const resultBody = [
       `# Fan-out of "${node.id}", visit ${String(occurrence)}`,
       '',
@@ -1963,10 +2074,17 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         `## ${outcome.slice.id}`,
         '',
         `Result asked for: ${outcome.slice.result}`,
+        ...(outcome.slice.acceptance === undefined ? [] : [`Acceptance: ${outcome.slice.acceptance}`]),
+        `Runs as: ${outcome.slice.as ?? node.id}${
+          Object.keys(outcome.slice.choices ?? {}).length === 0
+            ? ''
+            : `; ${Object.entries(outcome.slice.choices ?? {}).map(([id, value]) => `${id} ${value}`).join(', ')}`
+        }`,
+        `Ended: ${outcome.ending}${outcome.ok ? '' : ' — not finished; this branch\'s work is not complete'}`,
         '',
         clipReply(outcome.reply),
       ]),
-      ...mailboxSection(mailbox.messages(), mailbox.openProposals()),
+      ...mailboxSection(mailbox.messages(), mailbox.openProposals(), (id) => mailbox.statusOf(id)),
     ].join('\n');
     if (options.signal?.aborted === true) {
       return {
@@ -1983,9 +2101,11 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
       };
     }
     const allOk = ordered.length === slices.length && ordered.every((outcome) => outcome.ok);
+    // DSP-226: what the work carries on, from every branch that started, finished or not.
+    const joined = joinBranchChoices(graph, visit.carried, joinedFrom, node.id);
     return allOk
-      ? { execution: { product: { kind: 'success' }, summary, providerTurns: turns, resultBody }, calls: started }
-      : failed(summary, { providerTurns: turns, resultBody }, started);
+      ? { execution: { product: { kind: 'success' }, summary, providerTurns: turns, resultBody }, calls: started, joined }
+      : { ...failed(summary, { providerTurns: turns, resultBody }, started), joined };
   };
 
   let current: LoopNode = entry;
@@ -2253,6 +2373,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     // DSP-209 S10b: a fan-out node's one visit runs its branch instances, each its own call.
     let fanOutCalls: number | null = null;
     let fanOutBound: 'maxCalls' | null = null;
+    // DSP-226: the choices the work carries on after the branches joined.
+    let fanOutJoined: { readonly choices: VisitChoices; readonly made: readonly ChoiceMade[] } | null = null;
     try {
       if (current.fanOut !== undefined) {
         const fanned = await runFanOutVisit({
@@ -2264,11 +2386,14 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
           arrival,
           received,
           placement,
-          modelData,
+          carried,
+          modelDataFor: (branchNode, choices) =>
+            modelSelectionData(branchNode, arrivedOnEdge, arrivalReason, options.runModel, choices, graph),
         });
         execution = fanned.execution;
         fanOutCalls = fanned.calls;
         fanOutBound = fanned.bound ?? null;
+        fanOutJoined = fanned.joined ?? null;
       } else execution = await options.executor({
         ...(handoffDeclined ? { handoffDeclined: true } : {}),
         ...(continuedAfterHandoff === null ? {} : { continuedAfterHandoff }),
@@ -2532,7 +2657,10 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
     }
 
     // DSP-224: the step's own choices first, because its edges may be taken by them.
-    const decided = decideChoices(graph, current, carried, execution.choices);
+    // DSP-226: after a fan-out, from what its branches joined to.
+    const joinedMade = fanOutJoined?.made ?? [];
+    const decidedOwn = decideChoices(graph, current, fanOutJoined?.choices ?? carried, execution.choices);
+    const decided = { choices: decidedOwn.choices, made: [...joinedMade, ...decidedOwn.made] };
     const selected = selectEdge(graph, current, execution.product, choiceValuesOf(graph, decided.choices));
     if (selected.edge === null) {
       return fail({
@@ -2713,15 +2841,33 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
  * must resolve or reject. A contract change is a proposal, never binding because it was sent.
  * Bodies are the agents' words, quoted; nothing here when no message was sent.
  */
-function mailboxSection(messages: readonly MailboxMessage[], proposals: readonly MailboxMessage[]): readonly string[] {
+function mailboxSection(
+  messages: readonly MailboxMessage[],
+  proposals: readonly MailboxMessage[],
+  statusOf?: (id: string) => { readonly delivered: readonly string[]; readonly acknowledged: readonly string[] },
+): readonly string[] {
   if (messages.length === 0) {
     return [];
   }
+  // DSP-226: sent, delivered and acknowledged, kept apart per recipient.
+  const status = (message: MailboxMessage): string => {
+    if (statusOf === undefined || message.recipients.length === 0) {
+      return '';
+    }
+    const { delivered, acknowledged } = statusOf(message.id);
+    const never = message.recipients.filter((to) => !delivered.includes(to));
+    return (
+      ` [sent to ${message.recipients.join(', ')}; delivered to ${delivered.length === 0 ? 'none' : delivered.join(', ')}` +
+      `; acknowledged by ${acknowledged.length === 0 ? 'none' : acknowledged.join(', ')}` +
+      `${never.length === 0 ? '' : `; never delivered to ${never.join(', ')}`}]`
+    );
+  };
   const quote = (body: string): string[] => body.split(/\r?\n/).map((line) => `> ${line}`);
   const describe = (message: MailboxMessage): string =>
     `${message.id}: ${message.purpose} from ${message.from} to ${message.to}${message.critical ? ' (critical)' : ''}` +
     (message.contractRef === null ? '' : `, about ${message.contractRef}`) +
-    (message.branch === null ? '' : `, sent from ${message.branch} at base ${message.base ?? 'unknown'}`);
+    (message.branch === null ? '' : `, sent from ${message.branch} at base ${message.base ?? 'unknown'}`) +
+    status(message);
   return [
     '',
     '## Open proposals for the integrator',

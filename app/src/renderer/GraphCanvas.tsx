@@ -507,7 +507,8 @@ function NodeShape({
         or its letter when the drawing is zoomed out. A word and a border, never colour alone;
         its hover says the model, the visit and why.
       */}
-      {modelMark?.badge === null || modelMark?.badge === undefined || node.fanOut !== undefined ? null : (
+      {/* DSP-226: on a fan-out node the tag sums its latest visit's branches' classes ("S·M·L"), never one class. */}
+      {modelMark?.badge === null || modelMark?.badge === undefined ? null : (
         <g
           className={`node-class-badge${compact === true ? ' node-class-badge--compact' : ''}`}
           data-ev="node-class-badge"
@@ -546,6 +547,7 @@ function NodeShape({
                 },
               })}
         >
+          {modelMark === null || modelMark === undefined ? null : <title>{modelMark.detail}</title>}
           {branches}
         </text>
       )}

@@ -62,11 +62,20 @@ export function BranchList({
             data-slice-id={row.sliceId}
           >
             <p className="branch-list__title">
-              <strong>{row.sliceId}</strong> · {row.state} · <span className="branch-list__visit">{row.visitLabel}</span>
+              <strong>{row.sliceId}</strong> · {row.state}
+              {row.modelClass === null ? null : (
+                <>
+                  {' · '}
+                  <span className="branch-list__class" data-ev="branch-class">{row.modelClass}</span>
+                </>
+              )}{' '}
+              · <span className="branch-list__visit">{row.visitLabel}</span>
             </p>
             <dl className="branch-list__facts">
               <dt>Task</dt>
               <dd>{row.task}</dd>
+              <dt>Role</dt>
+              <dd data-ev="branch-role">{row.role}</dd>
               <dt>Model</dt>
               <dd>{row.model}</dd>
               <dt>Messages</dt>

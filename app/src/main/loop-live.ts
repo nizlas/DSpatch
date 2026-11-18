@@ -1044,6 +1044,19 @@ export function describeBranchAssignment(instance: FanOutInstance): string {
     `- Allowed actions: ${list(slice.allowedActions)}.`,
     `- Contracts you work against: ${list(slice.contractRefs)}.`,
     `- Check: ${slice.verification}`,
+    // DSP-226: what it must meet, when the slice says.
+    ...(slice.acceptance === undefined ? [] : [`- Acceptance: ${slice.acceptance}`]),
+    '',
+    // DSP-226: when to read the mailbox, what delivery means, and what a contract change is.
+    'Other branches may send you messages, and you may send them. A message is delivered only when its ' +
+      'recipient calls check_messages, so check before you start, after any significant change and ' +
+      'before you finish, and acknowledge each message you have acted on. Sent, delivered and ' +
+      'acknowledged are different things: do not assume another branch has read what you sent. ' +
+      'A proposed change to a shared contract is a proposal, not an agreement, whether you sent it or ' +
+      'received it. If your slice cannot be finished without such a decision, do not wait for one and do ' +
+      'not assume it: finish what you can inside your slice, then end your turn with a section headed ' +
+      '"Open decision" that names the contract, what you need decided and why, so the integrating step ' +
+      'returns it for coordination.',
     '',
     instance.workspacePath === null
       ? 'You work in the run\'s working folder and only read: write no file there.'
@@ -1942,6 +1955,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         branch: true,
       }) +
       receivedText +
+      // DSP-226: the branch's own choices, as task parameters, like any visit's.
+      describeVisitChoices(context.graph, {}, context.choices ?? {}) +
       describeBranchAssignment(instance);
     // DSP-209 S20: the branch's live output, addressed to its visit and slice, on the run's
     // ordinary activity path. Display only: nothing here reaches a prompt, a stored result or

@@ -238,3 +238,70 @@ export function describeVisitChoices(
   }
   return lines.length === 0 ? '' : `\n${lines.join('\n')}`;
 }
+
+/**
+ * DSP-226: a fan-out branch's choices: the visit's, with what its slice set for its own work.
+ * The slice was written by `decidedBy`, the step whose result holds the slice block.
+ */
+export function branchChoices(
+  carried: VisitChoices,
+  slice: { readonly id: string; readonly choices?: Readonly<Record<string, string>> },
+  decidedBy: string,
+): VisitChoices {
+  const set = Object.entries(slice.choices ?? {});
+  if (set.length === 0) {
+    return carried;
+  }
+  const next: Record<string, ChoiceValue> = { ...carried };
+  for (const [id, value] of set) {
+    next[id] = { value, by: 'step', decidedBy, reason: `set for slice ${slice.id}` };
+  }
+  return next;
+}
+
+/**
+ * DSP-226: the choices the work carries on after a fan-out visit. For a choice that `joins`
+ * `strongest`, the strongest value (latest listed option) the visit or any branch had, so
+ * joining never weakens what a branch needed; every other choice keeps the visit's value.
+ * `made` names what the join changed, for the journal.
+ */
+export function joinBranchChoices(
+  graph: Pick<LoopGraph, 'choices'>,
+  carried: VisitChoices,
+  branches: readonly { readonly sliceId: string; readonly choices: VisitChoices }[],
+  nodeId: string,
+): { readonly choices: VisitChoices; readonly made: readonly ChoiceMade[] } {
+  const next: Record<string, ChoiceValue> = { ...carried };
+  const made: ChoiceMade[] = [];
+  for (const choice of graph.choices ?? []) {
+    if (choice.joins !== 'strongest') {
+      continue;
+    }
+    const rank = (value: string | undefined): number => choice.options.findIndex((option) => option.id === value);
+    const own = carried[choice.id]?.value ?? choice.default;
+    let strongest = own;
+    const from: string[] = [];
+    for (const branch of branches) {
+      const value = branch.choices[choice.id]?.value ?? own;
+      if (rank(value) > rank(strongest)) {
+        strongest = value;
+        from.length = 0;
+      }
+      if (value === strongest) {
+        from.push(branch.sliceId);
+      }
+    }
+    if (strongest === own) {
+      continue;
+    }
+    const joined: ChoiceValue = {
+      value: strongest,
+      by: 'step',
+      decidedBy: nodeId,
+      reason: `the strongest any branch carried (${from.join(', ')}); joining never weakens it`,
+    };
+    next[choice.id] = joined;
+    made.push({ id: choice.id, ...joined });
+  }
+  return { choices: next, made };
+}

@@ -70,7 +70,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/limits': ['maxTasks', 'maxCalls', 'maxReworkRounds', 'maxMinutes', 'note'],
   '/archive': ['path', 'entryPerNode', 'referenceReturned', 'notes'],
   '/failureKinds/*': ['id', 'label', 'meaning'],
-  '/choices/*': ['id', 'label', 'meaning', 'options', 'default'],
+  '/choices/*': ['id', 'label', 'meaning', 'options', 'default', 'joins'],
   '/choices/*/options/*': ['id', 'meaning'],
   '/nodes/*': [
     'id',
@@ -115,7 +115,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   '/nodes/*/report': ['writtenBy', 'path'],
   '/nodes/*/produces': ['required', 'form', 'note'],
   '/nodes/*/view': ['x', 'y'],
-  '/nodes/*/fanOut': ['slicesFrom', 'maxConcurrent', 'isolation'],
+  '/nodes/*/fanOut': ['slicesFrom', 'maxConcurrent', 'isolation', 'branchAs'],
   // `delivers` sits next to `when`, because the two together are what an arrival is:
   // when it is taken, and what travels along it.
   // `skips` follows them: what taking the edge passes by (DSP-209 S3).

@@ -96,6 +96,9 @@ export interface BranchView {
   readonly ending: string | null;
   /** DSP-209 S19's model fields on `branch-started`, or `null` where it recorded none. */
   readonly model: ModelSelectionRecord | null;
+  /** DSP-226: the node the branch ran as and its role, from `branch-started`; `null` where not recorded. */
+  readonly runsAs: string | null;
+  readonly roleId: string | null;
   readonly sessionId: string | null;
   readonly messages: BranchMessages;
   /** `false` for every branch of an earlier visit to the same node. */
@@ -288,6 +291,8 @@ export function branchViewsFromJournal(
     /** DSP-209 S20: from `branch-started` (`task`, and S19's model fields). */
     journalTask: string | null;
     model: ModelSelectionRecord | null;
+    runsAs: string | null;
+    roleId: string | null;
     messages: { sent: number; delivered: number; acknowledged: number; undelivered: number };
   }
   const branches: Building[] = [];
@@ -302,6 +307,8 @@ export function branchViewsFromJournal(
         sessionId: null,
         journalTask: null,
         model: null,
+        runsAs: null,
+        roleId: null,
         messages: { sent: 0, delivered: 0, acknowledged: 0, undelivered: 0 },
       };
       branches.push(branch);
@@ -329,6 +336,8 @@ export function branchViewsFromJournal(
         branch.started = true;
         branch.journalTask = text(entry.data, 'task') ?? branch.journalTask;
         branch.model = modelSelectionFromData(entry.data) ?? branch.model;
+        branch.runsAs = text(entry.data, 'runsAs') ?? branch.runsAs;
+        branch.roleId = text(entry.data, 'roleId') ?? branch.roleId;
       } else {
         branch.ending = text(entry.data, 'ending') ?? 'not recorded';
       }
@@ -395,6 +404,8 @@ export function branchViewsFromJournal(
     state: stateOf(branch.ending, branch.started),
     ending: branch.ending,
     model: branch.model,
+    runsAs: branch.runsAs,
+    roleId: branch.roleId,
     sessionId: branch.sessionId,
     messages: { ...branch.messages },
     current: latestOccurrence.get(branch.visit.nodeId) === branch.visit.occurrence,
@@ -447,7 +458,7 @@ export function subGoalNodesFromJournal(journal: readonly RunJournalEntry[]): Re
  * DSP-209 S21 (decision 47): the role ids that make a step the integrator. Read from the
  * drawing's `role` as the run journalled it on `node-entered`, never from a node's name.
  */
-export const INTEGRATOR_ROLE_IDS: ReadonlySet<string> = new Set(['project-integrate']);
+export const INTEGRATOR_ROLE_IDS: ReadonlySet<string> = new Set(['project-integrate', 'generic-integrator']);
 
 const ATTENTION_ORDER: readonly StepAttention[] = ['failure', 'question', 'action'];
 

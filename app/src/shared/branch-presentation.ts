@@ -73,6 +73,10 @@ export interface BranchRow {
   readonly task: string;
   /** The state word, with the journal's ending where it is not `finished` ("failed: no-worktree"). */
   readonly state: string;
+  /** DSP-226: the role it ran as ("role generic-researcher, as researcher"), or "not recorded". */
+  readonly role: string;
+  /** DSP-226: its model class, written out ("Large"), or `null` where it had none. */
+  readonly modelClass: string | null;
   readonly model: string;
   readonly messages: string;
   readonly address: LiveOutputAddress;
@@ -86,13 +90,47 @@ function stateText(branch: BranchView): string {
   return `${word}: ${branch.ending}`;
 }
 
+function classWord(name: string | null): string | null {
+  return name === null || name === '' ? null : `${name.slice(0, 1).toUpperCase()}${name.slice(1)}`;
+}
+
+/**
+ * DSP-226: the model classes of a fan-out node's current (or latest) visit's branches, each
+ * with its count, in the order the branches started: "Small ×1 · Large ×2". `null` when none
+ * recorded a class. A fan-out with several classes is never shown as one of them.
+ */
+export function branchClassSummary(branches: readonly BranchView[], nodeId: string): {
+  readonly classes: readonly string[];
+  readonly line: string;
+} | null {
+  const own = branches.filter((branch) => branch.visit.nodeId === nodeId);
+  if (own.length === 0) {
+    return null;
+  }
+  const latest = Math.max(...own.map((branch) => branch.visit.occurrence));
+  const counts = new Map<string, number>();
+  for (const branch of own.filter((item) => item.visit.occurrence === latest)) {
+    const word = classWord(branch.model?.modelClass ?? null);
+    if (word !== null) {
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) {
+    return null;
+  }
+  return {
+    classes: [...counts.keys()],
+    line: [...counts.entries()].map(([word, count]) => `${word} ×${String(count)}`).join(' · '),
+  };
+}
+
 function modelText(branch: BranchView): string {
   const model = branch.model;
   if (model === null) {
     return 'the run’s model';
   }
   const name = model.model === '' ? 'the provider’s default' : model.model;
-  const how = model.source === 'policy' ? `chosen by the policy${model.option === null ? '' : ` (option “${model.option}”)`}` : model.source === 'fixed' ? 'fixed by the step' : 'the run’s model';
+  const how = model.source === 'policy' ? `${model.modelClass == null ? '' : `class ${classWord(model.modelClass) ?? ''}, `}chosen by the policy${model.option === null ? '' : ` (option “${model.option}”)`}` : model.source === 'fixed' ? 'fixed by the step' : 'the run’s model';
   return `${name} on ${model.provider}, ${how}`;
 }
 
@@ -124,6 +162,8 @@ export function branchRows(branches: readonly BranchView[], nodeId: string): rea
       current: branch.current,
       task: branch.task ?? TASK_NOT_RECORDED,
       state: stateText(branch),
+      role: branch.roleId === null ? 'not recorded' : `role ${branch.roleId}${branch.runsAs === null || branch.runsAs === nodeId ? '' : `, as ${branch.runsAs}`}`,
+      modelClass: classWord(branch.model?.modelClass ?? null),
       model: modelText(branch),
       messages: messagesText(branch),
       address: liveOutputAddressFor(branch.visit, branch.sliceId),

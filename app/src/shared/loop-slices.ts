@@ -13,9 +13,16 @@
  * include case-insensitive file systems and a rule that let `A.ts` and `a.ts` be owned
  * twice would let two branches write one file. Patterns are not paths: `*`, `?` and `[`
  * are refused rather than interpreted.
+ *
+ * **Role, choices and dependencies (DSP-226).** A slice may name the node it runs as (`as`,
+ * one of the fan-out's `branchAs`), the graph's choices for its own work (`choices`, such as a
+ * model class and a review route), what it must meet (`acceptance`), and the slices it depends
+ * on (`dependsOn`). A slice that depends on another slice of the same fan-out cannot run beside
+ * it, from the same base, so the block is refused: such work is split into rounds or run in
+ * sequence. All four are optional, and a block without them reads exactly as before.
  */
 
-import type { FanOutIsolation } from './loop-graph';
+import type { FanOutIsolation, VisitChoiceDef } from './loop-graph';
 
 /** The most slices one fan-out takes (mission decision 24). More wait their turn only up to this. */
 export const MAX_SLICES = 6;
@@ -31,6 +38,12 @@ export interface Slice {
   readonly allowedActions: readonly string[];
   readonly contractRefs: readonly string[];
   readonly verification: string;
+  /** DSP-226: the node this branch runs as, from the fan-out's `branchAs`; absent runs as the fan-out node. */
+  readonly as?: string;
+  /** DSP-226: the graph's choices for this branch's work, by choice id; others are the visit's. */
+  readonly choices?: Readonly<Record<string, string>>;
+  /** DSP-226: what the branch's result must meet, in the planner's words. */
+  readonly acceptance?: string;
 }
 
 export interface SliceProblem {
@@ -45,7 +58,10 @@ export interface SliceProblem {
     | 'unsafe-slice-id'
     | 'unsafe-owned-path'
     | 'overlapping-ownership'
-    | 'no-owned-paths';
+    | 'no-owned-paths'
+    | 'unknown-branch-as'
+    | 'bad-branch-choice'
+    | 'dependent-slices';
   readonly message: string;
   /** The slice it is about, where it is about one. */
   readonly sliceId?: string;
@@ -61,7 +77,16 @@ export type SliceReading =
  * `isolation` matters for one rule: under `worktree` a slice must own at least one path,
  * because a writing branch with nothing it may write has no work to do.
  */
-export function readSlices(resultText: string, options: { readonly isolation: FanOutIsolation }): SliceReading {
+export function readSlices(
+  resultText: string,
+  options: {
+    readonly isolation: FanOutIsolation;
+    /** DSP-226: the nodes a slice may run as; empty refuses any `as`, absent leaves it unchecked. */
+    readonly branchAs?: readonly string[];
+    /** DSP-226: the graph's choices a slice may set. */
+    readonly choices?: readonly VisitChoiceDef[];
+  },
+): SliceReading {
   const blocks = fencedBlocks(resultText).filter((block) => block.info === SLICE_BLOCK_INFO);
   if (blocks.length === 0) {
     return refused({ code: 'no-slice-block', message: `There is no fenced \`${SLICE_BLOCK_INFO}\` block in the result.` });
@@ -97,10 +122,15 @@ export function readSlices(resultText: string, options: { readonly isolation: Fa
 
   const problems: SliceProblem[] = [];
   const slices: Slice[] = [];
+  const dependencies = new Map<string, readonly string[]>();
   list.forEach((entry, index) => {
-    const slice = readSlice(entry, index, options.isolation, problems);
+    const slice = readSlice(entry, index, options, problems);
     if (slice !== null) {
       slices.push(slice);
+      const needs = isRecord(entry) ? stringList(entry['dependsOn']) : null;
+      if (needs !== null && needs.length > 0) {
+        dependencies.set(slice.id, needs);
+      }
     }
   });
 
@@ -132,6 +162,24 @@ export function readSlices(resultText: string, options: { readonly isolation: Fa
           }
         }
       }
+    }
+  }
+
+  // DSP-226: work that depends on another slice of this fan-out would start from the same base
+  // without it, so it is not run beside it.
+  for (const slice of slices) {
+    for (const needed of dependencies.get(slice.id) ?? []) {
+      const sibling = slices.some((other) => other.id.toLowerCase() === needed.toLowerCase());
+      problems.push({
+        code: 'dependent-slices',
+        message: sibling
+          ? `Slice "${slice.id}" depends on slice "${needed}", and branches of one fan-out all start from the same ` +
+            'base at the same time, so it would not see that work. Run the dependent work in a later round, ' +
+            'after the integration, or run the two in sequence.'
+          : `Slice "${slice.id}" depends on "${needed}", which is not a slice of this fan-out. A dependency ` +
+            'that is already settled belongs in "contractRefs"; one that is not must be settled first.',
+        sliceId: slice.id,
+      });
     }
   }
 
@@ -177,7 +225,13 @@ export function isSafeSliceId(id: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) && !id.includes('..') && !id.endsWith('.lock') && !id.endsWith('.');
 }
 
-function readSlice(entry: unknown, index: number, isolation: FanOutIsolation, problems: SliceProblem[]): Slice | null {
+function readSlice(
+  entry: unknown,
+  index: number,
+  options: { readonly isolation: FanOutIsolation; readonly branchAs?: readonly string[]; readonly choices?: readonly VisitChoiceDef[] },
+  problems: SliceProblem[],
+): Slice | null {
+  const isolation = options.isolation;
   const where = `Slice ${String(index + 1)}`;
   if (!isRecord(entry)) {
     problems.push({ code: 'bad-slice', message: `${where} is not an object.` });
@@ -228,6 +282,47 @@ function readSlice(entry: unknown, index: number, isolation: FanOutIsolation, pr
       normalised.push(safe);
     }
   }
+  // DSP-226: the node it runs as, its choices and what it must meet, all optional.
+  const as = nonEmpty(entry['as']);
+  // Checked only where the fan-out's `branchAs` is given; a reader without the graph takes it as written.
+  if (entry['as'] !== undefined && options.branchAs !== undefined && (as === null || !options.branchAs.includes(as))) {
+    problems.push({
+      code: 'unknown-branch-as',
+      message:
+        (options.branchAs ?? []).length === 0
+          ? `Slice "${id}" asks to run as "${String(entry['as'])}", and this fan-out runs every branch as itself: remove "as".`
+          : `Slice "${id}" asks to run as "${String(entry['as'])}", which is not one of ${(options.branchAs ?? []).map((name) => `"${name}"`).join(', ')}.`,
+      sliceId: id,
+    });
+  }
+  const choices: Record<string, string> = {};
+  const rawChoices = entry['choices'];
+  if (rawChoices !== undefined) {
+    if (!isRecord(rawChoices)) {
+      problems.push({ code: 'bad-branch-choice', message: `Slice "${id}": "choices" must be an object of choice to option.`, sliceId: id });
+    } else {
+      for (const [choiceId, value] of Object.entries(rawChoices)) {
+        const def = (options.choices ?? []).find((choice) => choice.id === choiceId);
+        if (options.choices === undefined && typeof value === 'string') {
+          choices[choiceId] = value;
+          continue;
+        }
+        if (def === undefined || typeof value !== 'string' || !def.options.some((option) => option.id === value)) {
+          problems.push({
+            code: 'bad-branch-choice',
+            message:
+              def === undefined
+                ? `Slice "${id}" sets "${choiceId}", which is not a choice of this graph.`
+                : `Slice "${id}" sets ${choiceId} "${String(value)}", which is not one of ${def.options.map((option) => `"${option.id}"`).join(', ')}.`,
+            sliceId: id,
+          });
+          continue;
+        }
+        choices[choiceId] = value;
+      }
+    }
+  }
+  const acceptance = nonEmpty(entry['acceptance']);
   if (isolation === 'worktree' && ownedPaths.length === 0) {
     problems.push({
       code: 'no-owned-paths',
@@ -235,7 +330,17 @@ function readSlice(entry: unknown, index: number, isolation: FanOutIsolation, pr
       sliceId: id,
     });
   }
-  return { id, result, ownedPaths: normalised, allowedActions, contractRefs, verification };
+  return {
+    id,
+    result,
+    ownedPaths: normalised,
+    allowedActions,
+    contractRefs,
+    verification,
+    ...(as === null ? {} : { as }),
+    ...(Object.keys(choices).length === 0 ? {} : { choices }),
+    ...(acceptance === null ? {} : { acceptance }),
+  };
 }
 
 /** Fenced code blocks, by their info string's first word: ``` or ~~~, closed by the same fence or longer. */

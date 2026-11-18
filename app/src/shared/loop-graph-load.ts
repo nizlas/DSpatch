@@ -482,7 +482,13 @@ function parseChoices(value: unknown, findings: Findings): readonly VisitChoiceD
       return;
     }
     const label = (isRecord(entry) ? nonEmptyString(entry['label']) : null) ?? id;
-    choices.push({ id, label, meaning, options, default: fallback });
+    // DSP-226: how a fan-out's branches join on it.
+    const joins = isRecord(entry) ? entry['joins'] : undefined;
+    if (joins !== undefined && joins !== 'strongest') {
+      findings.error('bad-choice-joins', `${pointer}/joins`, `Choice "${id}": "joins" can only be "strongest" (options listed weakest first).`);
+      return;
+    }
+    choices.push({ id, label, meaning, options, default: fallback, ...(joins === 'strongest' ? { joins } : {}) });
   });
   return choices;
 }
@@ -1317,7 +1323,10 @@ function parseFanOut(
   const slicesFrom = record === null ? null : nonEmptyString(record['slicesFrom']);
   const maxConcurrent = record?.['maxConcurrent'];
   const isolation = record?.['isolation'];
+  const branchAs = record?.['branchAs'];
   if (
+    (branchAs !== undefined &&
+      (!Array.isArray(branchAs) || branchAs.length === 0 || !branchAs.every((id) => typeof id === 'string' && id.trim() !== ''))) ||
     record === null ||
     slicesFrom === null ||
     typeof maxConcurrent !== 'number' ||
@@ -1330,12 +1339,18 @@ function parseFanOut(
       'bad-fan-out',
       pointer,
       `Node "${nodeId}": "fanOut" must be { "slicesFrom": <node id>, "maxConcurrent": 1 to ` +
-        `${String(FAN_OUT_MAX_CONCURRENT)}, "isolation": ${FAN_OUT_ISOLATIONS.map((name) => `"${name}"`).join(' or ')} }.`,
+        `${String(FAN_OUT_MAX_CONCURRENT)}, "isolation": ${FAN_OUT_ISOLATIONS.map((name) => `"${name}"`).join(' or ')} }, ` +
+        'and an optional "branchAs": a non-empty list of node ids.',
       { nodeId },
     );
     return null;
   }
-  return { slicesFrom, maxConcurrent, isolation: isolation as FanOutIsolation };
+  return {
+    slicesFrom,
+    maxConcurrent,
+    isolation: isolation as FanOutIsolation,
+    ...(Array.isArray(branchAs) ? { branchAs: branchAs as string[] } : {}),
+  };
 }
 
 function parseCapabilities(
@@ -2483,6 +2498,25 @@ function checkResultFlow(
           `remove "suggest-interactive" from this node.`,
         ids,
       );
+    }
+    // DSP-226: the nodes a branch may run as are agent steps that do not fan out themselves.
+    for (const id of fanOut.branchAs ?? []) {
+      const as = byId.get(id);
+      if (as === undefined || as.kind !== 'agent' || as.fanOut !== undefined || as.role === undefined) {
+        findings.error(
+          'fan-out-branch-as-unusable',
+          `${pointer}/branchAs`,
+          `Node "${node.id}" lets a branch run as "${id}", which ` +
+            (as === undefined
+              ? 'is not a node in this graph.'
+              : as.kind !== 'agent'
+                ? `is a ${as.kind} node, not an agent step.`
+                : as.fanOut !== undefined
+                  ? 'fans out itself; a branch does not start branches.'
+                  : 'has no role for the branch to take.'),
+          ids,
+        );
+      }
     }
     const declaresBranchFailed = graph.failureKinds.some((kind) => kind.id === BRANCH_FAILED);
     const routesBranchFailed = (outgoing.get(node.id) ?? []).some(

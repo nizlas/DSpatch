@@ -53,9 +53,9 @@ test('generic network loads, resolves its roles and retains its result and routi
   assert.equal(choice.preselected, false);
   const graph = load(root);
   const agents = graph.nodes.filter((node) => node.kind === 'agent');
-  assert.equal(agents.length, 30);
-  assert.equal(graph.edges.length, 111);
-  assert.equal(new Set(agents.map((node) => node.role?.id)).size, 15);
+  assert.equal(agents.length, 32);
+  assert.equal(graph.edges.length, 120);
+  assert.equal(new Set(agents.map((node) => node.role?.id)).size, 16);
   assert.ok(agents.every((node) => node.produces?.required && node.produces.form === 'stored-result'));
   assert.ok(graph.nodes.some((node) => node.kind === 'terminal' && node.ending === 'report-delivered'));
   assert.ok(graph.edges.every((edge) => edge.delivers?.includes('executive-intake')));
@@ -131,7 +131,7 @@ test('client bundling carries the definition, graph and every role', (context) =
   prepareBundled(app);
   const bundled = path.join(app, 'build/bundled');
   const graph = load(bundled);
-  assert.equal(graph.nodes.filter((node) => node.kind === 'agent').length, 30);
+  assert.equal(graph.nodes.filter((node) => node.kind === 'agent').length, 32);
   for (const file of [definitionPath, graphPath, ...fs.readdirSync(path.join(root, roleDirectory)).map((name) => `${roleDirectory}/${name}`)]) {
     assert.deepEqual(fs.readFileSync(path.join(bundled, file)), fs.readFileSync(path.join(root, file)), file);
   }
