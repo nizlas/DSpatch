@@ -9,6 +9,8 @@
  * do is listed here, and it is reached only over IPC.
  */
 
+import type { ProjectInstructions } from './project-instructions';
+import type { ProjectGraphAnswer, ProjectGraphRequest } from './project-graph-bridge';
 import type {
   AgentCommandEnding,
   AgentCommandRecord,
@@ -2753,6 +2755,13 @@ export interface DspatchBridge {
    * **A read.** It lists one directory per folder and starts nothing.
    */
   listLoopDefinitions(): Promise<LoopDefinitionListing>;
+  /** DSP-229: "Apply to repository…" and "Project instructions…": one request, one answer. */
+  projectGraph(request: ProjectGraphRequest): Promise<ProjectGraphAnswer>;
+  /**
+   * DSP-229: a native file chooser opened in `repository`. The path comes back relative to it, or
+   * absolute and marked external when the file is outside it; `null` when nothing was chosen.
+   */
+  pickProjectDocument(repository: string): Promise<{ readonly path: string; readonly external: boolean } | null>;
   /**
    * Select a definition for the next mandate (DSP-84, DSP-85).
    *
@@ -3142,6 +3151,11 @@ export type LoopGraphOpenOutcome =
       readonly definition?: OpenedLoopDefinition;
       /** Present when this is a proposal's preview, not a file on disk. */
       readonly preview?: ProposalPreview;
+      /**
+       * DSP-229: a project graph's own instructions, as a run started now would read them, with the
+       * file they are in (relative to the repository). Absent for every other graph.
+       */
+      readonly projectInstructions?: { readonly value: ProjectInstructions; readonly file: string };
     }
   | { readonly kind: 'cancelled' }
   | {
@@ -3644,6 +3658,8 @@ export type BridgeChannel =
   | 'dspatch:chat-loop-activity'
   | 'dspatch:prepare-chat-loop'
   | 'dspatch:list-loop-definitions'
+  | 'dspatch:project-graph'
+  | 'dspatch:pick-project-document'
   | 'dspatch:choose-loop-definition'
   | 'dspatch:take-graph-to-edit'
   | 'dspatch:graph-to-edit'

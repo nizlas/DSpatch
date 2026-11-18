@@ -303,8 +303,13 @@ export function describeDefinitionRow(row: LoopDefinitionRow): DefinitionRowDisp
         ? `${path.basename(row.origin.folderPath)} \u00b7 ${row.fileName}`
         : `${row.filePath} \u00b7 chosen by hand`;
 
+  // DSP-229: the chooser's group and the owning folder.
+  const group: 'project' | 'built-in' = row.origin.kind === 'shipped' ? 'built-in' : 'project';
+  const owner = row.origin.kind === 'folder' ? path.basename(row.origin.folderPath) : null;
   if (row.definition === null) {
     return {
+      group,
+      owner,
       name: row.fileName,
       description: null,
       origin,
@@ -317,12 +322,17 @@ export function describeDefinitionRow(row: LoopDefinitionRow): DefinitionRowDisp
     };
   }
 
+  // A project graph reads from its own repository, the folder it was found in: no dependency to show.
+  const readsOwnRepository = row.origin.kind === 'folder' && row.resourceRoot !== null && path.resolve(row.resourceRoot) === path.resolve(row.origin.folderPath);
   return {
+    group,
+    owner,
+    projectInstructions: row.definition.projectInstructions !== undefined,
     name: row.definition.name,
     description: row.definition.description ?? null,
     origin,
     error: null,
-    dependency: readsFromElsewhere(row.definition)
+    dependency: readsFromElsewhere(row.definition) && !readsOwnRepository
       ? `Reads its resources from ${row.resourceRoot ?? row.definition.resourceRoot ?? ''}` +
         (row.definition.resourceRootNote === undefined
           ? ''

@@ -356,6 +356,24 @@ For example, start with **wait for me**, inspect what the first agent produced, 
 
 Continuity means the visible work and conversation stay together. It does not mean every specialist shares one model context or that a cancelled process can resume at the exact instruction where it stopped. Provider recovery and resuming an interrupted graph run are separate capabilities; use the continuation controls actually offered for that state.
 
+### Make a built-in workflow your project's own
+
+A built-in graph is generic: its roles describe how a planner, an implementer or a reviewer works anywhere. **Apply to repository…** beside the **Graph** list in the Graph editor turns one into your project's workflow, fitted to the project's own documents and routines, saved in the repository and versioned with it.
+
+1. **Choose the template.** Pick a built-in workflow, the repository of this workspace it is for, and a name, such as *Our development workflow*.
+2. **Fit it to the project.** The window has three kinds of section:
+   - **Common to this project**, which every step gets: rules that apply everywhere, written once.
+   - **Each role**, which every step with that role gets: the implementer role in two steps gets its addition once in each, without copying.
+   - **Each step**, with its name, role and task shown: what only that step needs, such as a different focus for two steps that share a role.
+
+   In each section you write instructions, which are sent to the step after its generic role, and add documents with **Choose a document…** (anywhere in the repository: under `docs/`, at the root or elsewhere), each with why it matters and when to read it. A document is not attached: the step is told where it is and opens it itself when it needs it. A file outside the repository is marked as such, is not copied and will not travel with the repository.
+3. **Ask for recommendations, if you like.** **Recommend for all**, **for this role** or **for this step** asks the agent chosen for the workspace to read the repository, without changing anything, and propose instructions and documents with a reason and a time to read each, and what is missing, conflicting or uncertain. "For all" makes one inventory of the repository that later requests reuse. A proposal is shown beside your text and applied only when you take it: **Add to the text**, **Replace the text** or **Add reference**. Stopping or a failure leaves your text as it was. Recommendations need an agent with read-only access (Claude or Copilot); everything else works without one.
+4. **Review.** Selecting a step shows what it will be sent, in order: its generic role, then the common, role and step additions, assembled as the run will assemble them, then the assignment and handed-over results, which exist only during a run. A parallel branch that runs as a step gets that step's additions, in its own worktree. **Review and save…** lists every file that will be created.
+5. **Save.** The project graph is written under `.dspatch/loops/` in the repository: its definition, its graph, the generic roles copied as they are in this version of DSpatch (under `roles/<name>/`) and its own instructions in `<name>.project.json`. Nothing is overwritten and nothing is committed: commit the files with Git when you are ready. The project graph becomes this workspace's choice; nothing starts.
+6. **Run it.** The **Graph** list shows it under **Project workflows**, with its repository's name when several repositories are open, and only in a workspace that includes its repository; DSpatch's own graphs are under **Built-in workflows**. Send an assignment with **Use workflow** on, as for any graph.
+
+Later, **Project instructions…** beside the list reopens the same window for the chosen project workflow. Saving there changes only its instructions file, refuses to overwrite a change made to the file elsewhere, and applies from the next run: a run in progress keeps the instructions it started with. Updating DSpatch does not change a project workflow: its roles are its own copies, and the definition records which template and version it came from.
+
 ### Build or adapt a workflow
 
 **In conversation.** Ask the agent in the project chat for the workflow you want, for example *"a workflow that researches two approaches in parallel, lets me choose, then implements and tests the chosen one"*. The agent reads the existing graphs and their building blocks and answers with a proposal card: the graph's name and purpose and what applying it would write. **Open in editor** shows the proposed graph; **Apply** writes it; **Discard** writes nothing. A proposal never runs by itself, and Apply refuses to overwrite a graph that was changed on disk in the meantime.
@@ -370,7 +388,7 @@ Continuity means the visible work and conversation stay together. It does not me
 - **Open graph…** loads a `.loop.json` declaration and makes its workflow selectable.
 - A `.graph.json` is the drawing and workflow structure. Opening a drawing alone (**File → Open Graph File…**) is not the same as installing a selectable graph.
 
-Project graph declarations live under `.dspatch/loops/` (the folder and the `.loop.json` suffix keep their original names). For a custom workflow, copy a working declaration and its needed resources into your own project or branch, keep paths relative, and open the declaration in the editor. Do not edit read-only resources inside an installed application. The [chat-loop declaration](.dspatch/loops/dspatch-chat-loop.loop.json), its [graph](docs/loop/graphs/dspatch-chat-loop.graph.json) and the [parallel workflow](.dspatch/loops/dspatch-parallel-loop.loop.json) are useful starting points.
+Project graph declarations live under `.dspatch/loops/` (the folder and the `.loop.json` suffix keep their original names). To start from a built-in workflow, use **Apply to repository…** above rather than copying files by hand; to build one from scratch, describe it in the chat or copy a working declaration with its resources into your project, keep paths relative, and open the declaration in the editor. Do not edit read-only resources inside an installed application. The [chat-loop declaration](.dspatch/loops/dspatch-chat-loop.loop.json), its [graph](docs/loop/graphs/dspatch-chat-loop.graph.json) and the [parallel workflow](.dspatch/loops/dspatch-parallel-loop.loop.json) are useful starting points.
 
 Some graph concepts in the design documents are not runnable yet, such as a node that is itself a nested graph. Use the editor's validation and the runnable examples; the full development-process drawing includes unsupported parts and is not an executable template.
 

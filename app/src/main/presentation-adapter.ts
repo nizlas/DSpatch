@@ -12,6 +12,7 @@ import type {
   Unsubscribe,
   UsageReading,
 } from '../adapter/types';
+import { simulatedRecommendation } from './presentation-recommendations';
 import type { AgentAdapter } from '../adapter/agent-adapter';
 import { TASK_HEADER } from '../shared/review-agent';
 import { failsPresentation, failsTask, presentMs, simulatedReviewTask, streamMs } from './presentation-review-tasks';
@@ -664,6 +665,8 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // answered by reading the revision folder the session runs in, as the real agent does.
     const task = simulatedReviewTask(prompt, state.config.workspacePath, state.asked);
     answer = task?.answer ?? answer;
+    // DSP-229, SIMULATED: a project-instruction recommendation, from the repository's file names.
+    answer = simulatedRecommendation(prompt, state.config.workspacePath) ?? answer;
     // An analysis task reads before it answers: long enough to be stopped, as a real one is,
     // whether or not the revision folder had to be written first (a discussion may hold it).
     const toolMs = Math.max(0, Number(process.env['DSPATCH_PRESENTATION_TOOL_MS'] ?? '0') || 0);

@@ -1,4 +1,7 @@
 import { adoptionNotice } from '../main/host-data';
+import { projectGraphMethods, type ProjectGraphHost } from './project-graph-methods';
+import type { ProjectGraphRequest } from '../shared/project-graph-bridge';
+import { stepProjectText } from '../shared/project-instructions';
 import { hostname } from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -132,6 +135,7 @@ import {
   listChoosableLoops,
   openChosenLoop,
   rowForKey,
+  type ChosenLoop,
   type ChosenLoopOutcome,
 } from '../main/loop-definition-choice';
 import { discoverLoopDefinitions } from '../main/loop-definition-files';
@@ -1118,9 +1122,8 @@ async function openWorkspaceFor(request: WorkspaceOpenRequest): Promise<Workspac
       log(`[workspace] ${outcome.problem}`);
     }
   }
-  if (record.loopDefinitionKey !== null) {
-    workspaceLoopDefinitionKey = record.loopDefinitionKey;
-  }
+  // DSP-229: the opened workspace's own choice, or none: never the previous workspace's.
+  workspaceLoopDefinitionKey = record.loopDefinitionKey;
   log(
     `[workspace] opened "${record.name}" (${record.id}) with ${String(usable.length)} folder(s)` +
       `${carried === null ? '' : `; carried conversation ${carried} into it`}`,
@@ -2452,7 +2455,21 @@ function registerLoopMethods(): void {
     if (workspaceLoopDefinitionKey !== null) {
       paths.add(workspaceLoopDefinitionKey);
     }
-    return [...paths];
+    return [...paths].filter((definitionPath) => !belongsToClosedRepository(definitionPath));
+  }
+
+  /**
+   * DSP-229: a remembered choice that is a repository's own workflow — a file in some folder's
+   * `.dspatch/loops/` — is offered only while that folder is open, so a project workflow never shows
+   * in a workspace its repository is not part of. A definition kept anywhere else is put back as before.
+   */
+  function belongsToClosedRepository(definitionPath: string): boolean {
+    const loops = path.dirname(path.resolve(definitionPath));
+    if (path.basename(loops) !== 'loops' || path.basename(path.dirname(loops)) !== '.dspatch') {
+      return false;
+    }
+    const repository = path.dirname(path.dirname(loops));
+    return !loopFolders().some((folder) => path.resolve(folder) === repository);
   }
 
   function listOfferedLoops(): LoopDefinitionListing {
@@ -2508,6 +2525,25 @@ function registerLoopMethods(): void {
     'loop.listDefinitions',
     (): LoopDefinitionListing => listOfferedLoops(),
   );
+
+  /**
+   * DSP-229: "Apply to repository…" and "Project instructions…". Writes only inside the open
+   * workspace's folders, and an apply makes the new graph this workspace's choice; nothing starts.
+   */
+  const projectGraph = projectGraphMethods({
+    workspaceFolders: () => openWorkspaceFolders(),
+    ownRoot: () => ownRoot,
+    appVersion: config().appVersion,
+    choose: (definitionPath) => noteChosenLoopDefinition(definitionPath),
+    agent: () => {
+      const provider = agentChoiceStore.read();
+      return { provider, model: provider === null ? null : chatService.modelFor(provider) || null };
+    },
+    recommendRefusal: (provider) => adapterFactory.preflight({ provider, purpose: 'analysis' }),
+    createAnalysisAdapter: (provider) => adapterFactory.createAdapter({ provider, purpose: 'analysis' }) as unknown as ReturnType<ProjectGraphHost['createAnalysisAdapter']>,
+    log,
+  });
+  handle('loop.projectGraph', (_context, request: ProjectGraphRequest) => projectGraph(request));
 
   /**
    * Select a definition for the next mandate. **It starts nothing.**
@@ -3344,6 +3380,9 @@ function registerLoopMethods(): void {
                 : { context: { text: contextSnapshot.text, personWordsText: contextSnapshot.personWordsText } }),
               // DSP-209 S3. Which outcomes skip which steps; empty for every node without one.
               skipping: skippingRoutesOf(loaded.graph, node.id),
+              // DSP-229. The project's instructions for this step, read when the run started: for a
+              // branch, those of the node it runs as, with its own worktree as the repository root.
+              projectInstructions: projectStepText(chosen, loaded.graph, node, step, workspacePath),
             });
             // DSP-32. The one place a step's prompt is built is the one place a
             // waiting message can be handed over, and draining it here means the
@@ -4061,6 +4100,25 @@ function steeredNote(steered: readonly { readonly text: string; readonly outcome
  * Resolution is the resolver's, not a second reader beside it, so the text validation
  * checked is the text the agent is sent.
  */
+/** DSP-229: the run's project instructions for one step, by the shared assembly. */
+function projectStepText(
+  chosen: Pick<ChosenLoop, 'projectInstructions' | 'resourceRoot'>,
+  graph: LoopGraph,
+  node: LoopNode,
+  step: { readonly branch?: boolean; readonly runsAs?: string; readonly workspacePath?: string | null },
+  workspacePath: string,
+): string {
+  return stepProjectText(
+    chosen.projectInstructions === null
+      ? null
+      : { value: chosen.projectInstructions.value, relativeFile: path.relative(chosen.resourceRoot, chosen.projectInstructions.file).split(path.sep).join('/') },
+    graph,
+    node,
+    step,
+    { repository: chosen.resourceRoot, workingFolder: workspacePath, same: path.resolve(chosen.resourceRoot) === path.resolve(workspacePath) },
+  );
+}
+
 function chatRoleTextFor(node: LoopNode, resolve: RoleResolver): ChatRoleText | null {
   if (node.role === undefined) {
     return null;

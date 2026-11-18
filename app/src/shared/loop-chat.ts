@@ -1370,11 +1370,18 @@ export function chatPromptFor(
      * {@link skippingRoutesOf}. Absent or empty leaves every prompt byte for byte what it was.
      */
     readonly skipping?: readonly SkippingRoute[];
+    /**
+     * DSP-229: the project's instructions for this step, as `projectInstructionsText` writes
+     * them, placed right after the generic role and before the task. Absent or empty leaves
+     * every prompt byte for byte what it was.
+     */
+    readonly projectInstructions?: string;
   },
 ): string {
   const fromDrawing = options.mandateFrom === 'drawing';
   const precedence = fromDrawing ? DRAWING_TASK_PRECEDENCE : TASK_PRECEDENCE;
-  const preamble = rolePreamble(options.role);
+  const projectText = options.projectInstructions?.trim() ?? '';
+  const preamble = [...rolePreamble(options.role), ...(projectText === '' ? [] : [projectText, ''])];
   const declared = declarationInstructions(node.declaredFailures);
   const results = outcomeInstructions(node, options.skipping);
   // After the role and before the mandate, for the reason `rolePreamble` gives about
@@ -1521,7 +1528,8 @@ export interface BriefPart {
     | 'declarations'
     | 'outcomes'
     | 'choices'
-    | 'split';
+    | 'split'
+    | 'project';
   /** What to call it in the window. */
   readonly heading: string;
   /** Whether the text itself is inside the message the agent receives. */

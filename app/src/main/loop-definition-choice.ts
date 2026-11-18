@@ -35,6 +35,8 @@
  * provider cannot do.
  */
 
+import { projectInstructionsForRun } from './project-graph';
+import type { ProjectInstructions } from '../shared/project-instructions';
 import { CHAT_LOOP_GRAPH_ID, describeChosenLoopBinding } from '../shared/loop-chat';
 import type { LoopDefinitionChoice, LoopDefinitionListing } from '../shared/bridge';
 import type { RoleResolver } from '../shared/loop-graph';
@@ -76,6 +78,11 @@ export interface ChosenLoop {
   readonly graphVersionId: string;
   /** Anchored at the definition's resource root, never at the folder being worked on. */
   readonly resolveRole: RoleResolver;
+  /**
+   * DSP-229: the project's instructions, read with the graph, so a run keeps the ones it started
+   * with whatever is saved meanwhile; `null` for a graph without them.
+   */
+  readonly projectInstructions: { readonly value: ProjectInstructions; readonly file: string } | null;
 }
 export type ChosenLoopOutcome =
   | { readonly ok: true; readonly chosen: ChosenLoop }
@@ -273,6 +280,7 @@ export function openChosenLoop(
       graphText,
       graphVersionId: graphVersionIdFor(graphText),
       resolveRole,
+      projectInstructions: projectInstructionsForRun(row),
     },
   };
 }

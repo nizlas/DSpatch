@@ -137,10 +137,12 @@ import {
 } from '../shared/loop-run-view';
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import { ModelClassDialog } from './ModelClassDialog';
+import { ProjectGraphWindow, type ProjectWindowMode } from './ProjectGraphWindow';
 import { runningStep, stepStanding } from '../shared/loop-activity';
 import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind, type BriefPart } from '../shared/loop-chat';
 import { describeVisitChoices } from '../shared/loop-choices';
 import { describeSplitInstructions } from '../shared/loop-split-instructions';
+import { projectInstructionsText, type ProjectInstructions } from '../shared/project-instructions';
 import { ChoiceSections, ParallelSectionPanel, ParallelSections, SplitInstructionsPreview } from './GraphSectionForms';
 import { successRoutesOf } from '../shared/loop-results';
 import {
@@ -195,6 +197,8 @@ interface OpenFile {
   readonly definition: OpenedLoopDefinition | null;
   /** DSP-209 S23b: the proposal this drawing previews, or `null` for a file on disk. */
   readonly preview: ProposalPreview | null;
+  /** DSP-229: a project graph's own instructions, or `null`. */
+  readonly projectInstructions: { readonly value: ProjectInstructions; readonly file: string } | null;
 }
 
 type Selection = { readonly kind: 'node' | 'edge'; readonly id: string } | null;
@@ -244,6 +248,8 @@ export function LoopEditor(): React.JSX.Element {
    * beside one — it is displaying the stored choice, not a copy of it.
    */
   const [loopChoices, setLoopChoices] = useState<LoopDefinitionListing | null>(null);
+  // DSP-229: "Apply to repository…" or "Project instructions…", while open.
+  const [projectWindow, setProjectWindow] = useState<ProjectWindowMode | null>(null);
   const [choosing, setChoosing] = useState(false);
   /**
    * Why the last choice did not take, beside the chooser that refused it (DSP-85 #8).
@@ -636,6 +642,7 @@ export function LoopEditor(): React.JSX.Element {
       projectRoot: outcome.projectRoot,
       definition: outcome.definition ?? null,
       preview: outcome.preview ?? null,
+      projectInstructions: outcome.projectInstructions ?? null,
     });
     setSelection(null);
     setTool(null);
@@ -2688,18 +2695,28 @@ export function LoopEditor(): React.JSX.Element {
                 because a definition that vanished from the list would look exactly like
                 one nobody wrote.
               */}
-              {(loopChoices?.choices ?? []).map((choice) => (
-                <option
-                  key={choice.key}
-                  value={choice.key}
-                  disabled={!choice.usable}
-                  title={choice.display.error !== null ? 'Will not load: see Details' : choice.display.dependency !== null ? 'Reaches outside its folder: see Details' : undefined}
-                >
-                  {choice.display.name} · {choice.display.origin}
-                  {choice.display.variant === null ? '' : ` · ${choice.display.variant}`}
-                  {choice.usable ? '' : ' — will not load'}
-                </option>
-              ))}
+              {/* DSP-229: the workspace's own workflows first, by repository when there are several, then DSpatch's. */}
+              {(['project', 'built-in'] as const).map((group) => {
+                const rows = (loopChoices?.choices ?? []).filter((choice) => (choice.display.group ?? 'project') === group);
+                const owners = new Set(rows.map((choice) => choice.display.owner ?? ''));
+                return rows.length === 0 ? null : (
+                  <optgroup key={group} label={group === 'project' ? 'Project workflows' : 'Built-in workflows'} data-ev={`editor-loop-group-${group}`}>
+                    {rows.map((choice) => (
+                      <option
+                        key={choice.key}
+                        value={choice.key}
+                        disabled={!choice.usable}
+                        title={choice.display.error !== null ? 'Will not load: see Details' : choice.display.dependency !== null ? 'Reaches outside its folder: see Details' : undefined}
+                      >
+                        {choice.display.name}
+                        {group === 'project' ? (owners.size > 1 && choice.display.owner ? ` · ${choice.display.owner}` : '') : ` · ${choice.display.origin}`}
+                        {choice.display.variant === null ? '' : ` · ${choice.display.variant}`}
+                        {choice.usable ? '' : ' — will not load'}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
             </select>
           </label>
           {/*
@@ -2708,6 +2725,27 @@ export function LoopEditor(): React.JSX.Element {
             selection, through the same handler and the same judgement the dropdown uses.
             It starts nothing.
           */}
+          {/* DSP-229: copy a built-in workflow into a repository, or maintain a project workflow's instructions. */}
+          <button
+            type="button"
+            data-ev="apply-to-repository"
+            disabled={choosing || locked}
+            title={locked ? 'Held while a run walks' : 'Copy a built-in workflow into a repository of this workspace and fit it to the project'}
+            onClick={() => setProjectWindow({ mode: 'apply' })}
+          >
+            Apply to repository…
+          </button>
+          {chosenLoop !== null && loopChoices?.choices.find((choice) => choice.key === chosenLoop.key)?.display.projectInstructions === true ? (
+            <button
+              type="button"
+              data-ev="project-instructions"
+              disabled={choosing}
+              title="This workflow's project instructions: common, per role and per step"
+              onClick={() => setProjectWindow({ mode: 'edit', definitionKey: chosenLoop.key })}
+            >
+              Project instructions…
+            </button>
+          ) : null}
           <button
             type="button"
             data-ev="open-loop-definition"
@@ -3310,6 +3348,7 @@ export function LoopEditor(): React.JSX.Element {
               onNote={setNote}
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
               onGraphChange={(next) => apply(next)}
+              projectInstructions={file?.projectInstructions ?? null}
               onDelete={() => {
                 apply(withoutNode(graph, selectedNode.id), `Removed "${selectedNode.id}" and every edge that touched it.`);
                 setSelection(null);
@@ -3389,6 +3428,21 @@ export function LoopEditor(): React.JSX.Element {
         )}
       </footer>
 
+      {projectWindow === null ? null : (
+        <ProjectGraphWindow
+          mode={projectWindow}
+          onClose={() => {
+            setProjectWindow(null);
+            // Saved instructions show in the preview of the open graph from its next read.
+            if (chosenLoop !== null) void chooseLoop(chosenLoop.key);
+          }}
+          onApplied={(definitionKey) => {
+            setProjectWindow(null);
+            // The host made it this workspace's choice; the editor opens it, and nothing runs.
+            void chooseLoop(definitionKey);
+          }}
+        />
+      )}
       {modelClassesOpen ? (
         <ModelClassDialog
           initialProvider={runAgent?.provider ?? null}
@@ -3755,7 +3809,10 @@ function NodeInspector({
   onChange,
   onGraphChange,
   onDelete,
+  projectInstructions,
 }: {
+  /** DSP-229: the project graph's own instructions, as a run started now would read them. */
+  readonly projectInstructions?: { readonly value: ProjectInstructions; readonly file: string } | null;
   readonly graph: LoopGraph;
   readonly node: LoopNode;
   /** DSP-227: a change that reaches beyond this node, such as its parallel section. */
@@ -3825,7 +3882,32 @@ function NodeInspector({
       ? []
       : [{ id: 'split' as const, heading: 'How to propose a split', carried: true, present: true, detail: 'Written by DSpatch from the parallel section this step proposes for.', text: [splitText] }]),
   ];
-  const allParts = [...parts, ...generatedParts];
+  // DSP-229: the project's own additions, by the run's own assembly, after the role.
+  const projectText =
+    projectInstructions === undefined || projectInstructions === null || node.kind !== 'agent'
+      ? ''
+      : projectInstructionsText(
+          projectInstructions.value,
+          { nodeId: node.id, nodeLabel: node.label ?? node.id, roleId: node.role?.id ?? null },
+          { file: projectInstructions.file, repositoryRoot: resourceRoot ?? '(the repository)' },
+        );
+  const projectPart: BriefPart[] =
+    projectText === ''
+      ? []
+      : [
+          {
+            id: 'project',
+            heading: 'The project’s instructions for this step',
+            carried: true,
+            present: true,
+            detail:
+              `From ${projectInstructions?.file ?? ''}: common, role and step additions, after the role. Their text is in the message; the documents ` +
+              'they name are not attached, the step is told where they are. ' +
+              (node.fanOut === undefined ? '' : 'A branch that runs as another step gets that step’s additions instead, in its own worktree.'),
+            text: [projectText],
+          },
+        ];
+  const allParts = [...parts.slice(0, 1), ...projectPart, ...parts.slice(1), ...generatedParts];
 
   return (
     <div className="inspector">

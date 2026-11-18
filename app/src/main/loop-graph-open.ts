@@ -150,6 +150,15 @@ export function openedFromDefinition(outcome: ChosenLoopOutcome): LoopGraphOpenO
       name: chosen.definitionName,
       path: chosen.definitionPath,
     },
+    // DSP-229: what a run of this project graph would add to each step, for the node panel's preview.
+    ...(chosen.projectInstructions === null
+      ? {}
+      : {
+          projectInstructions: {
+            value: chosen.projectInstructions.value,
+            file: path.relative(chosen.resourceRoot, chosen.projectInstructions.file).split(path.sep).join('/'),
+          },
+        }),
   };
 }
 

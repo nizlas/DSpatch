@@ -1,4 +1,5 @@
 import type { HostBrowsePage } from './host-link';
+import type { ProjectGraphRequest } from './project-graph-bridge';
 import type {
   AddLoopInstructionRequest,
   SteerTurnRequest,
@@ -156,6 +157,8 @@ export type ProjectHostMethods = ReviewMethods & {
     readonly path: string;
   }) => { readonly revealed: false; readonly note: string } | { readonly target: string };
   readonly 'loop.listDefinitions': () => BridgeAnswer<'listLoopDefinitions'>;
+  /** DSP-229: apply a built-in graph to a repository, and keep its project instructions. */
+  readonly 'loop.projectGraph': (request: ProjectGraphRequest) => BridgeAnswer<'projectGraph'>;
   readonly 'loop.judgeDefinition': (definitionPath: string) => DefinitionJudgement;
   readonly 'loop.chooseDefinition': (
     definitionPath: string,
@@ -350,6 +353,7 @@ export const PROJECT_HOST_METHOD_NAMES = Object.keys({
   'loop.resolveRoles': true,
   'loop.locateRoleSource': true,
   'loop.listDefinitions': true,
+  'loop.projectGraph': true,
   'loop.judgeDefinition': true,
   'loop.chooseDefinition': true,
   'loop.chatRunStartCheck': true,

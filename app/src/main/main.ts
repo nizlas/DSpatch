@@ -1,4 +1,5 @@
 import childProcess from 'node:child_process';
+import type { ProjectGraphRequest } from '../shared/project-graph-bridge';
 import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
 import { REMOTE_SETUP_SCRIPTS, SAVE_REMOTE_SETUP_CHANNEL } from '../shared/remote-setup';
@@ -185,6 +186,8 @@ const SAVE_WORKSPACE_FILE: BridgeChannel = 'dspatch:save-workspace-file';
 const READ_WORKSPACE_DIRECTORY: BridgeChannel = 'dspatch:read-workspace-directory';
 const READ_WORKSPACE_FILE: BridgeChannel = 'dspatch:read-workspace-file';
 const LIST_LOOP_DEFINITIONS: BridgeChannel = 'dspatch:list-loop-definitions';
+const PROJECT_GRAPH: BridgeChannel = 'dspatch:project-graph';
+const PICK_PROJECT_DOCUMENT: BridgeChannel = 'dspatch:pick-project-document';
 const CHOOSE_LOOP_DEFINITION: BridgeChannel = 'dspatch:choose-loop-definition';
 const TAKE_GRAPH_TO_EDIT: BridgeChannel = 'dspatch:take-graph-to-edit';
 const GRAPH_TO_EDIT: BridgeChannel = 'dspatch:graph-to-edit';
@@ -5195,6 +5198,22 @@ function registerLoopGraphIpc(): void {
    * nothing started, nothing written.
    */
   ipcMain.handle(LIST_LOOP_DEFINITIONS, (): Promise<LoopDefinitionListing> => hostCall('loop.listDefinitions', NO_SENDER));
+
+  // DSP-229: "Apply to repository…" and "Project instructions…".
+  ipcMain.handle(PROJECT_GRAPH, (_event, request: ProjectGraphRequest) => hostCall('loop.projectGraph', NO_SENDER, request));
+  ipcMain.handle(PICK_PROJECT_DOCUMENT, async (_event, repository: unknown) => {
+    if (typeof repository !== 'string' || repository === '') {
+      return null;
+    }
+    const picked = await pickers.showOpenDialog({ title: 'Choose a document for the project instructions', defaultPath: repository, properties: ['openFile'] });
+    const chosen = picked.canceled ? undefined : picked.filePaths[0];
+    if (chosen === undefined) {
+      return null;
+    }
+    const relative = path.relative(repository, chosen);
+    const inside = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+    return inside ? { path: relative.split(path.sep).join('/'), external: false } : { path: chosen, external: true };
+  });
 
   /**
    * Select a definition for the next mandate. **It starts nothing.**

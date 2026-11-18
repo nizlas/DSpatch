@@ -1,4 +1,5 @@
 import type { HostBrowsePage, HostLinkBridge, HostLinkState, SetupBridge, SshQuestion } from '../shared/host-link';
+import type { ProjectGraphAnswer, ProjectGraphRequest } from '../shared/project-graph-bridge';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import type { HelpBridge, RemoteSetupScript } from '../shared/remote-setup';
 
@@ -173,6 +174,8 @@ const CHAT_LOOP_REPLY: BridgeChannel = 'dspatch:chat-loop-reply';
 const CHAT_LOOP_ACTIVITY: BridgeChannel = 'dspatch:chat-loop-activity';
 const PREPARE_CHAT_LOOP: BridgeChannel = 'dspatch:prepare-chat-loop';
 const LIST_LOOP_DEFINITIONS: BridgeChannel = 'dspatch:list-loop-definitions';
+const PROJECT_GRAPH: BridgeChannel = 'dspatch:project-graph';
+const PICK_PROJECT_DOCUMENT: BridgeChannel = 'dspatch:pick-project-document';
 const CHOOSE_LOOP_DEFINITION: BridgeChannel = 'dspatch:choose-loop-definition';
 const TAKE_GRAPH_TO_EDIT: BridgeChannel = 'dspatch:take-graph-to-edit';
 const GRAPH_TO_EDIT: BridgeChannel = 'dspatch:graph-to-edit';
@@ -404,6 +407,9 @@ const bridge: DspatchBridge = {
     ipcRenderer.invoke(PREPARE_CHAT_LOOP, chosen, definitionKey) as Promise<ChatLoopPrepareOutcome>,
   listLoopDefinitions: () =>
     ipcRenderer.invoke(LIST_LOOP_DEFINITIONS) as Promise<LoopDefinitionListing>,
+  projectGraph: (request: ProjectGraphRequest) => ipcRenderer.invoke(PROJECT_GRAPH, request) as Promise<ProjectGraphAnswer>,
+  pickProjectDocument: (repository: string) =>
+    ipcRenderer.invoke(PICK_PROJECT_DOCUMENT, repository) as Promise<{ readonly path: string; readonly external: boolean } | null>,
   chooseLoopDefinition: (definitionPath: string | null) =>
     ipcRenderer.invoke(
       CHOOSE_LOOP_DEFINITION,

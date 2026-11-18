@@ -48,6 +48,20 @@ export const LOOP_DEFINITION_DIR_SEGMENTS = ['.dspatch', 'loops'] as const;
 /** What a declaration file is called. Discovery reads nothing else. */
 export const LOOP_DEFINITION_SUFFIX = '.loop.json';
 
+/** DSP-229: the template a project graph was applied from. */
+export interface ProjectGraphOrigin {
+  /** The template's definition id and name, and its graph's id. */
+  readonly templateId: string;
+  readonly templateName: string;
+  readonly templateGraphId: string;
+  /** The DSpatch version that shipped the template. */
+  readonly appVersion: string;
+  /** SHA-256 of the template's graph text, and of each role source as copied. */
+  readonly graphSha256: string;
+  readonly roles: readonly { readonly id: string; readonly from: string; readonly to: string; readonly sha256: string }[];
+  readonly appliedAtUtc: string;
+}
+
 export interface LoopDefinition {
   readonly format: typeof LOOP_DEFINITION_FORMAT;
   readonly formatVersion: number;
@@ -78,6 +92,13 @@ export interface LoopDefinition {
    * ordinary case — results go to the run-scoped location DSpatch owns.
    */
   readonly resultRoot?: string;
+  /**
+   * DSP-229: the project's own instructions for this graph (`dspatch-project-instructions`),
+   * relative to this file's folder and inside it. Left out, the graph's steps get their roles only.
+   */
+  readonly projectInstructions?: string;
+  /** DSP-229: what this project graph was copied from, kept for a later comparison; never acted on. */
+  readonly origin?: ProjectGraphOrigin;
   readonly notes?: string;
 }
 
@@ -293,6 +314,17 @@ export function parseLoopDefinition(text: string): LoopDefinitionParse {
     }
   }
 
+  // DSP-229: a project graph's instructions, beside this file, and where it came from.
+  const projectInstructions = optionalString(parsed['projectInstructions'], 'projectInstructions', findings);
+  if (projectInstructions !== undefined && (looksAbsolute(projectInstructions) || climbsOut(projectInstructions))) {
+    error('project-instructions-outside', '/projectInstructions', '"projectInstructions" names a file beside this definition, relative to its folder and inside it.');
+  }
+  const originRaw = parsed['origin'];
+  const origin = isRecord(originRaw) && typeof originRaw['templateId'] === 'string' ? (originRaw as unknown as ProjectGraphOrigin) : undefined;
+  if (originRaw !== undefined && origin === undefined) {
+    findings.push({ severity: 'warning', code: 'bad-origin', pointer: '/origin', message: '"origin" is not in the form DSpatch writes, so where this graph was copied from is not known.' });
+  }
+
   if (findings.some((finding) => finding.severity === 'error')) {
     return { ok: false, definition: null, findings };
   }
@@ -310,6 +342,8 @@ export function parseLoopDefinition(text: string): LoopDefinitionParse {
       ...(resourceRootNote === undefined ? {} : { resourceRootNote }),
       ...(resultRoot === undefined ? {} : { resultRoot }),
       ...(notes === undefined ? {} : { notes }),
+      ...(projectInstructions === undefined ? {} : { projectInstructions }),
+      ...(origin === undefined ? {} : { origin }),
     },
     findings,
   };
@@ -343,6 +377,15 @@ export interface DefinitionRowDisplay {
   readonly dependency: string | null;
   /** How this row relates to its shipped or personal counterpart (DSP-160). */
   readonly variant: string | null;
+  /**
+   * DSP-229: which group the chooser lists it under: a workflow of a folder in the workspace, or
+   * one DSpatch ships. Absent reads as `project`, as rows did before.
+   */
+  readonly group?: 'project' | 'built-in';
+  /** DSP-229: the folder of the workspace it belongs to, by name, for a project workflow. */
+  readonly owner?: string | null;
+  /** DSP-229: it has project instructions, so "Project instructions…" can maintain it. */
+  readonly projectInstructions?: boolean;
 }
 
 /** A file name that discovery would consider. Not a claim that it parses. */

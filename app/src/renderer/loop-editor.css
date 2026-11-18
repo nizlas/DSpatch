@@ -1711,3 +1711,100 @@
 .inspector .parallel-form h4 {
   margin: 10px 0 4px;
 }
+
+/* DSP-229: the project workflow window. */
+.dialog.project-window {
+  max-width: min(1100px, 94vw);
+  width: 94vw;
+  max-height: 90vh;
+}
+.project-window label {
+  display: block;
+  margin: 6px 0;
+  color: #93a0b0;
+  font-size: 12px;
+}
+.project-window input,
+.project-window select,
+.project-window textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.project-body {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr;
+  gap: 14px;
+  min-height: 0;
+}
+.project-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 64vh;
+  overflow-y: auto;
+}
+.project-sections button {
+  text-align: left;
+}
+.project-sections button.on {
+  outline: 2px solid #6aa9ff;
+  font-weight: 600;
+}
+.project-sections__head {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #8b98a8;
+  text-transform: uppercase;
+}
+.project-section {
+  min-width: 0;
+  max-height: 64vh;
+  overflow-y: auto;
+}
+.project-document {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr auto;
+  gap: 4px;
+  align-items: center;
+  margin: 3px 0;
+}
+.project-document .tag {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: #e0b05a;
+}
+.project-document__buttons {
+  display: flex;
+  gap: 2px;
+}
+.project-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.project-diff .section-buttons {
+  grid-column: 1 / -1;
+}
+.project-proposal {
+  border-left: 2px solid #2c3540;
+  padding-left: 8px;
+  margin: 8px 0;
+}
+.project-preview pre {
+  white-space: pre-wrap;
+}
+@media (max-width: 760px) {
+  .project-body,
+  .project-diff,
+  .project-document {
+    grid-template-columns: 1fr;
+  }
+}
+.project-section pre,
+.project-proposals pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.project-diff > div {
+  min-width: 0;
+}

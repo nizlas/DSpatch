@@ -379,6 +379,12 @@ export interface LivePromptStep {
    */
   /** DSP-209 S11: this prompt is a fan-out branch's; the person's instructions reach it by the mailbox. */
   readonly branch?: boolean;
+  /**
+   * DSP-229: for a branch, the node it runs as (its slice's `as`, else the fan-out node) and the
+   * worktree it works in, so its project instructions are that node's and its paths resolve there.
+   */
+  readonly runsAs?: string;
+  readonly workspacePath?: string | null;
   readonly attachments: {
     readonly receivedResults: boolean;
     readonly requiredResult: boolean;
@@ -1424,7 +1430,7 @@ function remainingMs(
   return Math.max(0, deadlineAt - now());
 }
 
-interface TurnWait {
+export interface TurnWait {
   readonly finished: Promise<void>;
   readonly assistantText: () => string;
   readonly terminalStatus: () => string | null;
@@ -1494,7 +1500,7 @@ function activityFromEvent(
  * thinking, and the assignment asks for available commentary and activity, not that.
  * Its absence here is the enforcement.
  */
-function waitForTurn(
+export function waitForTurn(
   adapter: Pick<AgentAdapter, 'subscribe'>,
   sessionId: DspatchSessionId,
   onActivity?: (event: AgentEvent) => void | PromiseLike<void>,
@@ -2003,6 +2009,8 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         // DSP-209 S11: a branch's brief does not take the person's queued instructions; they reach
         // every branch through the mailbox instead, so no one branch takes them all.
         branch: true,
+        runsAs: instance.slice.as ?? node.id,
+        workspacePath: instance.workspacePath,
       }) +
       receivedText +
       // DSP-226: the branch's own choices, as task parameters, like any visit's.
