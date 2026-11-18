@@ -16,7 +16,7 @@ import type { JSX } from 'react';
 import type { LoopNode } from '../shared/loop-graph';
 import type { RunView } from '../shared/loop-run-view';
 import { liveOutputAddressFor } from '../shared/run-presentation';
-import { nodeVisitRows, type StepVisitRow } from '../shared/step-output';
+import { nodeVisitRows, visitContextWords, visitModelWords, type StepVisitRow } from '../shared/step-output';
 
 export function StepOutputActions({ node, watch }: { readonly node: LoopNode; readonly watch: RunView | null }): JSX.Element | null {
   const [note, setNote] = useState<string | null>(null);
@@ -39,6 +39,11 @@ export function StepOutputActions({ node, watch }: { readonly node: LoopNode; re
     </button>
   );
   const visits = run === null ? [] : nodeVisitRows(run.run.runId, run.entries, node.id, run.ended);
+  // DSP-225: each visit with the class and model it ran with, and what its agent had in context.
+  const facts = (row: StepVisitRow): string => {
+    const model = visitModelWords(row.model);
+    return `${row.label}${model === null ? '' : ` · ${model}`}`;
+  };
   const current = visits[visits.length - 1];
   const earlier = visits.slice(0, -1).reverse();
   return (
@@ -56,15 +61,23 @@ export function StepOutputActions({ node, watch }: { readonly node: LoopNode; re
         </p>
       ) : (
         <>
-          <p className="step-output-actions__row" data-ev="step-output-current">
-            {button(current)} <span>{current.label} · {current.ended ? 'done' : 'working'}</span>
+          <p className="step-output-actions__row" data-ev="step-output-current" title={visitContextWords(current) ?? undefined}>
+            {button(current)}{' '}
+            <span>
+              {current.ended ? (visits.length > 1 ? 'Latest' : 'Done') : 'Now'}: {facts(current)}
+            </span>
           </p>
+          {visitContextWords(current) === null ? null : (
+            <p className="muted" data-ev="step-output-context">
+              {visitContextWords(current)}
+            </p>
+          )}
           {earlier.length === 0 ? null : (
             <details className="step-output-actions__earlier">
               <summary>Earlier visits ({String(earlier.length)})</summary>
               {earlier.map((row) => (
-                <p key={row.visit.occurrence} className="step-output-actions__row">
-                  {button(row)} <span>{row.label} · done</span>
+                <p key={row.visit.occurrence} className="step-output-actions__row" data-ev="step-output-earlier" title={visitContextWords(row) ?? undefined}>
+                  {button(row)} <span>{facts(row)} · done</span>
                 </p>
               ))}
             </details>

@@ -792,6 +792,15 @@ export async function runScriptedWorkflow(
       return runReviewDiscussionScenario(plan);
     case 'review-hold':
       return runReviewHoldScenario(plan);
+    case 'loop-hold':
+      // DSP-225: nothing to drive; the window is left at rest for the person or the trial.
+      return {
+        passed: true,
+        exitCode: 0,
+        steps: [],
+        failures: [],
+        observations: { limits: 'SIMULATED. Every step answered in this window is the presentation adapter\'s; no provider is asked anything.' },
+      };
     case 'workspace-flow':
       return runWorkspaceFlowScenario(plan);
     case 'model-list':

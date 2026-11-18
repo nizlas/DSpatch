@@ -396,6 +396,12 @@ export interface StepExecution {
    */
   readonly choices?: StatedChoices;
   /**
+   * DSP-225: the provider session this visit's turn ran in, and whether it continued the node's
+   * session from an earlier visit (the agent then had that conversation in its context) or was
+   * opened for this visit. Set by the live executor; absent where no session was used.
+   */
+  readonly session?: { readonly id: string; readonly continued: boolean };
+  /**
    * DSP-209 S5a: the step called DSpatch's `request_interactive_handoff` tool during its
    * turn, with this reason. Set by the executor from the tool call, never from reply text.
    * When present the runner takes no edge and records no work result for this visit: it
@@ -659,9 +665,16 @@ export function nodeModelMark(
     return null;
   }
   let latest: RunJournalEntry | null = null;
+  // DSP-225: whether that visit has closed (or the run ended), so the line says "latest", not "now".
+  let closed = false;
   for (const entry of entries ?? []) {
     if (entry.kind === 'node-entered' && entry.nodeId === node.id) {
       latest = entry;
+      closed = false;
+    } else if (latest !== null && entry.nodeId === node.id && (entry.kind === 'node-produced' || entry.kind === 'runtime-fault')) {
+      closed = true;
+    } else if (entry.kind === 'run-ended') {
+      closed = true;
     }
   }
   const chosen = latest === null ? null : modelSelectionFromData(latest.data);
@@ -679,7 +692,7 @@ export function nodeModelMark(
     };
   }
   const visit = typeof latest.data?.['occurrence'] === 'number' ? latest.data['occurrence'] : null;
-  const visitWords = visit === null ? 'latest visit' : `visit ${String(visit)}`;
+  const visitWords = `${closed ? 'latest' : 'now'}: visit ${visit === null ? '?' : String(visit)}`;
   const model = chosen.model === '' ? 'the provider’s default' : chosen.model;
   const modelWords = chosen.classUsesChatModel === true ? `chat model ${model}` : model;
   const name = chosen.modelClass ?? null;
@@ -687,7 +700,7 @@ export function nodeModelMark(
     line: `${visitWords} · ${modelWords}`,
     badge: name === null ? null : { full: capitalised(name), short: name.slice(0, 1).toUpperCase() },
     detail:
-      `${visitWords === 'latest visit' ? 'Latest visit' : capitalised(visitWords)}: ` +
+      `${closed ? 'Latest visit' : 'Visit running now'}: visit ${visit === null ? '?' : String(visit)}, ` +
       `${name === null ? `option ${chosen.option ?? ''}` : `model class ${capitalised(name)}`}, model ${model} on ${chosen.provider}` +
       `${chosen.classUsesChatModel === true ? ` — the class is set to Use chat model, so it resolved to the chat's model ${model}` : ''}. ` +
       `Chosen: ${chosen.reason}. A class names the capacity asked for, not a guarantee of the model's.`,
@@ -2388,6 +2401,8 @@ export async function runLoopGraph(graph: LoopGraph, options: RunOptions): Promi
         nodeId: current.id,
         data: {
           product: execution.product.kind,
+          // DSP-225: which session the visit ran in, and whether it carried the node's earlier ones.
+          ...(execution.session === undefined ? {} : { session: execution.session.id, sessionContinued: execution.session.continued }),
           // DSP-103 #5, in the structured record rather than only in the sentence. A
           // reader reconstructing the run has to be able to separate the step's own
           // verdict from the engine having routed on the absence of one, and `product`

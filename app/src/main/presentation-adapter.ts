@@ -120,6 +120,18 @@ export function firstOfferedOutcome(prompt: string): string | null {
   return offered[0] ?? null;
 }
 
+/**
+ * DSP-225, SIMULATED: the first verdict a loop step's prompt offers, read only from the block that
+ * introduces the step's verdicts, or `null` when it offers none (failure names are not verdicts).
+ */
+export function firstOfferedVerdict(prompt: string): string | null {
+  const at = prompt.search(/^When you finish this step, write a whole line/m);
+  if (at < 0) {
+    return null;
+  }
+  return /^RESULT: ([a-z0-9][a-z0-9-]*)$/m.exec(prompt.slice(at))?.[1] ?? null;
+}
+
 /** What the fixed reply says. `token` is echoed so a turn can be identified. */
 export function presentationReply(token: string): string {
   return [
@@ -385,6 +397,8 @@ interface SessionState {
 }
 
 export class PresentationAdapter implements ChatAdapter, AgentAdapter {
+  /** DSP-225, SIMULATED: prompts so far that asked a step to decide choices, for `[[choice … #n]]`. */
+  private decidingPrompts = 0;
   readonly id = 'presentation-local';
 
   private readonly sessions = new Map<string, SessionState>();
@@ -625,11 +639,27 @@ export class PresentationAdapter implements ChatAdapter, AgentAdapter {
     // A loop step is answered with a declared outcome; an ordinary chat turn is not.
     // Appended rather than folded in, so the Markdown the presentation scenarios read
     // is byte for byte what it was and only a loop prompt sees anything new.
-    const declared = firstOfferedOutcome(prompt);
+    // DSP-225, SIMULATED: with `[[verdicts-only]]` a loop step names only one of its own verdicts,
+    // the first, and a step that has none just finishes, so a graph whose steps also offer failure
+    // names walks its ordinary path instead of declaring the first failure it was offered.
+    const declared = prompt.includes('[[verdicts-only]]') ? firstOfferedVerdict(prompt) : firstOfferedOutcome(prompt);
+    // DSP-225, SIMULATED: a `[[choice <id> <option>#<n>]]` marker in the prompt is stated on a CHOICE
+    // line by the n-th prompt that asks this run to decide that choice (without `#<n>`, by every
+    // one), so a window can walk a graph's per-visit choices with no model.
+    const decidingVisit = prompt.includes('This step also decides the following') ? ++this.decidingPrompts : 0;
+    const choices = [...prompt.matchAll(/\[\[choice (\S+) (\S+?)(?:#(\d+))?\]\]/g)]
+      .filter(([, id, option, visit]) => prompt.includes(`CHOICE: ${String(id)} ${String(option)} —`) && (visit === undefined || Number(visit) === decidingVisit))
+      .map(([, id, option]) => `CHOICE: ${String(id)} ${String(option)} simulated`);
+    // DSP-225, SIMULATED: a loop step's reply names its session, turn and model, so the output of
+    // two visits of one step can be told apart.
+    const identity =
+      declared === null
+        ? ''
+        : `Simulated turn ${String(state.runCounter)} of session ${state.dspatchSessionId}, model ${state.config.modelRequested === '' ? '(provider default)' : state.config.modelRequested}.\n\n`;
     let answer =
       declared === null
         ? presentationReply(token)
-        : `${presentationReply(token)}\n\nRESULT: ${declared}`;
+        : `${identity}${presentationReply(token)}\n\nRESULT: ${declared}${choices.length === 0 ? '' : `\n${choices.join('\n')}`}`;
     // DSP-152, SIMULATED: an analysis task (walks, a delegated review, a step question),
     // answered by reading the revision folder the session runs in, as the real agent does.
     const task = simulatedReviewTask(prompt, state.config.workspacePath, state.asked);

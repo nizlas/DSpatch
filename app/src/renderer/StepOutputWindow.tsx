@@ -31,13 +31,21 @@ import {
   nodeVisitRows,
   savedStepOutput,
   stepOutputFromQuery,
+  visitContextWords,
+  visitModelWords,
   type SavedStepOutput,
   type StepOutputFeed,
+  type StepVisitRow,
 } from '../shared/step-output';
 import { LiveReplyText, LiveToolCalls } from './LiveStepParts';
 import { followAfterScrollEvent } from './scroll-follow';
 
-type Saved = { readonly kind: 'none' } | { readonly kind: 'found'; readonly output: SavedStepOutput } | { readonly kind: 'missing'; readonly note: string };
+type Saved =
+  | { readonly kind: 'none' }
+  // DSP-225: with the record's own visits of this node, so a window opened after a restart still
+  // names its visit's class and model and the visits that came after it.
+  | { readonly kind: 'found'; readonly output: SavedStepOutput; readonly visits: readonly StepVisitRow[] }
+  | { readonly kind: 'missing'; readonly note: string };
 
 export function StepOutputWindow(): JSX.Element {
   const address = useMemo(() => stepOutputFromQuery(window.location.search), []);
@@ -46,6 +54,14 @@ export function StepOutputWindow(): JSX.Element {
   const [saved, setSaved] = useState<Saved>({ kind: 'none' });
   const [chosenSlice, setChosenSlice] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  /**
+   * DSP-225: the visit shown. It starts as the one the window was opened for — the node's latest,
+   * from the graph — and the reader moves back and forth between the node's visits here. A visit
+   * that starts while the window is open does not take it over; it is offered (see `latestRow`).
+   */
+  const [chosenVisit, setChosenVisit] = useState<number | null>(null);
+  /** DSP-225: the node's visits as its run record lists them, for a window that reads the record. */
+  const [recordVisits, setRecordVisits] = useState<readonly StepVisitRow[]>([]);
 
   useEffect(() => {
     if (address === null) {
@@ -66,18 +82,19 @@ export function StepOutputWindow(): JSX.Element {
   const seeded = feed.held === null;
   const view = feed.view;
   const nodeId = address?.nodeId ?? '';
+  const at = address === null ? null : { ...address, occurrence: chosenVisit ?? address.occurrence };
   const visits = view === null ? [] : nodeVisitRows(view.run.runId, view.entries, nodeId, view.ended);
-  const visit = visits.find((row) => row.visit.occurrence === address?.occurrence) ?? null;
+  const visit = visits.find((row) => row.visit.occurrence === at?.occurrence) ?? null;
   // A fan-out visit opened as a whole: its branches, each followed on its own.
   const branches =
     address === null || view === null
       ? []
-      : branchRows(branchViewsFromJournal(view.run.runId, view.entries), nodeId).filter((row) => row.address.occurrence === address.occurrence);
-  const isFanOut = address !== null && address.sliceId === undefined && branches.length > 0;
+      : branchRows(branchViewsFromJournal(view.run.runId, view.entries), nodeId).filter((row) => row.address.occurrence === at?.occurrence);
+  const isFanOut = at !== null && at.sliceId === undefined && branches.length > 0;
   const slice = isFanOut
     ? (chosenSlice ?? branches.find((row) => row.state === 'working')?.sliceId ?? branches[0]?.sliceId ?? null)
-    : (address?.sliceId ?? null);
-  const shown = address === null ? null : { ...address, ...(slice === null ? {} : { sliceId: slice }) };
+    : (at?.sliceId ?? null);
+  const shown = at === null ? null : { ...at, ...(slice === null ? {} : { sliceId: slice }) };
   const live = shown === null || view === null ? null : liveStateFor(view.steps, view.branchSteps, shown);
   const branch = slice === null ? null : (branches.find((row) => row.sliceId === slice) ?? null);
   const what = slice === null ? 'step' : 'branch';
@@ -113,7 +130,14 @@ export function StepOutputWindow(): JSX.Element {
       (records) => {
         const record = records.find((entry) => entry.runId === shown.runId)?.record ?? null;
         if (current) {
-          setSaved(record === null ? { kind: 'missing', note: 'There is no run data for this step: no record of its run was found.' } : { kind: 'found', output: savedStepOutput(record, shown) });
+          if (record !== null) {
+            setRecordVisits(nodeVisitRows(shown.runId, record.journal, shown.nodeId, true));
+          }
+          setSaved(
+            record === null
+              ? { kind: 'missing', note: 'There is no run data for this step: no record of its run was found.' }
+              : { kind: 'found', output: savedStepOutput(record, shown), visits: nodeVisitRows(shown.runId, record.journal, shown.nodeId, true) },
+          );
         }
       },
       (error: unknown) => {
@@ -189,12 +213,77 @@ export function StepOutputWindow(): JSX.Element {
     return <main className="branch-window"><p>This window was not given a step to show.</p></main>;
   }
   const nodeLabel = view?.entries.find((entry) => entry.kind === 'node-entered' && entry.nodeId === nodeId)?.data?.['label'];
-  const title = describeStepOutput(shown ?? address, typeof nodeLabel === 'string' ? nodeLabel : nodeId, visit?.visit ?? null);
+  // DSP-225: the visit shown, from the run held or else its record; never the node's latest by mistake.
+  const rows = visits.length > 0 ? visits : recordVisits;
+  const shownOccurrence = at?.occurrence ?? address.occurrence;
+  const own = rows.find((row) => row.visit.occurrence === shownOccurrence) ?? null;
+  const latestRow = rows.at(-1) ?? null;
+  const behind = latestRow !== null && latestRow.visit.occurrence > shownOccurrence && address.sliceId === undefined ? latestRow : null;
+  const modelWords = visitModelWords(own?.model ?? null);
+  const contextWords = own === null ? null : visitContextWords(own);
+  const title = describeStepOutput(shown ?? address, typeof nodeLabel === 'string' ? nodeLabel : nodeId, visit?.visit ?? own?.visit ?? null);
+  const showVisit = (occurrence: number): void => {
+    setChosenVisit(occurrence);
+    setSaved({ kind: 'none' });
+    setChosenSlice(null);
+    following.current = true;
+    setAtFoot(true);
+  };
+
   const standing = finished || view === null ? null : stepStanding({ step: live, stillWatching: !view.ended, nowMs });
 
   return (
     <main className="branch-window" data-ev="step-output-window" data-finished={finished ? 'true' : 'false'}>
       <h1 className="branch-window__title">{title}</h1>
+      {own === null || (own.model === null && contextWords === null) ? null : (
+        <p className="branch-window__facts" data-ev="step-output-visit-model">
+          {own.model === null
+            ? null
+            : `This visit (visit ${String(own.visit.occurrence)}) ran ${modelWords ?? ''} on ${own.model.provider}. Chosen: ${own.model.reason}.`}
+          {contextWords === null ? null : (
+            <>
+              {own.model === null ? null : <br />}
+              <span data-ev="step-output-visit-context">{contextWords}</span>
+            </>
+          )}
+        </p>
+      )}
+      {rows.length > 1 && address.sliceId === undefined ? (
+        // DSP-225: the node's visits, oldest to latest, to move back and forth between in this window.
+        <nav className="step-visits" aria-label="Visits of this step" data-ev="step-output-visits">
+          <button type="button" className="button" data-ev="step-output-visit-earlier" disabled={shownOccurrence <= (rows[0]?.visit.occurrence ?? 1)} onClick={() => showVisit(shownOccurrence - 1)}>
+            ← Earlier
+          </button>
+          {rows.map((row) => (
+            <button
+              key={row.visit.occurrence}
+              type="button"
+              className="button"
+              aria-pressed={row.visit.occurrence === shownOccurrence}
+              data-ev="step-output-visit"
+              data-visit={row.visit.occurrence}
+              onClick={() => showVisit(row.visit.occurrence)}
+            >
+              {row.label}
+              {visitModelWords(row.model) === null ? '' : ` · ${visitModelWords(row.model) ?? ''}`}
+              {row.ended ? '' : ' · now'}
+            </button>
+          ))}
+          <button type="button" className="button" data-ev="step-output-visit-later" disabled={latestRow === null || shownOccurrence >= latestRow.visit.occurrence} onClick={() => showVisit(shownOccurrence + 1)}>
+            Later →
+          </button>
+        </nav>
+      ) : null}
+      {behind === null ? null : (
+        // DSP-225: a later visit never takes the window over; one press shows it.
+        <p className="step-output-newer" data-ev="step-output-newer" role="status">
+          This is visit {String(shownOccurrence)}, not the latest. Visit {String(behind.visit.occurrence)}
+          {visitModelWords(behind.model) === null ? '' : ` (${visitModelWords(behind.model) ?? ''})`} {behind.ended ? 'is the latest' : 'is running now'}.{' '}
+          <button type="button" className="button" data-ev="step-output-follow-newer" onClick={() => showVisit(behind.visit.occurrence)}>
+            Show visit {String(behind.visit.occurrence)}
+          </button>
+        </p>
+      )}
       {isFanOut ? (
         <nav className="step-branches" aria-label="Branches of this step" data-ev="step-output-branches">
           {branches.map((row) => (

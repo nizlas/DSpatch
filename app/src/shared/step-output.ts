@@ -17,9 +17,9 @@
 
 import type { StepActivityState } from './loop-activity';
 import type { ParsedRunRecord, RecordedAgentReply, RecordedCommand } from './loop-record';
-import type { RunJournalEntry } from './loop-run';
+import { modelSelectionFromData, type RunJournalEntry } from './loop-run';
 import { addressOf, applyRunEvent, runViewFor, type LoopRunEvent, type RunView } from './loop-run-view';
-import { visitsFromJournal, type LiveOutputAddress, type VisitIdentity } from './run-presentation';
+import { visitsFromJournal, type LiveOutputAddress, type ModelSelectionRecord, type VisitIdentity } from './run-presentation';
 
 /** A step visit, or one branch of it, and the conversation whose records keep its run. */
 export type StepOutputAddress = LiveOutputAddress & { readonly conversationId?: string };
@@ -31,6 +31,39 @@ export interface StepVisitRow {
   readonly label: string;
   /** The node closed this visit (`node-produced` or a runtime fault), or the run ended. */
   readonly ended: boolean;
+  /** DSP-225: the model this visit ran with, from its own `node-entered`; `null` when none was recorded. */
+  readonly model: ModelSelectionRecord | null;
+  /**
+   * DSP-225: whether the visit's turn continued the node's session from an earlier visit, from its
+   * own `node-produced`; `null` before it closed, or when no session was recorded.
+   */
+  readonly sessionContinued: boolean | null;
+}
+
+/** DSP-225: "Large · model-l", "Small · chat model x", or the model alone, for a visit's row and heading. */
+export function visitModelWords(model: ModelSelectionRecord | null): string | null {
+  if (model === null) {
+    return null;
+  }
+  const name = model.model === '' ? 'the provider’s default' : model.model;
+  const which = model.classUsesChatModel === true ? `chat model ${name}` : name;
+  return model.modelClass === undefined ? which : `${model.modelClass.slice(0, 1).toUpperCase()}${model.modelClass.slice(1)} · ${which}`;
+}
+
+/**
+ * DSP-225: what the agent of this visit had in its context, said plainly. A visit shown on its own
+ * is not therefore an independent judgement: a continued session holds the node's earlier visits.
+ */
+export function visitContextWords(row: Pick<StepVisitRow, 'sessionContinued' | 'visit'>): string | null {
+  if (row.sessionContinued === null) {
+    return null;
+  }
+  return row.sessionContinued
+    ? `The agent continued this step’s session from an earlier visit, so its earlier conversation here was in its context. ` +
+        'Shown apart, this visit is still not an independent review of the earlier one.'
+    : row.visit.occurrence > 1
+      ? 'The agent ran in a new session opened for this visit: it had no conversation from the earlier visits, only what its brief carried.'
+      : 'The agent ran in a session opened for this step: it had only what its brief carried.';
 }
 
 /** Words for a visit: its number, and its attempt when a rework brought the run back. */
@@ -53,14 +86,22 @@ export function nodeVisitRows(
   const visits = visitsFromJournal(runId, journal).filter((entry) => entry.visit.nodeId === nodeId);
   return visits.map((entry, index) => {
     const next = visits[index + 1]?.seq ?? Number.POSITIVE_INFINITY;
-    const closed = journal.some(
+    const closing = journal.find(
       (line) =>
         line.nodeId === nodeId &&
         (line.kind === 'node-produced' || line.kind === 'runtime-fault') &&
         line.seq > entry.seq &&
         line.seq < next,
     );
-    return { visit: entry.visit, label: visitWords(entry.visit), ended: runEnded || closed || index < visits.length - 1 };
+    const entered = journal.find((line) => line.seq === entry.seq);
+    const continued = closing?.data?.['sessionContinued'];
+    return {
+      visit: entry.visit,
+      label: visitWords(entry.visit),
+      ended: runEnded || closing !== undefined || index < visits.length - 1,
+      model: modelSelectionFromData(entered?.data),
+      sessionContinued: typeof continued === 'boolean' ? continued : null,
+    };
   });
 }
 

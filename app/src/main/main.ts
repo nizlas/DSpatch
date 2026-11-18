@@ -5051,7 +5051,10 @@ function registerIpc(): void {
           // Hold mode: the record is written and the window stays. Nothing else is
           // driven; the person closes it when they have looked.
           log(
-            chatRunScenario === 'review-hold'
+            chatRunScenario === 'loop-hold'
+              ? `hold mode: the window is left at rest with the presentation adapter; any graph walked from the ` +
+                  `chat is answered by it (SIMULATED). Close it when done.`
+              : chatRunScenario === 'review-hold'
               ? `hold mode: the window is left open on P1 with nothing sent (every answer SIMULATED by ` +
                   `the presentation adapters). Close it when done; would have exited with ${String(exitCode)}.`
               : `hold mode: the window is left open with the ${presentationResumeMode} state ` +

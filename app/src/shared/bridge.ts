@@ -2139,7 +2139,13 @@ export type ScriptedScenario =
    * is left at rest for a person, with *Open review* going to the seeded last review.
    * Nothing is sent; every answer the person asks for is SIMULATED.
    */
-  | 'review-hold';
+  | 'review-hold'
+  /**
+   * DSP-225: the window opens with the presentation adapter and is left at rest, so a person or a
+   * window trial can walk a graph from the chat with every step's answer SIMULATED. Nothing is
+   * driven or sent by the script.
+   */
+  | 'loop-hold';
 
 /** What the `review-window` scenario asks the main process to read or do. Scripted runs only. */
 /** What the `pair-review` scenario asks of the review windows (DSP-150). */

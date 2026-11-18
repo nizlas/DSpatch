@@ -2083,6 +2083,27 @@ textarea.grow-field:placeholder-shown {
   color: var(--muted);
 }
 
+/* DSP-225: the step's visits, oldest to latest; the one shown is pressed. */
+.step-visits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.step-visits .button[aria-pressed='true'] {
+  outline: 2px solid #7fa8c4;
+}
+
+/* DSP-225: a later visit of the step, offered and never shown on its own. */
+.step-output-newer {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #d9b25f;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
 .branch-window__output {
   flex: 1;
   max-height: none;

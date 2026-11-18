@@ -3047,6 +3047,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
     const stated = (node.decides ?? []).length === 0 ? {} : statedChoicesFrom(turn.assistantText(), node.decides ?? []);
     return remember(context, {
       ...(Object.keys(stated).length === 0 ? {} : { choices: stated }),
+      session: { id: openSession.dspatchSessionId, continued: reusedSession },
       product,
       ...(resultBody === undefined ? {} : { resultBody }),
       ...(reason === null ? {} : { reason }),

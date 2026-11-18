@@ -104,7 +104,9 @@ export const chatRunScenario: ScriptedScenario =
                                           ? 'review-discussion'
                                           : chatRunValue === 'review-hold'
                                             ? 'review-hold'
-                                            : 'full-workflow';
+                                            : chatRunValue === 'loop-hold'
+                                              ? 'loop-hold'
+                                              : 'full-workflow';
 
 /**
  * The one run that talks to no provider.
@@ -206,7 +208,9 @@ export const presentationMode =
   // DSP-127: the review discussion, answered by presentation adapters of its own.
   chatRunScenario === 'review-discussion' ||
   // DSP-126/127 hand-over: P1 opened and left at rest for a person; every answer simulated.
-  chatRunScenario === 'review-hold';
+  chatRunScenario === 'review-hold' ||
+  // DSP-225: a window left at rest for walking a graph by hand or by a trial; every answer simulated.
+  chatRunScenario === 'loop-hold';
 
 /**
  * Hold mode (`DSPATCH_CHAT_HOLD=1` with `resume-choice`, or `review-hold`): the scenario performs the
@@ -219,4 +223,5 @@ export const presentationMode =
 export const chatRunHold =
   (chatRunScenario === 'resume-choice' && process.env['DSPATCH_CHAT_HOLD'] === '1') ||
   // A hold by nature: P1 is opened and the window is left to the person (`start-review.cmd`).
-  chatRunScenario === 'review-hold';
+  chatRunScenario === 'review-hold' ||
+  chatRunScenario === 'loop-hold';

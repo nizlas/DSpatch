@@ -15,6 +15,7 @@ import { routeLoopEdges, routingBox, segmentCrossesBox } from '../src/shared/loo
 import { createMemoryResultStore } from '../src/shared/loop-results';
 import { modelSelectionData, modelSelectionFromData, nodeModelMark, runLoopGraph, type RunJournalEntry, type RunModel, type StepContext, type StepExecution } from '../src/shared/loop-run';
 import { statedChoicesFrom } from '../src/shared/loop-choices';
+import { nodeVisitRows, visitContextWords, visitModelWords } from '../src/shared/step-output';
 import { prepareBundled } from '../scripts/prepare-bundled.mjs';
 import { readModelChoiceFile, writeModelChoiceFile, writeModelClass } from '../src/main/model-choice-file';
 import { sharedClassModels } from '../src/shared/loop-graph';
@@ -544,7 +545,7 @@ class NetworkAgent {
     };
     setImmediate(() => {
       emit({ type: 'run.started' });
-      emit({ type: 'assistant.message', text: `${node} done.\n\nRESULT: ${outcome}` } as Partial<AgentEvent>);
+      emit({ type: 'assistant.message', text: `${node} visit ${String(visit)} done.\n\nRESULT: ${outcome}` } as Partial<AgentEvent>);
       emit({ type: 'run.finished', status: 'finished' } as Partial<AgentEvent>);
     });
     return Promise.resolve({ dspatchRunId: runId });
@@ -710,7 +711,7 @@ test('DSP-222: an unmapped class runs the chat\'s model and says so, before the 
   assert.match(String(data['modelReason']), /class small, decided by tl-dispatch: one localized fix; class small uses the chat model for copilot/);
   const mark = nodeModelMark(graph.nodes.find((node) => node.id === 'implementer')!, [{ seq: 1, atIso: '', sinceStartMs: 0, kind: 'node-entered', nodeId: 'implementer', detail: '', data: { ...data, occurrence: 1 } }]);
   assert.equal(mark?.badge?.full, 'Small');
-  assert.equal(mark?.line, 'visit 1 · chat model person-model');
+  assert.equal(mark?.line, 'now: visit 1 · chat model person-model');
   assert.match(mark?.detail ?? '', /Use chat model, so it resolved to the chat's model person-model/);
 });
 
@@ -755,7 +756,7 @@ test('DSP-222: on the live path the class\'s model reaches the adapter, and a re
   assert.deepEqual(agent.modelsOf('implementer'), ['model-for-small', 'model-for-large']);
   const journal = entries.filter((entry) => entry.kind === 'node-entered' && entry.nodeId === 'implementer').map((entry) => modelSelectionFromData(entry.data));
   assert.deepEqual(journal.map((visit) => `${visit?.modelClass ?? ''}:${visit?.model ?? ''}`), ['small:model-for-small', 'large:model-for-large']);
-  assert.deepEqual(badges, ['Small/S visit 1 · model-for-small', 'Large/L visit 2 · model-for-large']);
+  assert.deepEqual(badges, ['Small/S now: visit 1 · model-for-small', 'Large/L now: visit 2 · model-for-large']);
   // The review route is the visit's own: QA the first slice, design QA the second, and the
   // reviewer's and skeptic's class follows it.
   assert.equal(agent.modelsOf('qa').length, 1);
@@ -972,3 +973,65 @@ test('DSP-224: validation refuses an unknown choice, an uncovered route and two 
   // An escalation offered only on the standard route needs no thorough edge: the step is not offered it then.
   assert.deepEqual(codes((json) => { delete json.edges.find((edge) => edge.id === 'e111')!.sets; }), []);
 });
+
+/* DSP-225: one node visited twice, small then large: kept apart, with model and agent context per visit. */
+
+for (const provider of ['copilot', 'claude'] as const) {
+  test(`DSP-225: two visits of one node, small then large, on ${provider}: each visit's model, output and agent context stay its own`, async (context) => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsp-visits-'));
+    context.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+    const project = path.join(scratch, 'project');
+    fs.mkdirSync(project);
+    const graph = load(root);
+    const implementer = graph.nodes.find((node) => node.id === 'implementer')!;
+    const resolveRole = createFileRoleResolver(root);
+    const entries: RunJournalEntry[] = [];
+    const seenAtSecond: string[] = [];
+    const agent = new NetworkAgent(provider, graph.nodes.map((node) => node.id), {
+      'tl-dispatch#1': dispatchReply('implementer', { class: 'small', review: 'standard' }),
+      'tl-dispatch#2': dispatchReply('implementer', { class: 'large', review: 'thorough' }),
+      'executive-continue#1': 'next-slice',
+    }, (node, visit) => {
+      if (node === 'implementer' && visit === 2) {
+        // While visit 2 runs: the mark is visit 2's, and visit 1's row is closed with its own model.
+        const rows = nodeVisitRows('two-visits', entries, 'implementer', false);
+        seenAtSecond.push(nodeModelMark(implementer, entries)?.line ?? '', ...rows.map((row) => `${row.label}|${visitModelWords(row.model) ?? ''}|${String(row.ended)}`));
+      }
+    });
+    const delivery = await runLiveGraph(graph, {
+      runId: 'two-visits',
+      repoRoot: root,
+      outDir: null,
+      resultsDir: path.join(scratch, 'results'),
+      modelRequested: 'chat-model',
+      personModel: 'chat-model',
+      modelClasses: { small: 'model-small', large: 'model-large' },
+      workspacePath: project,
+      keepWorkspace: true,
+      bindingKind: 'chat-loop',
+      provider,
+      createAdapter: () => agent as unknown as ChatAdapter,
+      onJournalEntry: (entry) => entries.push(entry),
+      promptFor: (node, step) => chatPromptFor(node, { entryId: graph.entry, mandate: 'Two slices.', step, role: (() => { const resolved = node.role === undefined ? null : resolveRole(node.role); return resolved === null ? null : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null }; })(), skipping: skippingRoutesOf(graph, node.id) }),
+    });
+    assert.equal(delivery.result.status, 'completed', delivery.journalText);
+    // The adapter got each visit's model.
+    assert.deepEqual(agent.modelsOf('implementer'), ['model-small', 'model-large']);
+    assert.deepEqual(seenAtSecond, ['now: visit 2 · model-large', 'visit 1|Small · model-small|true', 'visit 2|Large · model-large|false']);
+    // After the run: both visits, each with its own model, output and context; the mark says latest.
+    const rows = nodeVisitRows('two-visits', entries, 'implementer', true);
+    assert.deepEqual(rows.map((row) => [row.visit.occurrence, row.model?.modelClass, row.model?.model, row.model?.provider]), [[1, 'small', 'model-small', provider], [2, 'large', 'model-large', provider]]);
+    assert.equal(nodeModelMark(implementer, entries)?.line, 'latest: visit 2 · model-large');
+    assert.match(nodeModelMark(implementer, entries)?.detail ?? '', /^Latest visit: visit 2, model class Large, model model-large on /);
+    const bodies = delivery.result.results.filter((item) => item.nodeId === 'implementer').map((item) => [item.occurrence, item.body]);
+    assert.deepEqual(bodies.map(([occurrence]) => occurrence), [1, 2]);
+    assert.match(String(bodies[0]?.[1]), /implementer visit 1 done/);
+    assert.match(String(bodies[1]?.[1]), /implementer visit 2 done/);
+    assert.doesNotMatch(String(bodies[1]?.[1]), /visit 1 done/);
+    // The agent's context, as it really was: Claude switched the model in the node's session, so
+    // visit 2 had visit 1's conversation; another agent opened a new session for the new model.
+    assert.equal(rows[0]?.sessionContinued, false);
+    assert.equal(rows[1]?.sessionContinued, provider === 'claude');
+    assert.match(visitContextWords(rows[1]!) ?? '', provider === 'claude' ? /earlier conversation here was in its context.*not an independent review/ : /new session opened for this visit/);
+  });
+}
