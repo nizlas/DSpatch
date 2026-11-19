@@ -42,20 +42,18 @@
       "id": "coordinator",
       "kind": "agent",
       "label": "Coordinator: establish and brief",
-      "purpose": "Establish what this run's mandate actually asks, then write the brief the implementer works from: the bounded piece of work, what is deliberately outside it, and what would count as done. Where the mandate asks for a change to the working folders, say which change, what must not change with it, and what a verifier could run against it. Where it asks for something else — an answer, a calculation, an analysis, or an activity carried through to its end — brief that, and say what having done it looks like; do not turn it into a change so that it has a familiar shape, because the brief is all the later steps get and a change nobody asked for is the assignment replaced rather than specified. Do none of the work yourself — that is the implementer's step, and the later steps see only what you write here.",
+      "purpose": "Establish what this run's mandate actually asks, then write the brief the implementer works from: the bounded piece of work, what is deliberately outside it, and what would count as done. Where the mandate asks for a change to the working folders, say which change, what must not change with it, and what a verifier could run against it. Where it asks for something else — an answer, a calculation, an analysis, or an activity carried through to its end — brief that, and say what having done it looks like; do not turn it into a change so that it has a familiar shape, because the brief is all the later steps get and a change nobody asked for is the assignment replaced rather than specified. Do none of the work yourself — that is the implementer's step, and the later steps see only what you write here.\n\n**How you declare a result is decided by the message you are in, not by this role.** Different steps of a loop are offered different answers, and the message is the only thing that knows which ones this step has.\n\nWhere your own message lists names for a whole `RESULT:` line, write that line using one of those names and nothing else on it. Where it lists none, doing the work is the answer and you write no such line: a name nobody drew an edge for is a result the run cannot route, and inventing one stops the run instead of finishing it.\n\nThe two opening words work the same way. Where your message asks for SPEC_ERROR, that is how you say the mandate rests on a premise that turns out to be wrong; where it asks for BLOCKED, that is how you say something concrete prevents the work — access you do not have, or a decision that is not yours to make. Where your message asks for neither, do not open your reply with either word: say plainly in prose what is wrong or what is in the way, and hand that back as your result, which is what the person reading this run needs from you anyway. Both words are read only as the opening of your reply, so use either freely in ordinary prose anywhere else.",
       "role": {
-        "id": "dspatch-run-coordinator",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/run/dspatch-run-coordinator.role.md" }
+        "id": "coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["briefed", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["spec-error", "blocked"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The brief, whole. Every later step is a different agent with none of this conversation, and what you write here is what the implementer is given about the assignment."
-      },
+      "produces": { "required": true, "form": "stored-result", "note": "The brief, whole. Every later step is a different agent with none of this conversation, and what you write here is what the implementer is given about the assignment." },
       "notes": "The entry, and it is where the drawn niclas-mandate and route-next-step both land. The mandate is the text the person sent, so approval is the act of starting rather than a step; and classifying what the work needs is judgement, which is this role's, not a diamond the runner can resolve. Its role is the in-run coordinator (DSP-83), not the Cursor coordinator skill: see this graph's own notes for why those are two roles rather than one.\n\ndeclaredFailures arrived with DSP-91 and closes a defect that cost a whole run. This node declared none, while the prompt asked every step for SPEC_ERROR and BLOCKED unconditionally — so on 21 September 2026 a coordinator that read its mandate, refused it and closed with RESULT: BLOCKED was routed as SUCCESS down e01, and the implementer was handed a refusal as its brief. The two edges below are where that refusal now goes. A coordinator is the one step that can see the assignment before any of the run's other calls are spent, so it is the cheapest place in the drawing to stop.\n\nDSP-101 is in the purpose above, and this node is where that defect did its damage. This is the step that decides what the rest of the run is working on, and while its purpose asked for \"the bounded change\" there was one kind of assignment it could not write down — and what a step cannot write down, it converts. See this graph's own notes under WHAT AN ASSIGNMENT MAY BE for the run that showed it.\n\nThe outcomes line is DSP-102. Until 22 September 2026 this step's contract was that its ordinary reply was its brief, and it had no way of being wrong about that: with no outcomes declared, every reply that is not a declared failure means success. Naming briefed makes a brief a positive signature instead of a residue, and unclear gives a reply that named nothing somewhere honest to go — e01c — rather than stopping the run on what reads like a wiring fault. briefed is first because an unscripted dry run takes the first declared outcome, and this graph's ordinary path is walked that way.",
       "view": { "x": 400, "y": 40 }
     },
@@ -65,24 +63,19 @@
       "label": "Implementer",
       "purpose": "Do the bounded piece of work the brief describes and check it yourself. Where it is a change to the working folders, make it and run the real commands on it. Where the brief asks instead for an answer, a calculation, an analysis or an activity carried through to its end, produce that and leave the folders as you found them — a step that correctly changes nothing has finished its work, not skipped it. Your checks do not replace the independent verification that follows; say what you did, what you ran and what is still wrong.",
       "role": {
-        "id": "dspatch-implementer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-implementer.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
-      "limits": {
-        "maxMinutes": 90,
-        "note": "A wall-clock bound is how the runner notices a step that stopped moving. It is not a route: nothing in this graph is taken when it expires — see onRuntimeFault."
-      },
+      "limits": { "maxMinutes": 90, "note": "A wall-clock bound is how the runner notices a step that stopped moving. It is not a route: nothing in this graph is taken when it expires — see onRuntimeFault." },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["done", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["spec-error", "research-needed", "blocked"],
       "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "What you did and why — the change you made, or the answer, analysis or activity the brief asked for instead — the commands you ran with their exit codes, and what is still wrong. Where the work was a change to the code, the commands and their exit codes are not optional and an account without them is not one. It is filed for you, in the run's own storage and not in the folders you are working in, and it is what the verifier and the reviewer are given, so anything they need has to be in it." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "markdown-file",
-        "note": "What you did and why — the change you made, or the answer, analysis or activity the brief asked for instead — the commands you ran with their exit codes, and what is still wrong. Where the work was a change to the code, the commands and their exit codes are not optional and an account without them is not one. It is filed for you, in the run's own storage and not in the folders you are working in, and it is what the verifier and the reviewer are given, so anything they need has to be in it."
-      },
       "notes": "Revisited on a rework round, and the runner returns to this node's own agent — the same implementer, told what the review said, rather than a stranger handed a second attempt at someone else's work.\n\nThat sentence was written before anything made it true and stood untrue for a month: the run returned to the right agent and told it nothing, because consumes below is one list whatever edge arrives. What makes it true is on the edges now — e12 delivers the review, e06 delivers the research answer — and consumes is what a first visit gets, when no earlier step of this run has anything to say beyond the brief.\n\nThe outcomes line is DSP-102, and this is the node the observation was about. On 22 September 2026 this step was offered RESULT: blocked, asked a question instead, and was routed down e02 as a step that had finished — not because anything misread it, but because with no outcomes declared anything that is not a declared failure is success, and its message said as much in as many words: a step that finished writes no such line. done and unclear replace that residual contract with a positive one. A reply that names nothing takes e02a now, which is a route this drawing chose rather than a fault in the machinery. done is first because an unscripted dry run takes the first declared outcome.",
       "view": { "x": 400, "y": 180 }
     },
@@ -92,20 +85,18 @@
       "label": "Researcher",
       "purpose": "Investigate one bounded question and gather the evidence a decision needs, keeping what you observed apart from what you only read: missing measurements are unknown, not zero. In this graph the question is the one that stopped the implementation, which is this node's place in the loop rather than a limit on what the role can be asked.",
       "role": {
-        "id": "dspatch-researcher",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-researcher.role.md" }
+        "id": "researcher",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/researcher/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["answered", "not-established"],
       "whenUndeclared": "not-established",
       "declaredFailures": ["spec-error", "blocked"],
       "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "The evidence and what it settles. Read-only, so the runner files it for you." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "markdown-file",
-        "note": "The evidence and what it settles. Read-only, so the runner files it for you."
-      },
       "notes": "Reached only from the implementer's research-needed failure, which is a routed decision and not a broken step. It is handed the implementer's account as well as the brief, which is where the question it is being asked actually is — see e03. The gap this note used to describe was real and is closed: consumes could not ask for the implementer's report, because consumes is asked on every arrival and would then have demanded on a first visit something only a later one could have; the arrival asks instead, and only the arrival that can answer.\n\nThe outcomes line is DSP-103, and this node was left permissive by DSP-102 as the cheapest case to leave alone. It is not the cheapest case: e06 returned on plain success, and with no outcomes declared every reply that is not a declared failure is plain success — so a researcher that asked a question back, or that investigated honestly and could not settle the matter, was handed to the implementer as finished research with its own uncertainty invisible in the routing. answered and not-established are that difference, said positively. Both go back to the implementer, because either way the work resumes where it stopped and the researcher's own account is what it resumes with; what changes is that the implementer is told which it is. answered is first because an unscripted dry run takes the first declared outcome.\n\nThis is a choice this drawing makes about this node. Nothing in the engine knows what a researcher is, no route here follows from the role's name, and a graph that used the same role at three nodes could give each of them a different contract.",
       "view": { "x": 120, "y": 300 }
     },
@@ -115,20 +106,18 @@
       "label": "Verifier",
       "purpose": "Check the work as it now stands and report evidence and gaps. Where the assignment was to change the code, that means running the real commands and giving their exit codes. Where its result is an answer, an analysis or an activity, check that against what was asked by means that suit it — and that the folders were left as the assignment said, which is a fair check; taking an inventory of them to decide what to check is not. Do not fix anything: an implementation you repaired is no longer the one that was handed to you.",
       "role": {
-        "id": "dspatch-verifier",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-verifier.role.md" }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["checked", "could-not-check"],
       "whenUndeclared": "could-not-check",
       "declaredFailures": ["blocked"],
       "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "PASS / FAIL / NOT_RUN per claim, with the commands you ran and their exit codes wherever running something is what checked it. A claim nothing can be run against still needs the evidence you do have, named as what it is. An agent narrative is not evidence. It is filed for you, in the run's own storage and not in the folders you are working in." },
       "consumes": ["implementer"],
-      "produces": {
-        "required": true,
-        "form": "markdown-file",
-        "note": "PASS / FAIL / NOT_RUN per claim, with the commands you ran and their exit codes wherever running something is what checked it. A claim nothing can be run against still needs the evidence you do have, named as what it is. An agent narrative is not evidence. It is filed for you, in the run's own storage and not in the folders you are working in."
-      },
       "notes": "Its own session, so it did not watch the implementation happen. What it knows about the work is the mandate, its own purpose and the implementer's report, which is what consumes hands it — and the working copy itself, which it can read.\n\nThe outcomes line is DSP-102. In the same 22 September 2026 run this step was offered RESULT: blocked, wrote BLOCKED in bold in the middle of its prose, and never put it on the line it was asked for — and nothing could notice, because its compliance was defined negatively. checked and could-not-check define it positively. Neither name is its PASS/FAIL: that still lives in its report and still reaches the reviewer whichever way it falls, which is why this node has no verdict branch and still does not. They say whether it was able to check at all. whenUndeclared above is what makes a reply that declares nothing route on e09a instead of stopping the run; until DSP-103 that followed from could-not-check being one of two spellings the engine recognised, which was a routing decision this drawing never actually made.",
       "view": { "x": 400, "y": 320 }
     },
@@ -138,19 +127,17 @@
       "label": "Implementation review",
       "purpose": "Read the implementer's account and the verifier's evidence together, against the assignment — and against the actual code where the assignment was to change it — and answer accept, rework or needs-decision with the reasons behind it. What you are judging is the assignment that was given: where it asked for an answer, an analysis or an activity rather than a change, unchanged working folders are the assignment honoured and not a delivery that is missing. Accept only what the evidence supports; a check nobody ran is unknown, not a pass.",
       "role": {
-        "id": "dspatch-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-reviewer.role.md" }
+        "id": "work-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/work-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["accept", "rework", "needs-decision", "could-not-review"],
       "whenUndeclared": "could-not-review",
       "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "ACCEPT, REWORK or NEEDS_DECISION against the assignment, the verifier's evidence, and the actual code where the assignment concerned it, with the reasons. Read-only, so the runner files it." },
       "consumes": ["implementer", "verifier"],
-      "produces": {
-        "required": true,
-        "form": "markdown-file",
-        "note": "ACCEPT, REWORK or NEEDS_DECISION against the assignment, the verifier's evidence, and the actual code where the assignment concerned it, with the reasons. Read-only, so the runner files it."
-      },
       "notes": "An agent node and not a gate. A gate in this runner starts the project's own command, which is the wrong mechanism for a judgement: it would reach no reviewer, build no brief and use none of what this node consumes. A verdict of rework is an outcome and not a failure — the reviewer did its job and the answer was no — and maxReworkRounds is what stops the same assignment being handed to more agents.\n\nThe fourth outcome is DSP-97 and it is not a fourth verdict. accept, rework and needs-decision are what this step answers about the work, and they keep the edges they have always had. could-not-review is what it says when the contract this node sets it — a verdict against the assignment, the evidence and the code, with the reasons — cannot be fulfilled at all, which is a different kind of statement and goes to a different place: e13a, to the ending that says the run finished without complete reporting and says nothing else. Niclas settled that the two nodes share that destination and keep distinct reasons, so the name here is this node's own and not the report step's.\n\nwhenUndeclared is the half that closes the gap the card was filed for. Until DSP-97 this node declared outcomes and stated no fallback, so a reply naming none of the three — including a reviewer that wrote its whole reasoning in prose and never put a verdict on the line the message asked for — was an undeclared product and stopped the run as a runtime fault at the second-to-last step. It now takes the same route as an explicit could-not-review, and the recorded outcome's provenance is what tells them apart: step-declared where the step named it, engine-fallback where DSpatch routed on the absence of a name. Nothing reads the prose for a verdict, here or anywhere: the route is taken because a form the message asked for is missing.",
       "view": { "x": 400, "y": 460 }
     },
@@ -158,21 +145,19 @@
       "id": "coordinator-report",
       "kind": "agent",
       "label": "Coordinator: report",
-      "purpose": "Summarise what was done, what was checked and what remains, as copyable text a person can answer in one pass. Lead with what the run produced: what is now true of the project where it changed something, and the answer, the analysis or the activity itself where that was what was asked for. Name the commands the evidence came from, and keep what was observed apart from what was claimed.",
+      "purpose": "Summarise what was done, what was checked and what remains, as copyable text a person can answer in one pass. Lead with what the run produced: what is now true of the project where it changed something, and the answer, the analysis or the activity itself where that was what was asked for. Name the commands the evidence came from, and keep what was observed apart from what was claimed.\n\n**How you declare a result is decided by the message you are in, not by this role.** Different steps of a loop are offered different answers, and the message is the only thing that knows which ones this step has.\n\nWhere your own message lists names for a whole `RESULT:` line, write that line using one of those names and nothing else on it. Where it lists none, doing the work is the answer and you write no such line: a name nobody drew an edge for is a result the run cannot route, and inventing one stops the run instead of finishing it.\n\nThe two opening words work the same way. Where your message asks for SPEC_ERROR, that is how you say the mandate rests on a premise that turns out to be wrong; where it asks for BLOCKED, that is how you say something concrete prevents the work — access you do not have, or a decision that is not yours to make. Where your message asks for neither, do not open your reply with either word: say plainly in prose what is wrong or what is in the way, and hand that back as your result, which is what the person reading this run needs from you anyway. Both words are read only as the opening of your reply, so use either freely in ordinary prose anywhere else.",
       "role": {
-        "id": "dspatch-run-coordinator",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/run/dspatch-run-coordinator.role.md" }
+        "id": "coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["reported", "could-not-report"],
       "whenUndeclared": "could-not-report",
       "report": { "writtenBy": "coordinator" },
+      "produces": { "required": true, "form": "markdown-file", "note": "The run's report, as copyable Markdown. It is the last thing written and it is what a person reads instead of the journal." },
       "consumes": ["implementation-review"],
-      "produces": {
-        "required": true,
-        "form": "markdown-file",
-        "note": "The run's report, as copyable Markdown. It is the last thing written and it is what a person reads instead of the journal."
-      },
       "notes": "The outcomes line is DSP-97, and until 30 September 2026 this node was the last one left without it — deliberately, because what this loop should say when the work was accepted and the run could not report on it was an authoring decision nobody had made. Declaring nothing had one consequence and it was narrow: a report step that filed a report saying it could not do its own step still produced plain success, took e14 and reached delivered, whose ending is success. Nothing else was wrong on that path. The recorded outcome was still verification-not-performed, runOutcomeFrom never reads terminalNodeId, and the badge and the sentence beside it were honest. The green tick on Delivered was the whole of it, and it was ahead of the facts.\n\nreported and could-not-report replace that residual contract with a positive one, and reported is first because an unscripted dry run takes the first declared outcome. This is the same shape DSP-102 gave the three steps down the middle; what differs is where the second name goes. Not stopped: the premise was not wrong, the work was not blocked, and the review accepted — so all three of that terminal's sentences would be untrue here. Not needs-a-decision: the review already answered, and there is nothing to decide. reporting-incomplete is the ending this card adds, and it states what happened and refuses to state anything else.\n\nwhenUndeclared names could-not-report, so a reply with no such line takes e14a rather than stopping the run as a fault at the very last step, and the recorded outcome says which of the two it was — step-declared where the step named it, engine-fallback where DSpatch read the absence of a name. Nothing here reads the report body. The worst case is unchanged and is still caught elsewhere: produces.required is true, so a step that files nothing at all faults with required-result-missing and reaches no terminal of any kind.",
       "view": { "x": 400, "y": 600 }
     },

@@ -285,19 +285,19 @@ describe('opening a loop from its definition', () => {
     const home = temporaryDir('open');
     const resourceRoot = path.join(home, 'resources');
     for (const [from, to] of [
-      ['project-work.role.md', 'work.role.md'],
-      ['project-check.role.md', 'check.role.md'],
+      ['implementer/v1.role.md', 'work.role.md'],
+      ['verifier/v1.role.md', 'check.role.md'],
     ] as const) {
       write(
         path.join(resourceRoot, 'roles', to),
-        fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'roles', 'project', from), 'utf8'),
+        fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'roles', 'catalog', from), 'utf8'),
       );
     }
 
     const graphText = fs
       .readFileSync(path.join(repoRoot, 'docs', 'loop', 'graphs', 'dspatch-chat-loop.graph.json'), 'utf8')
-      .replace('docs/loop/roles/project/project-work.role.md', 'roles/work.role.md')
-      .replace('docs/loop/roles/project/project-check.role.md', 'roles/check.role.md')
+      .replace('docs/loop/roles/catalog/implementer/v1.role.md', 'roles/work.role.md')
+      .replace('docs/loop/roles/catalog/verifier/v1.role.md', 'roles/check.role.md')
       .replace(/\r?\n/g, options.graphNewline);
     const graphFile = path.join(resourceRoot, 'graphs', 'ported.graph.json');
     write(graphFile, graphText);

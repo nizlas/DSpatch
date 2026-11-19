@@ -6,7 +6,9 @@
  *   .dspatch/loops/<id>.loop.json        the definition, with `origin` and `projectInstructions`
  *   .dspatch/loops/<id>.graph.json       the template's graph, its role paths pointing at the copies
  *   .dspatch/loops/<id>.project.json     the project's instructions (common, per role, per node)
- *   .dspatch/loops/roles/<id>/*.role.md  the template's role sources, copied as they were
+ *   .dspatch/roles/<role>/v<n>.role.md   DSP-231: the shared catalog roles the graph uses, copied with
+ *                                        their identity, version and digest (one copy per repository)
+ *   .dspatch/loops/roles/<id>/*.role.md  a template's local, unversioned role sources, copied as they were
  *
  * Everything is relative to the repository, so it travels with it and goes through Git like any
  * other file; nothing here commits. The definition is written last, and discovery reads only
@@ -32,6 +34,8 @@ import {
   type ReferenceProblem,
 } from '../shared/project-instructions';
 import { loopDefinitionDirFor, type LoopDefinitionRow } from './loop-definition-files';
+import { planCatalogCopies, roleDigest } from './role-catalog-files';
+import { catalogFileFor, PROJECT_ROLE_CATALOG_DIR } from '../shared/role-catalog';
 
 /** Lower case, digits and hyphens: a file name on every platform. */
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -116,9 +120,35 @@ export function planProjectGraph(input: {
   const loops = loopDefinitionDirFor(repository);
   const roleDir = path.join(loops, 'roles', id);
   const files: PlannedFile[] = [];
-  const copies: { id: string; from: string; to: string; sha256: string }[] = [];
+  const copies: { id: string; from: string; to: string; sha256: string; version?: number }[] = [];
   const rewritten = new Map<string, string>();
   const takenNames = new Set<string>();
+  // DSP-231: catalog roles go to the repository's own catalog, by identity and version, and are
+  // shared by every project graph in it; an identical copy already there is reused, another is a
+  // conflict. Project additions stay in <id>.project.json, apart from the roles.
+  const catalogRoles = referencedRoles(parsed.graph).filter((reference) => reference.source.kind === 'role-catalog' && reference.version !== undefined);
+  const catalogDir = path.join(repository, PROJECT_ROLE_CATALOG_DIR);
+  const copies_ = planCatalogCopies(
+    catalogDir,
+    catalogRoles.map((reference) => ({ id: reference.id, version: reference.version as number, sourceFile: path.resolve(input.template.resourceRoot as string, reference.source.path) })),
+  );
+  problems.push(...copies_.problems);
+  for (const file of copies_.files) {
+    files.push({ path: file.path, relative: relativeTo(repository, file.path), action: fs.existsSync(file.path) ? 'change' : 'create', what: file.what, text: file.text });
+  }
+  const catalogCopies = new Set(copies_.files.map((file) => file.path));
+  for (const reference of catalogRoles) {
+    const target = path.join(catalogDir, catalogFileFor(reference.id, reference.version as number));
+    const to = relativeTo(repository, target);
+    rewritten.set(reference.source.path, to);
+    let text = '';
+    try {
+      text = fs.readFileSync(path.resolve(input.template.resourceRoot, reference.source.path), 'utf8');
+    } catch {
+      text = '';
+    }
+    copies.push({ id: reference.id, version: reference.version as number, from: reference.source.path, to, sha256: roleDigest(text) });
+  }
   for (const reference of referencedRoles(parsed.graph)) {
     if (rewritten.has(reference.source.path)) continue;
     const source = path.resolve(input.template.resourceRoot, reference.source.path);
@@ -180,6 +210,8 @@ export function planProjectGraph(input: {
   };
   files.push({ path: definitionPath, relative: relativeTo(repository, definitionPath), action: 'create', what: 'the definition, written last', text: `${JSON.stringify(definition, null, 2)}\n` });
   for (const file of files) {
+    // The repository's role catalog index is extended, not replaced: it lists every copy.
+    if (file.action === 'change' && catalogCopies.has(file.path)) continue;
     if (fs.existsSync(file.path)) problems.push(`${file.relative} exists already, and an apply never replaces a file. Choose another name.`);
   }
   return problems.length > 0 ? { ok: false, problems } : { ok: true, plan: { repository, id, definitionPath, files, graph, origin } };
@@ -203,15 +235,29 @@ export function writeProjectGraph(
 ): { readonly ok: true; readonly written: readonly string[] } | { readonly ok: false; readonly problem: string } {
   const write = io.write ?? writeWhole;
   const created: string[] = [];
+  // DSP-231: the one file an apply may change is the repository's role catalog index; it is put back as it was on failure.
+  const changed: { readonly path: string; readonly before: string }[] = [];
   const ordered = [...plan.files.filter((file) => file.path !== plan.definitionPath), ...plan.files.filter((file) => file.path === plan.definitionPath)];
   try {
     for (const file of ordered) {
+      if (file.action === 'change') {
+        changed.push({ path: file.path, before: fs.readFileSync(file.path, 'utf8') });
+        write(file.path, file.text);
+        continue;
+      }
       if (fs.existsSync(file.path)) throw new Error(`${file.relative} appeared while saving; nothing is replaced.`);
       write(file.path, file.text);
       created.push(file.path);
     }
-    return { ok: true, written: created };
+    return { ok: true, written: [...created, ...changed.map((file) => file.path)] };
   } catch (error) {
+    for (const file of changed) {
+      try {
+        write(file.path, file.before);
+      } catch {
+        // Best effort, as below.
+      }
+    }
     for (const file of created.reverse()) {
       try {
         fs.rmSync(file, { force: true });

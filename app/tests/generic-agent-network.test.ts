@@ -67,10 +67,15 @@ test('generic network loads, resolves its roles and retains its result and routi
     assert.ok(agent.role);
     const role = resolver(agent.role);
     assert.ok(role?.instructions, agent.role.id);
-    assert.match(role.instructions, /project's applicable instructions only as required by the task/);
-    assert.match(role.instructions, /Do not delegate to subagents unless the user explicitly authorizes it/);
-    assert.match(role.instructions, /Include a carry-forward ledger in every reply, including failures/);
-    assert.match(role.instructions, /add an entry only at tl-accept when its outcome is accept/);
+    // DSP-231: a shared catalog role, pinned by version and held to the catalog's text.
+    assert.equal(agent.role.source.kind, 'role-catalog');
+    assert.equal(role.version, 1);
+    assert.equal(role.catalog?.status, 'listed', role.catalog?.detail);
+    assert.match(role.instructions, /Do not delegate to other agents unless the person explicitly authorizes it/);
+    // The ledger is this graph's contract, so it is in every step's task, not in the shared role.
+    assert.doesNotMatch(role.instructions, /carry-forward ledger/);
+    assert.match(agent.purpose ?? '', /Include a carry-forward ledger in every reply, including failures/);
+    assert.match(agent.purpose ?? '', /add an entry only at tl-accept when its outcome is accept/);
   }
 });
 
@@ -628,7 +633,7 @@ for (const provider of ['cursor', 'claude', 'copilot'] as const) {
     assert.ok(delivery.inspection.sessions.every((session) => session.provider === provider));
     const entry = agent.prompts.get('executive-intake')?.[0] ?? '';
     assert.match(entry, /Project instruction files present[^\n]*\n- AGENTS\.md/);
-    const executive = resolveRole({ id: 'generic-executive', source: { kind: 'role-source', path: 'docs/loop/roles/generic/executive.role.md' } });
+    const executive = resolveRole({ id: 'coordinator', version: 1, source: { kind: 'role-catalog', path: 'docs/loop/roles/catalog/coordinator/v1.role.md' } });
     assert.ok(executive !== null && fs.existsSync(path.resolve(installed, executive.sourcePath)), 'roles are read from the installed copy');
     assert.ok(entry.includes((executive?.instructions ?? '').split('\n').find((line) => line.trim() !== '') ?? '\u0000'));
     for (const node of ['tl-dispatch', 'implementer', 'qa', 'reviewer', 'tl-accept', 'documenter-wrapup', 'executive-report']) {

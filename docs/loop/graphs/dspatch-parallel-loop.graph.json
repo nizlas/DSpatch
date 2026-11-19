@@ -47,87 +47,82 @@
       "id": "slice",
       "kind": "agent",
       "label": "Split the work",
-      "purpose": "Read the Mandate and the project, and decide whether the work splits into two or three parts that can be done at the same time without writing the same files. Write one dspatch-slices block: two or three slices, or a single slice when it does not split well. Each slice names its result, the paths it owns, its allowed actions, the contracts it works against and its smallest check. Do not change any file.",
+      "purpose": "Read the Mandate and the project, and decide whether the work splits into two or three parts that can be done at the same time without writing the same files. Write one dspatch-slices block: two or three slices, or a single slice when it does not split well. Each slice names its result, the paths it owns, its allowed actions, the contracts it works against and its smallest check. Do not change any file.\n\nWrite the plan as exactly one fenced block whose info string is `dspatch-slices`, in the form this message gives; DSpatch reads exactly one.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
       "role": {
-        "id": "project-slice",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-slice.role.md"
-        }
+        "id": "slicer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/slicer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 15 },
       "declaredFailures": ["spec-error", "blocked"],
-      "notes": "The slicer is a role and nothing more (the parallelism document's §7): nothing in the engine treats this node specially. Its result is required, because the implementing step's branches are made from the block in it.",
       "report": { "writtenBy": "self" },
       "produces": { "required": true, "form": "stored-result", "note": "Exactly one dspatch-slices block, and a short account of why the work was split this way or kept whole." },
+      "notes": "The slicer is a role and nothing more (the parallelism document's §7): nothing in the engine treats this node specially. Its result is required, because the implementing step's branches are made from the block in it.",
       "view": { "x": 360, "y": 40 }
     },
     {
       "id": "work",
       "kind": "agent",
       "label": "Do the slices",
-      "purpose": "Do your slice of the Mandate, in your own worktree, inside the paths your slice owns, and run your slice's check. On a later visit you are given the integrating step's findings: act on the ones that concern your slice.",
+      "purpose": "Do your slice of the Mandate, in your own worktree, inside the paths your slice owns, and run your slice's check. On a later visit you are given the integrating step's findings: act on the ones that concern your slice.\n\nYou are one of several agents doing the same assignment in parallel, each with its own slice. Your message ends with **your slice**: its result, the paths you own, your allowed actions, the contracts you work against and your check. Do that slice, and only that slice.\n\nWork in the folder you were given: your own worktree, made from the same base as every other branch. Read freely there.\n\nChange **only the paths your slice owns**. Another branch owns the rest, and if two branches change the same file the integrating step has to undo one of them. When your slice cannot be done without changing a path you do not own, do not change it: say which path and why in your reply, so the integrating step can decide.\n\nWork against the contracts your slice names. If one turns out to be inadequate, do not quietly change the shared agreement; say what is wrong and what you assumed instead.\n\nRun **your slice's own check**, as the slice names it, and fix what it shows. Run the last check after your last change. Do not run the whole project's suite: the integrating step checks the combination.\n\nOn a later visit you are given the integrating step's findings. Act on the ones that concern your slice.\n\n**Messages between the branches.** You have three tools for the other branches running beside you: `check_messages`, `send_message` and `acknowledge_message`.\n\n- Call `check_messages` at natural boundaries: **before you start**, **after a significant change**, and **before you finish**. Messages are delivered only when you check; nothing interrupts your work.\n- Send a `finding` when something you found affects another slice's owned paths or a contract the slices share — to that slice by its id, or to `all`. Send a `question` when another slice's answer would change what you do, and carry on without the answer. Send a `contract-change` when a shared contract has to change: it is a proposal for the integrating step to resolve, not an agreement, so do not build on it as if it were decided. Send to `integrator` what only the integrating step can resolve.\n- `acknowledge_message` a message once you have acted on it.\n- A message from `the person` is the person's instruction to the run: follow it as part of your assignment, within your slice.\n- **Never wait for a reply.** There is no way to wait, and a branch that has ended is not restarted for a message. Keep messages short and to the point; routine progress is not a message.\n\nDo not commit, push, switch branches or create branches. When your turn ends, DSpatch commits what you left in your worktree to your temporary branch, and the integrating step merges the branches. Do not install dependencies, change global configuration or touch anything outside your worktree.\n\nReply in prose: what is now true of your slice, the files you changed and why, what you ran and what it showed for the code as you leave it, and anything you could not do or had to assume — a path you needed and did not own, a contract you found inadequate.\n\nIf the premise of your slice is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
       "role": {
-        "id": "project-branch",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-branch.role.md"
-        }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 60 },
+      "requirements": ["no-subagent-delegation"],
       "declaredFailures": ["branch-failed"],
       "fanOut": { "slicesFrom": "slice", "maxConcurrent": 3, "isolation": "worktree" },
-      "notes": "The one fan-out node. Each slice runs as its own branch instance; DSpatch commits what each left to its temporary branch and removes its worktree, or keeps the worktree when the commit is refused. The step's own result lists every branch, its commit and its reply, clipped; the integrator reads the commits.",
       "report": { "writtenBy": "self" },
       "produces": { "required": false, "form": "stored-result", "note": "Written by DSpatch: per slice, how it ended, its temporary branch and commit, and its reply, clipped." },
+      "notes": "The one fan-out node. Each slice runs as its own branch instance; DSpatch commits what each left to its temporary branch and removes its worktree, or keeps the worktree when the commit is refused. The step's own result lists every branch, its commit and its reply, clipped; the integrator reads the commits.",
       "view": { "x": 360, "y": 180 }
     },
     {
       "id": "integrate",
       "kind": "agent",
       "label": "Combine the branches",
-      "purpose": "Merge each slice's temporary branch into the working copy in the order the slices were listed, resolve conflicts, check that the branches respect the contracts the slices named, and run the checks the combination needs. Name what you merged, from which branch and commit, and what conflicted and how you resolved it. If a branch has to be redone, declare rework with concrete findings for the slices concerned. Never delete a temporary branch.",
+      "purpose": "Merge each slice's temporary branch into the working copy in the order the slices were listed, resolve conflicts, check that the branches respect the contracts the slices named, and run the checks the combination needs. Name what you merged, from which branch and commit, and what conflicted and how you resolved it. If a branch has to be redone, declare rework with concrete findings for the slices concerned. Never delete a temporary branch.\n\nEach slice's temporary branch is named `dspatch/run/<run>/<node>/v<visit>/<slice>`, and a rework visit's branches carry the next visit number.\n\n`integrated` when every branch is merged and the combination checks out as far as you can tell; `rework` with findings for the branches when one has to be redone; `not-integrated` when the branches cannot be combined into what the mandate asks. The independent review that follows is not your check; do not treat your own `integrated` as it.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
       "role": {
-        "id": "project-integrate",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-integrate.role.md"
-        }
+        "id": "integrator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/integrator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 30 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["integrated", "rework", "not-integrated"],
       "whenUndeclared": "not-integrated",
       "declaredFailures": ["spec-error", "blocked", "limit-reached"],
-      "consumes": ["work"],
-      "notes": "Decision 7: the integrator merges; the engine does not. It is handed the implementing step's result, which names every branch and commit; it reads the commits, not the clipped replies.",
       "report": { "writtenBy": "self" },
       "produces": { "required": false, "form": "stored-result", "note": "Exactly what was merged, from which branch and commit, what conflicted and how it was resolved, and what was checked. On rework, the findings for each slice concerned." },
+      "consumes": ["work"],
+      "notes": "Decision 7: the integrator merges; the engine does not. It is handed the implementing step's result, which names every branch and commit; it reads the commits, not the clipped replies.",
       "view": { "x": 360, "y": 320 }
     },
     {
       "id": "review",
       "kind": "agent",
       "label": "Check the combined work",
-      "purpose": "Establish independently whether the assignment was met by the combined work in the working copy. Discover how this project is checked and run those checks yourself where your tools can run commands. Judge from real results, not from the integrating step's account. If the combination can be fixed, say exactly what is wrong and declare rework; if it is met, declare met; if it cannot be met, declare not-met.",
+      "purpose": "Establish independently whether the assignment was met by the combined work in the working copy. Discover how this project is checked and run those checks yourself where your tools can run commands. Judge from real results, not from the integrating step's account. If the combination can be fixed, say exactly what is wrong and declare rework; if it is met, declare met; if it cannot be met, declare not-met.\n\nReply in prose, to the person who reads this run. They may not have read the role and should not have to.\n\nDSpatch lets a `met` stand only if a command recorded in this run completed on the code exactly as you leave it, or if the run changed no file. Run your checks on the code as it is, and do not change files.\n\n`met` means the assignment was met. `rework` means it was not met yet and the work step can fix it: list each finding concretely — the command you ran, what it showed, and what has to change — because your reply is the only thing the work step is given about what is wrong. `not-met` means it cannot be met as asked, or what is wrong is not something another round of work would fix; say why. `could-not-check` means you could not establish it — no identifiable check, a command you could not run, or a result you could not read. Use `could-not-check` rather than guessing. It is a real answer and not a failure of the run.\n\nDo not declare `limit-reached`. DSpatch routes that itself when the correction rounds are spent.\n\nIf the premise of the check is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the check — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
       "role": {
-        "id": "project-check",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-check.role.md"
-        }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 20 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["met", "rework", "not-met", "could-not-check"],
       "whenUndeclared": "could-not-check",
       "declaredFailures": ["spec-error", "blocked", "limit-reached"],
-      "consumes": ["integrate"],
-      "notes": "The same independent check as the chat loop's, on the integrated result: its own session, so it did not watch the work happen.",
       "report": { "writtenBy": "self" },
       "produces": { "required": false, "form": "stored-result", "note": "Your verdict and findings. On rework they are the only thing the integrating step is given about what is wrong." },
+      "consumes": ["integrate"],
+      "notes": "The same independent check as the chat loop's, on the integrated result: its own session, so it did not watch the work happen.",
       "view": { "x": 360, "y": 460 }
     },
     {
@@ -178,29 +173,13 @@
     { "id": "p-branches-done", "from": "work", "to": "integrate", "when": { "on": "success" }, "label": "every branch finished" },
     { "id": "p-branch-failed", "from": "work", "to": "branches-failed", "when": { "on": "declared-failure", "failure": "branch-failed" }, "label": "a branch failed" },
     { "id": "p-integrated", "from": "integrate", "to": "review", "when": { "on": "outcome", "outcome": "integrated" }, "label": "integrated" },
-    {
-      "id": "p-integrate-rework",
-      "from": "integrate",
-      "to": "work",
-      "when": { "on": "outcome", "outcome": "rework" },
-      "label": "back to the branches with findings",
-      "delivers": ["integrate"],
-      "notes": "The second visit to the fan-out: new branches beside the first visit's, each given the integrating step's findings. Counted against maxReworkRounds."
-    },
+    { "id": "p-integrate-rework", "from": "integrate", "to": "work", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["integrate"], "label": "back to the branches with findings", "notes": "The second visit to the fan-out: new branches beside the first visit's, each given the integrating step's findings. Counted against maxReworkRounds." },
     { "id": "p-not-integrated", "from": "integrate", "to": "not-met", "when": { "on": "outcome", "outcome": "not-integrated" }, "label": "could not be combined" },
     { "id": "p-integrate-spec", "from": "integrate", "to": "stopped", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error while combining" },
     { "id": "p-integrate-blocked", "from": "integrate", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked while combining" },
     { "id": "p-integrate-limit", "from": "integrate", "to": "not-met", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "correction rounds spent" },
     { "id": "p-met", "from": "review", "to": "done", "when": { "on": "outcome", "outcome": "met" }, "label": "assignment met" },
-    {
-      "id": "p-review-rework",
-      "from": "review",
-      "to": "integrate",
-      "when": { "on": "outcome", "outcome": "rework" },
-      "label": "not met: back to the integrator with findings",
-      "delivers": ["review"],
-      "notes": "The review's findings go to the integrating step, which may fix the combination itself or send the branches back."
-    },
+    { "id": "p-review-rework", "from": "review", "to": "integrate", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["review"], "label": "not met: back to the integrator with findings", "notes": "The review's findings go to the integrating step, which may fix the combination itself or send the branches back." },
     { "id": "p-review-not-met", "from": "review", "to": "not-met", "when": { "on": "outcome", "outcome": "not-met" }, "label": "assignment not met" },
     { "id": "p-could-not-check", "from": "review", "to": "not-established", "when": { "on": "outcome", "outcome": "could-not-check" }, "label": "could not check" },
     { "id": "p-review-spec", "from": "review", "to": "not-established", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error while checking" },

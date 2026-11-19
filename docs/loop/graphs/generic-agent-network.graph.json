@@ -70,10 +70,11 @@
       "id": "executive-intake",
       "kind": "agent",
       "label": "Executive: executive-intake",
-      "purpose": "Assess the original mandate and supplied context. Choose plan-iteration if a plan is needed, select-slice if an actionable plan exists, or wrap-up if no work can proceed. Preserve explicit constraints and decisions for later steps.",
+      "purpose": "Assess the original mandate and supplied context. Choose plan-iteration if a plan is needed, select-slice if an actionable plan exists, or wrap-up if no work can proceed. Preserve explicit constraints and decisions for later steps.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-executive",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/executive.role.md" }
+        "id": "coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["plan-iteration", "select-slice", "wrap-up"],
@@ -86,10 +87,11 @@
       "id": "tl-plan",
       "kind": "agent",
       "label": "Tech Lead: tl-plan",
-      "purpose": "Define the goal, technical boundaries, dependencies and an initial ordering for planning. Choose needs-decision if an essential decision is outside the mandate; otherwise choose skeleton.",
+      "purpose": "Define the goal, technical boundaries, dependencies and an initial ordering for planning. Choose needs-decision if an essential decision is outside the mandate; otherwise choose skeleton.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["skeleton", "needs-decision"],
@@ -102,10 +104,11 @@
       "id": "planner-expand",
       "kind": "agent",
       "label": "Planner: planner-expand",
-      "purpose": "Expand the supplied skeleton into actionable work with scope, dependencies, acceptance criteria and verification. Address specific findings when revisited.",
+      "purpose": "Expand the supplied skeleton into actionable work with scope, dependencies, acceptance criteria and verification. Address specific findings when revisited.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-planner",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/planner.role.md" }
+        "id": "planner",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/planner/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["spec-error", "limit-reached"],
@@ -117,10 +120,11 @@
       "id": "reviewer-readiness",
       "kind": "agent",
       "label": "Reviewer: reviewer-readiness",
-      "purpose": "Independently assess whether the proposed work is actionable and sufficiently specified. Choose accept or rework with concrete findings. Carry the received proposed plan and its technical constraints with source attribution, including on rework; identify missing evidence.",
+      "purpose": "Independently assess whether the proposed work is actionable and sufficiently specified. Choose accept or rework with concrete findings. Carry the received proposed plan and its technical constraints with source attribution, including on rework; identify missing evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer.role.md" }
+        "id": "plan-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/plan-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["accept", "rework"],
@@ -134,10 +138,11 @@
       "id": "tl-plan-accept",
       "kind": "agent",
       "label": "Tech Lead: tl-plan-accept",
-      "purpose": "Assess the proposed plan and its technical constraints. Choose accept, rework with specific defects, or needs-decision when a person must decide. Carry the received plan, constraints and review with source attribution, including on rework; identify missing evidence.",
+      "purpose": "Assess the proposed plan and its technical constraints. Choose accept, rework with specific defects, or needs-decision when a person must decide. Carry the received plan, constraints and review with source attribution, including on rework; identify missing evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["accept", "rework", "needs-decision"],
@@ -151,10 +156,11 @@
       "id": "backlog-plan",
       "kind": "agent",
       "label": "Backlog: backlog-plan",
-      "purpose": "Record the accepted plan in the authorized work system if the mandate calls for it; otherwise return the plan and explain that no record was changed.",
+      "purpose": "Record the accepted plan in the authorized work system if the mandate calls for it; otherwise return the plan and explain that no record was changed.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-backlog",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
+        "id": "backlog-keeper",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/backlog-keeper/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["blocked", "limit-reached"],
@@ -166,10 +172,11 @@
       "id": "tl-select",
       "kind": "agent",
       "label": "Tech Lead (medium): tl-select",
-      "purpose": "Select the next useful bounded slice from the mandate and available plan, using the received carry-forward ledger to avoid repeating accepted work. Include that ledger in the reply. Choose slice-selected, needs-planning, or focus-complete.",
+      "purpose": "Select the next useful bounded slice from the mandate and available plan, using the received carry-forward ledger to avoid repeating accepted work. Include that ledger in the reply. Choose slice-selected, needs-planning, or focus-complete.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead-m",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["slice-selected", "needs-planning", "focus-complete"],
@@ -182,10 +189,11 @@
       "id": "planner",
       "kind": "agent",
       "label": "Planner: planner",
-      "purpose": "Prepare a bounded slice contract with inputs, scope, deliverables, acceptance and verification; address specific feedback on return. Include the received carry-forward ledger in the reply.",
+      "purpose": "Prepare a bounded slice contract with inputs, scope, deliverables, acceptance and verification; address specific feedback on return. Include the received carry-forward ledger in the reply.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-planner",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/planner.role.md" }
+        "id": "planner",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/planner/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["spec-error", "limit-reached"],
@@ -197,10 +205,11 @@
       "id": "reviewer-plan-gate",
       "kind": "agent",
       "label": "Reviewer: reviewer-plan-gate",
-      "purpose": "Independently assess the slice contract for readiness and conformance to the mandate. Choose accept or rework with findings. Carry the received contract with source attribution, including on rework; identify missing evidence.",
+      "purpose": "Independently assess the slice contract for readiness and conformance to the mandate. Choose accept or rework with findings. Carry the received contract with source attribution, including on rework; identify missing evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer.role.md" }
+        "id": "plan-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/plan-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["accept", "rework"],
@@ -214,10 +223,11 @@
       "id": "backlog-start",
       "kind": "agent",
       "label": "Backlog: backlog-start",
-      "purpose": "Record the start and current focus in the authorized work system if requested and permitted; otherwise return the intended focus without claiming an update.",
+      "purpose": "Record the start and current focus in the authorized work system if requested and permitted; otherwise return the intended focus without claiming an update.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-backlog",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
+        "id": "backlog-keeper",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/backlog-keeper/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["blocked", "limit-reached"],
@@ -229,10 +239,11 @@
       "id": "tl-dispatch",
       "kind": "agent",
       "label": "Tech Lead (medium): tl-dispatch",
-      "purpose": "Choose the declared capability that best fits the slice, or choose replan, escalate, or stop-slice. Carry the current slice contract, original constraints and actual incoming work, verification and feedback into the handoff; identify missing or uncertain evidence and do not claim unobserved work. With a capability, also decide the model class the work needs and the review route it takes, independently of each other. The Implementer runs any class, the Researcher medium or large and the Explorer small or medium. The review route decides the Implementer's checks: standard goes through QA, the review and the challenge, either of which may escalate to the thorough check; thorough goes through design QA, a design and correctness review and a full challenge. It decides the Researcher's challenge the same way. Explorer and Data Curator work is always checked on the standard route, and Infrastructure and Experiment Analyst work on the thorough one. Choose parallel only when the subtask splits into independent parts; give each part its own class and review route by what that part needs.",
+      "purpose": "Choose the declared capability that best fits the slice, or choose replan, escalate, or stop-slice. Carry the current slice contract, original constraints and actual incoming work, verification and feedback into the handoff; identify missing or uncertain evidence and do not claim unobserved work. With a capability, also decide the model class the work needs and the review route it takes, independently of each other. The Implementer runs any class, the Researcher medium or large and the Explorer small or medium. The review route decides the Implementer's checks: standard goes through QA, the review and the challenge, either of which may escalate to the thorough check; thorough goes through design QA, a design and correctness review and a full challenge. It decides the Researcher's challenge the same way. Explorer and Data Curator work is always checked on the standard route, and Infrastructure and Experiment Analyst work on the thorough one. Choose parallel only when the subtask splits into independent parts; give each part its own class and review route by what that part needs.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead-m",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["implementer", "researcher", "explorer", "data-curator", "infra", "experiment-analyst", "parallel", "replan", "escalate", "stop-slice"],
@@ -246,10 +257,11 @@
       "id": "tl-escalation",
       "kind": "agent",
       "label": "Tech Lead: tl-escalation",
-      "purpose": "Resolve the escalated technical issue within the mandate. Choose decided, replan, or stop-slice; identify any required human decision. Carry the current contract and actual incoming work, verification and feedback, identifying missing or uncertain evidence.",
+      "purpose": "Resolve the escalated technical issue within the mandate. Choose decided, replan, or stop-slice; identify any required human decision. Carry the current contract and actual incoming work, verification and feedback, identifying missing or uncertain evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["decided", "replan", "stop-slice"],
@@ -262,10 +274,11 @@
       "id": "implementer",
       "kind": "agent",
       "label": "Implementer: implementer",
-      "purpose": "Implement the assigned slice and report changes, checks and limitations. On the thorough review route, also report the design choices made and the design uncertainties left, for design QA and the design review. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
+      "purpose": "Implement the assigned slice and report changes, checks and limitations. On the thorough review route, also report the design choices made and the design uncertainties left, for design QA and the design review. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-implementer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/implementer.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "small", "note": "A straightforward, localized change with an obvious approach." }, { "id": "medium", "note": "A change that follows established patterns across several places." }, { "id": "large", "note": "A complex change whose design is uncertain." }], "default": "medium", "chosenBy": "class" },
       "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
@@ -277,10 +290,11 @@
       "id": "researcher",
       "kind": "agent",
       "label": "Researcher: researcher",
-      "purpose": "Investigate the assigned question and return sources, findings and uncertainties. For a complex or uncertain question, also compare alternatives and conflicting evidence and explain the tradeoffs. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
+      "purpose": "Investigate the assigned question and return sources, findings and uncertainties. For a complex or uncertain question, also compare alternatives and conflicting evidence and explain the tradeoffs. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-researcher",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/researcher.role.md" }
+        "id": "researcher",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/researcher/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "medium", "note": "A focused question." }, { "id": "large", "note": "A complex or uncertain question." }], "default": "medium", "chosenBy": "class" },
       "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
@@ -292,10 +306,11 @@
       "id": "explorer",
       "kind": "agent",
       "label": "Explorer: explorer",
-      "purpose": "Locate the assigned material, or trace the assigned behavior or prior work, and report direct evidence, references and adaptation implications. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
+      "purpose": "Locate the assigned material, or trace the assigned behavior or prior work, and report direct evidence, references and adaptation implications. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-explorer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/explorer.role.md" }
+        "id": "explorer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/explorer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "small", "note": "Locating material and references." }, { "id": "medium", "note": "Tracing behavior, dependencies and adaptation risk." }], "default": "small", "chosenBy": "class" },
       "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
@@ -307,10 +322,11 @@
       "id": "data-curator",
       "kind": "agent",
       "label": "Data Curator: data-curator",
-      "purpose": "Perform the assigned authorized data work and report provenance, checks and limitations. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
+      "purpose": "Perform the assigned authorized data work and report provenance, checks and limitations. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-data-curator",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/data-curator.role.md" }
+        "id": "data-curator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/data-curator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
@@ -322,10 +338,11 @@
       "id": "infra",
       "kind": "agent",
       "label": "Infrastructure: infra",
-      "purpose": "Perform the assigned authorized infrastructure work. Choose done for completed ordinary work or job-gate-needed when authorization or verification remains pending. Identify the plan, operations actually performed, pending authorization and verification, and any uncertain outcome; do not imply a launch or verification occurred without evidence. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution.",
+      "purpose": "Perform the assigned authorized infrastructure work. Choose done for completed ordinary work or job-gate-needed when authorization or verification remains pending. Identify the plan, operations actually performed, pending authorization and verification, and any uncertain outcome; do not imply a launch or verification occurred without evidence. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-infra",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/infra.role.md" }
+        "id": "infrastructure",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/infrastructure/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["done", "job-gate-needed"],
@@ -338,10 +355,11 @@
       "id": "experiment-analyst",
       "kind": "agent",
       "label": "Experiment Analyst: experiment-analyst",
-      "purpose": "Analyze the supplied experiment evidence and report comparisons, limitations and conclusions. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.",
+      "purpose": "Analyze the supplied experiment evidence and report comparisons, limitations and conclusions. On every outcome or failure, carry the received slice contract and relevant feedback with source attribution, and identify unperformed or uncertain work.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-experiment-analyst",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/experiment-analyst.role.md" }
+        "id": "experiment-analyst",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/experiment-analyst/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["spec-error", "research-needed", "blocked", "limit-reached"],
@@ -353,10 +371,11 @@
       "id": "branches",
       "kind": "agent",
       "label": "Parallel: branches",
-      "purpose": "Do your slice of the subtask in your own branch, inside the paths your slice owns, and run your slice's check. Report what you changed, the checks you ran and their results, what you could not do, and any open decision about a shared contract. On a later visit you are given the integrator's findings: act on those that concern your slice.",
+      "purpose": "Do your slice of the subtask in your own branch, inside the paths your slice owns, and run your slice's check. Report what you changed, the checks you ran and their results, what you could not do, and any open decision about a shared contract. On a later visit you are given the integrator's findings: act on those that concern your slice.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-implementer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/implementer.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "small", "note": "A straightforward, localized change with an obvious approach." }, { "id": "medium", "note": "A change that follows established patterns across several places." }, { "id": "large", "note": "A complex change whose design is uncertain." }], "default": "medium", "chosenBy": "class" },
       "declaredFailures": ["branch-failed", "limit-reached"],
@@ -370,10 +389,11 @@
       "id": "integrator",
       "kind": "agent",
       "label": "Integrator: integrator",
-      "purpose": "Combine the branches into the working copy: read each branch's result and ending, its open decisions and the proposals and messages between the branches; check each branch against the shared contracts; merge the temporary branches in the order listed, resolve conflicts and name each merge and resolution; run the checks that show the parts work together. Choose integrated only when every branch finished and was combined and checked and no contract proposal is left open. Choose rework, with concrete findings per branch, when the branches can fix what is wrong in another round. Choose return-to-lead when a branch failed or was cancelled, a shared contract needs a decision, or the work must be split differently or done in sequence; name each such branch and where its work is kept. Never delete a temporary branch.",
+      "purpose": "Combine the branches into the working copy: read each branch's result and ending, its open decisions and the proposals and messages between the branches; check each branch against the shared contracts; merge the temporary branches in the order listed, resolve conflicts and name each merge and resolution; run the checks that show the parts work together. Choose integrated only when every branch finished and was combined and checked and no contract proposal is left open. Choose rework, with concrete findings per branch, when the branches can fix what is wrong in another round. Choose return-to-lead when a branch failed or was cancelled, a shared contract needs a decision, or the work must be split differently or done in sequence; name each such branch and where its work is kept. Never delete a temporary branch.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-integrator",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/integrator.role.md" }
+        "id": "integrator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/integrator/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "medium", "note": "Branches that follow established patterns." }, { "id": "large", "note": "Branches whose combination is complex or uncertain." }], "default": "medium", "chosenBy": "class" },
       "outcomes": ["integrated", "rework", "return-to-lead"],
@@ -389,10 +409,11 @@
       "id": "qa",
       "kind": "agent",
       "label": "QA: qa",
-      "purpose": "Independently verify the result against the slice criteria. Choose pass or fail and identify the tested content, checks, results and gaps. Include the received slice contract and actual worker result in the reply, identified by source, so the next step can review them; mark missing evidence as missing.",
+      "purpose": "Independently verify the result against the slice criteria. Choose pass or fail and identify the tested content, checks, results and gaps. Include the received slice contract and actual worker result in the reply, identified by source, so the next step can review them; mark missing evidence as missing.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-qa",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/qa.role.md" }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["pass", "fail"],
@@ -406,10 +427,11 @@
       "id": "qa-design",
       "kind": "agent",
       "label": "QA: qa-design",
-      "purpose": "Verify the design-related result against the assigned criteria. Choose pass or fail and identify evidence and gaps. Include the received slice contract and actual worker result in the reply, identified by source, so the next step can review them; mark missing evidence as missing.",
+      "purpose": "Verify the design-related result against the assigned criteria. Choose pass or fail and identify evidence and gaps. Include the received slice contract and actual worker result in the reply, identified by source, so the next step can review them; mark missing evidence as missing.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-qa",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/qa.role.md" }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["pass", "fail"],
@@ -423,10 +445,11 @@
       "id": "reviewer",
       "kind": "agent",
       "label": "Reviewer: reviewer",
-      "purpose": "Independently review the slice contract, actual work and available verification evidence; do not accept when evidence needed for the contract is missing. On the standard review route, choose accept, rework, or design-review when deeper design assessment is needed. On the thorough route, review substantive design and correctness, including any earlier review, and choose accept or rework with actionable findings. Carry the received contract, work, verification and review artifacts with source attribution in the reply alongside the review; identify missing evidence without inventing it.",
+      "purpose": "Independently review the slice contract, actual work and available verification evidence; do not accept when evidence needed for the contract is missing. On the standard review route, choose accept, rework, or design-review when deeper design assessment is needed. On the thorough route, review substantive design and correctness, including any earlier review, and choose accept or rework with actionable findings. Carry the received contract, work, verification and review artifacts with source attribution in the reply alongside the review; identify missing evidence without inventing it.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer.role.md" }
+        "id": "work-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/work-reviewer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "standard", "modelClass": "small", "note": "A bounded review of the slice." }, { "id": "thorough", "modelClass": "large", "note": "A review of design and correctness." }], "default": "standard", "chosenBy": "review" },
       "outcomes": ["accept", "rework", "design-review"],
@@ -440,10 +463,11 @@
       "id": "reviewer-job-gate",
       "kind": "agent",
       "label": "Reviewer: job plan review",
-      "purpose": "Independently review only the received infrastructure plan and reported state. Identify pending authorization and verification, uncertain outcomes and any findings. Carry the received slice contract and infrastructure result with source attribution. This review is not authorization, evidence of launch or verification, or slice acceptance; do not perform the job.",
+      "purpose": "Independently review only the received infrastructure plan and reported state. Identify pending authorization and verification, uncertain outcomes and any findings. Carry the received slice contract and infrastructure result with source attribution. This review is not authorization, evidence of launch or verification, or slice acceptance; do not perform the job.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/reviewer.role.md" }
+        "id": "plan-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/plan-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["limit-reached"],
@@ -455,10 +479,11 @@
       "id": "skeptic",
       "kind": "agent",
       "label": "Skeptic: skeptic",
-      "purpose": "Challenge the claims and supporting evidence against the slice contract; do not pass when evidence needed for the contract is missing. On the standard review route, check whether the stated conclusions follow from identifiable evidence and choose pass, rework, or escalate with a reason when the conclusions need a full challenge. On the thorough route, examine alternative explanations, missing evidence and overstatement, and choose pass or rework with a reason. Carry the received contract, work, verification and review artifacts with source attribution in the reply; identify missing evidence without inventing it.",
+      "purpose": "Challenge the claims and supporting evidence against the slice contract; do not pass when evidence needed for the contract is missing. On the standard review route, check whether the stated conclusions follow from identifiable evidence and choose pass, rework, or escalate with a reason when the conclusions need a full challenge. On the thorough route, examine alternative explanations, missing evidence and overstatement, and choose pass or rework with a reason. Carry the received contract, work, verification and review artifacts with source attribution in the reply; identify missing evidence without inventing it.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-skeptic",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/skeptic.role.md" }
+        "id": "skeptic",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/skeptic/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "standard", "modelClass": "small", "note": "Challenge the claims about a bounded result." }, { "id": "thorough", "modelClass": "large", "note": "Challenge the substantive conclusions and their evidence." }], "default": "standard", "chosenBy": "review" },
       "outcomes": ["pass", "rework", "escalate"],
@@ -472,10 +497,11 @@
       "id": "tl-accept",
       "kind": "agent",
       "label": "Tech Lead (medium): tl-accept",
-      "purpose": "Judge the slice against its contract and the actual work, verification, review and challenge evidence. Choose accept, rework with concrete findings, or stop-slice; do not accept when evidence needed for the contract is missing, and do not treat agent acceptance as human approval. Carry these received artifacts with source attribution in the reply and identify missing evidence without inventing it.",
+      "purpose": "Judge the slice against its contract and the actual work, verification, review and challenge evidence. Choose accept, rework with concrete findings, or stop-slice; do not accept when evidence needed for the contract is missing, and do not treat agent acceptance as human approval. Carry these received artifacts with source attribution in the reply and identify missing evidence without inventing it.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead-m",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["accept", "rework", "stop-slice"],
@@ -489,10 +515,11 @@
       "id": "backlog-done",
       "kind": "agent",
       "label": "Backlog: backlog-done",
-      "purpose": "Record the accepted slice and its evidence in the authorized work system if requested and permitted; otherwise report the accepted state without claiming an update. Carry the received acceptance and its contract, work and evidence with source attribution, including if recording is blocked.",
+      "purpose": "Record the accepted slice and its evidence in the authorized work system if requested and permitted; otherwise report the accepted state without claiming an update. Carry the received acceptance and its contract, work and evidence with source attribution, including if recording is blocked.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-backlog",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
+        "id": "backlog-keeper",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/backlog-keeper/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["blocked", "limit-reached"],
@@ -504,10 +531,11 @@
       "id": "backlog-blocked",
       "kind": "agent",
       "label": "Backlog: backlog-blocked",
-      "purpose": "Record the actual stopped state and a concrete continuation in the authorized work system if requested and permitted; otherwise return them in the result. Carry the received contract, work and evidence with source attribution, including if recording is blocked; identify missing evidence.",
+      "purpose": "Record the actual stopped state and a concrete continuation in the authorized work system if requested and permitted; otherwise return them in the result. Carry the received contract, work and evidence with source attribution, including if recording is blocked; identify missing evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-backlog",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/backlog.role.md" }
+        "id": "backlog-keeper",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/backlog-keeper/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "declaredFailures": ["blocked", "limit-reached"],
@@ -519,10 +547,11 @@
       "id": "executive-continue",
       "kind": "agent",
       "label": "Executive: executive-continue",
-      "purpose": "Assess the current mandate, accepted work and remaining limits. Choose next-slice when useful authorized work remains, otherwise wrap-up. Carry the received state, contract, work and evidence with source attribution; distinguish stopped work from accepted work and identify missing evidence.",
+      "purpose": "Assess the current mandate, accepted work and remaining limits. Choose next-slice when useful authorized work remains, otherwise wrap-up. Carry the received state, contract, work and evidence with source attribution; distinguish stopped work from accepted work and identify missing evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-executive",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/executive.role.md" }
+        "id": "coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "outcomes": ["next-slice", "wrap-up"],
@@ -536,10 +565,11 @@
       "id": "documenter-wrapup",
       "kind": "agent",
       "label": "Documenter: documenter-wrapup",
-      "purpose": "Summarize durable decisions, results, uncertainties and a concrete continuation. Carry the actual incoming evidence and stopped or blocked state with source attribution; report pending authorization and verification without implying completion. Update project documentation only when authorized; otherwise return the information.",
+      "purpose": "Summarize durable decisions, results, uncertainties and a concrete continuation. Carry the actual incoming evidence and stopped or blocked state with source attribution; report pending authorization and verification without implying completion. Update project documentation only when authorized; otherwise return the information.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-documenter",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/documenter.role.md" }
+        "id": "documenter",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/documenter/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "report": { "writtenBy": "self" },
@@ -550,10 +580,11 @@
       "id": "tl-report",
       "kind": "agent",
       "label": "Tech Lead (medium): tl-report",
-      "purpose": "Summarize technical work, decisions, checks, remaining risks and the current state from identifiable evidence. Carry the received evidence and stopped or blocked state with source attribution; identify missing or uncertain evidence.",
+      "purpose": "Summarize technical work, decisions, checks, remaining risks and the current state from identifiable evidence. Carry the received evidence and stopped or blocked state with source attribution; identify missing or uncertain evidence.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-tech-lead-m",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/tech-lead-m.role.md" }
+        "id": "tech-lead",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/tech-lead/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "report": { "writtenBy": "self" },
@@ -564,10 +595,11 @@
       "id": "executive-report",
       "kind": "agent",
       "label": "Executive: executive-report",
-      "purpose": "Deliver the final report: the mandate, outcomes, evidence, unverified claims, decisions needed and next actions. Distinguish the agents reports from independently observed facts.",
+      "purpose": "Deliver the final report: the mandate, outcomes, evidence, unverified claims, decisions needed and next actions. Distinguish the agents reports from independently observed facts.\n\nInclude a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
       "role": {
-        "id": "generic-executive",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/generic/executive.role.md" }
+        "id": "coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "report": { "writtenBy": "self" },

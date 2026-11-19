@@ -1,0 +1,900 @@
+{
+  "format": "dspatch-role-catalog",
+  "formatVersion": 1,
+  "origin": "dspatch",
+  "note": "DSpatch's shared agent roles (DSP-231). A version file is never edited: a changed role is a new version file and a new entry here. The digest is SHA-256 of the file with CRLF read as LF. See docs/loop/ROLE_CATALOG.md.",
+  "roles": [
+    {
+      "id": "backlog-keeper",
+      "title": "Backlog keeper",
+      "summary": "Maintain the assigned work record when authorized: statuses, decisions and next actions, kept accurate and traceable.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "backlog-keeper/v1.role.md",
+          "sha256": "a4fe511d5f9b6f4fcc2c666f1c8e489f99accc02dc3ed2f382d8bba6399c4719"
+        }
+      ]
+    },
+    {
+      "id": "coordinator",
+      "title": "Coordinator",
+      "summary": "Establish what an assignment means, set its direction and brief the step that does it, reconcile what comes back, and report to the person who started the work.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "coordinator/v1.role.md",
+          "sha256": "d5b8baa6a9518462f0ab5f023ef31b742af3480e7e925712672a94515c3ba54f"
+        }
+      ]
+    },
+    {
+      "id": "data-curator",
+      "title": "Data Curator",
+      "summary": "Inspect or prepare data within the authorized scope, checking provenance, access, quality and reproducibility.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "data-curator/v1.role.md",
+          "sha256": "2577ce094d955db897b6b6a15b934324530d30d2ce098a70836890f520438982"
+        }
+      ]
+    },
+    {
+      "id": "documenter",
+      "title": "Documenter",
+      "summary": "Record the assigned durable information when authorized: decisions, verified outcomes, uncertainties and a concrete continuation.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "documenter/v1.role.md",
+          "sha256": "51b71485dd717c87d9212b55ef1fa9d92344b7c653f0966ea96454c62446fabd"
+        }
+      ]
+    },
+    {
+      "id": "experiment-analyst",
+      "title": "Experiment Analyst",
+      "summary": "Interpret experiment evidence: identify the runs and conditions compared, separate measurements from inference and disclose limitations.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "experiment-analyst/v1.role.md",
+          "sha256": "229eb8a29f538e12c0c5998385ad814e042bcedfec4b5344e7511eddfe5d58ff"
+        }
+      ]
+    },
+    {
+      "id": "explorer",
+      "title": "Explorer",
+      "summary": "Locate and describe the existing material and behaviour an assignment needs, with precise references, and trace behaviour and its boundaries when asked.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "explorer/v1.role.md",
+          "sha256": "0a3b0d62db5a7bbfd54b531d3ca8af4743c78832b230c3ad424f5cca0f0ea394"
+        }
+      ]
+    },
+    {
+      "id": "implementer",
+      "title": "Implementer",
+      "summary": "Carry out an assigned piece of work in the project, usually a bounded change, check it in proportion to its risk, and report exactly what was done and what was not established.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "implementer/v1.role.md",
+          "sha256": "d3f7bb92c35fa9ef1f1be1bcb3697eacef19e2883ebc18d8accda7aba54e9348"
+        }
+      ]
+    },
+    {
+      "id": "infrastructure",
+      "title": "Infrastructure",
+      "summary": "Carry out authorized infrastructure work: establish the target and its actual state, run only authorized operations, and report identifiers and uncertain outcomes.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "infrastructure/v1.role.md",
+          "sha256": "2dd4efd21c6c2674db7ca79cda39345b40abfa0bdf7e7a44db47ca02b4f93d5c"
+        }
+      ]
+    },
+    {
+      "id": "integrator",
+      "title": "Integrator",
+      "summary": "Combine the results of work done in parallel branches into one whole in the working copy, resolve conflicts and open proposals, and establish whether the parts work together.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "integrator/v1.role.md",
+          "sha256": "dcca211e3ee255a370b0750aa31f6c4af1faede5743af8c1d50329605d94212e"
+        }
+      ]
+    },
+    {
+      "id": "mission-coordinator",
+      "title": "Mission coordinator",
+      "summary": "Carry a long assignment across many sub-goals and several runs: keep its working state in a file, choose the next step it needs, record each result, and stop at a boundary with the state saved.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "mission-coordinator/v1.role.md",
+          "sha256": "517380bafac30e22bf3afbe955ca92f914925401affc85b7a129b84d45b4e793"
+        }
+      ]
+    },
+    {
+      "id": "plan-reviewer",
+      "title": "Plan reviewer",
+      "summary": "Independently review a plan before work starts: its value, ordering, dependencies, bounded tasks and assessable criteria, returning concrete findings without rewriting it.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "plan-reviewer/v1.role.md",
+          "sha256": "ec94fe9dfef6e89449f08d40a9a77935cf2f449728dc97203dc7a8f7a6de1f76"
+        }
+      ]
+    },
+    {
+      "id": "planner",
+      "title": "Planner",
+      "summary": "Turn a goal into an actionable plan: the next increment, why it comes next, and bounded tasks with assessable criteria and proportionate verification.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "planner/v1.role.md",
+          "sha256": "4fe0ca4f05a43c3c9c33df0205cabfb628ba19aad27aafadc5ff9dd0d83b2a4f"
+        }
+      ]
+    },
+    {
+      "id": "researcher",
+      "title": "Researcher",
+      "summary": "Investigate a question or uncertainty with evidence suited to it, from a focused question to a complex one, and return what the evidence settles and the smallest probe for what it does not.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "researcher/v1.role.md",
+          "sha256": "b7d13e78dbbd338dbd00dd23db366fdc06ebba5e8856a66bfaa47c7558a68651"
+        }
+      ]
+    },
+    {
+      "id": "skeptic",
+      "title": "Skeptic",
+      "summary": "Challenge claims and conclusions against their evidential basis, from a bounded result to substantive conclusions, and report what is unsupported.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "skeptic/v1.role.md",
+          "sha256": "28969dd1a76fd4c486b10ff5aeccb8e9e74a9bad97d83f48807aa3227861fec9"
+        }
+      ]
+    },
+    {
+      "id": "slicer",
+      "title": "Slicer",
+      "summary": "Decide whether an assignment splits into parts that can be done at the same time by separate agents, and propose those parts, or keep the work as one.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "slicer/v1.role.md",
+          "sha256": "911edf0bd9d8474be2bff455c3f72c30e29e3f5087c420ca06987eade1334cd8"
+        }
+      ]
+    },
+    {
+      "id": "tech-lead",
+      "title": "Tech Lead",
+      "summary": "Guide the technical direction of the work: assess plans and tradeoffs, select and route bounded slices, judge their acceptance against evidence, and escalate what is outside the mandate.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "tech-lead/v1.role.md",
+          "sha256": "76292c0df65a46a4dbdc71244682846d1fe0419fa2772b4bfd6f4fff901a727a"
+        }
+      ]
+    },
+    {
+      "id": "verifier",
+      "title": "Verifier",
+      "summary": "Establish independently whether an assigned result meets what was asked, with evidence suited to it, and report what the evidence does and does not show.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "verifier/v1.role.md",
+          "sha256": "a34f5cb85c626307f46ef90f028b2107bde98ef76f5971fcb82836d3a525c34b"
+        }
+      ]
+    },
+    {
+      "id": "walk-planner",
+      "title": "Walk planner",
+      "summary": "Plan a review's code walks so a reader can follow the change as the program runs: the steps, the one code place each shows, and how each is reached. Derived from docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.2, sections 1 to 3.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "walk-planner/v1.role.md",
+          "sha256": "ba2f529a3ea87614003c3307f3f5091cbb28510f4449a531f6b0cda0ddec5374"
+        }
+      ]
+    },
+    {
+      "id": "walk-reviewer",
+      "title": "Walk reviewer",
+      "summary": "Judge whether finished code walks let the reader of the chosen profile follow the course and understand what the steps show, checked against the code and docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.2; name concrete shortcomings or accept.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "walk-reviewer/v1.role.md",
+          "sha256": "29463088995644a6bc83737359b5d0334d189e3468a6a1312067c05e89c06d90"
+        }
+      ]
+    },
+    {
+      "id": "walk-writer",
+      "title": "Walk writer",
+      "summary": "Explain each step of a planned walk to the reader of the chosen profile, beside the code, from your own reading of it. Derived from docs/CODE_WALK_UNDERSTANDING_AND_PROFILES.md version 1.2, sections 2 to 4 and 6.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "walk-writer/v1.role.md",
+          "sha256": "f4afaf34618a2322d77cfaea325bfd472b53e663e535ac0d909efde0271d9dab"
+        }
+      ]
+    },
+    {
+      "id": "work-reviewer",
+      "title": "Work reviewer",
+      "summary": "Independently review a result of work — a change, an answer or an analysis — against its assignment, the actual material and the evidence, and return concrete findings without fixing it.",
+      "versions": [
+        {
+          "version": 1,
+          "file": "work-reviewer/v1.role.md",
+          "sha256": "4b20553cdd12aafc4a3eb411d8205663257369ace10cb87462b89981ce60e3b3"
+        }
+      ]
+    }
+  ],
+  "legacy": [
+    {
+      "id": "generic-executive",
+      "title": "Executive",
+      "sources": [
+        {
+          "path": "roles/generic/executive.role.md",
+          "sha256": "f1eccae1527ab6afe834094bfd0e767842454f2d450930a2b73693a955f36829"
+        }
+      ],
+      "to": [
+        {
+          "role": "coordinator",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
+      "note": "Same responsibility as the run coordinator: establish the mandate, set direction, choose next steps and report. Merged."
+    },
+    {
+      "id": "generic-tech-lead",
+      "title": "Tech Lead",
+      "sources": [
+        {
+          "path": "roles/generic/tech-lead.role.md",
+          "sha256": "949862dda3b88c7ce813c0dc3cd639ffd5da34c2f943f770db8cb500227f2e5e"
+        }
+      ],
+      "to": [
+        {
+          "role": "tech-lead",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
+      "note": "Merged with Tech Lead (medium): same tools and requirements; the scope of each step (planning, escalation) is in the node task."
+    },
+    {
+      "id": "generic-tech-lead-m",
+      "title": "Tech Lead (medium)",
+      "sources": [
+        {
+          "path": "roles/generic/tech-lead-m.role.md",
+          "sha256": "6f4a5adb2d51c03c5cc7c1738259fefbac26e6a120d45564fe4e51694102dd35"
+        }
+      ],
+      "to": [
+        {
+          "role": "tech-lead",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
+      "note": "\"medium\" named no model policy (the nodes inherit the chat model) and no other tool or requirement; selection, dispatch and acceptance are in the node tasks."
+    },
+    {
+      "id": "generic-planner",
+      "title": "Planner",
+      "sources": [
+        {
+          "path": "roles/generic/planner.role.md",
+          "sha256": "c27137c4b8c4e037e6991b8bc8c9791d8c7aa286dcd50cfd80ee5e03d13a5152"
+        }
+      ],
+      "to": [
+        {
+          "role": "planner",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-backlog",
+      "title": "Backlog",
+      "sources": [
+        {
+          "path": "roles/generic/backlog.role.md",
+          "sha256": "a4254aed80f891576a970f1063282f5e89fb5c7bae9493758d6f5c5bfcadd8e5"
+        }
+      ],
+      "to": [
+        {
+          "role": "backlog-keeper",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-documenter",
+      "title": "Documenter",
+      "sources": [
+        {
+          "path": "roles/generic/documenter.role.md",
+          "sha256": "7aeec689131e00065cf129110cd7de2507120c741ae05a010e3e4537e442b234"
+        }
+      ],
+      "to": [
+        {
+          "role": "documenter",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-researcher",
+      "title": "Researcher",
+      "sources": [
+        {
+          "path": "roles/generic/researcher.role.md",
+          "sha256": "55e8dcc4942a7e90ef66487fb8c90b1c2d654c54102453b8ec27c49a51453066"
+        }
+      ],
+      "to": [
+        {
+          "role": "researcher",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-explorer",
+      "title": "Explorer",
+      "sources": [
+        {
+          "path": "roles/generic/explorer.role.md",
+          "sha256": "4bf2ec05f9caf7bde314e3165d23d6d3f904258e5f503dc67e496e43e57b4203"
+        }
+      ],
+      "to": [
+        {
+          "role": "explorer",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-data-curator",
+      "title": "Data Curator",
+      "sources": [
+        {
+          "path": "roles/generic/data-curator.role.md",
+          "sha256": "d02bc75396aa5cd9ccc9a2b98a9f68387419db71d9a48d218da060934b72ec69"
+        }
+      ],
+      "to": [
+        {
+          "role": "data-curator",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-experiment-analyst",
+      "title": "Experiment Analyst",
+      "sources": [
+        {
+          "path": "roles/generic/experiment-analyst.role.md",
+          "sha256": "5ad406f2d1ec07af7b722dce0bbe341d94d9884c8d5859b6d06b151767f948e2"
+        }
+      ],
+      "to": [
+        {
+          "role": "experiment-analyst",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-infra",
+      "title": "Infrastructure",
+      "sources": [
+        {
+          "path": "roles/generic/infra.role.md",
+          "sha256": "6cc43b03325923619d7051d6753103c8dc17477698812dd5f105dd2a826f1aa3"
+        }
+      ],
+      "to": [
+        {
+          "role": "infrastructure",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-implementer",
+      "title": "Implementer",
+      "sources": [
+        {
+          "path": "roles/generic/implementer.role.md",
+          "sha256": "026118f3fdc1f97e41a82bb96502104fd973f7a22ea3c79afc04bd9344a494d8"
+        }
+      ],
+      "to": [
+        {
+          "role": "implementer",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-integrator",
+      "title": "Integrator",
+      "sources": [
+        {
+          "path": "roles/generic/integrator.role.md",
+          "sha256": "9780eb1aa61d88c3bab4ee2b2d78843d110df82296f7db4219c2f0a6fb24bbf5"
+        }
+      ],
+      "to": [
+        {
+          "role": "integrator",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "generic-qa",
+      "title": "QA",
+      "sources": [
+        {
+          "path": "roles/generic/qa.role.md",
+          "sha256": "d886ed2e45726875783358fc69a28a3da54f88f74a161b64a3691b0471265bec"
+        }
+      ],
+      "to": [
+        {
+          "role": "verifier",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
+      "note": "QA runs proportionate checks against criteria: the Verifier's responsibility."
+    },
+    {
+      "id": "generic-reviewer",
+      "title": "Reviewer",
+      "sources": [
+        {
+          "path": "roles/generic/reviewer.role.md",
+          "sha256": "a3e2062742dde4d2a44388ff1d22add5f0debe241718de2ce89da4cda1b5ea80"
+        }
+      ],
+      "to": [
+        {
+          "role": "work-reviewer",
+          "version": 1,
+          "default": true,
+          "when": "the step reviews a result of work: a change, an answer or an analysis"
+        },
+        {
+          "role": "plan-reviewer",
+          "version": 1,
+          "when": "the step reviews a plan before the work starts"
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval.",
+      "nodes": {
+        "generic-agent-network/reviewer-readiness": "plan-reviewer",
+        "generic-agent-network/reviewer-plan-gate": "plan-reviewer",
+        "generic-agent-network/reviewer-job-gate": "plan-reviewer"
+      },
+      "note": "Split by what is reviewed: a plan and a result of work have different contracts."
+    },
+    {
+      "id": "generic-skeptic",
+      "title": "Skeptic",
+      "sources": [
+        {
+          "path": "roles/generic/skeptic.role.md",
+          "sha256": "e5b4a4b819388fff6e73900d9a562a7c83b3c293bec767736fc2f9c054318e48"
+        }
+      ],
+      "to": [
+        {
+          "role": "skeptic",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Include a carry-forward ledger in every reply, including failures: preserve all received ledger entries with their source and status, and add an entry only at tl-accept when its outcome is accept, citing that slice, its contract, work, evidence and source. Do not invent missing entries or treat agent acceptance as human approval."
+    },
+    {
+      "id": "dspatch-run-coordinator",
+      "title": "Run coordinator",
+      "sources": [
+        {
+          "path": "roles/run/dspatch-run-coordinator.role.md",
+          "sha256": "6263fd69286e109400e6067382c2df062ec09fc6c3841cbefac0bc5d7d9fcb26"
+        }
+      ],
+      "to": [
+        {
+          "role": "coordinator",
+          "version": 1
+        }
+      ],
+      "note": "Its DSpatch-specific history and the description of DSpatch's external loop are dropped; how this step declares a result stays with the node.",
+      "nodeTask": "**How you declare a result is decided by the message you are in, not by this role.** Different steps of a loop are offered different answers, and the message is the only thing that knows which ones this step has.\n\nWhere your own message lists names for a whole `RESULT:` line, write that line using one of those names and nothing else on it. Where it lists none, doing the work is the answer and you write no such line: a name nobody drew an edge for is a result the run cannot route, and inventing one stops the run instead of finishing it.\n\nThe two opening words work the same way. Where your message asks for SPEC_ERROR, that is how you say the mandate rests on a premise that turns out to be wrong; where it asks for BLOCKED, that is how you say something concrete prevents the work — access you do not have, or a decision that is not yours to make. Where your message asks for neither, do not open your reply with either word: say plainly in prose what is wrong or what is in the way, and hand that back as your result, which is what the person reading this run needs from you anyway. Both words are read only as the opening of your reply, so use either freely in ordinary prose anywhere else."
+    },
+    {
+      "id": "dspatch-mission-coordinator",
+      "title": "Mission coordinator",
+      "sources": [
+        {
+          "path": "roles/run/dspatch-mission-coordinator.role.md",
+          "sha256": "8a72a269f54207d8ccb445f1f0271ea6a0088ce8af9b03271859121d946d213e"
+        }
+      ],
+      "to": [
+        {
+          "role": "mission-coordinator",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Where the drawing offers both, `implement` sends a sub-goal to one implementer and `implement-parallel` sends it through a slicer, parallel branches in their own worktrees and an integrator, each path to its own review. A parallel brief is the same brief as an implementer's, plus the parts and interfaces you see; the slicer may still keep it as one slice. The integrator merges as commits on the current branch, so a parallel sub-goal's code is already committed when it reaches you: say which commits are the sub-goal's, and make your own commit of the working-state file. The temporary branches stay for the person to keep or delete. Independent verification is the reviewer's to ask for.\n\nYour message lists the names you may give as a whole `RESULT:` line. Write exactly one of them on its own line, and only after the working-state file is written.",
+      "note": "The mission loop's outcome names move to the node task; \"every rule in AGENTS.md applies\" moves to the mission loop's project instructions."
+    },
+    {
+      "id": "dspatch-backlog-planner",
+      "title": "Backlog Planner",
+      "sources": [
+        {
+          "path": "roles/dspatch-backlog-planner.role.md",
+          "sha256": "b7ffff93758f10d5e0cb45e10c21c06191731b4fcfb301390809a273c8238605"
+        }
+      ],
+      "to": [
+        {
+          "role": "planner",
+          "version": 1
+        }
+      ],
+      "note": "DSpatch's own documents and product priorities move to the mission loop's project instructions."
+    },
+    {
+      "id": "dspatch-researcher",
+      "title": "Researcher",
+      "sources": [
+        {
+          "path": "roles/dspatch-researcher.role.md",
+          "sha256": "5b9c80d378f6025471e7d57cddfe1faf6023ef5b73ee2552774fe4fd82023033"
+        }
+      ],
+      "to": [
+        {
+          "role": "researcher",
+          "version": 1
+        }
+      ],
+      "note": "Read-only stays a requirement of the nodes that had it."
+    },
+    {
+      "id": "dspatch-implementer",
+      "title": "Implementer",
+      "sources": [
+        {
+          "path": "roles/dspatch-implementer.role.md",
+          "sha256": "e7fdac7b115660b943004eba676a85ad27b2d1dab8b51e9fbdb4e1529315ce7c"
+        }
+      ],
+      "to": [
+        {
+          "role": "implementer",
+          "version": 1
+        }
+      ],
+      "note": "DSpatch's own documents, verification policy and adapter rule move to the mission loop's project instructions."
+    },
+    {
+      "id": "dspatch-verifier",
+      "title": "Verifier",
+      "sources": [
+        {
+          "path": "roles/dspatch-verifier.role.md",
+          "sha256": "903f93fd8386a9f4a29b4aa1a08f9a0335bdd9dd95cb27d9f26b21aefc34607f"
+        }
+      ],
+      "to": [
+        {
+          "role": "verifier",
+          "version": 1
+        }
+      ],
+      "note": "The snapshot script and DSpatch's verification policy move to the mission loop's project instructions."
+    },
+    {
+      "id": "dspatch-reviewer",
+      "title": "Reviewer",
+      "sources": [
+        {
+          "path": "roles/dspatch-reviewer.role.md",
+          "sha256": "399874fd9d4a49c70aad2884c3ef84082a9aebd275c89981ad823c61379e77b5"
+        }
+      ],
+      "to": [
+        {
+          "role": "work-reviewer",
+          "version": 1,
+          "default": true,
+          "when": "the step reviews a result of work"
+        },
+        {
+          "role": "plan-reviewer",
+          "version": 1,
+          "when": "the step reviews a plan"
+        }
+      ],
+      "nodes": {
+        "dspatch-development-loop/plan-review": "plan-reviewer"
+      },
+      "note": "Its plan and implementation modes become two roles."
+    },
+    {
+      "id": "project-work",
+      "title": "Work in this project",
+      "sources": [
+        {
+          "path": "roles/project/project-work.role.md",
+          "sha256": "f9aef228510e0fb63b46352d50e329254673be95e08e58558371d1f8d4315659"
+        }
+      ],
+      "to": [
+        {
+          "role": "implementer",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Reply in prose, to the person who reads this run. They may not have read the role and should not have to. If your tools cannot run commands, say which build or test you would have wanted and could not run; where the drawing has a step in which DSpatch runs the project's command itself, that step is where it runs.\n\n`succeeded` means you did the work the mandate asked for, as far as you can tell. `unclear` means you cannot honestly say that — you did not finish, or you cannot tell. Use `unclear` rather than guessing. A later step will check the project; do not treat your own `succeeded` as that check.\n\nWhere the step you are in offers `done-unchecked`, it means: the work is done, and the independent check would add nothing, so skip it. It is right only when **you changed no file** and the mandate was a question, a reading or an explanation — the answer is the whole of the work. It is wrong for any change to code, build files, configuration or tests, however small, and wrong whenever you are unsure: then declare `succeeded` and let the check run. Skipping is recorded as skipped, never as checked or met, and the person sees your reason, so the reason is required. Give it on the same line, after the name:\n\n```\nRESULT: done-unchecked the mandate was a question about the build; no file changed\n```\n\nWhere you are offered the tool `request_interactive_handoff`, assess first whether the task benefits from the loop's steps. If working interactively with the person is a better fit — a decision only they can make, or work that has become exploratory — call that tool with a short reason, then end your turn with a short account of where the work stands. Do this before you change files where you can. The person chooses; follow their choice. If they choose to continue in the loop, carry on with the step, and do not recommend the switch again in this run. Never write the recommendation as your outcome or ask for it only in your reply: the tool is the only way it is heard.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
+      "note": "Its outcomes, the optional skip and the interactive handoff are the node's contract and move to the node task."
+    },
+    {
+      "id": "project-check",
+      "title": "Check the work in this project",
+      "sources": [
+        {
+          "path": "roles/project/project-check.role.md",
+          "sha256": "0db7d059a23efa50cbea395470c0f5091556711df707cb4b56c8347ff236ceb4"
+        }
+      ],
+      "to": [
+        {
+          "role": "verifier",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Reply in prose, to the person who reads this run. They may not have read the role and should not have to.\n\nDSpatch lets a `met` stand only if a command recorded in this run completed on the code exactly as you leave it, or if the run changed no file. Run your checks on the code as it is, and do not change files.\n\n`met` means the assignment was met. `rework` means it was not met yet and the work step can fix it: list each finding concretely — the command you ran, what it showed, and what has to change — because your reply is the only thing the work step is given about what is wrong. `not-met` means it cannot be met as asked, or what is wrong is not something another round of work would fix; say why. `could-not-check` means you could not establish it — no identifiable check, a command you could not run, or a result you could not read. Use `could-not-check` rather than guessing. It is a real answer and not a failure of the run.\n\nDo not declare `limit-reached`. DSpatch routes that itself when the correction rounds are spent.\n\nIf the premise of the check is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the check — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
+      "note": "Its verdicts and the rule for a met verdict are the node's contract and move to the node task."
+    },
+    {
+      "id": "project-slice",
+      "title": "Split the work into slices",
+      "sources": [
+        {
+          "path": "roles/project/project-slice.role.md",
+          "sha256": "4c60d8262776459ad43f66bc256a7048b1bc2827ca69cf34e35013cd28e7ca1e"
+        }
+      ],
+      "to": [
+        {
+          "role": "slicer",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Write the plan as exactly one fenced block whose info string is `dspatch-slices`, in the form this message gives; DSpatch reads exactly one.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
+      "note": "The slice block's fields are written by DSpatch from the fan-out (DSP-227) and are not repeated."
+    },
+    {
+      "id": "project-branch",
+      "title": "Do one slice of the work",
+      "sources": [
+        {
+          "path": "roles/project/project-branch.role.md",
+          "sha256": "cb3acc9683cb956b9cae951e9a05cead882d96a4d53f9abb059069601bc02e34"
+        }
+      ],
+      "to": [
+        {
+          "role": "implementer",
+          "version": 1
+        }
+      ],
+      "nodeTask": "You are one of several agents doing the same assignment in parallel, each with its own slice. Your message ends with **your slice**: its result, the paths you own, your allowed actions, the contracts you work against and your check. Do that slice, and only that slice.\n\nWork in the folder you were given: your own worktree, made from the same base as every other branch. Read freely there.\n\nChange **only the paths your slice owns**. Another branch owns the rest, and if two branches change the same file the integrating step has to undo one of them. When your slice cannot be done without changing a path you do not own, do not change it: say which path and why in your reply, so the integrating step can decide.\n\nWork against the contracts your slice names. If one turns out to be inadequate, do not quietly change the shared agreement; say what is wrong and what you assumed instead.\n\nRun **your slice's own check**, as the slice names it, and fix what it shows. Run the last check after your last change. Do not run the whole project's suite: the integrating step checks the combination.\n\nOn a later visit you are given the integrating step's findings. Act on the ones that concern your slice.\n\n**Messages between the branches.** You have three tools for the other branches running beside you: `check_messages`, `send_message` and `acknowledge_message`.\n\n- Call `check_messages` at natural boundaries: **before you start**, **after a significant change**, and **before you finish**. Messages are delivered only when you check; nothing interrupts your work.\n- Send a `finding` when something you found affects another slice's owned paths or a contract the slices share — to that slice by its id, or to `all`. Send a `question` when another slice's answer would change what you do, and carry on without the answer. Send a `contract-change` when a shared contract has to change: it is a proposal for the integrating step to resolve, not an agreement, so do not build on it as if it were decided. Send to `integrator` what only the integrating step can resolve.\n- `acknowledge_message` a message once you have acted on it.\n- A message from `the person` is the person's instruction to the run: follow it as part of your assignment, within your slice.\n- **Never wait for a reply.** There is no way to wait, and a branch that has ended is not restarted for a message. Keep messages short and to the point; routine progress is not a message.\n\nDo not commit, push, switch branches or create branches. When your turn ends, DSpatch commits what you left in your worktree to your temporary branch, and the integrating step merges the branches. Do not install dependencies, change global configuration or touch anything outside your worktree.\n\nReply in prose: what is now true of your slice, the files you changed and why, what you ran and what it showed for the code as you leave it, and anything you could not do or had to assume — a path you needed and did not own, a contract you found inadequate.\n\nIf the premise of your slice is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
+      "note": "A branch is an Implementer; the slice, owned paths, messages and commit rules are the fan-out node's contract."
+    },
+    {
+      "id": "project-integrate",
+      "title": "Combine the branches into one result",
+      "sources": [
+        {
+          "path": "roles/project/project-integrate.role.md",
+          "sha256": "4a13c69b8d2327dc318c7da83cb7c0d2645ce1b5fda0e322aa15f6313a0ddd4e"
+        }
+      ],
+      "to": [
+        {
+          "role": "integrator",
+          "version": 1
+        }
+      ],
+      "nodeTask": "Each slice's temporary branch is named `dspatch/run/<run>/<node>/v<visit>/<slice>`, and a rework visit's branches carry the next visit number.\n\n`integrated` when every branch is merged and the combination checks out as far as you can tell; `rework` with findings for the branches when one has to be redone; `not-integrated` when the branches cannot be combined into what the mandate asks. The independent review that follows is not your check; do not treat your own `integrated` as it.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way."
+    },
+    {
+      "id": "walk-planner",
+      "title": "Walk planner",
+      "sources": [
+        {
+          "path": "roles/review/walk-planner.role.md",
+          "sha256": "02dcf59c4c6752c33b7636bf4a452d164257bacf533db24499eb1fdd8eb596d3"
+        }
+      ],
+      "to": [
+        {
+          "role": "walk-planner",
+          "version": 1
+        }
+      ]
+    },
+    {
+      "id": "walk-writer",
+      "title": "Walk writer",
+      "sources": [
+        {
+          "path": "roles/review/walk-writer.role.md",
+          "sha256": "6f98ba073752ecc398ca8e39d30af595408942ea881f80ea3db10b46000a3665"
+        }
+      ],
+      "to": [
+        {
+          "role": "walk-writer",
+          "version": 1
+        }
+      ]
+    },
+    {
+      "id": "walk-reviewer",
+      "title": "Walk reviewer",
+      "sources": [
+        {
+          "path": "roles/review/walk-reviewer.role.md",
+          "sha256": "2782bedfb55aeef0b39a5e05fe9a3a6c5ea22866afc842aef702615d3df7796a"
+        }
+      ],
+      "to": [
+        {
+          "role": "walk-reviewer",
+          "version": 1
+        }
+      ],
+      "note": "Reviews a code walk for its reader, a contract of its own; not merged with the plan or work reviewer."
+    },
+    {
+      "id": "coordinator",
+      "title": "Coordinator (workshop example)",
+      "sources": [
+        {
+          "path": "examples/workshop/.dspatch/loops/roles/workshop-coordinator.role.md",
+          "sha256": "d899ff5cefe8d76ed2b30f53e60e5248995e40a12896d76ac3877fba9ef966b5"
+        }
+      ],
+      "to": [
+        {
+          "role": "coordinator",
+          "version": 1
+        }
+      ]
+    },
+    {
+      "id": "maker",
+      "title": "Maker (workshop example)",
+      "sources": [
+        {
+          "path": "examples/workshop/.dspatch/loops/roles/workshop-maker.role.md",
+          "sha256": "3c0f104b4a61ddce77f8d5759a1c63cf2580a7f67e5038885e8af43fb7336c27"
+        }
+      ],
+      "to": [
+        {
+          "role": "implementer",
+          "version": 1
+        }
+      ]
+    },
+    {
+      "id": "scout",
+      "title": "Scout (workshop example)",
+      "sources": [
+        {
+          "path": "examples/workshop/.dspatch/loops/roles/workshop-scout.role.md",
+          "sha256": "93f1642ffc4bedfe9f4277498fa69cdce8fc0d6c0e7f8910b3689f9c316f9b62"
+        }
+      ],
+      "to": [
+        {
+          "role": "explorer",
+          "version": 1
+        }
+      ]
+    },
+    {
+      "id": "checker",
+      "title": "Checker (workshop example)",
+      "sources": [
+        {
+          "path": "examples/workshop/.dspatch/loops/roles/workshop-checker.role.md",
+          "sha256": "cfe4fc9caf6793519589d53cf0483e199a195a3b903c58888dd9cfd0d011b1b8"
+        }
+      ],
+      "to": [
+        {
+          "role": "verifier",
+          "version": 1
+        }
+      ]
+    },
+    {
+      "id": "assembler",
+      "title": "Assembler (workshop example)",
+      "sources": [
+        {
+          "path": "examples/workshop/.dspatch/loops/roles/workshop-assembler.role.md",
+          "sha256": "ea0140cc4c32f975de3479203178a4aa7168980a4bd721133da8d1994a205b86"
+        }
+      ],
+      "to": [
+        {
+          "role": "integrator",
+          "version": 1
+        }
+      ]
+    }
+  ]
+}

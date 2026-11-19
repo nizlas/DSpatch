@@ -4,6 +4,7 @@ import type { HostLinkState } from '../shared/host-link';
 import { remoteBuild } from '../shared/remote-build';
 import { REMOTE_SETUP_SCRIPTS, SAVE_REMOTE_SETUP_CHANNEL } from '../shared/remote-setup';
 import { EXPECT_USERDATA_ENV, profileRefusal } from './profile-guard';
+import { setInstalledRoleCatalogRoot } from './role-catalog-files';
 import { WINDOW_ZOOM_FILE, WindowZoom, WindowZoomStore, zoomMenuItems } from './window-zoom';
 import { WINDOW_LAYOUT_FILE, WindowLayoutStore } from './window-layout';
 import { aboutText, mainWindowTitle } from './about';
@@ -436,6 +437,8 @@ function log(message: string): void {
  * is a second direction on top of the content walk rather than the guard itself.
  */
 const ownRepoRoot = ownRepositoryRoot(app.getAppPath()) ?? bundledRoot();
+// DSP-231: the role catalog installed with this DSpatch.
+setInstalledRoleCatalogRoot(ownRepoRoot);
 
 /** An installed DSpatch's read-only loops, graphs, roles and pinned lists (DSP-153). */
 function bundledRoot(): string | null {

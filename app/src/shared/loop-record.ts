@@ -540,6 +540,10 @@ export interface RecordedAgentReply {
   readonly roleId?: string;
   /** Where that role was read from, relative to the project root. */
   readonly roleSourcePath?: string;
+  /** DSP-231: the catalog version of that role, for a catalog role. */
+  readonly roleVersion?: number;
+  /** DSP-231: SHA-256 of the role text the step was given (line endings normalised). */
+  readonly roleSha256?: string;
   /**
    * The provider session this step ran in.
    *

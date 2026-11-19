@@ -33,6 +33,9 @@ import path from 'node:path';
 import type { AppTool, AppToolResult } from '../adapter/types';
 import { discoverLoopDefinitions, type LoopDefinitionRow } from '../main/loop-definition-files';
 import { parseRoleSource, ROLE_SECTIONS } from '../main/role-source';
+import { catalogDirFor, installedRoleCatalog, planCatalogCopies } from '../main/role-catalog-files';
+import { catalogFileFor, catalogReference, latestVersion, type RoleCatalogIndex } from '../shared/role-catalog';
+import { referencedRoles } from '../shared/loop-graph-editing';
 import { proposedRoleResolver } from './graph-proposal-preview';
 import { NODE_HELP_LABEL_MAX } from '../shared/loop-chat';
 import {
@@ -279,7 +282,13 @@ export function graphAuthoringTools(host: GraphAuthoringHost): readonly AppTool[
         'the proposal is kept on this conversation, and only the person can apply it. The draft is ' +
         'checked first; if it has errors they are returned and nothing is kept, so fix them and ' +
         'propose again. target is a graph id from list_loops, or "new:<id>" for a new graph in this ' +
-        'project. Every agent node needs a role. A role the project does not have yet goes in ' +
+        'project. Every agent node needs a role. Reuse a shared role from DSpatch\'s role catalog ' +
+        'whenever its responsibility fits the step (describe_loop_building_blocks lists them): a node ' +
+        'references one by identity and version, as {"id": "implementer", "version": 1, "source": ' +
+        '{"kind": "role-catalog", "path": "<catalog>/implementer/v1.role.md"}}, where <catalog> is ' +
+        '.dspatch/roles in a project, and DSpatch adds the copies to the proposal. Put what is specific ' +
+        'to this graph in the node\'s purpose, not in a new role. Only a responsibility no shared role ' +
+        'has gets a new role, under an id of its own, never a catalog id. A new role goes in ' +
         'roleFiles, in the same proposal, written to disk only when the person applies it: each ' +
         'entry is a whole role source (describe_loop_building_blocks shows one). A new role R of ' +
         'graph L is placed at .dspatch/loops/roles/L-R.role.md, and a node references it as ' +
@@ -490,6 +499,14 @@ function propose(
     if (added.some((each) => each.role === role)) {
       return refuse(`Two roleFiles entries are both role "${role}". Nothing was proposed.`);
     }
+    // DSP-231: a shared identity always means the shared definition.
+    if (installedRoleCatalog()?.roles.some((shared) => shared.id === role) === true) {
+      return refuse(
+        `roleFiles entry ${String(index + 1)} has role "${role}", which is a shared role of DSpatch's catalog. Reference the shared role ` +
+          `(${JSON.stringify(catalogReference(role, latestVersion(installedRoleCatalog() as RoleCatalogIndex, role) ?? 1, catalogDirFor(resourceRoot)))}) and put what this graph needs in the node's purpose, ` +
+          'or give a role with a different responsibility an id of its own. Nothing was proposed.',
+      );
+    }
     const place = rolePlace(loopsDir, resourceRoot, loopId, role);
     if (fs.existsSync(place.file)) {
       return refuse(
@@ -498,6 +515,29 @@ function propose(
     }
     roleFiles.push({ path: place.file, text });
     added.push({ role, reference: place.reference });
+  }
+  // DSP-231: the shared catalog roles the draft references and the project does not have yet are
+  // copied into it with the proposal, create-only and checked against the catalog's digest.
+  const draftForCopies = parseLoopGraph(graphArg);
+  if (draftForCopies.ok) {
+    const wanted = referencedRoles(draftForCopies.graph).filter(
+      (reference) => reference.source.kind === 'role-catalog' && reference.version !== undefined && !fs.existsSync(path.resolve(resourceRoot, reference.source.path)),
+    );
+    const catalogDir = path.resolve(resourceRoot, catalogDirFor(resourceRoot));
+    const misplaced = wanted.filter((reference) => path.resolve(resourceRoot, reference.source.path) !== path.join(catalogDir, catalogFileFor(reference.id, reference.version as number)));
+    if (misplaced.length > 0) {
+      return refuse(
+        `These shared roles are referenced at a path DSpatch does not copy them to: ${misplaced.map((reference) => reference.source.path).join(', ')}. ` +
+          `Reference them as ${misplaced.map((reference) => JSON.stringify(catalogReference(reference.id, reference.version as number, catalogDirFor(resourceRoot)))).join(', ')}. Nothing was proposed.`,
+      );
+    }
+    const copies = planCatalogCopies(catalogDir, wanted.map((reference) => ({ id: reference.id, version: reference.version as number })));
+    if (copies.problems.length > 0) return refuse(`${copies.problems.join(' ')} Nothing was proposed.`);
+    for (const file of copies.files) {
+      // A proposal only adds files: an existing index is left as it is, and the copies are checked against the installed catalog.
+      if (fs.existsSync(file.path)) continue;
+      roleFiles.push({ path: file.path, text: file.text });
+    }
   }
   // How roles are referenced here, said with every answer about a node's role.
   const roleHelp = (): string =>
@@ -589,7 +629,19 @@ function buildingBlocks(): string {
     });
     return `- ${provider}:\n${answers.join('\n')}`;
   });
+  // DSP-231: the shared roles a graph should reuse before writing one of its own.
+  const catalog = installedRoleCatalog();
+  const shared =
+    catalog === null
+      ? ['DSpatch\'s role catalog could not be read here.']
+      : catalog.roles.map((role) => `- ${role.id} v${String(latestVersion(catalog, role.id) ?? 1)} — ${role.title}: ${role.summary}`);
   return [
+    'Shared roles (DSpatch\'s role catalog). Reuse one whenever its responsibility fits; a node references it by identity and version, ' +
+      '{"id": "<id>", "version": <n>, "source": {"kind": "role-catalog", "path": ".dspatch/roles/<id>/v<n>.role.md"}} in a project, and ' +
+      'DSpatch copies the shared text into the project with the proposal. What only this graph needs goes in the node\'s purpose; the ' +
+      'project\'s own rules go in its project instructions. The same identity and version always mean the same text, so a role with another ' +
+      'responsibility needs an id of its own:\n' +
+      shared.join('\n'),
     'Terms. DSpatch orchestrates agents through agent execution graphs: nodes are steps with their work and responsibilities, and connections decide how execution proceeds. ' +
       'A step\'s declared outcome or failure picks the next connection, so a run can take different paths, return to earlier steps or split into parallel branches and join them. ' +
       'A loop is a recurring path through the graph; a graph may hold several loops or none. The path is chosen during a run; the graph\'s structure is not changed by a run, which keeps the version it started with. ' +

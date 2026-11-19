@@ -18,7 +18,8 @@ export type RecommendationTarget = { readonly kind: 'all' } | { readonly kind: '
 /** What the window knows of the graph, enough to say what each role and step is for. */
 export interface GraphOutline {
   readonly name: string;
-  readonly roles: readonly { readonly id: string; readonly title: string; readonly summary: string }[];
+  /** DSP-231: a catalog role's version and origin, so a person sees which shared definition it is. */
+  readonly roles: readonly { readonly id: string; readonly title: string; readonly summary: string; readonly version?: number; readonly origin?: string }[];
   readonly nodes: readonly { readonly id: string; readonly label: string; readonly roleId: string | null; readonly purpose: string }[];
 }
 

@@ -13,7 +13,12 @@ import path from 'node:path';
 import type { ProviderId } from '../adapter/types';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
 import { discoverLoopDefinitions, type LoopDefinitionRow } from '../main/loop-definition-files';
-import { planProjectGraph, readProjectGraph, referenceProblems, writeProjectGraph } from '../main/project-graph';
+import { planProjectGraph, readProjectGraph, referenceProblems, saveProjectInstructions, sha256, writeProjectGraph } from '../main/project-graph';
+import { availableCatalogRoles, catalogDirFor, installedRoleCatalog, planCatalogCopies, planProjectRole } from '../main/role-catalog-files';
+import { parseRoleSource } from '../main/role-source';
+import { serialiseLoopGraph } from '../shared/loop-graph-write';
+import { catalogReference, planRoleUpgrade, type RoleUpgradePlan } from '../shared/role-catalog';
+import type { PlannedFileView, RoleUpgradeView } from '../shared/project-graph-bridge';
 import { ProjectDraftStore, type DraftAnswer, type DraftSource } from '../main/project-drafts';
 import { runRecommendation } from '../main/project-recommend-run';
 import type { LoopGraph, RoleResolver } from '../shared/loop-graph';
@@ -85,12 +90,19 @@ export function projectGraphService(host: ProjectGraphHost): ProjectGraphService
     if (opened === null) return 'That graph does not load.';
     const { graph, resolve } = opened;
     const roleTexts: Record<string, { sourcePath: string; instructions: string }> = {};
-    const roles: { id: string; title: string; summary: string }[] = [];
+    const roles: { id: string; title: string; summary: string; version?: number; origin?: string }[] = [];
     for (const reference of referencedRoles(graph)) {
       if (roleTexts[reference.id] !== undefined) continue;
       const resolved = resolve(reference);
       roleTexts[reference.id] = { sourcePath: reference.source.path, instructions: resolved?.instructions ?? '' };
-      roles.push({ id: reference.id, title: reference.id, summary: resolved?.summary ?? '' });
+      // DSP-231: the role's own title (its identity is the stable key), and which shared definition it is.
+      roles.push({
+        id: reference.id,
+        title: resolved?.title ?? reference.id,
+        summary: resolved?.summary ?? '',
+        ...(reference.version === undefined ? {} : { version: reference.version }),
+        ...(resolved?.origin === undefined ? {} : { origin: resolved.origin }),
+      });
     }
     const agents = graph.nodes.filter((node) => node.kind === 'agent');
     const reading = 'definitionKey' in source ? readProjectGraph(row) : null;
@@ -243,12 +255,156 @@ export function projectGraphService(host: ProjectGraphHost): ProjectGraphService
         running.get(request.requestId)?.abort();
         return { kind: 'cancelled' };
       }
+      case 'roleCatalog': {
+        const catalog = installedRoleCatalog();
+        return {
+          kind: 'roleCatalog',
+          roles: availableCatalogRoles(request.resourceRoot === null ? null : writableRoot(request.resourceRoot)),
+          catalogDir: request.resourceRoot === null ? '.dspatch/roles' : catalogDirFor(request.resourceRoot),
+          legacy: (catalog?.legacy ?? []).map((entry) => entry.id),
+        };
+      }
+      case 'roleSource': {
+        // Read only, and only inside the graph's own resource root, as role resolution reads it.
+        const root = path.resolve(request.resourceRoot);
+        const file = path.resolve(root, request.path);
+        const relative = path.relative(root, file);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) return refused('That role is outside the graph\'s resources.');
+        try {
+          return { kind: 'roleSource', text: fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') };
+        } catch {
+          return refused(`${request.path} cannot be read.`);
+        }
+      }
+      case 'copyCatalogRoles': {
+        const root = writableRoot(request.resourceRoot);
+        if (root === null) return refused('Shared roles are copied only into a folder of this workspace.');
+        const copies = planCatalogCopies(path.join(root, catalogDirFor(root)), request.roles);
+        if (copies.problems.length > 0) return refused(...copies.problems);
+        for (const file of copies.files) writeFileWhole(file.path, file.text);
+        host.log?.(`[roles] copied ${request.roles.map((role) => `${role.id}@${String(role.version)}`).join(', ')} into ${root}`);
+        return { kind: 'rolesCopied', written: copies.files.map((file) => file.path) };
+      }
+      case 'projectRoleSave': {
+        const root = writableRoot(request.resourceRoot);
+        if (root === null) return refused('A project role is saved only in a folder of this workspace.');
+        const planned = planProjectRole(root, request.text, (text) => {
+          const parsed = parseRoleSource(text);
+          return parsed.ok || parsed.portable !== undefined
+            ? { ok: true, id: (parsed.ok ? parsed.source : parsed.portable)?.id ?? '' }
+            : { ok: false, problems: parsed.problems.map((problem) => problem.message) };
+        });
+        if (!planned.ok) return refused(...planned.problems);
+        for (const file of planned.files) writeFileWhole(file.path, file.text);
+        host.log?.(`[roles] saved the project role ${planned.id} v${String(planned.version)} in ${root}`);
+        return { kind: 'roleSaved', id: planned.id, version: planned.version, reference: planned.reference, written: planned.files.map((file) => file.path) };
+      }
+      case 'roleUpgrade':
+      case 'roleUpgradeApply': {
+        const row = projectRows().find((candidate) => path.resolve(candidate.filePath) === path.resolve(request.definitionKey));
+        if (row === undefined || row.graphPath === null || row.resourceRoot === null) return refused('That graph is not in this workspace any more.');
+        const opened = graphOf(row);
+        const catalog = installedRoleCatalog();
+        if (opened === null || catalog === null) return refused(opened === null ? 'That graph does not load.' : 'DSpatch\'s role catalog could not be read.');
+        const graphText = fs.readFileSync(row.graphPath, 'utf8');
+        const reading = row.definition?.projectInstructions === undefined ? null : readProjectGraph(row);
+        const project = reading !== null && !('problem' in reading) ? reading : null;
+        const catalogDir = catalogDirFor(row.resourceRoot);
+        const plan = planRoleUpgrade({
+          graph: opened.graph,
+          instructions: project?.instructions ?? null,
+          catalog,
+          resolve: opened.resolve,
+          catalogDir,
+          ...(row.definition?.origin?.templateGraphId === undefined ? {} : { templateGraphId: row.definition.origin.templateGraphId }),
+          ...(request.choices === undefined ? {} : { choices: request.choices }),
+          resolveCatalog: (id, version) => opened.resolve(catalogReference(id, version, catalogDir)) ?? resolveInstalled(id, version),
+        });
+        const copies = planCatalogCopies(path.join(row.resourceRoot, catalogDir), plan.catalogRoles);
+        const instructionsChanged = project !== null && JSON.stringify(plan.instructions) !== JSON.stringify(project.instructions);
+        const unsaved = project !== null && drafts.unsaved(row.filePath).length > 0;
+        const blocked =
+          plan.mappings.length === 0
+            ? 'No step uses a role the catalog replaces.'
+            : copies.problems.length > 0
+              ? copies.problems.join(' ')
+              : unsaved && instructionsChanged
+                ? 'The project instructions have unsaved changes. Save or discard them first, so the upgrade moves what is saved.'
+                : null;
+        const files: PlannedFileView[] = [
+          ...copies.files.map((file) => ({ relative: relativeOf(row.resourceRoot as string, file.path), action: (fs.existsSync(file.path) ? 'change' : 'create') as 'create' | 'change', what: file.what })),
+          ...(instructionsChanged && project !== null ? [{ relative: relativeOf(row.resourceRoot, project.instructionsPath), action: 'change' as const, what: 'the project instructions: role additions moved so each reaches the same steps' }] : []),
+          { relative: relativeOf(row.resourceRoot, row.graphPath), action: 'change', what: 'the graph: shared roles by identity and version, requirements and moved task text on the steps' },
+        ];
+        if (request.kind === 'roleUpgrade') {
+          return { kind: 'roleUpgrade', plan: upgradeView(row.definition?.name ?? opened.graph.name, plan, files, blocked), graphSha256: sha256(graphText) };
+        }
+        if (blocked !== null) return refused(blocked);
+        if (sha256(graphText) !== request.graphSha256) return refused('The graph changed on disk since the upgrade was shown. Nothing was written: look at it again.');
+        const written: string[] = [];
+        for (const file of copies.files) {
+          writeFileWhole(file.path, file.text);
+          written.push(file.path);
+        }
+        if (instructionsChanged && project !== null && plan.instructions !== null) {
+          const saved = saveProjectInstructions({ reading: project, instructions: plan.instructions, graph: plan.graph });
+          if (!saved.ok) return refused(`${saved.problem} The role copies were written; the graph was not changed.`);
+          written.push(project.instructionsPath);
+        }
+        writeFileWhole(row.graphPath, serialiseLoopGraph(plan.graph, { newline: graphText.includes('\r\n') ? '\r\n' : '\n' }));
+        written.push(row.graphPath);
+        host.log?.(`[roles] upgraded ${row.filePath} to shared roles: ${plan.mappings.map((mapping) => `${mapping.nodeId} ${mapping.from.id}->${mapping.to.id}`).join(', ')}`);
+        return { kind: 'roleUpgraded', written };
+      }
     }
   };
+  /** A folder of this workspace that `root` is, or `null`: roles are written nowhere else. */
+  function writableRoot(root: string): string | null {
+    const resolved = path.resolve(root);
+    return host.workspaceFolders().some((folder) => path.resolve(folder) === resolved) ? resolved : null;
+  }
+  function resolveInstalled(id: string, version: number): ReturnType<RoleResolver> {
+    const own = host.ownRoot();
+    return own === null ? null : createFileRoleResolver(own)(catalogReference(id, version, 'docs/loop/roles/catalog'));
+  }
   return {
     handle,
     drafts,
     definitionKeyFor: (loopId) =>
       projectRows().find((row) => row.definition?.id === loopId && row.definition.projectInstructions !== undefined)?.filePath ?? null,
+  };
+}
+
+function relativeOf(root: string, file: string): string {
+  return path.relative(root, file).split(path.sep).join('/');
+}
+
+/** Write one file whole: to a temporary name beside it, then renamed into place. */
+function writeFileWhole(file: string, text: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${String(process.pid)}.tmp`;
+  fs.writeFileSync(temporary, text, 'utf8');
+  fs.renameSync(temporary, file);
+}
+
+function upgradeView(graphName: string, plan: RoleUpgradePlan, files: readonly PlannedFileView[], blocked: string | null): RoleUpgradeView {
+  return {
+    graphName,
+    mappings: plan.mappings.map((mapping) => ({
+      nodeId: mapping.nodeId,
+      nodeLabel: mapping.nodeLabel,
+      from: mapping.from.id,
+      to: mapping.to.id,
+      version: mapping.to.version ?? 1,
+      alternatives: mapping.alternatives.map((target) => ({ role: target.role, when: target.when ?? '' })),
+      requirementsMovedToNode: mapping.requirementsMovedToNode,
+      taskAddition: mapping.taskAddition,
+      reason: mapping.reason,
+    })),
+    additions: plan.additions,
+    kept: plan.kept,
+    conflicts: plan.conflicts,
+    files,
+    blocked,
   };
 }

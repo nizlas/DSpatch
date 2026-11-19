@@ -750,6 +750,46 @@ export interface ChatRoleText {
   readonly sourcePath: string;
   /** The role's own prose, or `null` when the reference resolved without any. */
   readonly instructions: string | null;
+  /** DSP-231: for a catalog role, its title, version, origin and digest; absent for a local role. */
+  readonly title?: string;
+  readonly version?: number;
+  readonly origin?: string;
+  readonly sha256?: string;
+}
+
+/** DSP-231: what a prompt and a run record need of a resolved role, from one place. */
+export function chatRoleTextOf(resolved: {
+  readonly id: string;
+  readonly sourcePath: string;
+  readonly instructions?: string;
+  readonly title?: string;
+  readonly version?: number;
+  readonly origin?: string;
+  readonly sha256?: string;
+}): ChatRoleText {
+  return {
+    id: resolved.id,
+    sourcePath: resolved.sourcePath,
+    instructions: resolved.instructions ?? null,
+    ...(resolved.version === undefined
+      ? {}
+      : {
+          version: resolved.version,
+          ...(resolved.title === undefined ? {} : { title: resolved.title }),
+          ...(resolved.origin === undefined ? {} : { origin: resolved.origin }),
+          ...(resolved.sha256 === undefined ? {} : { sha256: resolved.sha256 }),
+        }),
+  };
+}
+
+/**
+ * How the prompt names the role: its identity alone for a local role, as before; for a catalog role
+ * its title, identity and version, so the shared definition a step was given is recognisable.
+ */
+function roleNameFor(role: ChatRoleText): string {
+  if (role.version === undefined) return `"${role.id}"`;
+  const catalog = role.origin === 'dspatch' ? 'DSpatch\u2019s role catalog' : role.origin === 'project' ? 'this project\u2019s role catalog' : 'a role catalog';
+  return `"${role.title ?? role.id}" (${role.id}, version ${String(role.version)} from ${catalog})`;
 }
 
 /**
@@ -804,13 +844,13 @@ export function roleHeadlineFor(role: ChatRoleText): string {
     // drawing claims something its role file does not supply, and the agent is the one
     // party that can notice the role it was handed is not the one the work needs.
     return (
-      `You are performing the role "${role.id}", declared for this step in the loop ` +
+      `You are performing the role ${roleNameFor(role)}, declared for this step in the loop ` +
       `drawing. DSpatch read no instructions for it beyond the name, so this is all ` +
       `the role says. ${ROLE_PROVENANCE}`
     );
   }
   return (
-    `You are performing the role "${role.id}", declared for this step in the loop ` +
+    `You are performing the role ${roleNameFor(role)}, declared for this step in the loop ` +
     `drawing. Everything between the markers below is that role, whole, as its author ` +
     `wrote it \u2014 the role is this text and not a file you have to find. ` +
     `${ROLE_PROVENANCE} It governs how you work, and the task follows it.`

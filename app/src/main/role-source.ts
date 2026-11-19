@@ -103,6 +103,15 @@ export interface RoleSource {
   readonly requirements: readonly RoleRequirement[];
   readonly sections: readonly RoleSection[];
   readonly targetBlocks: readonly RoleTargetBlock[];
+  /**
+   * DSP-231: the catalog version, for a role published in a role catalog. A source without one is
+   * a local role that no graph can pin. Never edited in place: a changed role is a new version.
+   */
+  readonly version?: number;
+  /** DSP-231: who published it — `dspatch` for DSpatch's own catalog, `project` for a project's. */
+  readonly origin?: string;
+  /** DSP-231: the role it was made from, `<id>@<version>`, when it was made from one. */
+  readonly derivedFrom?: string;
 }
 
 /** What went wrong, in terms of the file the author is looking at. */
@@ -351,7 +360,30 @@ export function parseRoleSource(text: string): RoleSourceResult {
     problems.push({ message: 'Missing `## Purpose`.' });
   }
 
-  const source: RoleSource = { id, title, summary, targets, requirements, sections, targetBlocks };
+  const versionField = fields.get('version');
+  let version: number | undefined;
+  if (versionField !== undefined) {
+    const parsedVersion = Number(versionField.value);
+    if (!/^[1-9][0-9]*$/.test(versionField.value) || !Number.isSafeInteger(parsedVersion)) {
+      problems.push({ message: `\`version\` must be a whole number from 1, not \`${versionField.value}\`.`, line: versionField.line });
+    } else {
+      version = parsedVersion;
+    }
+  }
+  const origin = fields.get('origin')?.value;
+  const derivedFrom = fields.get('derivedFrom')?.value;
+  const source: RoleSource = {
+    id,
+    title,
+    summary,
+    targets,
+    requirements,
+    sections,
+    targetBlocks,
+    ...(version === undefined ? {} : { version }),
+    ...(origin === undefined || origin === '' ? {} : { origin }),
+    ...(derivedFrom === undefined || derivedFrom === '' ? {} : { derivedFrom }),
+  };
   if (problems.length > 0) {
     return problems.every((problem) => problem.exportOnly === true) ? { ok: false, problems, portable: source } : { ok: false, problems };
   }

@@ -195,7 +195,7 @@ describe('the role the panel shows is the role the agent is sent', () => {
         false,
         `${id} should not be told to be the Cursor coordinator: it cannot call subagents`,
       );
-      assert.equal(node.role.source.kind, 'role-source');
+      assert.equal(node.role.source.kind, 'role-catalog');
       assert.ok(
         fs.existsSync(path.join(repoRoot, node.role.source.path)),
         `${node.role.source.path} should exist`,

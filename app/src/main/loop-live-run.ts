@@ -33,7 +33,7 @@ import {
 } from './loop-live';
 import type { WorkingCopyClaim } from './working-copy-lock';
 import type { StepActivity } from '../shared/loop-activity';
-import { chatPromptFor, describeChosenLoopBinding, skippingRoutesOf } from '../shared/loop-chat';
+import { chatPromptFor, chatRoleTextOf, describeChosenLoopBinding, skippingRoutesOf } from '../shared/loop-chat';
 import {
   describeLiveBinding,
   editorLiveBindingFor,
@@ -297,11 +297,7 @@ function withEditorBinding(
           role:
             resolved === null
               ? null
-              : {
-                  id: resolved.id,
-                  sourcePath: resolved.sourcePath,
-                  instructions: resolved.instructions ?? null,
-                },
+              : chatRoleTextOf(resolved),
         });
       }),
     runProjectTest:

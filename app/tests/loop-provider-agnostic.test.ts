@@ -151,7 +151,7 @@ describe('DSP-219: one loop, three providers, the target unchanged', () => {
       assert.deepEqual(built, [provider]);
       assert.ok(delivery.inspection.sessions.every((session) => session.provider === provider));
       // Each step is told its role's common instructions, whatever the provider.
-      const work = resolveRole({ id: 'project-work', source: { kind: 'role-source', path: 'docs/loop/roles/project/project-work.role.md' } });
+      const work = resolveRole({ id: 'implementer', version: 1, source: { kind: 'role-catalog', path: 'docs/loop/roles/catalog/implementer/v1.role.md' } });
       const firstLine = (work?.instructions ?? '').split('\n').find((line) => line.trim() !== '') ?? '';
       assert.ok(firstLine.length > 20);
       assert.ok(agent.prompts[0]?.includes(firstLine), 'the work step was told the role’s own words');
@@ -252,7 +252,8 @@ describe('DSP-219: older definitions and the export format', () => {
     assert.equal(role?.exportProblems?.length, 1);
 
     const graph = graphNamed('dspatch-chat-loop.graph.json');
-    const findings = checkLoopGraph(graph, { resolveRole: (reference) => (reference.id === 'project-work' ? role : resolveRole(reference)), runProvider: 'claude' });
+    // The chat loop's work step uses the catalog Implementer since DSP-231; the broken local role stands in for it.
+    const findings = checkLoopGraph(graph, { resolveRole: (reference) => (reference.id === 'implementer' ? role : resolveRole(reference)), runProvider: 'claude' });
     assert.equal(findings.some((finding) => finding.severity === 'error'), false);
     assert.match(findings.find((finding) => finding.code === 'role-export-form')?.message ?? '', /generating those files will refuse/);
   });

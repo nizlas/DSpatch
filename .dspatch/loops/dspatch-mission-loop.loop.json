@@ -7,5 +7,6 @@
   "resourceRoot": "../..",
   "resourceRootNote": "The DSpatch working copy this file is filed in, two levels up from .dspatch/loops. The graph and every role live there and are referenced, not copied.",
   "graph": "docs/loop/graphs/dspatch-mission-loop.graph.json",
-  "notes": "DSP-208, prepared for the adaptive-execution mission. Start it from chat with Use loop and the mandate in docs/missions/adaptive-execution/BRIEF.md, section Operating the run. It works on the folders opened in the workspace, which for this mission is the DSpatch working copy itself. Its continuity is the working-state file docs/missions/adaptive-execution/STATE.md, not the run: a run that ends for any reason is continued by starting a new one with the same mandate."
+  "notes": "DSP-208, prepared for the adaptive-execution mission. Start it from chat with Use loop and the mandate in docs/missions/adaptive-execution/BRIEF.md, section Operating the run. It works on the folders opened in the workspace, which for this mission is the DSpatch working copy itself. Its continuity is the working-state file docs/missions/adaptive-execution/STATE.md, not the run: a run that ends for any reason is continued by starting a new one with the same mandate.",
+  "projectInstructions": "dspatch-mission-loop.project.json"
 }

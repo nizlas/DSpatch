@@ -92,7 +92,12 @@ export function referencedRoles(text: string): readonly RoleReference[] {
     if (typeof kind !== 'string' || typeof sourcePath !== 'string') {
       continue;
     }
-    found.push({ id, source: { kind: kind as RoleReference['source']['kind'], path: sourcePath } });
+    const version = (role as { readonly version?: unknown }).version;
+    found.push({
+      id,
+      ...(typeof version === 'number' ? { version } : {}),
+      source: { kind: kind as RoleReference['source']['kind'], path: sourcePath },
+    });
   }
   return found;
 }

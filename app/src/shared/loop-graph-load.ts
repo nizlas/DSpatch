@@ -994,6 +994,31 @@ function parseRole(
     );
     return null;
   }
+  // DSP-231: a catalog reference pins a version; no other kind has one.
+  const version = value['version'];
+  if (kind === 'role-catalog') {
+    if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+      findings.error(
+        'role-catalog-without-version',
+        `${pointer}/version`,
+        `Role "${roleId}" on node "${nodeId}" refers to the role catalog without a version. A catalog ` +
+          `reference names the version it uses ("version": 1), so the same graph always gets the same role.`,
+        { nodeId },
+      );
+      return null;
+    }
+    return { id: roleId, version, source: { kind, path: sourcePath } };
+  }
+  if (version !== undefined) {
+    findings.error(
+      'role-version-without-catalog',
+      `${pointer}/version`,
+      `Role "${roleId}" on node "${nodeId}" has a "version" but its source kind is "${kind}". Only a ` +
+        `"role-catalog" reference is versioned.`,
+      { nodeId },
+    );
+    return null;
+  }
   return { id: roleId, source: { kind: kind as RoleReference['source']['kind'], path: sourcePath } };
 }
 
@@ -2345,6 +2370,23 @@ function checkNodeRole(
               `agent on "${node.id}" is told only the step's own task.`,
             ids,
           );
+        }
+        // DSP-231: a catalog reference is held to the text its catalogs list for that identity
+        // and version. An edited copy or a file that declares another identity or version is
+        // refused; a text no catalog lists is said.
+        const catalog = role.catalog;
+        if (catalog !== undefined && node.role.version !== undefined) {
+          const named = `role "${node.role.id}" version ${String(node.role.version)} at ${role.sourcePath}`;
+          if (catalog.status === 'modified' || catalog.status === 'mismatch') {
+            findings.error(
+              catalog.status === 'modified' ? 'role-copy-modified' : 'role-version-mismatch',
+              `${pointer}/role`,
+              `Node "${node.id}" refers to ${named}, and ${catalog.detail}. The same identity and version must always mean the same role.`,
+              ids,
+            );
+          } else if (catalog.status === 'unlisted') {
+            findings.warning('role-not-in-catalog', `${pointer}/role`, `Node "${node.id}" refers to ${named}: ${catalog.detail}.`, ids);
+          }
         }
         if (role.exportProblems !== undefined && role.exportProblems.length > 0) {
           findings.notice(

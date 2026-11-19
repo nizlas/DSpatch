@@ -46,7 +46,7 @@ import { LAYER_GAP, layeredLayout } from './loop-layout';
  * for the other.
  */
 export function roleKey(reference: RoleReference): string {
-  return `${reference.id}\u0000${reference.source.kind}\u0000${reference.source.path}`;
+  return `${reference.id}\u0000${reference.source.kind}\u0000${reference.source.path}${reference.version === undefined ? '' : `\u0000${String(reference.version)}`}`;
 }
 
 /** A resolver over answers the main process already gave us, for offline revalidation. */

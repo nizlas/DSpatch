@@ -1134,8 +1134,8 @@ describe('a step is asked only for the result its own contract offers', () => {
     assert.match(prompt, /A missing or contradictory name is read as "could-not-report"/);
     // No opening word, because no edge here carries one.
     assert.doesNotMatch(prompt, /begin your reply with the word/);
-    // And the role says what to do instead, which is the half that makes that absence
-    // readable rather than merely silent.
+    // And the step says what to do instead, which is the half that makes that absence
+    // readable rather than merely silent (since DSP-231 in the node's task, not the shared role).
     assert.match(prompt, /decided by the message you are in, not by this role/);
     assert.match(prompt, /Where it lists none, doing the work is the answer/);
     assert.match(prompt, /say plainly in prose what is wrong or what is in the way/);
@@ -1183,8 +1183,8 @@ describe('a step is asked only for the result its own contract offers', () => {
       'the role\u2019s second copy of the engine paragraph is gone',
     );
     assert.doesNotMatch(prompt, /SKILL\.md/, 'no bare DSpatch path reaches an agent');
-    // What is kept is what only this role can say.
-    assert.match(prompt, /\*\*That is not this role\*\*/);
+    // What is kept is what only this role can say: since DSP-231 the shared Coordinator's own text.
+    assert.match(prompt, /You are not the person\./);
   });
 });
 

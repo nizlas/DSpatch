@@ -47,10 +47,11 @@
       "id": "coordinator",
       "kind": "agent",
       "label": "Coordinator: reconcile and choose",
-      "purpose": "Read the start brief and the working-state file the mandate names, reconcile them with the working copy and with what the arriving step handed you, record what happened, and choose the step the mission needs next. When you choose implement, your result is the implementer's brief for exactly one sub-goal. Choose implement-parallel instead only when the sub-goal splits into two or three parts that write different files and meet only at interfaces you can name, and the split is worth its integration; then your result is the same kind of brief, with the parts and the interfaces you see, and you commit the working-state file first so the working copy has no uncommitted change to a tracked file. Choose by dependencies and expected benefit: parallelism is not a goal in itself. When a review accepted a sub-goal, record it and commit it as the brief allows, then go straight on to the next feasible sub-goal. When a sub-goal is blocked, stalled or waits on Niclas, record why and go on with sub-goals that do not depend on it. End the run only when no feasible work remains or the whole is assessed. Write the working-state file before you name your outcome.",
+      "purpose": "Read the start brief and the working-state file the mandate names, reconcile them with the working copy and with what the arriving step handed you, record what happened, and choose the step the mission needs next. When you choose implement, your result is the implementer's brief for exactly one sub-goal. Choose implement-parallel instead only when the sub-goal splits into two or three parts that write different files and meet only at interfaces you can name, and the split is worth its integration; then your result is the same kind of brief, with the parts and the interfaces you see, and you commit the working-state file first so the working copy has no uncommitted change to a tracked file. Choose by dependencies and expected benefit: parallelism is not a goal in itself. When a review accepted a sub-goal, record it and commit it as the brief allows, then go straight on to the next feasible sub-goal. When a sub-goal is blocked, stalled or waits on Niclas, record why and go on with sub-goals that do not depend on it. End the run only when no feasible work remains or the whole is assessed. Write the working-state file before you name your outcome.\n\nWhere the drawing offers both, `implement` sends a sub-goal to one implementer and `implement-parallel` sends it through a slicer, parallel branches in their own worktrees and an integrator, each path to its own review. A parallel brief is the same brief as an implementer's, plus the parts and interfaces you see; the slicer may still keep it as one slice. The integrator merges as commits on the current branch, so a parallel sub-goal's code is already committed when it reaches you: say which commits are the sub-goal's, and make your own commit of the working-state file. The temporary branches stay for the person to keep or delete. Independent verification is the reviewer's to ask for.\n\nYour message lists the names you may give as a whole `RESULT:` line. Write exactly one of them on its own line, and only after the working-state file is written.",
       "role": {
-        "id": "dspatch-mission-coordinator",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/run/dspatch-mission-coordinator.role.md" }
+        "id": "mission-coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/mission-coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 30 },
@@ -58,11 +59,7 @@
       "whenUndeclared": "unclear",
       "declaredFailures": ["blocked"],
       "report": { "writtenBy": "self" },
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Which sub-goal or decision this visit is about, what was reconciled and recorded, and the brief for the next step where there is one. It is all the next step is given about its assignment beyond the mandate."
-      },
+      "produces": { "required": true, "form": "stored-result", "note": "Which sub-goal or decision this visit is about, what was reconciled and recorded, and the brief for the next step where there is one. It is all the next step is given about its assignment beyond the mandate." },
       "view": { "x": 420, "y": 40 }
     },
     {
@@ -71,19 +68,17 @@
       "label": "Map and plan",
       "purpose": "Map the mission's vision and requirements against what DSpatch's code actually does today, by reading the code, and propose the sub-goals: each with an id, its result, acceptance criteria a reviewer can check, dependencies, the files or areas it concerns, the governing decisions it touches and the smallest relevant verification. Keep implemented, needs-wiring and missing apart, and name what needs Niclas's decision instead of planning around it. Where the coordinator asks for a revision, revise against the new evidence and keep the mission's goal and mandate.",
       "role": {
-        "id": "dspatch-backlog-planner",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-backlog-planner.role.md" }
+        "id": "planner",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/planner/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["planned", "not-established"],
       "whenUndeclared": "not-established",
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The mapping and the proposed sub-goals. Read-only: the coordinator records the plan in the working-state file." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The mapping and the proposed sub-goals. Read-only: the coordinator records the plan in the working-state file."
-      },
       "view": { "x": 80, "y": 40 }
     },
     {
@@ -92,19 +87,17 @@
       "label": "Research",
       "purpose": "Investigate the one bounded question the coordinator's brief names and return the evidence a decision needs, keeping what you observed apart from what you read. Missing measurements are unknown, not zero.",
       "role": {
-        "id": "dspatch-researcher",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-researcher.role.md" }
+        "id": "researcher",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/researcher/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["answered", "not-established"],
       "whenUndeclared": "not-established",
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The evidence and what it settles. Read-only." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The evidence and what it settles. Read-only."
-      },
       "view": { "x": 80, "y": 220 }
     },
     {
@@ -113,21 +106,19 @@
       "label": "Implement a sub-goal",
       "purpose": "Implement the one sub-goal the coordinator's brief names, within its scope, and check it with the smallest relevant targeted checks the verification policy in AGENTS.md allows. On a rework round, address the review's concrete findings and nothing else, and make your report cover the whole sub-goal, because the coordinator receives only this round's account: every file the sub-goal changed across its rounds, every check run on it with its result, which of them you reran now, and what is still wrong. Do not commit; the coordinator does that once the sub-goal is accepted. Report what you changed and why, the commands you ran with their exit codes, what you left for Niclas to try himself and what is still wrong.",
       "role": {
-        "id": "dspatch-implementer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-implementer.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 120 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["done", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["spec-error", "research-needed", "blocked"],
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The account the reviewer is given: what changed, why, the commands and their exit codes, and what is still wrong." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The account the reviewer is given: what changed, why, the commands and their exit codes, and what is still wrong."
-      },
       "view": { "x": 420, "y": 220 }
     },
     {
@@ -136,20 +127,18 @@
       "label": "Verify independently",
       "purpose": "Check the specific claims the reviewer asked you to check, on the working copy as it now stands, with the smallest relevant commands the verification policy in AGENTS.md allows. PASS, FAIL or NOT_RUN per claim with commands and exit codes. Do not fix anything.",
       "role": {
-        "id": "dspatch-verifier",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-verifier.role.md" }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["checked", "could-not-check"],
       "whenUndeclared": "could-not-check",
       "declaredFailures": ["blocked"],
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Evidence per claim, with commands and exit codes." },
       "consumes": ["implementer"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Evidence per claim, with commands and exit codes."
-      },
       "view": { "x": 760, "y": 220 }
     },
     {
@@ -158,19 +147,17 @@
       "label": "Review the sub-goal",
       "purpose": "Judge the implementer's result against the sub-goal's acceptance criteria in the coordinator's brief, the governing decisions it names, the actual code, and how it fits the sub-goals already reviewed. Answer accept, rework with concrete findings the implementer can act on, verify when a specific claim needs an independent check you cannot make by reading (at most once per sub-goal, naming the claims), needs-decision when only Niclas can settle it, or stalled when this sub-goal is not converging: the same concrete finding survives two rework rounds, or a third rework round would be needed. Reviewing does not mean running the implementer's checks again. Accept only what the evidence supports; a check nobody ran is unknown. When you accept after a rework round, your verdict must stand on its own, because the coordinator receives only this round's accounts: restate the earlier rounds' findings that are still open, the non-blocking suggestions included, and what was untested. Your acceptance is an agent's review, not Niclas's approval.",
       "role": {
-        "id": "dspatch-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-reviewer.role.md" }
+        "id": "work-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/work-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["accept", "rework", "verify", "needs-decision", "stalled", "could-not-review"],
       "whenUndeclared": "could-not-review",
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The verdict with its reasons, and for rework the findings, each concrete enough to act on." },
       "consumes": ["coordinator", "implementer"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The verdict with its reasons, and for rework the findings, each concrete enough to act on."
-      },
       "view": { "x": 420, "y": 400 }
     },
     {
@@ -179,85 +166,75 @@
       "label": "Assess the whole",
       "purpose": "Assess the mission as a whole against the start brief, its vision and its success criteria, the working-state file and the actual code: are the planned sub-goals done as reviewed, does the combined result keep the exact scope, do the parts fit together, and which requirements were skipped, left open or need Niclas. Answer complete only when nothing required is open; skipped is not met. Your assessment is not Niclas's approval.",
       "role": {
-        "id": "dspatch-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-reviewer.role.md" }
+        "id": "work-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/work-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 60 },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["complete", "gaps", "needs-decision", "could-not-review"],
       "whenUndeclared": "could-not-review",
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The whole assessment: what is met, what is open or skipped and why, and the gaps as concrete sub-goals." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The whole assessment: what is met, what is open or skipped and why, and the gaps as concrete sub-goals."
-      },
       "view": { "x": 760, "y": 40 }
     },
     {
       "id": "final-report",
       "kind": "agent",
       "label": "Report the mission",
-      "purpose": "Write the mission's final report for Niclas from the working-state file and the whole assessment: what was implemented, independently reviewed, verified, skipped or left open, the commits, what Niclas should examine and try himself, and the remaining departures from decided design. Record in the working-state file that the mission is reported and awaits Niclas's assessment.",
+      "purpose": "Write the mission's final report for Niclas from the working-state file and the whole assessment: what was implemented, independently reviewed, verified, skipped or left open, the commits, what Niclas should examine and try himself, and the remaining departures from decided design. Record in the working-state file that the mission is reported and awaits Niclas's assessment.\n\nWhere the drawing offers both, `implement` sends a sub-goal to one implementer and `implement-parallel` sends it through a slicer, parallel branches in their own worktrees and an integrator, each path to its own review. A parallel brief is the same brief as an implementer's, plus the parts and interfaces you see; the slicer may still keep it as one slice. The integrator merges as commits on the current branch, so a parallel sub-goal's code is already committed when it reaches you: say which commits are the sub-goal's, and make your own commit of the working-state file. The temporary branches stay for the person to keep or delete. Independent verification is the reviewer's to ask for.\n\nYour message lists the names you may give as a whole `RESULT:` line. Write exactly one of them on its own line, and only after the working-state file is written.",
       "role": {
-        "id": "dspatch-mission-coordinator",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/run/dspatch-mission-coordinator.role.md" }
+        "id": "mission-coordinator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/mission-coordinator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 30 },
       "outcomes": ["reported", "could-not-report"],
       "whenUndeclared": "could-not-report",
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The mission report, as copyable Markdown." },
       "consumes": ["mission-review"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The mission report, as copyable Markdown."
-      },
       "view": { "x": 1080, "y": 40 }
     },
     {
       "id": "slicer",
       "kind": "agent",
       "label": "Split the sub-goal",
-      "purpose": "The coordinator chose to implement one sub-goal in parallel; its brief names the sub-goal, its acceptance criteria, the governing decisions and the parts it sees. Read the brief, the start brief and the working-state file the mandate names, and the code the sub-goal touches. Split the sub-goal into two or three slices only where each writes its own files and the slices meet only at interfaces you name in contractRefs; otherwise write one slice, which runs as a single branch. Give every slice the sub-goal context it needs in its result: what to build, which acceptance criteria it carries, and the governing decisions that bind it, because a branch is handed your slice and the coordinator's brief and nothing else of this run. Each slice's verification is its own smallest targeted check under the verification policy in AGENTS.md. Do not widen the sub-goal, and change no file.",
+      "purpose": "The coordinator chose to implement one sub-goal in parallel; its brief names the sub-goal, its acceptance criteria, the governing decisions and the parts it sees. Read the brief, the start brief and the working-state file the mandate names, and the code the sub-goal touches. Split the sub-goal into two or three slices only where each writes its own files and the slices meet only at interfaces you name in contractRefs; otherwise write one slice, which runs as a single branch. Give every slice the sub-goal context it needs in its result: what to build, which acceptance criteria it carries, and the governing decisions that bind it, because a branch is handed your slice and the coordinator's brief and nothing else of this run. Each slice's verification is its own smallest targeted check under the verification policy in AGENTS.md. Do not widen the sub-goal, and change no file.\n\nWrite the plan as exactly one fenced block whose info string is `dspatch-slices`, in the form this message gives; DSpatch reads exactly one.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
       "role": {
-        "id": "project-slice",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/project/project-slice.role.md" }
+        "id": "slicer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/slicer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 30 },
       "declaredFailures": ["spec-error", "blocked"],
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Whether and why the sub-goal was split, and exactly one dspatch-slices block." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Whether and why the sub-goal was split, and exactly one dspatch-slices block."
-      },
       "view": { "x": 120, "y": 800 }
     },
     {
       "id": "branches",
       "kind": "agent",
       "label": "Implement the slices",
-      "purpose": "You are one branch of a sub-goal implemented in parallel. The coordinator's brief is the sub-goal; your slice, at the end of this message, is your part of it. Do your slice inside the paths it owns, in your own worktree, against the contracts it names, and run its own check; do not commit, which DSpatch does for you when your turn ends. Every rule in AGENTS.md applies. Call check_messages before you start, after a significant change and before you finish: messages are delivered only when you check, never into a turn while it runs. Acknowledge each message you acted on, send a finding when your work affects another slice's paths or a shared contract, and never wait for a reply. On a later visit you are given the integrator's findings; act on the ones for your slice, starting from the merged state your worktree now holds.",
+      "purpose": "You are one branch of a sub-goal implemented in parallel. The coordinator's brief is the sub-goal; your slice, at the end of this message, is your part of it. Do your slice inside the paths it owns, in your own worktree, against the contracts it names, and run its own check; do not commit, which DSpatch does for you when your turn ends. Every rule in AGENTS.md applies. Call check_messages before you start, after a significant change and before you finish: messages are delivered only when you check, never into a turn while it runs. Acknowledge each message you acted on, send a finding when your work affects another slice's paths or a shared contract, and never wait for a reply. On a later visit you are given the integrator's findings; act on the ones for your slice, starting from the merged state your worktree now holds.\n\nYou are one of several agents doing the same assignment in parallel, each with its own slice. Your message ends with **your slice**: its result, the paths you own, your allowed actions, the contracts you work against and your check. Do that slice, and only that slice.\n\nWork in the folder you were given: your own worktree, made from the same base as every other branch. Read freely there.\n\nChange **only the paths your slice owns**. Another branch owns the rest, and if two branches change the same file the integrating step has to undo one of them. When your slice cannot be done without changing a path you do not own, do not change it: say which path and why in your reply, so the integrating step can decide.\n\nWork against the contracts your slice names. If one turns out to be inadequate, do not quietly change the shared agreement; say what is wrong and what you assumed instead.\n\nRun **your slice's own check**, as the slice names it, and fix what it shows. Run the last check after your last change. Do not run the whole project's suite: the integrating step checks the combination.\n\nOn a later visit you are given the integrating step's findings. Act on the ones that concern your slice.\n\n**Messages between the branches.** You have three tools for the other branches running beside you: `check_messages`, `send_message` and `acknowledge_message`.\n\n- Call `check_messages` at natural boundaries: **before you start**, **after a significant change**, and **before you finish**. Messages are delivered only when you check; nothing interrupts your work.\n- Send a `finding` when something you found affects another slice's owned paths or a contract the slices share — to that slice by its id, or to `all`. Send a `question` when another slice's answer would change what you do, and carry on without the answer. Send a `contract-change` when a shared contract has to change: it is a proposal for the integrating step to resolve, not an agreement, so do not build on it as if it were decided. Send to `integrator` what only the integrating step can resolve.\n- `acknowledge_message` a message once you have acted on it.\n- A message from `the person` is the person's instruction to the run: follow it as part of your assignment, within your slice.\n- **Never wait for a reply.** There is no way to wait, and a branch that has ended is not restarted for a message. Keep messages short and to the point; routine progress is not a message.\n\nDo not commit, push, switch branches or create branches. When your turn ends, DSpatch commits what you left in your worktree to your temporary branch, and the integrating step merges the branches. Do not install dependencies, change global configuration or touch anything outside your worktree.\n\nReply in prose: what is now true of your slice, the files you changed and why, what you ran and what it showed for the code as you leave it, and anything you could not do or had to assume — a path you needed and did not own, a contract you found inadequate.\n\nIf the premise of your slice is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
       "role": {
-        "id": "project-branch",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/project/project-branch.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 120 },
-      "fanOut": { "slicesFrom": "slicer", "maxConcurrent": 3, "isolation": "worktree" },
+      "requirements": ["no-subagent-delegation"],
       "declaredFailures": ["branch-failed"],
+      "fanOut": { "slicesFrom": "slicer", "maxConcurrent": 3, "isolation": "worktree" },
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "Filed by the engine: every slice's ending, temporary branch and commit, the base, the messages and the open proposals for the integrator." },
       "consumes": ["coordinator"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "Filed by the engine: every slice's ending, temporary branch and commit, the base, the messages and the open proposals for the integrator."
-      },
       "notes": "The node's maxMinutes bounds the whole visit, every branch included. A branch is handed the mandate, the run's context, what the arriving edge delivers (the coordinator's brief and the slicer's plan; on rework, the integrator's findings) and its own slice.",
       "view": { "x": 420, "y": 800 }
     },
@@ -265,23 +242,21 @@
       "id": "integrate",
       "kind": "agent",
       "label": "Combine the branches",
-      "purpose": "Combine the branches of one parallel sub-goal into the working copy, as the role says: read the commits, merge in the listed order with git's own merge so the merged state is recorded as commits on the current branch, resolve each conflict and say how, resolve or reject every open proposal by id, and run the targeted checks the combination needs under the verification policy in AGENTS.md. On rework, send the branches back with concrete findings per slice; leave nothing uncommitted of your own when you do, so the next branches start from the merged state and keep it. Your report must cover the whole sub-goal, because the coordinator and the review are handed only your latest account: every slice and visit with its branch, commit and ending, what was merged, what conflicted, every check with its result, what failed and what is still wrong. A branch that failed or was not merged means the sub-goal is not integrated. Do not push and do not touch the working-state file.",
+      "purpose": "Combine the branches of one parallel sub-goal into the working copy, as the role says: read the commits, merge in the listed order with git's own merge so the merged state is recorded as commits on the current branch, resolve each conflict and say how, resolve or reject every open proposal by id, and run the targeted checks the combination needs under the verification policy in AGENTS.md. On rework, send the branches back with concrete findings per slice; leave nothing uncommitted of your own when you do, so the next branches start from the merged state and keep it. Your report must cover the whole sub-goal, because the coordinator and the review are handed only your latest account: every slice and visit with its branch, commit and ending, what was merged, what conflicted, every check with its result, what failed and what is still wrong. A branch that failed or was not merged means the sub-goal is not integrated. Do not push and do not touch the working-state file.\n\nEach slice's temporary branch is named `dspatch/run/<run>/<node>/v<visit>/<slice>`, and a rework visit's branches carry the next visit number.\n\n`integrated` when every branch is merged and the combination checks out as far as you can tell; `rework` with findings for the branches when one has to be redone; `not-integrated` when the branches cannot be combined into what the mandate asks. The independent review that follows is not your check; do not treat your own `integrated` as it.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work, begin your reply with the word BLOCKED and then one sentence saying what is in the way.",
       "role": {
-        "id": "project-integrate",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/project/project-integrate.role.md" }
+        "id": "integrator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/integrator/v1.role.md" }
       },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 60 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["integrated", "rework", "not-integrated"],
       "whenUndeclared": "not-integrated",
       "declaredFailures": ["spec-error", "blocked"],
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The whole sub-goal's integration: per slice and visit its branch, commit and ending, what was merged and conflicted, the checks and what is still wrong." },
       "consumes": ["coordinator", "branches"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The whole sub-goal's integration: per slice and visit its branch, commit and ending, what was merged and conflicted, the checks and what is still wrong."
-      },
       "view": { "x": 760, "y": 800 }
     },
     {
@@ -290,19 +265,17 @@
       "label": "Review the combined sub-goal",
       "purpose": "Judge the integrated result of a parallel sub-goal against the acceptance criteria in the coordinator's brief, the governing decisions it names, the actual code on the current branch and how it fits the sub-goals already reviewed. Check that each branch stayed inside its slice's paths, that no failed or unmerged branch is counted as done, and that the integrator's account matches the commits. Answer accept, rework with concrete findings for the integrator, needs-decision when only Niclas can settle it, or stalled when the sub-goal is not converging: the same concrete finding survives two rework rounds, or a third would be needed. Reviewing does not mean running the integrator's checks again. When you accept after a rework round, restate the earlier rounds' findings that are still open, the non-blocking suggestions included, and what was untested, because the coordinator receives only this round's accounts. Your acceptance is an agent's review, not Niclas's approval.",
       "role": {
-        "id": "dspatch-reviewer",
-        "source": { "kind": "role-source", "path": "docs/loop/roles/dspatch-reviewer.role.md" }
+        "id": "work-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/work-reviewer/v1.role.md" }
       },
       "model": { "policy": "inherit" },
+      "requirements": ["no-file-writes", "no-subagent-delegation"],
       "outcomes": ["accept", "rework", "needs-decision", "stalled", "could-not-review"],
       "whenUndeclared": "could-not-review",
       "report": { "writtenBy": "self" },
+      "produces": { "required": true, "form": "stored-result", "note": "The verdict with its reasons, and for rework the findings for the integrator, each concrete enough to act on." },
       "consumes": ["coordinator", "integrate"],
-      "produces": {
-        "required": true,
-        "form": "stored-result",
-        "note": "The verdict with its reasons, and for rework the findings for the integrator, each concrete enough to act on."
-      },
       "view": { "x": 1080, "y": 800 }
     },
     {
@@ -373,54 +346,43 @@
     { "id": "c-no-progress", "from": "coordinator", "to": "no-progress", "when": { "on": "outcome", "outcome": "no-progress" }, "label": "no progress" },
     { "id": "c-unclear", "from": "coordinator", "to": "stopped", "when": { "on": "outcome", "outcome": "unclear" }, "label": "no outcome named" },
     { "id": "c-blocked", "from": "coordinator", "to": "blocked", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
-
     { "id": "p-planned", "from": "planner", "to": "coordinator", "when": { "on": "outcome", "outcome": "planned" }, "delivers": ["planner"], "label": "plan proposed" },
     { "id": "p-open", "from": "planner", "to": "coordinator", "when": { "on": "outcome", "outcome": "not-established" }, "delivers": ["planner"], "label": "plan not established" },
-
     { "id": "r-answered", "from": "researcher", "to": "coordinator", "when": { "on": "outcome", "outcome": "answered" }, "delivers": ["researcher"], "label": "answered" },
     { "id": "r-open", "from": "researcher", "to": "coordinator", "when": { "on": "outcome", "outcome": "not-established" }, "delivers": ["researcher"], "label": "not settled" },
-
     { "id": "i-done", "from": "implementer", "to": "review", "when": { "on": "outcome", "outcome": "done" }, "delivers": ["coordinator", "implementer"], "label": "for review" },
     { "id": "i-unclear", "from": "implementer", "to": "coordinator", "when": { "on": "outcome", "outcome": "unclear" }, "delivers": ["implementer"], "label": "no result named" },
     { "id": "i-research", "from": "implementer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "research-needed" }, "delivers": ["implementer"], "label": "research needed" },
     { "id": "i-spec", "from": "implementer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["implementer"], "label": "wrong premise" },
     { "id": "i-blocked", "from": "implementer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["implementer"], "label": "blocked" },
-
     { "id": "v-checked", "from": "verifier", "to": "review", "when": { "on": "outcome", "outcome": "checked" }, "delivers": ["coordinator", "implementer", "verifier"], "label": "evidence" },
     { "id": "v-open", "from": "verifier", "to": "review", "when": { "on": "outcome", "outcome": "could-not-check" }, "delivers": ["coordinator", "implementer", "verifier"], "label": "could not check" },
     { "id": "v-blocked", "from": "verifier", "to": "coordinator", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["verifier"], "label": "blocked" },
-
     { "id": "rv-accept", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["implementer", "review"], "label": "accepted: record and commit" },
     { "id": "rv-rework", "from": "review", "to": "implementer", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["coordinator", "review"], "label": "rework with findings" },
     { "id": "rv-verify", "from": "review", "to": "verifier", "when": { "on": "outcome", "outcome": "verify" }, "delivers": ["coordinator", "implementer", "review"], "label": "verify these claims" },
     { "id": "rv-decision", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["review"], "label": "needs a decision" },
     { "id": "rv-stalled", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "stalled" }, "delivers": ["implementer", "review"], "label": "not converging", "notes": "Repeated attempts on one problem, told apart from ordinary rework across sub-goals: the review stops the sub-goal's rework loop and hands it to the coordinator, which records it as blocked with the open findings and goes on with sub-goals that do not depend on it." },
     { "id": "rv-open", "from": "review", "to": "coordinator", "when": { "on": "outcome", "outcome": "could-not-review" }, "delivers": ["review"], "label": "no verdict" },
-
     { "id": "s-sliced", "from": "slicer", "to": "branches", "when": { "on": "success" }, "delivers": ["coordinator", "slicer"], "label": "slices planned" },
     { "id": "s-spec", "from": "slicer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["slicer"], "label": "wrong premise" },
     { "id": "s-blocked", "from": "slicer", "to": "coordinator", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["slicer"], "label": "blocked" },
-
     { "id": "b-done", "from": "branches", "to": "integrate", "when": { "on": "success" }, "delivers": ["coordinator", "branches"], "label": "every branch finished" },
     { "id": "b-failed", "from": "branches", "to": "coordinator", "when": { "on": "declared-failure", "failure": "branch-failed" }, "delivers": ["branches"], "label": "a branch failed: not done" },
-
     { "id": "g-integrated", "from": "integrate", "to": "parallel-review", "when": { "on": "outcome", "outcome": "integrated" }, "delivers": ["coordinator", "integrate"], "label": "for review" },
     { "id": "g-rework", "from": "integrate", "to": "branches", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["coordinator", "slicer", "integrate"], "label": "branches again, from the merged state" },
     { "id": "g-not", "from": "integrate", "to": "coordinator", "when": { "on": "outcome", "outcome": "not-integrated" }, "delivers": ["integrate"], "label": "not integrated: not done" },
     { "id": "g-spec", "from": "integrate", "to": "coordinator", "when": { "on": "declared-failure", "failure": "spec-error" }, "delivers": ["integrate"], "label": "wrong premise" },
     { "id": "g-blocked", "from": "integrate", "to": "coordinator", "when": { "on": "declared-failure", "failure": "blocked" }, "delivers": ["integrate"], "label": "blocked" },
-
     { "id": "pr-accept", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "accept" }, "delivers": ["integrate", "parallel-review"], "label": "accepted: record and commit" },
     { "id": "pr-rework", "from": "parallel-review", "to": "integrate", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["coordinator", "branches", "parallel-review"], "label": "rework with findings" },
     { "id": "pr-decision", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["integrate", "parallel-review"], "label": "needs a decision" },
     { "id": "pr-stalled", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "stalled" }, "delivers": ["integrate", "parallel-review"], "label": "not converging" },
     { "id": "pr-open", "from": "parallel-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "could-not-review" }, "delivers": ["parallel-review"], "label": "no verdict" },
-
     { "id": "m-complete", "from": "mission-review", "to": "final-report", "when": { "on": "outcome", "outcome": "complete" }, "delivers": ["mission-review"], "label": "complete" },
     { "id": "m-gaps", "from": "mission-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "gaps" }, "delivers": ["mission-review"], "label": "gaps found" },
     { "id": "m-decision", "from": "mission-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "needs-decision" }, "delivers": ["mission-review"], "label": "needs a decision" },
     { "id": "m-open", "from": "mission-review", "to": "coordinator", "when": { "on": "outcome", "outcome": "could-not-review" }, "delivers": ["mission-review"], "label": "no verdict" },
-
     { "id": "f-reported", "from": "final-report", "to": "mission-complete", "when": { "on": "outcome", "outcome": "reported" }, "label": "reported" },
     { "id": "f-open", "from": "final-report", "to": "reporting-incomplete", "when": { "on": "outcome", "outcome": "could-not-report" }, "label": "could not report" }
   ]

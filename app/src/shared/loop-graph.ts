@@ -692,8 +692,8 @@ export interface StepLimits {
  * named here so that a graph written tonight moves to it by changing two fields
  * instead of every node. The `id` is stable across that change; the source is not.
  */
-export type RoleSourceKind = 'cursor-agent-file' | 'cursor-skill-file' | 'role-source';
-export const ROLE_SOURCE_KINDS = ['cursor-agent-file', 'cursor-skill-file', 'role-source'] as const;
+export type RoleSourceKind = 'cursor-agent-file' | 'cursor-skill-file' | 'role-source' | 'role-catalog';
+export const ROLE_SOURCE_KINDS = ['cursor-agent-file', 'cursor-skill-file', 'role-source', 'role-catalog'] as const;
 
 /**
  * A node's role: a reference, never the prose.
@@ -705,6 +705,12 @@ export const ROLE_SOURCE_KINDS = ['cursor-agent-file', 'cursor-skill-file', 'rol
  */
 export interface RoleReference {
   readonly id: string;
+  /**
+   * DSP-231: the catalog version a `role-catalog` reference pins. The same identity and version
+   * always mean the same text, checked by digest against the catalog that lists it; a reference of
+   * any other kind has none and is a local, unversioned role.
+   */
+  readonly version?: number;
   readonly source: {
     readonly kind: RoleSourceKind;
     readonly path: string;
@@ -1499,6 +1505,24 @@ export interface ResolvedRole {
    * blocks), which a run DSpatch walks does not read. Absent when there is nothing.
    */
   readonly exportProblems?: readonly string[];
+  /** DSP-231: the role's title, for people. */
+  readonly title?: string;
+  /** DSP-231: the catalog version the role source declares, when it declares one. */
+  readonly version?: number;
+  /** DSP-231: who published the definition: `dspatch` for DSpatch's catalog, `project` for a project's own. */
+  readonly origin?: string;
+  /** DSP-231: the role this one was made from, as `<id>@<version>`, when it says. */
+  readonly derivedFrom?: string;
+  /** DSP-231: SHA-256 of the role source as read, line endings normalised. */
+  readonly sha256?: string;
+  /**
+   * DSP-231: how a `role-catalog` reference was checked against the catalogs that list its identity
+   * and version. `listed`: the text is the listed one. `modified`: a catalog lists this identity and
+   * version with another digest, so this is an edited copy and is refused. `unlisted`: no catalog
+   * DSpatch can read lists it. `installed`: the referenced copy was missing and the text was read
+   * from the catalog installed with DSpatch. `mismatch`: the file declares another identity or version.
+   */
+  readonly catalog?: { readonly status: 'listed' | 'modified' | 'unlisted' | 'installed' | 'mismatch'; readonly detail: string };
 }
 
 /**

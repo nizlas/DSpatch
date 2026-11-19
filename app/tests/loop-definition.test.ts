@@ -87,7 +87,7 @@ function write(file: string, text: string): void {
 /**
  * The real chat-loop graph and the real project roles, laid out under one folder.
  *
- * `graphs/chat.graph.json` and `docs/loop/roles/project/…`, which is where that graph
+ * `graphs/chat.graph.json` and `docs/loop/roles/catalog/…` (DSP-231), which is where that graph
  * expects its roles. A declaration anchored here reaches both.
  */
 function resourcesUnder(folder: string): void {
@@ -95,10 +95,10 @@ function resourcesUnder(folder: string): void {
     path.join(folder, 'graphs', 'chat.graph.json'),
     fs.readFileSync(path.join(repoRoot, chatGraphRel), 'utf8'),
   );
-  for (const rel of ['project-work.role.md', 'project-check.role.md']) {
+  for (const rel of ['implementer/v1.role.md', 'verifier/v1.role.md', 'catalog.json']) {
     write(
-      path.join(folder, 'docs', 'loop', 'roles', 'project', rel),
-      fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'roles', 'project', rel), 'utf8'),
+      path.join(folder, 'docs', 'loop', 'roles', 'catalog', rel),
+      fs.readFileSync(path.join(repoRoot, 'docs', 'loop', 'roles', 'catalog', rel), 'utf8'),
     );
   }
 }
@@ -564,7 +564,7 @@ describe('resolving from the definition', () => {
   it('tells "resolves to nothing" from "unchecked", which is the whole reason the control is here', () => {
     const graphText = fs
       .readFileSync(path.join(repoRoot, chatGraphRel), 'utf8')
-      .replace('docs/loop/roles/project/project-work.role.md', 'docs/loop/roles/project/absent.role.md');
+      .replace('docs/loop/roles/catalog/implementer/v1.role.md', 'docs/loop/roles/catalog/implementer/absent.role.md');
 
     const checked = loadLoopGraph(graphText, {
       resolveRole: createFileRoleResolver(repoRoot),

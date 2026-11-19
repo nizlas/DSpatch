@@ -36,7 +36,49 @@ export type ProjectGraphRequest =
       readonly instructions: ProjectInstructions;
       readonly inventory: string | null;
     }
-  | { readonly kind: 'cancelRecommend'; readonly requestId: string };
+  | { readonly kind: 'cancelRecommend'; readonly requestId: string }
+  // DSP-231: shared, versioned roles. The roles a graph at `resourceRoot` can use; copies of shared
+  // ones into a repository; a project's own role saved as a new identity or its next version; and the
+  // reviewable upgrade of a graph from its legacy roles.
+  | { readonly kind: 'roleCatalog'; readonly resourceRoot: string | null }
+  | { readonly kind: 'roleSource'; readonly resourceRoot: string; readonly path: string }
+  | { readonly kind: 'copyCatalogRoles'; readonly resourceRoot: string; readonly roles: readonly { readonly id: string; readonly version: number }[] }
+  | { readonly kind: 'projectRoleSave'; readonly resourceRoot: string; readonly text: string }
+  | { readonly kind: 'roleUpgrade'; readonly definitionKey: string; readonly choices?: Readonly<Record<string, string>> }
+  | { readonly kind: 'roleUpgradeApply'; readonly definitionKey: string; readonly choices?: Readonly<Record<string, string>>; readonly graphSha256: string };
+
+/** DSP-231: one role a graph can use. */
+export interface CatalogRoleView {
+  readonly id: string;
+  readonly title: string;
+  readonly summary: string;
+  /** `dspatch` for DSpatch's catalog, `project` for the repository's own. */
+  readonly origin: string;
+  readonly versions: readonly number[];
+  readonly derivedFrom?: string;
+}
+
+/** DSP-231: the upgrade of a graph from legacy roles, for review. */
+export interface RoleUpgradeView {
+  readonly graphName: string;
+  readonly mappings: readonly {
+    readonly nodeId: string;
+    readonly nodeLabel: string;
+    readonly from: string;
+    readonly to: string;
+    readonly version: number;
+    readonly alternatives: readonly { readonly role: string; readonly when: string }[];
+    readonly requirementsMovedToNode: readonly string[];
+    readonly taskAddition: string;
+    readonly reason: string;
+  }[];
+  readonly additions: readonly { readonly fromRole: string; readonly kind: 'role' | 'nodes'; readonly toRole?: string; readonly nodes?: readonly string[]; readonly reason: string }[];
+  readonly kept: readonly { readonly nodeId: string; readonly roleId: string; readonly reason: string }[];
+  readonly conflicts: readonly string[];
+  readonly files: readonly PlannedFileView[];
+  /** Why it cannot be applied now, when it cannot: an unsaved draft of the instructions, say. */
+  readonly blocked: string | null;
+}
 
 /** A file to be written, as the window shows it before saving. */
 export interface PlannedFileView {
@@ -76,4 +118,10 @@ export type ProjectGraphAnswer =
   | { readonly kind: 'checked'; readonly references: readonly ReferenceProblem[] }
   | { readonly kind: 'recommended'; readonly answer: RecommendationAnswer; readonly inventory: string; readonly dropped: readonly string[]; readonly agent: string }
   | { readonly kind: 'cancelled' }
+  | { readonly kind: 'roleCatalog'; readonly roles: readonly CatalogRoleView[]; readonly catalogDir: string; readonly legacy: readonly string[] }
+  | { readonly kind: 'roleSource'; readonly text: string }
+  | { readonly kind: 'rolesCopied'; readonly written: readonly string[] }
+  | { readonly kind: 'roleSaved'; readonly id: string; readonly version: number; readonly reference: string; readonly written: readonly string[] }
+  | { readonly kind: 'roleUpgrade'; readonly plan: RoleUpgradeView; readonly graphSha256: string }
+  | { readonly kind: 'roleUpgraded'; readonly written: readonly string[] }
   | { readonly kind: 'refused'; readonly problems: readonly string[]; readonly view?: ProjectDraftView };

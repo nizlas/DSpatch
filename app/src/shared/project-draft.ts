@@ -96,26 +96,42 @@ function plural(count: number, one: string, many: string): string {
   return `${String(count)} ${count === 1 ? one : many}`;
 }
 
-/** What a level is, for a heading: "Common", "Role reviewer", "Step Review the change". */
+/** DSP-231: the three scopes of project additions, as the person reads them. */
+export const SCOPE_NAMES = {
+  common: 'All agent nodes',
+  role: 'All nodes with this role',
+  node: 'This node instance only',
+} as const;
+
+/** A role as a person reads it: its title, with its identity and version where they say more. */
+export function roleLabel(outline: GraphOutline, id: string): string {
+  const role = outline.roles.find((candidate) => candidate.id === id);
+  if (role === undefined) return id;
+  const identity = role.version === undefined ? (role.title === id ? '' : id) : `${id} v${String(role.version)}`;
+  return identity === '' ? role.title : `${role.title} (${identity})`;
+}
+
+/** What a level is, for a heading: "All agent nodes", "All nodes with this role · Reviewer (work-reviewer v1)", "This node instance only · Review". */
 export function levelName(outline: GraphOutline, key: LevelKey): string {
   const level = parseLevelKey(key);
   if (level === null) return key;
-  if (level.kind === 'common') return 'Common';
-  if (level.kind === 'role') return `Role ${outline.roles.find((role) => role.id === level.id)?.title ?? level.id}`;
-  return `Step ${outline.nodes.find((node) => node.id === level.id)?.label ?? level.id}`;
+  if (level.kind === 'common') return SCOPE_NAMES.common;
+  if (level.kind === 'role') return `${SCOPE_NAMES.role} · ${roleLabel(outline, level.id)}`;
+  return `${SCOPE_NAMES.node} · ${outline.nodes.find((node) => node.id === level.id)?.label ?? level.id}`;
 }
 
-/** Who an edit at a level reaches, said before it is made: "Applies to all 4 steps using Reviewer". */
+/** Who an edit at a level reaches, said before it is made: "Reaches all 4 nodes using Reviewer". */
 export function scopeLine(outline: GraphOutline, key: LevelKey): string {
   const level = parseLevelKey(key);
   const steps = stepsAt(outline, key);
   if (level === null) return '';
-  if (level.kind === 'common') return `Applies to all ${plural(steps.length, 'step', 'steps')} of this graph`;
+  if (level.kind === 'common') return `Reaches all ${plural(steps.length, 'agent node', 'agent nodes')} of this graph`;
   if (level.kind === 'role') {
-    const title = outline.roles.find((role) => role.id === level.id)?.title ?? level.id;
-    return steps.length === 1 ? `Applies to the 1 step using ${title}` : `Applies to all ${String(steps.length)} steps using ${title}`;
+    const title = roleLabel(outline, level.id);
+    if (steps.length === 0) return `Reaches no node: no node of this graph uses ${title} any more`;
+    return steps.length === 1 ? `Reaches the 1 node using ${title}, by its identity ${level.id}` : `Reaches all ${String(steps.length)} nodes using ${title}, by its identity ${level.id}`;
   }
-  return 'Applies only to this step';
+  return 'Reaches only this node, on every visit to it, and the branches that run as it';
 }
 
 // ---------------------------------------------------------------------------------------------

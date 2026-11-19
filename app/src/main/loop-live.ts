@@ -329,7 +329,7 @@ export interface LiveAgentReply {
    * ran as `project-work` from `docs/loop/roles/project-work.role.md` without reading
    * the prompt to find out. `null` for a node that names no role.
    */
-  readonly role: { readonly id: string; readonly sourcePath: string } | null;
+  readonly role: { readonly id: string; readonly sourcePath: string; readonly version?: number } | null;
   /** DSP-209 S10b: the slice, when this reply is one branch instance's of a fan-out. */
   readonly sliceId?: string;
   /**
@@ -2075,7 +2075,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
         terminalStatus: turn.terminalStatus(),
         terminalEnd: turn.terminalEnd(),
         prompt: message,
-        role: node.role === undefined ? null : { id: node.role.id, sourcePath: node.role.source.path },
+        role: node.role === undefined ? null : { id: node.role.id, sourcePath: node.role.source.path, ...(node.role.version === undefined ? {} : { version: node.role.version }) },
         sliceId: instance.sliceId,
         sessionId: session.dspatchSessionId,
       });
@@ -2985,7 +2985,7 @@ export function createLiveExecutor(options: LiveExecutorOptions): StepExecutor {
       role:
         node.role === undefined
           ? null
-          : { id: node.role.id, sourcePath: node.role.source.path },
+          : { id: node.role.id, sourcePath: node.role.source.path, ...(node.role.version === undefined ? {} : { version: node.role.version }) },
       sessionId: openSession.dspatchSessionId,
     });
     inspection.modelReported = options.modelReported?.(openSession.dspatchSessionId) ?? inspection.modelReported;

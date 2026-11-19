@@ -42,54 +42,44 @@
       "id": "work",
       "kind": "agent",
       "label": "Do what was asked",
-      "purpose": "Do what the Mandate asks, in the open project. Read freely, change the project's files when the mandate asks for a change, and run the builds and tests the work needs with your own tools where they can run commands. A failing build or test is information: fix the cause and run it again within this step, until you judge the work done. Then say what changed, what you checked and what remains. Where your tools cannot run commands, say what you could not run. On a later visit you are given the checking step's findings: act on them, check again, and report.",
+      "purpose": "Do what the Mandate asks, in the open project. Read freely, change the project's files when the mandate asks for a change, and run the builds and tests the work needs with your own tools where they can run commands. A failing build or test is information: fix the cause and run it again within this step, until you judge the work done. Then say what changed, what you checked and what remains. Where your tools cannot run commands, say what you could not run. On a later visit you are given the checking step's findings: act on them, check again, and report.\n\nReply in prose, to the person who reads this run. They may not have read the role and should not have to. If your tools cannot run commands, say which build or test you would have wanted and could not run; where the drawing has a step in which DSpatch runs the project's command itself, that step is where it runs.\n\n`succeeded` means you did the work the mandate asked for, as far as you can tell. `unclear` means you cannot honestly say that — you did not finish, or you cannot tell. Use `unclear` rather than guessing. A later step will check the project; do not treat your own `succeeded` as that check.\n\nWhere the step you are in offers `done-unchecked`, it means: the work is done, and the independent check would add nothing, so skip it. It is right only when **you changed no file** and the mandate was a question, a reading or an explanation — the answer is the whole of the work. It is wrong for any change to code, build files, configuration or tests, however small, and wrong whenever you are unsure: then declare `succeeded` and let the check run. Skipping is recorded as skipped, never as checked or met, and the person sees your reason, so the reason is required. Give it on the same line, after the name:\n\n```\nRESULT: done-unchecked the mandate was a question about the build; no file changed\n```\n\nWhere you are offered the tool `request_interactive_handoff`, assess first whether the task benefits from the loop's steps. If working interactively with the person is a better fit — a decision only they can make, or work that has become exploratory — call that tool with a short reason, then end your turn with a short account of where the work stands. Do this before you change files where you can. The person chooses; follow their choice. If they choose to continue in the loop, carry on with the step, and do not recommend the switch again in this run. Never write the recommendation as your outcome or ask for it only in your reply: the tool is the only way it is heard.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
       "role": {
-        "id": "project-work",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-work.role.md"
-        }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "limits": {
-        "maxMinutes": 15
-      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 15 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["succeeded", "done-unchecked", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["spec-error", "blocked"],
       "capabilities": ["suggest-interactive"],
-      "notes": "Since DSP-209 S5b this step may recommend continuing interactively through DSpatch's request_interactive_handoff tool, never through its reply text and never as its outcome; the run then holds for the person's explicit choice between continuing interactively (the run ends as handed over) and continuing in the loop (this step goes on in its own session and is not offered it again in the run). This records the vision's returning to chat (ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md), AGENT_BEHAVIOUR_AND_ORCHESTRATION.md §4 and mission decision 4 of DSP-209. The branch is the named verdict the reply declares (RESULT: succeeded, RESULT: done-unchecked with its reason after the name, or RESULT: unclear, or a first-line SPEC_ERROR / BLOCKED). A missing or contradictory name routes as unclear — that is cheaper than a false success. whenUndeclared is where that last sentence is now written down, and it is DSP-103: until 30 September 2026 this node got that route because the word unclear was one of two spellings the engine recognised, which was a routing decision taken by a spelling and stated nowhere in the drawing. Nothing is inferred from an outcome's name any more; this line is the whole of it, and renaming the outcome would now mean renaming it here too rather than silently changing where a non-answer goes. DSpatch's before-and-after snapshot is corroboration in the record, not this branch. `produces.required` is false on purpose, and it is the one place this small loop had to choose: this step's account is required by `check`, and `consumes` enforces it there, on the one path that needs it. Requiring it here would enforce it on every path — including `unclear`, `spec-error` and `blocked`, where the drawing already ends honestly at `not-established` or `stopped`, and where a required-result fault would replace a precise ending with \"establish what happened\" about a step that has already said.",
       "report": { "writtenBy": "self" },
       "produces": { "required": false, "form": "stored-result", "note": "Your account of what you established and what you did not. The checking step is a different agent with none of this conversation, and what you write here is the only thing it is given about your work." },
+      "notes": "Since DSP-209 S5b this step may recommend continuing interactively through DSpatch's request_interactive_handoff tool, never through its reply text and never as its outcome; the run then holds for the person's explicit choice between continuing interactively (the run ends as handed over) and continuing in the loop (this step goes on in its own session and is not offered it again in the run). This records the vision's returning to chat (ADAPTIVE_EXECUTION_AND_SHARED_CONTEXT.md), AGENT_BEHAVIOUR_AND_ORCHESTRATION.md §4 and mission decision 4 of DSP-209. The branch is the named verdict the reply declares (RESULT: succeeded, RESULT: done-unchecked with its reason after the name, or RESULT: unclear, or a first-line SPEC_ERROR / BLOCKED). A missing or contradictory name routes as unclear — that is cheaper than a false success. whenUndeclared is where that last sentence is now written down, and it is DSP-103: until 30 September 2026 this node got that route because the word unclear was one of two spellings the engine recognised, which was a routing decision taken by a spelling and stated nowhere in the drawing. Nothing is inferred from an outcome's name any more; this line is the whole of it, and renaming the outcome would now mean renaming it here too rather than silently changing where a non-answer goes. DSpatch's before-and-after snapshot is corroboration in the record, not this branch. `produces.required` is false on purpose, and it is the one place this small loop had to choose: this step's account is required by `check`, and `consumes` enforces it there, on the one path that needs it. Requiring it here would enforce it on every path — including `unclear`, `spec-error` and `blocked`, where the drawing already ends honestly at `not-established` or `stopped`, and where a required-result fault would replace a precise ending with \"establish what happened\" about a step that has already said.",
       "view": { "x": 360, "y": 60 }
     },
     {
       "id": "check",
       "kind": "agent",
       "label": "Check the work",
-      "purpose": "Establish independently whether the assignment was met. Discover how this project is checked and run those checks yourself where your tools can run commands - possibly several, possibly none if the assignment was only to read. Judge from real results, not from the work step's account. If the work can be fixed, say exactly what is wrong and declare rework; if it is met, declare met; if it cannot be met, declare not-met. Where your tools cannot run commands, do not say you ran anything. Do not ask the user to name a command.",
+      "purpose": "Establish independently whether the assignment was met. Discover how this project is checked and run those checks yourself where your tools can run commands - possibly several, possibly none if the assignment was only to read. Judge from real results, not from the work step's account. If the work can be fixed, say exactly what is wrong and declare rework; if it is met, declare met; if it cannot be met, declare not-met. Where your tools cannot run commands, do not say you ran anything. Do not ask the user to name a command.\n\nReply in prose, to the person who reads this run. They may not have read the role and should not have to.\n\nDSpatch lets a `met` stand only if a command recorded in this run completed on the code exactly as you leave it, or if the run changed no file. Run your checks on the code as it is, and do not change files.\n\n`met` means the assignment was met. `rework` means it was not met yet and the work step can fix it: list each finding concretely — the command you ran, what it showed, and what has to change — because your reply is the only thing the work step is given about what is wrong. `not-met` means it cannot be met as asked, or what is wrong is not something another round of work would fix; say why. `could-not-check` means you could not establish it — no identifiable check, a command you could not run, or a result you could not read. Use `could-not-check` rather than guessing. It is a real answer and not a failure of the run.\n\nDo not declare `limit-reached`. DSpatch routes that itself when the correction rounds are spent.\n\nIf the premise of the check is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the check — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
       "role": {
-        "id": "project-check",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-check.role.md"
-        }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "limits": {
-        "maxMinutes": 20
-      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 20 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["met", "rework", "not-met", "could-not-check"],
       "whenUndeclared": "could-not-check",
       "declaredFailures": ["spec-error", "blocked", "limit-reached"],
-      "notes": "This is an agent assignment, not a shell command DSpatch starts. A reading mandate may honestly need no build; that is a verdict the checking agent may reach, not a branch DSpatch takes by counting files. Its own session, so it did not watch the work happen: what it knows about the work is the mandate, this purpose, and the account `work` left, which is what `consumes` hands it. A missing or contradictory RESULT routes as could-not-check, and whenUndeclared above is where that is stated (DSP-103). It used to follow from the word could-not-check being one of two spellings the engine recognised; a third verdict named anything else would not have had the route, and nothing said so.",
       "report": { "writtenBy": "self" },
-      "consumes": ["work"],
       "produces": { "required": false, "form": "stored-result", "note": "Your verdict and findings. On rework they are the only thing the work step is given about what is wrong, so name each problem concretely: the command you ran, what it showed, and what has to change." },
+      "consumes": ["work"],
+      "notes": "This is an agent assignment, not a shell command DSpatch starts. A reading mandate may honestly need no build; that is a verdict the checking agent may reach, not a branch DSpatch takes by counting files. Its own session, so it did not watch the work happen: what it knows about the work is the mandate, this purpose, and the account `work` left, which is what `consumes` hands it. A missing or contradictory RESULT routes as could-not-check, and whenUndeclared above is where that is stated (DSP-103). It used to follow from the word could-not-check being one of two spellings the engine recognised; a third verdict named anything else would not have had the route, and nothing said so.",
       "view": { "x": 360, "y": 220 }
     },
     {
@@ -134,94 +124,17 @@
     }
   ],
   "edges": [
-    {
-      "id": "e-succeeded",
-      "from": "work",
-      "to": "check",
-      "when": { "on": "outcome", "outcome": "succeeded" },
-      "label": "work succeeded",
-      "notes": "Always hand a work step that declares succeeded to check. The checking agent decides what the assignment required."
-    },
-    {
-      "id": "e-unchecked",
-      "from": "work",
-      "to": "check-skipped",
-      "when": { "on": "outcome", "outcome": "done-unchecked" },
-      "skips": ["check"],
-      "label": "done, check skipped",
-      "notes": "DSP-209 S4. The work step's declared choice, with its reason after the name on its RESULT: line; the run journals check as skipped with that reason. Goes around check to its own terminal, so check cannot be reached on this route and the step's prompt is right that it is not run."
-    },
-    {
-      "id": "e-unclear",
-      "from": "work",
-      "to": "not-established",
-      "when": { "on": "outcome", "outcome": "unclear" },
-      "label": "work unclear"
-    },
-    {
-      "id": "e-spec",
-      "from": "work",
-      "to": "stopped",
-      "when": { "on": "declared-failure", "failure": "spec-error" },
-      "label": "spec-error"
-    },
-    {
-      "id": "e-blocked",
-      "from": "work",
-      "to": "stopped",
-      "when": { "on": "declared-failure", "failure": "blocked" },
-      "label": "blocked"
-    },
-    {
-      "id": "e-met",
-      "from": "check",
-      "to": "done",
-      "when": { "on": "outcome", "outcome": "met" },
-      "label": "assignment met"
-    },
-    {
-      "id": "e-not-met",
-      "from": "check",
-      "to": "not-met",
-      "when": { "on": "outcome", "outcome": "not-met" },
-      "label": "assignment not met"
-    },
-    {
-      "id": "e-rework",
-      "from": "check",
-      "to": "work",
-      "when": { "on": "outcome", "outcome": "rework" },
-      "label": "not met: back to work with findings",
-      "delivers": ["check"],
-      "notes": "DSP-145. The check's concrete findings go back to the work step, which continues its own session. Counted against maxReworkRounds; a spent bound goes to not-met through limit-reached."
-    },
-    {
-      "id": "e-check-limit",
-      "from": "check",
-      "to": "not-met",
-      "when": { "on": "declared-failure", "failure": "limit-reached" },
-      "label": "correction rounds spent"
-    },
-    {
-      "id": "e-could-not-check",
-      "from": "check",
-      "to": "not-established",
-      "when": { "on": "outcome", "outcome": "could-not-check" },
-      "label": "could not check"
-    },
-    {
-      "id": "e-check-spec",
-      "from": "check",
-      "to": "not-established",
-      "when": { "on": "declared-failure", "failure": "spec-error" },
-      "label": "spec-error while checking"
-    },
-    {
-      "id": "e-check-blocked",
-      "from": "check",
-      "to": "not-established",
-      "when": { "on": "declared-failure", "failure": "blocked" },
-      "label": "blocked while checking"
-    }
+    { "id": "e-succeeded", "from": "work", "to": "check", "when": { "on": "outcome", "outcome": "succeeded" }, "label": "work succeeded", "notes": "Always hand a work step that declares succeeded to check. The checking agent decides what the assignment required." },
+    { "id": "e-unchecked", "from": "work", "to": "check-skipped", "when": { "on": "outcome", "outcome": "done-unchecked" }, "skips": ["check"], "label": "done, check skipped", "notes": "DSP-209 S4. The work step's declared choice, with its reason after the name on its RESULT: line; the run journals check as skipped with that reason. Goes around check to its own terminal, so check cannot be reached on this route and the step's prompt is right that it is not run." },
+    { "id": "e-unclear", "from": "work", "to": "not-established", "when": { "on": "outcome", "outcome": "unclear" }, "label": "work unclear" },
+    { "id": "e-spec", "from": "work", "to": "stopped", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error" },
+    { "id": "e-blocked", "from": "work", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked" },
+    { "id": "e-met", "from": "check", "to": "done", "when": { "on": "outcome", "outcome": "met" }, "label": "assignment met" },
+    { "id": "e-not-met", "from": "check", "to": "not-met", "when": { "on": "outcome", "outcome": "not-met" }, "label": "assignment not met" },
+    { "id": "e-rework", "from": "check", "to": "work", "when": { "on": "outcome", "outcome": "rework" }, "delivers": ["check"], "label": "not met: back to work with findings", "notes": "DSP-145. The check's concrete findings go back to the work step, which continues its own session. Counted against maxReworkRounds; a spent bound goes to not-met through limit-reached." },
+    { "id": "e-check-limit", "from": "check", "to": "not-met", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "correction rounds spent" },
+    { "id": "e-could-not-check", "from": "check", "to": "not-established", "when": { "on": "outcome", "outcome": "could-not-check" }, "label": "could not check" },
+    { "id": "e-check-spec", "from": "check", "to": "not-established", "when": { "on": "declared-failure", "failure": "spec-error" }, "label": "spec-error while checking" },
+    { "id": "e-check-blocked", "from": "check", "to": "not-established", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "blocked while checking" }
   ]
 }

@@ -398,6 +398,16 @@ The status line says which levels are unsaved. **Save** writes the draft; **Disc
 
 **Moving from an earlier way of working.** When you bring over instructions from somewhere else, such as earlier VS Code agent definitions, old guidelines or a review checklist, discuss them with the chat a level at a time. Point the agent at the files, ask which rules still hold, and apply what you agree with. Its proposals name each instruction's source and say when it may be outdated. Nothing old is treated as current just because it exists.
 
+### Shared roles
+
+Every step of a workflow performs a **role**: a generic description of a responsibility, such as Implementer, Verifier or Work reviewer. DSpatch ships one catalog of shared roles, and every built-in workflow uses it, so an Implementer is the same Implementer in every graph. Select an agent node and the panel shows, under *The role it performs*, the role's name, identity and version (for example *Implementer · implementer v1 · DSpatch catalog*), how many nodes of the graph use it, the role's text, and below it the node's own task, the project's additions and the whole message the step is sent. Nodes that share a role share its instructions, not a conversation: each runs in its own session.
+
+- **What belongs where.** Put what this graph needs from a step in the node's task. Put your project's rules and documents in *Project instructions*: **All agent nodes**, **All nodes with this role** or **This node instance only** (that node on every visit). Leave the shared role as it is.
+- **Change a node's role** with *Change role…* and pick a shared role by its responsibility. In a project it is copied into `.dspatch/roles/` with its version. If additions for the old role no longer reach any node, *Project instructions* shows them so you can move them to another role or remove them; nothing moves on its own.
+- **Your own role.** *Make a project role from this…* starts from the current text under a new identity; saving writes `.dspatch/roles/<id>/v1.role.md`. Change it later with *New version…*: the old version stays as it is for every graph that uses it, and you choose which nodes use the new one. A shared DSpatch role is never changed from a project.
+- **Versions are pinned.** A graph keeps the version it names until you choose another; a run keeps the roles it started with.
+- **Older workflows** keep working. If a workflow in your project still uses roles from before the catalog, its graph panel offers *Upgrade to shared roles…*. It shows the mapping per node, what moves into the nodes' tasks, how your project additions move (and any conflicts), and every file it would change. Nothing changes until you apply it.
+
 ### Build or adapt a workflow
 
 **In conversation.** Ask the agent in the project chat for the workflow you want, for example *"a workflow that researches two approaches in parallel, lets me choose, then implements and tests the chosen one"*. The agent reads the existing graphs and their building blocks and answers with a proposal card: the graph's name and purpose and what applying it would write. **Open in editor** shows the proposed graph; **Apply** writes it; **Discard** writes nothing. A proposal never runs by itself, and Apply refuses to overwrite a graph that was changed on disk in the meantime.

@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { RequirementId, ResolvedRole, RoleReference, RoleResolver } from '../shared/loop-graph';
+import { catalogStatusOf, roleDigest } from './role-catalog-files';
 import { parseRoleSource, sectionBodies } from './role-source';
 
 /**
@@ -46,7 +47,7 @@ export function createFileRoleResolver(resourceRoot: string): RoleResolver {
   const cache = new Map<string, ResolvedRole | null>();
 
   return (reference: RoleReference): ResolvedRole | null => {
-    const key = `${reference.source.kind}\u0000${reference.source.path}`;
+    const key = `${reference.id}\u0000${reference.source.kind}\u0000${reference.source.path}\u0000${String(reference.version ?? '')}`;
     const cached = cache.get(key);
     if (cached !== undefined) {
       return cached;
@@ -69,9 +70,31 @@ function resolveOnce(root: string, reference: RoleReference): ResolvedRole | nul
   try {
     text = fs.readFileSync(requested, 'utf8');
   } catch {
+    // A catalog reference is no exception (DSP-231): its copy is where the graph says, at the
+    // resource root, or the reference resolves to nothing. A repository keeps its own copies.
     return null;
   }
   return resolveRoleText(text, reference, requested);
+}
+
+/**
+ * DSP-231: a `role-catalog` reference: read as a role source, then held to its identity, its version
+ * and the digest the catalogs list for it. The text is still returned when the check fails, so the
+ * editor can show what is there; validation refuses the graph on `catalog.status`.
+ */
+function resolveCatalogRole(text: string, reference: RoleReference, file: string): ResolvedRole | null {
+  const resolved = resolveRoleSource(text, reference);
+  if (resolved === null) return null;
+  const sha256 = roleDigest(text);
+  const status = catalogStatusOf(reference, { id: resolved.id, version: resolved.version }, sha256, file);
+  const { origin, title, ...catalog } = status;
+  return {
+    ...resolved,
+    sha256,
+    catalog,
+    ...(resolved.origin === undefined && origin !== undefined ? { origin } : {}),
+    ...(resolved.title === undefined && title !== undefined ? { title } : {}),
+  };
 }
 
 /**
@@ -80,8 +103,12 @@ function resolveOnce(root: string, reference: RoleReference): ResolvedRole | nul
  * reads the same once Apply has written it.
  */
 export function resolveRoleText(text: string, reference: RoleReference, requested: string): ResolvedRole | null {
+  if (reference.source.kind === 'role-catalog') {
+    return resolveCatalogRole(text, reference, requested);
+  }
   if (reference.source.kind === 'role-source') {
-    return resolveRoleSource(text, reference);
+    const resolved = resolveRoleSource(text, reference);
+    return resolved === null ? null : { ...resolved, sha256: roleDigest(text) };
   }
 
   const front = frontMatter(text);
@@ -141,6 +168,10 @@ function resolveRoleSource(text: string, reference: RoleReference): ResolvedRole
     summary: source.summary,
     ...(instructions === '' ? {} : { instructions }),
     ...(exportProblems.length === 0 ? {} : { exportProblems }),
+    ...(source.title === '' ? {} : { title: source.title }),
+    ...(source.version === undefined ? {} : { version: source.version }),
+    ...(source.origin === undefined ? {} : { origin: source.origin }),
+    ...(source.derivedFrom === undefined ? {} : { derivedFrom: source.derivedFrom }),
   };
 }
 

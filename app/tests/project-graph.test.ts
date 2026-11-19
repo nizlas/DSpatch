@@ -2,7 +2,7 @@
  * DSP-229: applying a bundled graph to a repository, its project instructions, and what steps
  * and parallel branches are sent. A synthetic project (AGENTS.md, architecture and testing
  * documents, a document outside docs/) and a template made from the Workshop example, whose
- * "maker" step and "crew" fan-out share the role maker. Simulated adapters only.
+ * "maker" step and "crew" fan-out share the role implementer (the shared catalog role since DSP-231). Simulated adapters only.
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -82,7 +82,7 @@ const INSTRUCTIONS: ProjectInstructions = {
   format: 'dspatch-project-instructions',
   formatVersion: 1,
   common: { text: 'COMMON: follow the repository rules.', documents: [{ path: 'AGENTS.md', purpose: 'the project rules', when: 'before starting' }] },
-  roles: { maker: { text: 'ROLE-MAKER: run npm test before you finish.', documents: [{ path: 'docs/TESTING.md', purpose: 'how tests are run', when: 'before finishing' }] } },
+  roles: { implementer: { text: 'ROLE-MAKER: run npm test before you finish.', documents: [{ path: 'docs/TESTING.md', purpose: 'how tests are run', when: 'before finishing' }] } },
   nodes: {
     maker: { text: 'NODE-MAKER: change only src/.', documents: [{ path: 'docs/ARCHITECTURE.md', purpose: 'module boundaries', when: 'before changing structure' }] },
     crew: { text: 'NODE-CREW: keep to your slice.', documents: [] },
@@ -109,11 +109,12 @@ test('applying creates a self-contained project graph, leaves the template as it
     '.dspatch/loops/orders-workflow.graph.json',
     '.dspatch/loops/orders-workflow.loop.json',
     '.dspatch/loops/orders-workflow.project.json',
-    '.dspatch/loops/roles/orders-workflow/workshop-assembler.role.md',
-    '.dspatch/loops/roles/orders-workflow/workshop-checker.role.md',
-    '.dspatch/loops/roles/orders-workflow/workshop-coordinator.role.md',
-    '.dspatch/loops/roles/orders-workflow/workshop-maker.role.md',
-    '.dspatch/loops/roles/orders-workflow/workshop-scout.role.md',
+    '.dspatch/roles/catalog.json',
+    '.dspatch/roles/coordinator/v1.role.md',
+    '.dspatch/roles/explorer/v1.role.md',
+    '.dspatch/roles/implementer/v1.role.md',
+    '.dspatch/roles/integrator/v1.role.md',
+    '.dspatch/roles/verifier/v1.role.md',
   ]);
   // A project workflow of this repository, found by discovery, loading on its own copied roles.
   const found = discoverLoopDefinitions([repository]).rows.find((candidate) => candidate.definition?.id === 'orders-workflow');
@@ -124,7 +125,9 @@ test('applying creates a self-contained project graph, leaves the template as it
   assert.equal(found.resourceRoot, repository);
   const loaded = loadLoopGraph(fs.readFileSync(found.graphPath ?? '', 'utf8'), { resolveRole: createFileRoleResolver(repository) });
   assert.ok(loaded.ok, JSON.stringify(loaded.ok ? [] : loaded.findings));
-  assert.ok(loaded.graph.nodes.every((node) => node.role === undefined || node.role.source.path.startsWith('.dspatch/loops/roles/orders-workflow/')));
+  // DSP-231: shared roles by identity and version, from the repository's own catalog copies.
+  assert.ok(loaded.graph.nodes.every((node) => node.role === undefined || (node.role.source.kind === 'role-catalog' && node.role.source.path.startsWith('.dspatch/roles/'))));
+  assert.ok(loaded.graph.nodes.every((node) => node.role === undefined || createFileRoleResolver(repository)(node.role)?.catalog?.status === 'listed'));
   assert.ok(!fs.readFileSync(found.filePath, 'utf8').includes(repository), 'no absolute path in the definition');
   // The template is untouched.
   for (const [file, text] of Object.entries(before)) {
@@ -161,13 +164,16 @@ test('the copy keeps its instructions when the template changes, and its referen
   const { root, row } = templateFolder();
   const repository = project();
   apply(repository, row);
-  // DSpatch is updated: the template's maker role changes.
-  const templateRole = path.join(root, '.dspatch/loops/roles/workshop-maker.role.md');
-  fs.writeFileSync(templateRole, fs.readFileSync(templateRole, 'utf8').replace('Make the change you are given', 'TEMPLATE CHANGED'));
+  // The template's copy of the implementer role changes: the repository keeps its own copy.
+  const templateRole = path.join(root, '.dspatch/roles/implementer/v1.role.md');
+  fs.writeFileSync(templateRole, fs.readFileSync(templateRole, 'utf8').replace('Carry out the work you are assigned', 'TEMPLATE CHANGED'));
   const resolve = createFileRoleResolver(repository);
-  const maker = resolve({ id: 'maker', source: { kind: 'role-source', path: '.dspatch/loops/roles/orders-workflow/workshop-maker.role.md' } });
-  assert.match(maker?.instructions ?? '', /Make the change you are given/);
+  const maker = resolve({ id: 'implementer', version: 1, source: { kind: 'role-catalog', path: '.dspatch/roles/implementer/v1.role.md' } });
+  assert.match(maker?.instructions ?? '', /Carry out the work you are assigned/);
   assert.doesNotMatch(maker?.instructions ?? '', /TEMPLATE CHANGED/);
+  assert.equal(maker?.catalog?.status, 'listed');
+  // And the edited template copy is now an edited copy of a published version: refused, not a variant.
+  assert.equal(createFileRoleResolver(root)({ id: 'implementer', version: 1, source: { kind: 'role-catalog', path: '.dspatch/roles/implementer/v1.role.md' } })?.catalog?.status, 'modified');
   // Moved elsewhere, the graph, its roles and its references still resolve.
   const moved = path.join(temp('dsp-moved-'), 'orders-kit');
   fs.cpSync(repository, moved, { recursive: true });
@@ -316,7 +322,7 @@ test('a step gets its role, then the common, role and step additions once, by th
   assert.match(maker, new RegExp(`repository root, which for this step is ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   // The preview a person reads is the very text in the prompt.
   const makerNode = graph.nodes.find((node) => node.id === 'maker')!;
-  const preview = projectInstructionsText(instructions.value, { nodeId: 'maker', nodeLabel: makerNode.label ?? 'maker', roleId: 'maker' }, { file: instructions.relativeFile, repositoryRoot: repository });
+  const preview = projectInstructionsText(instructions.value, { nodeId: 'maker', nodeLabel: makerNode.label ?? 'maker', roleId: 'implementer' }, { file: instructions.relativeFile, repositoryRoot: repository });
   assert.ok(maker.includes(preview));
   // The coordinator gets the common layer only.
   const coordinator = agent.prompts.get('coordinator')?.[0] ?? '';
@@ -379,7 +385,7 @@ test('the host applies, chooses and saves; recommendations reuse one inventory a
   assert.ok(options.kind === 'options' && options.templates.some((template) => template.key === row.filePath));
   const empty = { format: 'dspatch-project-instructions' as const, formatVersion: 1, common: { text: '', documents: [] }, roles: {}, nodes: {} };
   const planned = await methods({ kind: 'plan', templateKey: row.filePath, repository, name: 'Orders workflow', instructions: empty });
-  assert.ok(planned.kind === 'planned' && planned.files.length === 8);
+  assert.ok(planned.kind === 'planned' && planned.files.length === 9, 'graph, definition, instructions, five shared role copies and their index');
   assert.equal(discoverLoopDefinitions([repository]).rows.length, 0, 'a plan writes nothing');
   const applied = await methods({ kind: 'apply', templateKey: row.filePath, repository, name: 'Orders workflow', instructions: empty });
   assert.ok(applied.kind === 'applied');
@@ -444,14 +450,14 @@ test('a role edit reaches every step with the role and a step edit one step; two
   const onDisk = fs.readFileSync(instructionsPath, 'utf8');
   const first = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
   assert.deepEqual(first.unsaved, []);
-  assert.deepEqual(first.outline.nodes.filter((node) => node.roleId === 'maker').map((node) => node.id).sort(), ['crew', 'maker']);
+  assert.deepEqual(first.outline.nodes.filter((node) => node.roleId === 'implementer').map((node) => node.id).sort(), ['crew', 'maker']);
   const where = { file: first.instructionsFile, repositoryRoot: first.repository };
   const before = Object.fromEntries(first.outline.nodes.map((node) => [node.id, previewForStep(first.draft, first.outline, node.id, where)]));
 
   // "The panel" changes the role; "the window", working from the draft it last saw, changes one step.
-  const panel = viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'role:maker', section: { text: 'ROLE-MAKER-2: keep commits small.', documents: [] } }] }));
+  const panel = viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'role:implementer', section: { text: 'ROLE-MAKER-2: keep commits small.', documents: [] } }] }));
   const window = viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'node:scout', section: { text: 'NODE-SCOUT-2: notes in docs/notes only.', documents: [] } }] }));
-  assert.deepEqual([...window.unsaved].sort(), ['node:scout', 'role:maker'], 'neither edit overwrote the other');
+  assert.deepEqual([...window.unsaved].sort(), ['node:scout', 'role:implementer'], 'neither edit overwrote the other');
   assert.ok(window.revision > panel.revision);
   assert.equal(changes.length >= 2, true, 'every window is told');
   const after = Object.fromEntries(window.outline.nodes.map((node) => [node.id, previewForStep(window.draft, window.outline, node.id, where)]));
@@ -465,7 +471,7 @@ test('a role edit reaches every step with the role and a step edit one step; two
   }
   assert.equal(fs.readFileSync(instructionsPath, 'utf8'), onDisk, 'nothing is saved by editing');
   // The scope said before an edit.
-  assert.match(discussionContext(window, { nodeId: 'maker' }), /Applies to all 2 steps using/);
+  assert.match(discussionContext(window, { nodeId: 'maker' }), /Reaches all 2 nodes using/);
 });
 
 test('save writes the draft and the run reads exactly what the draft previewed; a run already started keeps its own', async () => {
@@ -550,7 +556,7 @@ test('the chat proposes through its tool; applying changes only the draft, and a
   });
   const tool = (name: string) => tools.find((each) => each.name === name)!;
   const read = await tool('read_project_instructions').execute({ graph: 'orders-workflow', step: 'maker' });
-  assert.ok(!read.isError && /ROLE-MAKER: run npm test/.test(read.text) && /Applies to all 2 steps using/.test(read.text), read.text);
+  assert.ok(!read.isError && /ROLE-MAKER: run npm test/.test(read.text) && /Reaches all 2 nodes using/.test(read.text), read.text);
   assert.doesNotMatch(read.text, new RegExp(AGENTS_SECRET), 'documents are named, never included');
 
   // Malformed: a level the graph lacks is refused and nothing is kept.
@@ -558,7 +564,7 @@ test('the chat proposes through its tool; applying changes only the draft, and a
   assert.ok(bad.isError && /no role "nobody"/.test(bad.text));
 
   const changes = JSON.stringify([
-    { level: 'role:maker', text: 'ROLE-MAKER: run npm test and npm run lint before you finish.', reason: 'Lint is required by CI.', sources: [{ path: '.github/copilot/agents/maker.agent.md', note: 'earlier agent definition; the lint rule is still in CI, the rest is outdated' }] },
+    { level: 'role:implementer', text: 'ROLE-MAKER: run npm test and npm run lint before you finish.', reason: 'Lint is required by CI.', sources: [{ path: '.github/copilot/agents/maker.agent.md', note: 'earlier agent definition; the lint rule is still in CI, the rest is outdated' }] },
     { level: 'node:scout', remove: true, reason: 'The scout no longer writes notes.' },
   ]);
   const proposed = await tool('propose_project_instructions').execute({ graph: 'orders-workflow', explanation: 'Bring the lint rule over.', changes });
@@ -566,27 +572,27 @@ test('the chat proposes through its tool; applying changes only the draft, and a
   let view = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
   const p1 = view.proposals.find((proposal) => proposal.id === 'p1')!;
   assert.equal(p1.turnRunId, 'turn-1');
-  assert.deepEqual(p1.changes.map((change) => [change.level, change.action, [...change.steps].sort()]), [['role:maker', 'change', ['crew', 'maker']], ['node:scout', 'remove', ['scout']]]);
+  assert.deepEqual(p1.changes.map((change) => [change.level, change.action, [...change.steps].sort()]), [['role:implementer', 'change', ['crew', 'maker']], ['node:scout', 'remove', ['scout']]]);
   assert.match(p1.changes[0]!.sources[0]!.note, /outdated/);
   assert.deepEqual(view.unsaved, [], 'proposing changes nothing');
 
   // A second proposal for the role, then the person edits the role by hand.
   turn = 'turn-2';
-  const second = await tool('propose_project_instructions').execute({ graph: 'orders-workflow', explanation: 'Shorter.', changes: JSON.stringify([{ level: 'role:maker', text: 'ROLE-MAKER: test.', reason: 'shorter' }]) });
+  const second = await tool('propose_project_instructions').execute({ graph: 'orders-workflow', explanation: 'Shorter.', changes: JSON.stringify([{ level: 'role:implementer', text: 'ROLE-MAKER: test.', reason: 'shorter' }]) });
   assert.ok(!second.isError);
-  viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'role:maker', section: { text: 'MY OWN ROLE TEXT', documents: [] } }] }));
+  viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'role:implementer', section: { text: 'MY OWN ROLE TEXT', documents: [] } }] }));
   const stale = await service.handle({ kind: 'proposalApply', definitionKey: key, proposalId: 'p2' });
-  assert.ok(stale.kind === 'refused' && /role:maker changed in the draft/.test(stale.problems.join(' ')), JSON.stringify(stale));
+  assert.ok(stale.kind === 'refused' && /role:implementer changed in the draft/.test(stale.problems.join(' ')), JSON.stringify(stale));
   view = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
-  assert.equal(view.draft.roles['maker']?.text, 'MY OWN ROLE TEXT', 'the newer manual edit is kept');
+  assert.equal(view.draft.roles['implementer']?.text, 'MY OWN ROLE TEXT', 'the newer manual edit is kept');
   assert.equal(view.proposals.find((proposal) => proposal.id === 'p2')?.status, 'stale');
 
   // p1 is stale for the role too; undo the manual edit and it applies whole.
   viewOf(await service.handle({ kind: 'draftDiscard', definitionKey: key }));
   const applied = viewOf(await service.handle({ kind: 'proposalApply', definitionKey: key, proposalId: 'p1' }));
-  assert.match(applied.draft.roles['maker']?.text ?? '', /npm run lint/);
+  assert.match(applied.draft.roles['implementer']?.text ?? '', /npm run lint/);
   assert.equal(applied.draft.nodes['scout'], undefined);
-  assert.deepEqual([...applied.unsaved].sort(), ['node:scout', 'role:maker']);
+  assert.deepEqual([...applied.unsaved].sort(), ['node:scout', 'role:implementer']);
   assert.equal(fs.readFileSync(instructionsPath, 'utf8'), onDisk, 'applying a proposal saves nothing');
   assert.equal(applied.proposals.find((proposal) => proposal.id === 'p1')?.status, 'applied');
 
@@ -604,7 +610,7 @@ test('the chat proposes through its tool; applying changes only the draft, and a
   assert.ok(again instanceof ProjectDraftStore);
   const restored = again.view(key);
   assert.ok(restored.ok);
-  assert.deepEqual([...restored.view.unsaved].sort(), ['node:scout', 'role:maker']);
+  assert.deepEqual([...restored.view.unsaved].sort(), ['node:scout', 'role:implementer']);
   assert.equal(again.proposalsFor('conv-1').length, 2);
 });
 

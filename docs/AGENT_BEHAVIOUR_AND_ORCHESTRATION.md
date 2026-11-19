@@ -75,7 +75,7 @@ The editor should let readers follow references to skills and governing document
 
 The initial editing interface should provide Markdown source text with a preview. A form field should exist only if it corresponds to a defined field in the source format. Descriptive prose does not need to be broken into a new schema to be presented well.
 
-Saving in the editor must update the canonical file. If several nodes use the same role, it must be clear that the change affects the shared role. Generated provider files must continue to be derived from the source. An ongoing run must retain the version of the instructions it started with; changes apply to subsequent calls according to an explicit versioning rule.
+Saving in the editor must update the canonical file. If several nodes use the same role, it must be clear that the change affects the shared role. Generated provider files must continue to be derived from the source. An ongoing run must retain the version of the instructions it started with; changes apply to subsequent calls according to an explicit versioning rule. Since DSP-231 that rule exists for DSpatch's runs: roles come from a shared catalog by identity and version, a published version is never edited, and a change is a new version a graph adopts explicitly ([ROLE_CATALOG.md](loop/ROLE_CATALOG.md)).
 
 ### Capabilities must be discoverable
 

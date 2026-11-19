@@ -1,0 +1,72 @@
+{
+  "format": "dspatch-role-catalog",
+  "formatVersion": 1,
+  "origin": "project",
+  "roles": [
+    {
+      "id": "coordinator",
+      "title": "Coordinator",
+      "summary": "Establish what an assignment means, set its direction and brief the step that does it, reconcile what comes back, and report to the person who started the work.",
+      "origin": "dspatch",
+      "versions": [
+        {
+          "version": 1,
+          "file": "coordinator/v1.role.md",
+          "sha256": "d5b8baa6a9518462f0ab5f023ef31b742af3480e7e925712672a94515c3ba54f"
+        }
+      ]
+    },
+    {
+      "id": "explorer",
+      "title": "Explorer",
+      "summary": "Locate and describe the existing material and behaviour an assignment needs, with precise references, and trace behaviour and its boundaries when asked.",
+      "origin": "dspatch",
+      "versions": [
+        {
+          "version": 1,
+          "file": "explorer/v1.role.md",
+          "sha256": "0a3b0d62db5a7bbfd54b531d3ca8af4743c78832b230c3ad424f5cca0f0ea394"
+        }
+      ]
+    },
+    {
+      "id": "implementer",
+      "title": "Implementer",
+      "summary": "Carry out an assigned piece of work in the project, usually a bounded change, check it in proportion to its risk, and report exactly what was done and what was not established.",
+      "origin": "dspatch",
+      "versions": [
+        {
+          "version": 1,
+          "file": "implementer/v1.role.md",
+          "sha256": "d3f7bb92c35fa9ef1f1be1bcb3697eacef19e2883ebc18d8accda7aba54e9348"
+        }
+      ]
+    },
+    {
+      "id": "integrator",
+      "title": "Integrator",
+      "summary": "Combine the results of work done in parallel branches into one whole in the working copy, resolve conflicts and open proposals, and establish whether the parts work together.",
+      "origin": "dspatch",
+      "versions": [
+        {
+          "version": 1,
+          "file": "integrator/v1.role.md",
+          "sha256": "dcca211e3ee255a370b0750aa31f6c4af1faede5743af8c1d50329605d94212e"
+        }
+      ]
+    },
+    {
+      "id": "verifier",
+      "title": "Verifier",
+      "summary": "Establish independently whether an assigned result meets what was asked, with evidence suited to it, and report what the evidence does and does not show.",
+      "origin": "dspatch",
+      "versions": [
+        {
+          "version": 1,
+          "file": "verifier/v1.role.md",
+          "sha256": "a34f5cb85c626307f46ef90f028b2107bde98ef76f5971fcb82836d3a525c34b"
+        }
+      ]
+    }
+  ]
+}

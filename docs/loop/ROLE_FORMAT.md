@@ -103,3 +103,9 @@ Roles that may write files get Edit, Write and Bash with no path limit; a narrow
 **On DSpatch's own path, every Claude Code answer is still `unknown`.** Each cell carries an explicit `whenDSpatchWalksTheRun` of *nothing has been run*, because no adapter opens a Claude Code session. Generating these files makes Claude Code usable for the external loop; it does not make it a runtime provider for DSpatch.
 
 **Targets are for export (DSP-219).** `targets`, target blocks and their checks govern generating agent files. DSpatch's own runs read a role's sections, whichever agent the chat chose, and a source whose only problems are with its targets or target blocks is still read for a run, with a notice; generation refuses it as before.
+
+<a id="catalog-fields"></a>
+
+## Catalog roles: version, origin, derivedFrom (DSP-231)
+
+A role published in a role catalog adds three front-matter fields: `version` (a whole number from 1), `origin` (`dspatch` for DSpatch's catalog, `project` for a repository's own) and, for a role made from another, `derivedFrom: <id>@<version>`. Its file is `<catalog>/<id>/v<version>.role.md` and is never edited; a change is a new version. The catalog's `catalog.json` lists each version's digest. The catalog is read by DSpatch's runs; `npm run roles:generate` reads only the top level of `docs/loop/roles/` and so still generates the external loop's agents from the `dspatch-*.role.md` sources, unchanged. See [ROLE_CATALOG.md](ROLE_CATALOG.md).

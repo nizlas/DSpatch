@@ -1900,3 +1900,61 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* DSP-231: a shared role's identity, its picker and editor, the upgrade, and additions that reach no node. */
+.role-identity {
+  margin: 4px 0 8px;
+  min-width: 0;
+}
+.role-identity__line {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.role-picker ul {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.role-picker li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.role-editor__text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.role-upgrade {
+  border-top: 1px solid #2c3540;
+  margin-top: 12px;
+  padding-top: 8px;
+  min-width: 0;
+}
+.role-upgrade__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.role-upgrade__table th,
+.role-upgrade__table td {
+  border-bottom: 1px solid #2c3540;
+  padding: 3px 4px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.role-upgrade__table select {
+  max-width: 100%;
+}
+.project-orphans {
+  border-left: 3px solid #e0b05a;
+  padding: 4px 8px;
+  margin: 6px 0;
+}
+.project-orphan select {
+  max-width: 100%;
+}

@@ -16,6 +16,7 @@ import {
   draftStatusLine,
   levelName,
   previewForStep,
+  roleLabel,
   scopeLine,
   sectionAt,
   staleChanges,
@@ -26,7 +27,7 @@ import {
   type ProjectInstructionProposal,
 } from '../shared/project-draft';
 import type { ProjectGraphAnswer } from '../shared/project-graph-bridge';
-import type { DocumentReference, InstructionSection, ProjectInstructions, ReferenceProblem } from '../shared/project-instructions';
+import { sectionIsEmpty, type DocumentReference, type InstructionSection, type ProjectInstructions, type ReferenceProblem } from '../shared/project-instructions';
 
 export interface ProjectDraftHandle {
   readonly view: ProjectDraftView | null;
@@ -236,7 +237,7 @@ export function LevelEditor({
     <details className={`project-level${unsaved ? ' project-level--unsaved' : ''}`} data-ev={`project-level-${level.replace(':', '-')}`} data-level={level} open={open}>
       <summary>
         <strong>{levelName(view.outline, level)}</strong>
-        {inherited === null ? <span className="tag">this step</span> : <span className="tag tag--inherited">{inherited}</span>}
+        {inherited === null ? <span className="tag">this node</span> : <span className="tag tag--inherited">{inherited}</span>}
         {unsaved ? <span className="tag tag--unsaved">unsaved</span> : null}
         <span className="muted"> {empty ? '— nothing yet' : `— ${section.text.trim() === '' ? 'no text' : `${String(section.text.trim().split('\n').length)} line(s)`}, ${String(section.documents.length)} document(s)`}</span>
       </summary>
@@ -458,6 +459,67 @@ export function useProjectProposals(conversationId: string | null): readonly Pro
  * With no step: the common instructions and where each level has additions. For a built-in
  * workflow with no project instructions: the way to make it the project's own.
  */
+/**
+ * DSP-231: additions for a role no node of the graph uses any more — after a node's role was changed,
+ * say. They are shown and handled here, explicitly: moved to a role the graph uses, or removed. They
+ * never follow a role on their own, and a save that would keep them is refused.
+ */
+function OrphanedAdditions({ handle }: { readonly handle: ProjectDraftHandle }): React.JSX.Element | null {
+  const { view, draft } = handle;
+  const [target, setTarget] = useState<Record<string, string>>({});
+  if (view === null || draft === null) return null;
+  const used = new Set(view.outline.nodes.flatMap((node) => (node.roleId === null ? [] : [node.roleId])));
+  const orphaned = Object.keys(draft.roles).filter((id) => !used.has(id) && !sectionIsEmpty(draft.roles[id]));
+  if (orphaned.length === 0) return null;
+  const roles = view.outline.roles.filter((role) => used.has(role.id));
+  return (
+    <div className="project-orphans" data-ev="project-orphans">
+      <div className="setting-name">Additions that reach no node</div>
+      {orphaned.map((id) => {
+        const chosen = target[id] ?? roles[0]?.id ?? '';
+        const section = sectionAt(draft, `role:${id}`);
+        return (
+          <div key={id} className="project-orphan" data-ev="project-orphan" data-role={id}>
+            <p className="muted">
+              The additions for all nodes with the role <code>{id}</code> ({sectionSummary(section)}) reach no node: no node of this graph uses that role now.
+              Move them to a role the graph uses, or remove them. Saving is refused while they stay here.
+            </p>
+            <span className="section-buttons">
+              <select aria-label="Move to role" data-ev="project-orphan-target" value={chosen} onChange={(event) => setTarget({ ...target, [id]: event.target.value })}>
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {roleLabel(view.outline, role.id)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                data-ev="project-orphan-move"
+                disabled={chosen === ''}
+                onClick={() =>
+                  handle.edit((value) => {
+                    const into = sectionAt(value, `role:${chosen}`);
+                    const joined = {
+                      text: [into.text.trim(), section.text.trim()].filter((part) => part !== '').join('\n\n'),
+                      documents: [...into.documents, ...section.documents.filter((doc) => !into.documents.some((existing) => existing.path === doc.path))],
+                    };
+                    return withSection(withSection(value, `role:${chosen}`, joined), `role:${id}`, { text: '', documents: [] });
+                  })
+                }
+              >
+                Move to this role
+              </button>
+              <button type="button" data-ev="project-orphan-remove" onClick={() => handle.edit((value) => withSection(value, `role:${id}`, { text: '', documents: [] }))}>
+                Remove
+              </button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ProjectInstructionsSection({
   handle,
   nodeId,
@@ -516,13 +578,15 @@ export function ProjectInstructionsSection({
       <DraftStatus handle={handle} />
       {view === null ? null : node !== null ? (
         <>
-          <LevelEditor handle={handle} level="common" inherited="inherited from the project" open={false} />
-          {node.roleId === null ? null : <LevelEditor handle={handle} level={`role:${node.roleId}`} inherited={`inherited from the role ${node.roleId}`} open={false} />}
+          <LevelEditor handle={handle} level="common" inherited="inherited by every agent node" open={false} />
+          {node.roleId === null ? null : <LevelEditor handle={handle} level={`role:${node.roleId}`} inherited={`inherited by every node with this role`} open={false} />}
           <LevelEditor handle={handle} level={`node:${node.id}`} inherited={null} open />
+          <OrphanedAdditions handle={handle} />
         </>
       ) : (
         <>
-          <LevelEditor handle={handle} level="common" inherited="every step" open />
+          <LevelEditor handle={handle} level="common" inherited="every agent node" open />
+          <OrphanedAdditions handle={handle} />
           <ul className="project-panel__levels" data-ev="project-panel-levels">
             {view.outline.roles.map((role) => (
               <li key={role.id}>
@@ -537,7 +601,7 @@ export function ProjectInstructionsSection({
                 </li>
               ))}
           </ul>
-          <p className="muted">Select a step on the canvas to edit its role's and its own additions.</p>
+          <p className="muted">Select a node on the canvas to edit the additions for its role and for that node alone.</p>
         </>
       )}
       <span className="section-buttons">

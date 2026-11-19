@@ -1,0 +1,53 @@
+{
+  "format": "dspatch-project-instructions",
+  "formatVersion": 1,
+  "common": {
+    "text": "This is DSpatch's own repository. Every rule in AGENTS.md applies, its verification policy included: the smallest relevant check of the concrete change, Niclas's own manual trials, and no broad suites, window trials, platform matrices or extra CI runs unless he asks or a concrete risk needs them. Niclas's explicit decisions govern the vision and the architecture; a change to the architecture, a control boundary, the permission model or the division of responsibility needs his decision. Maintained repository content is in English.",
+    "documents": [
+      {
+        "path": "AGENTS.md",
+        "purpose": "How work on DSpatch is done: project language, governing documents, design conformance and the verification policy",
+        "when": "before starting"
+      },
+      {
+        "path": "docs/VISION.md",
+        "purpose": "The governing source for product direction",
+        "when": "when the work touches product direction or scope"
+      },
+      {
+        "path": "BACKLOG.md",
+        "purpose": "Development direction, task statuses and the start order",
+        "when": "when planning or recording a task"
+      },
+      {
+        "path": "docs/AGENT_BEHAVIOUR_AND_ORCHESTRATION.md",
+        "purpose": "Where a behaviour is defined: a role's instructions, a node's configuration, the graph's connections or the engine's rules",
+        "when": "when the work concerns how DSpatch's agents or loops behave"
+      },
+      {
+        "path": "docs/DEVELOPMENT_LOOP.md",
+        "purpose": "Proportionate verification and keeping the test suite worth running",
+        "when": "before choosing, adding or removing a check"
+      }
+    ]
+  },
+  "roles": {
+    "planner": {
+      "text": "Use DSP-1 to DSP-6 as examples of concrete value, ordering and assessable criteria rather than as a template. Keep usability and code understanding central, and do not make a large agent platform a prerequisite for initial value.",
+      "documents": []
+    },
+    "implementer": {
+      "text": "Keep provider calls behind the adapter, common actions visible and errors understandable. A chat task is not a mandate to implement all of Maestro. `npm run test:list` in `app/` names the test groups; run the targeted tests that reach the change with `node --import ./scripts/ts-resolve.mjs --test tests/<file>.test.ts`, and the type check (`npm run -s typecheck`) where the change warrants it. A text, CSS or layout change normally needs no new test: check it and leave its look to Niclas.",
+      "documents": []
+    },
+    "verifier": {
+      "text": "Where the brief names a candidate snapshot, check its content ID with `scripts/loop_snapshot.py` before running anything; if the working copy does not match, the coordinator must explain the change and identify the correct candidate before verification continues. `npm run test:list` in `app/` names the test groups. Leave presentation to Niclas's assessment and say what he should look at.",
+      "documents": []
+    },
+    "work-reviewer": {
+      "text": "Judge the result against the governing decisions as well as code quality and test evidence, and report a departure from decided design as a finding. Your acceptance is not Niclas's UX acceptance.",
+      "documents": []
+    }
+  },
+  "nodes": {}
+}

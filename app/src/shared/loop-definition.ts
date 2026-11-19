@@ -58,7 +58,8 @@ export interface ProjectGraphOrigin {
   readonly appVersion: string;
   /** SHA-256 of the template's graph text, and of each role source as copied. */
   readonly graphSha256: string;
-  readonly roles: readonly { readonly id: string; readonly from: string; readonly to: string; readonly sha256: string }[];
+  /** DSP-231: a catalog role carries its `version`; its copy is the repository's, shared by every project graph in it. */
+  readonly roles: readonly { readonly id: string; readonly from: string; readonly to: string; readonly sha256: string; readonly version?: number }[];
   readonly appliedAtUtc: string;
 }
 

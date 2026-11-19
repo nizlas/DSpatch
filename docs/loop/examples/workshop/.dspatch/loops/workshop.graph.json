@@ -49,7 +49,8 @@
       "purpose": "Decide how the request is done. Choose make for a change, scout for a question to answer first, or stop when it cannot be done.",
       "role": {
         "id": "coordinator",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-coordinator.role.md" }
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/coordinator/v1.role.md" }
       },
       "outcomes": ["make", "scout", "stop", "split"],
       "decides": ["size", "review"],
@@ -62,8 +63,9 @@
       "label": "Maker",
       "purpose": "Make the change the coordinator assigned and run its check.",
       "role": {
-        "id": "maker",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-maker.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/implementer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "small" }, { "id": "medium" }, { "id": "large" }], "default": "medium", "chosenBy": "size" },
       "produces": { "required": true, "form": "stored-result" },
@@ -75,8 +77,9 @@
       "label": "Scout",
       "purpose": "Answer the question the coordinator assigned from the existing material, with where you found it.",
       "role": {
-        "id": "scout",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-scout.role.md" }
+        "id": "explorer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/explorer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "medium" }, { "id": "large" }], "default": "medium", "chosenBy": "size" },
       "produces": { "required": true, "form": "stored-result" },
@@ -88,8 +91,9 @@
       "label": "Quick check",
       "purpose": "Check the work against the request and its own check. Choose pass or fix.",
       "role": {
-        "id": "checker",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-checker.role.md" }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/verifier/v1.role.md" }
       },
       "outcomes": ["pass", "fix"],
       "consumes": ["maker"],
@@ -101,8 +105,9 @@
       "label": "Deep check",
       "purpose": "Check the design and the correctness of the work, and run the checks that show it works. Choose pass or fix.",
       "role": {
-        "id": "checker",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-checker.role.md" }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/verifier/v1.role.md" }
       },
       "outcomes": ["pass", "fix"],
       "view": { "x": 443, "y": 466 }
@@ -127,8 +132,9 @@
       "label": "Crew: parallel parts",
       "purpose": "Do your slice of the work in your own branch, inside the paths your slice owns, and run your slice's check. Report what you changed, the checks you ran and their results, what you could not do, and any open decision about a shared contract. On a later visit you are given the integrator's findings: act on those that concern your slice.",
       "role": {
-        "id": "maker",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-maker.role.md" }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/implementer/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "small" }, { "id": "medium" }, { "id": "large" }], "default": "medium", "chosenBy": "size" },
       "declaredFailures": ["branch-failed"],
@@ -143,8 +149,9 @@
       "label": "Assembler",
       "purpose": "Combine the branches into the working copy: read each branch's result and ending, its open decisions and the messages between the branches; check each against the shared contracts; merge the temporary branches in the order listed, resolve conflicts and name each merge and resolution; run the checks that show the parts work together. A merge is not proof that they do. Choose integrated only when every branch finished and was combined and checked and no contract proposal is left open. Choose rework, with concrete findings per branch, when the branches can fix what is wrong in another round. Choose needs-decision when a branch failed or was cancelled, a shared contract needs a decision, or the work must be split differently or done in sequence; name each such branch and where its work is kept. Never delete a temporary branch.",
       "role": {
-        "id": "assembler",
-        "source": { "kind": "role-source", "path": ".dspatch/loops/roles/workshop-assembler.role.md" }
+        "id": "integrator",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": ".dspatch/roles/integrator/v1.role.md" }
       },
       "model": { "policy": "select", "options": [{ "id": "steady", "modelClass": "medium" }], "default": "steady" },
       "outcomes": ["integrated", "rework", "needs-decision"],

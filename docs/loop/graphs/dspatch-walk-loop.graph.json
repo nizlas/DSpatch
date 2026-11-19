@@ -38,15 +38,19 @@
       "kind": "agent",
       "label": "Plan the walks",
       "purpose": "Read the two revisions and plan the walks: which behaviours or questions they follow, the steps and the one code place each shows, how each step is reached, and a brief per step for the writer. On a later visit you are given the reviewer's structural findings: change only what they concern.",
-      "role": { "id": "walk-planner", "source": { "kind": "role-source", "path": "docs/loop/roles/review/walk-planner.role.md" } },
+      "role": {
+        "id": "walk-planner",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/walk-planner/v1.role.md" }
+      },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 30 },
       "outcomes": ["planned", "replanned"],
       "whenUndeclared": "planned",
       "declaredFailures": ["blocked"],
-      "notes": "planned on the first visit, replanned on a visit after the reviewer sent the plan back: the two differ only in what the edge to the writer delivers, since the first visit has no findings to hand on. The executor states the outcome from the visit; nothing is read from the planner's prose.",
       "report": { "writtenBy": "self" },
       "produces": { "required": false, "form": "stored-result", "note": "The plan as JSON: walks, steps, places and briefs. The writer and the reviewer are given it as a stored result. Not required here, as in the chat loop: the writer's consumes enforces it on the one path that needs it, and the blocked route ends honestly at stopped instead of as a missing-result fault." },
+      "notes": "planned on the first visit, replanned on a visit after the reviewer sent the plan back: the two differ only in what the edge to the writer delivers, since the first visit has no findings to hand on. The executor states the outcome from the visit; nothing is read from the planner's prose.",
       "view": { "x": 120, "y": 60 }
     },
     {
@@ -54,15 +58,19 @@
       "kind": "agent",
       "label": "Write the steps",
       "purpose": "Explain each step of the plan in the chosen profile, beside its code, one step per call in your own session, with the whole plan and your own reading of the code. On a later visit you are given the reviewer's findings about the texts, or a changed plan: write again only the steps they concern.",
-      "role": { "id": "walk-writer", "source": { "kind": "role-source", "path": "docs/loop/roles/review/walk-writer.role.md" } },
+      "role": {
+        "id": "walk-writer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/walk-writer/v1.role.md" }
+      },
       "model": { "policy": "inherit" },
       "limits": { "maxMinutes": 60 },
       "outcomes": ["written"],
       "whenUndeclared": "written",
-      "notes": "One call of the drawing, many provider turns: the executor sends one turn per step and keeps the session, so a later step is written knowing the earlier ones. A turn that fails ends the run as a runtime fault; nothing is resent.",
       "report": { "writtenBy": "self" },
-      "consumes": ["plan"],
       "produces": { "required": true, "form": "stored-result", "note": "Every step's text, by step id: the first part and the deepening after the marker." },
+      "consumes": ["plan"],
+      "notes": "One call of the drawing, many provider turns: the executor sends one turn per step and keeps the session, so a later step is written knowing the earlier ones. A turn that fails ends the run as a runtime fault; nothing is resent.",
       "view": { "x": 360, "y": 60 }
     },
     {
@@ -70,16 +78,20 @@
       "kind": "agent",
       "label": "Review the walks",
       "purpose": "Read the finished walks as the person will, check them against the code, and judge whether this reader can follow the course and understand what the steps show. Accept them, or name concrete shortcomings: structural ones for the planner, explanation ones for the writer. On your second visit, after the one correction round, give the final assessment and ask for nothing more.",
-      "role": { "id": "walk-reviewer", "source": { "kind": "role-source", "path": "docs/loop/roles/review/walk-reviewer.role.md" } },
+      "role": {
+        "id": "walk-reviewer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/walk-reviewer/v1.role.md" }
+      },
       "model": { "policy": "inherit" },
-      "limits": { "maxMinutes": 30, "maxReworkRounds": 1 },
+      "limits": { "maxReworkRounds": 1, "maxMinutes": 30 },
       "outcomes": ["accepted", "rework-plan", "rework-text", "objections"],
       "whenUndeclared": "accepted",
       "declaredFailures": ["limit-reached"],
-      "notes": "The outcome comes from the reviewer's JSON verdict and the kinds of its findings: any structural finding sends the plan back, otherwise the texts. On the second visit the executor asks for a final assessment and reads rework as objections; should the verdict still route a rework, maxReworkRounds 1 is spent and the engine routes limit-reached. whenUndeclared accepted: an unreadable answer is recorded as such in the result and does not start a round about nothing.",
       "report": { "writtenBy": "self" },
-      "consumes": ["plan", "write"],
       "produces": { "required": true, "form": "stored-result", "note": "The assessment, the verdict and the findings, each with its steps, what falls short, why it matters and what in the code shows it." },
+      "consumes": ["plan", "write"],
+      "notes": "The outcome comes from the reviewer's JSON verdict and the kinds of its findings: any structural finding sends the plan back, otherwise the texts. On the second visit the executor asks for a final assessment and reads rework as objections; should the verdict still route a rework, maxReworkRounds 1 is spent and the engine routes limit-reached. whenUndeclared accepted: an unreadable answer is recorded as such in the result and does not start a round about nothing.",
       "view": { "x": 600, "y": 60 }
     },
     {
@@ -108,14 +120,14 @@
     }
   ],
   "edges": [
-    { "id": "e-planned", "from": "plan", "to": "write", "when": { "on": "outcome", "outcome": "planned" }, "label": "planned", "delivers": ["plan"] },
-    { "id": "e-replanned", "from": "plan", "to": "write", "when": { "on": "outcome", "outcome": "replanned" }, "label": "replanned after findings", "delivers": ["plan", "review"], "notes": "The writer is given the new plan and the findings that caused it, so it writes again only the steps that changed or were found wanting." },
+    { "id": "e-planned", "from": "plan", "to": "write", "when": { "on": "outcome", "outcome": "planned" }, "delivers": ["plan"], "label": "planned" },
+    { "id": "e-replanned", "from": "plan", "to": "write", "when": { "on": "outcome", "outcome": "replanned" }, "delivers": ["plan", "review"], "label": "replanned after findings", "notes": "The writer is given the new plan and the findings that caused it, so it writes again only the steps that changed or were found wanting." },
     { "id": "e-blocked", "from": "plan", "to": "stopped", "when": { "on": "declared-failure", "failure": "blocked" }, "label": "could not plan" },
     { "id": "e-written", "from": "write", "to": "review", "when": { "on": "outcome", "outcome": "written" }, "label": "written" },
     { "id": "e-accepted", "from": "review", "to": "delivered", "when": { "on": "outcome", "outcome": "accepted" }, "label": "accepted" },
     { "id": "e-objections", "from": "review", "to": "delivered-with-objections", "when": { "on": "outcome", "outcome": "objections" }, "label": "objections remain" },
-    { "id": "e-rework-plan", "from": "review", "to": "plan", "when": { "on": "outcome", "outcome": "rework-plan" }, "label": "structure: back to the planner", "delivers": ["review"], "notes": "Counted against maxReworkRounds." },
-    { "id": "e-rework-text", "from": "review", "to": "write", "when": { "on": "outcome", "outcome": "rework-text" }, "label": "explanations: back to the writer", "delivers": ["plan", "review"], "notes": "Counted against maxReworkRounds." },
+    { "id": "e-rework-plan", "from": "review", "to": "plan", "when": { "on": "outcome", "outcome": "rework-plan" }, "delivers": ["review"], "label": "structure: back to the planner", "notes": "Counted against maxReworkRounds." },
+    { "id": "e-rework-text", "from": "review", "to": "write", "when": { "on": "outcome", "outcome": "rework-text" }, "delivers": ["plan", "review"], "label": "explanations: back to the writer", "notes": "Counted against maxReworkRounds." },
     { "id": "e-limit", "from": "review", "to": "delivered-with-objections", "when": { "on": "declared-failure", "failure": "limit-reached" }, "label": "correction round spent" }
   ]
 }

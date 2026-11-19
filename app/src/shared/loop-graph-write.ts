@@ -105,7 +105,7 @@ const KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
     'notes',
     'view',
   ],
-  '/nodes/*/role': ['id', 'source'],
+  '/nodes/*/role': ['id', 'version', 'source'],
   '/nodes/*/role/source': ['kind', 'path'],
   // DSP-209 S19: a `select` policy's options and default follow the older fields, so a graph
   // without them is written exactly as before.

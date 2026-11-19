@@ -140,10 +140,11 @@ import { ModelClassDialog } from './ModelClassDialog';
 import { ProjectGraphWindow, type ProjectWindowMode } from './ProjectGraphWindow';
 import { ProjectInstructionsSection, useProjectDraft, type ProjectDraftHandle } from './ProjectInstructionsPanel';
 import { runningStep, stepStanding } from '../shared/loop-activity';
-import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind, type BriefPart } from '../shared/loop-chat';
+import { BRIEF_EXCLUSIONS, briefParts, chatRoleTextOf, nodeHelpLabel, nodeHelpText, requiredForKind, type BriefPart } from '../shared/loop-chat';
 import { describeVisitChoices } from '../shared/loop-choices';
 import { describeSplitInstructions } from '../shared/loop-split-instructions';
 import { projectInstructionsText, type ProjectInstructions } from '../shared/project-instructions';
+import { RoleIdentity, RoleUpgradeSection } from './RoleCatalogControls';
 import { ChoiceSections, ParallelSectionPanel, ParallelSections, SplitInstructionsPreview } from './GraphSectionForms';
 import { successRoutesOf } from '../shared/loop-results';
 import {
@@ -3396,7 +3397,22 @@ export function LoopEditor(): React.JSX.Element {
               onChangeTarget={changeTarget}
               onChange={(next) => apply(next)}
               onSelect={(target) => setSelection(target)}
-              projectSection={projectSection(null)}
+              projectSection={
+                <>
+                  {/* DSP-231: a workspace graph that still uses legacy roles is offered a reviewable upgrade. */}
+                  {file !== null && file.preview === null && file.definition !== null && shownChoice?.display.group !== 'built-in' ? (
+                    <RoleUpgradeSection
+                      definitionKey={file.definition.path}
+                      dirty={dirty}
+                      onApplied={(note) => {
+                        setNote(note);
+                        void open({ kind: 'definition', path: file.definition?.path ?? '' });
+                      }}
+                    />
+                  ) : null}
+                  {projectSection(null)}
+                </>
+              }
             />
           )}
           </fieldset>
@@ -3874,10 +3890,7 @@ function NodeInspector({
   const inherited = requirements.filter((standing) => standing.fromRole);
   const parts = briefParts(node, {
     entryId: graph.entry,
-    role:
-      role === null
-        ? null
-        : { id: role.id, sourcePath: role.sourcePath, instructions: role.instructions ?? null },
+    role: role === null ? null : chatRoleTextOf(role),
     workingRootCount: null,
     producedBy: (id) => {
       const other = nodeById(graph, id);
@@ -4048,6 +4061,8 @@ function NodeInspector({
               </button>
             )}
           </h3>
+          {/* DSP-231: which shared definition this is, and the explicit ways to change it. */}
+          <RoleIdentity graph={graph} node={node} role={role} resourceRoot={resourceRoot} onGraphChange={onGraphChange} onNote={onNote} />
           {node.role === undefined ? (
             <>
               <p className="muted">

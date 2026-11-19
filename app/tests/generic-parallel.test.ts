@@ -21,7 +21,7 @@ import type { ChatAdapter } from '../src/main/chat-service';
 import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { runLiveGraph } from '../src/main/loop-live-run';
 import { branchRows } from '../src/shared/branch-presentation';
-import { chatPromptFor, skippingRoutesOf } from '../src/shared/loop-chat';
+import { chatRoleTextOf, chatPromptFor, skippingRoutesOf } from '../src/shared/loop-chat';
 import type { LoopGraph, RunProvider } from '../src/shared/loop-graph';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import { createMemoryResultStore } from '../src/shared/loop-results';
@@ -191,8 +191,8 @@ test('each branch runs as its own capability with its own choices; the strongest
   });
   assert.equal(result.status, 'completed', result.fault?.detail ?? '');
   const [a, b] = ['a', 'b'].map((id) => branchCalls(seen).find((item) => item.instance?.sliceId === id)!);
-  assert.equal(a?.node.role?.id, 'generic-implementer');
-  assert.equal(b?.node.role?.id, 'generic-researcher');
+  assert.equal(a?.node.role?.id, 'implementer');
+  assert.equal(b?.node.role?.id, 'researcher');
   assert.equal(a?.node.id, 'branches', 'a branch stays the fan-out node\'s instance');
   assert.equal(a?.choices?.['class']?.value, 'small');
   assert.equal(b?.choices?.['class']?.value, 'large');
@@ -200,8 +200,8 @@ test('each branch runs as its own capability with its own choices; the strongest
   assert.notEqual(a?.instance?.workspacePath, b?.instance?.workspacePath);
   const started = entries.filter((entry) => entry.kind === 'branch-started');
   assert.deepEqual(started.map((entry) => [entry.data?.['sliceId'], entry.data?.['runsAs'], entry.data?.['roleId'], entry.data?.['modelClass'], entry.data?.['model']]), [
-    ['a', 'branches', 'generic-implementer', 'small', 'model-small'],
-    ['b', 'researcher', 'generic-researcher', 'large', 'model-large'],
+    ['a', 'branches', 'implementer', 'small', 'model-small'],
+    ['b', 'researcher', 'researcher', 'large', 'model-large'],
   ]);
   // Joined: thorough, so the integrated work takes design QA and the thorough review. The class
   // does not join (DSP-227): the integrator keeps the class its own policy takes, the lead's.
@@ -223,8 +223,8 @@ test('each branch runs as its own capability with its own choices; the strongest
   assert.deepEqual(mark?.badge, { full: 'S·L', short: 'SL' });
   const rows = branchRows(branchViewsFromJournal('r', entries), 'branches');
   assert.deepEqual(rows.map((row) => [row.sliceId, row.role, row.modelClass]), [
-    ['a', 'role generic-implementer', 'Small'],
-    ['b', 'role generic-researcher, as researcher', 'Large'],
+    ['a', 'role implementer', 'Small'],
+    ['b', 'role researcher, as researcher', 'Large'],
   ]);
 });
 
@@ -462,7 +462,8 @@ for (const provider of ['claude', 'cursor'] as const) {
           step,
           role: (() => {
             const resolved = node.role === undefined ? null : resolveRole(node.role);
-            return resolved === null ? null : { id: resolved.id, sourcePath: resolved.sourcePath, instructions: resolved.instructions ?? null };
+            // As the host builds it (DSP-231: with a catalog role's title and version).
+            return resolved === null ? null : chatRoleTextOf(resolved);
           })(),
           skipping: skippingRoutesOf(graph, node.id),
         }),
@@ -479,8 +480,8 @@ for (const provider of ['claude', 'cursor'] as const) {
     assert.equal(agent.models.get(sessionOf('a')), 'model-small');
     assert.equal(agent.models.get(sessionOf('b')), 'model-large');
     const [promptA, promptB] = [agent.prompts.get('branch:a')?.[0] ?? '', agent.prompts.get('branch:b')?.[0] ?? ''];
-    assert.match(promptA, /Implement a bounded change/);
-    assert.match(promptB, /role "generic-researcher"/);
+    assert.match(promptA, /Carry out the work you are assigned/);
+    assert.match(promptB, /role "Researcher" \(researcher, version 1 from DSpatch\u2019s role catalog\)/);
     assert.doesNotMatch(promptA, /Model class: large/);
     assert.match(promptA, /Model class: small/);
     assert.match(promptB, /Model class: large/);
@@ -500,7 +501,7 @@ for (const provider of ['claude', 'cursor'] as const) {
     );
     // The integrator is given every branch's result, the open proposal and the delivery of each message.
     const integratorPrompt = agent.prompts.get('integrator')?.[0] ?? '';
-    assert.match(integratorPrompt, /Combine the results of work done in parallel branches/);
+    assert.match(integratorPrompt, /Own the combined result. Several branches did their parts/);
     assert.match(integratorPrompt, /## Open proposals for the integrator[\s\S]*contract-change from b to integrator/);
     assert.match(integratorPrompt, /finding from a to b[^\n]*delivered to b; acknowledged by b/);
     assert.match(integratorPrompt, /## b[\s\S]*Open decision/);

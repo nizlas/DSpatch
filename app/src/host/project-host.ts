@@ -63,6 +63,7 @@ import {
 import {
   boundedPathList,
   chatPromptFor,
+  chatRoleTextOf,
   skippingRoutesOf,
   describeChosenLoopBinding,
   lookupFromGraph,
@@ -149,6 +150,7 @@ import {
   resolvedRolesWith,
 } from '../main/loop-graph-open';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
+import { setInstalledRoleCatalogRoot } from '../main/role-catalog-files';
 import { openedFromProposal } from './graph-proposal-preview';
 import { type LiveInspection, type SteerableStep } from '../main/loop-live';
 import { uncertainLoopWork, WORKING_COPY_LOCK } from '../main/working-copy-lock';
@@ -3580,7 +3582,13 @@ function registerLoopMethods(): void {
               prompt: reply.prompt,
               ...(reply.role === null
                 ? {}
-                : { roleId: reply.role.id, roleSourcePath: reply.role.sourcePath }),
+                : {
+                    roleId: reply.role.id,
+                    roleSourcePath: reply.role.sourcePath,
+                    // DSP-231: the catalog version the step was given; the run-started entry's
+                    // roles carry each role's digest, read once when the run started.
+                    ...(reply.role.version === undefined ? {} : { roleVersion: reply.role.version }),
+                  }),
               // DSP-79 #1. Two consecutive agent nodes now run in two sessions, and
               // this is the line in the record where a reader sees that they did.
               sessionId: reply.sessionId,
@@ -4170,11 +4178,7 @@ function chatRoleTextFor(node: LoopNode, resolve: RoleResolver): ChatRoleText | 
   if (resolved === null) {
     return null;
   }
-  return {
-    id: resolved.id,
-    sourcePath: resolved.sourcePath,
-    instructions: resolved.instructions ?? null,
-  };
+  return chatRoleTextOf(resolved);
 }
 
 /**
@@ -5111,6 +5115,8 @@ export function startProjectHost(start: ProjectHostStart): Readonly<Record<strin
   emitEvent = start.emit;
   // An installed DSpatch has no repository: its bundled folder holds what the code looks for in one.
   ownRepoRoot = ownRepositoryRoot(start.config.appPath) ?? start.config.bundledRoot ?? null;
+  // DSP-231: the role catalog installed with this DSpatch is the one in its own resources.
+  setInstalledRoleCatalogRoot(ownRepoRoot);
   providerSetup = new ProviderSetup({
     supportDir: path.join(start.config.userDataDir, 'provider-support'),
     pinnedDir: start.config.bundledRoot ?? start.config.appPath,

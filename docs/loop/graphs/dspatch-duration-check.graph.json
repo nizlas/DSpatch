@@ -37,20 +37,15 @@
       "id": "work",
       "kind": "agent",
       "label": "Complete formatDuration",
-      "purpose": "Edit src/duration.ts so that the tests in test/duration.test.ts pass; the tests are the specification, so read them. Do not edit any test file and do not add dependencies. You do not need to run the tests: the next step is DSpatch running them. Say what you changed and what you did not establish.",
+      "purpose": "Edit src/duration.ts so that the tests in test/duration.test.ts pass; the tests are the specification, so read them. Do not edit any test file and do not add dependencies. You do not need to run the tests: the next step is DSpatch running them. Say what you changed and what you did not establish.\n\nReply in prose, to the person who reads this run. They may not have read the role and should not have to. If your tools cannot run commands, say which build or test you would have wanted and could not run; where the drawing has a step in which DSpatch runs the project's command itself, that step is where it runs.\n\n`succeeded` means you did the work the mandate asked for, as far as you can tell. `unclear` means you cannot honestly say that — you did not finish, or you cannot tell. Use `unclear` rather than guessing. A later step will check the project; do not treat your own `succeeded` as that check.\n\nWhere the step you are in offers `done-unchecked`, it means: the work is done, and the independent check would add nothing, so skip it. It is right only when **you changed no file** and the mandate was a question, a reading or an explanation — the answer is the whole of the work. It is wrong for any change to code, build files, configuration or tests, however small, and wrong whenever you are unsure: then declare `succeeded` and let the check run. Skipping is recorded as skipped, never as checked or met, and the person sees your reason, so the reason is required. Give it on the same line, after the name:\n\n```\nRESULT: done-unchecked the mandate was a question about the build; no file changed\n```\n\nWhere you are offered the tool `request_interactive_handoff`, assess first whether the task benefits from the loop's steps. If working interactively with the person is a better fit — a decision only they can make, or work that has become exploratory — call that tool with a short reason, then end your turn with a short account of where the work stands. Do this before you change files where you can. The person chooses; follow their choice. If they choose to continue in the loop, carry on with the step, and do not recommend the switch again in this run. Never write the recommendation as your outcome or ask for it only in your reply: the tool is the only way it is heard.\n\nIf the premise of the mandate is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the work — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
       "role": {
-        "id": "project-work",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-work.role.md"
-        }
+        "id": "implementer",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/implementer/v1.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "limits": {
-        "maxMinutes": 15
-      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 15 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["succeeded", "unclear"],
       "whenUndeclared": "unclear",
       "declaredFailures": ["spec-error", "blocked"],
@@ -64,28 +59,23 @@
       "label": "DSpatch runs the tests",
       "purpose": "DSpatch runs node --test test/duration.test.ts in the run's working folder. Pass or fail is the process exit code, not an agent's account.",
       "outcomes": ["pass", "fail", "not-verified"],
-      "notes": "No role and no provider turn. The command is bound to this drawing by the editor's Run (EXAMPLE_GATE_COMMAND), and this purpose names it so a reader sees what will run. Its result is filed and handed to check.",
       "produces": { "required": false, "form": "stored-result", "note": "DSpatch's record of the command it ran." },
+      "notes": "No role and no provider turn. The command is bound to this drawing by the editor's Run (EXAMPLE_GATE_COMMAND), and this purpose names it so a reader sees what will run. Its result is filed and handed to check.",
       "view": { "x": 360, "y": 200 }
     },
     {
       "id": "check",
       "kind": "agent",
       "label": "Check the change",
-      "purpose": "Establish whether the assignment was met, from the change in the working folders, the work step's account and the test result DSpatch handed you. That result is evidence about the code version it names and no other. Do not edit files.",
+      "purpose": "Establish whether the assignment was met, from the change in the working folders, the work step's account and the test result DSpatch handed you. That result is evidence about the code version it names and no other. Do not edit files.\n\nReply in prose, to the person who reads this run. They may not have read the role and should not have to.\n\nDSpatch lets a `met` stand only if a command recorded in this run completed on the code exactly as you leave it, or if the run changed no file. Run your checks on the code as it is, and do not change files.\n\n`met` means the assignment was met. `rework` means it was not met yet and the work step can fix it: list each finding concretely — the command you ran, what it showed, and what has to change — because your reply is the only thing the work step is given about what is wrong. `not-met` means it cannot be met as asked, or what is wrong is not something another round of work would fix; say why. `could-not-check` means you could not establish it — no identifiable check, a command you could not run, or a result you could not read. Use `could-not-check` rather than guessing. It is a real answer and not a failure of the run.\n\nDo not declare `limit-reached`. DSpatch routes that itself when the correction rounds are spent.\n\nIf the premise of the check is wrong, begin your reply with the word SPEC_ERROR and then one sentence saying what is wrong. If something concrete prevents the check — access you do not have, a decision that is not yours — begin your reply with the word BLOCKED and then one sentence saying what is in the way. Those two words are read only as the opening of your reply, so use either of them freely in ordinary prose anywhere else.",
       "role": {
-        "id": "project-check",
-        "source": {
-          "kind": "role-source",
-          "path": "docs/loop/roles/project/project-check.role.md"
-        }
+        "id": "verifier",
+        "version": 1,
+        "source": { "kind": "role-catalog", "path": "docs/loop/roles/catalog/verifier/v1.role.md" }
       },
-      "model": {
-        "policy": "inherit"
-      },
-      "limits": {
-        "maxMinutes": 15
-      },
+      "model": { "policy": "inherit" },
+      "limits": { "maxMinutes": 15 },
+      "requirements": ["no-subagent-delegation"],
       "outcomes": ["met", "not-met", "could-not-check"],
       "whenUndeclared": "could-not-check",
       "declaredFailures": ["spec-error", "blocked"],
