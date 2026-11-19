@@ -69,6 +69,8 @@ export interface TurnState {
   readonly handover: { readonly runId: string; readonly fromStep: string } | null;
   /** DSP-209 S7: DSpatch's recap of loop runs sent in front of this message, verbatim, or `null`. */
   readonly loopRecap: string | null;
+  /** DSP-230: the project instructions under discussion, sent in front of this message, or `null`. */
+  readonly projectContext: string | null;
   readonly answer: string;
   readonly deltaCount: number;
   readonly toolsStarted: number;
@@ -192,6 +194,7 @@ export function routeEvent(
       resentContext: event.resentContext ?? null,
       handover: event.handover ?? null,
       loopRecap: event.loopRecap ?? null,
+      projectContext: event.projectContext ?? null,
       answer: '',
       deltaCount: 0,
       toolsStarted: 0,

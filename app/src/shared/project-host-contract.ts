@@ -1,5 +1,6 @@
 import type { HostBrowsePage } from './host-link';
 import type { ProjectGraphRequest } from './project-graph-bridge';
+import type { ChatSendContext } from './bridge';
 import type {
   AddLoopInstructionRequest,
   SteerTurnRequest,
@@ -113,6 +114,8 @@ export type ProjectHostMethods = ReviewMethods & {
   readonly 'chat.sendPrompt': (
     prompt: string,
     acknowledgedAttemptIds: readonly AttemptAcknowledgement[],
+    /** DSP-230: context DSpatch sends in front of the message, such as project instructions under discussion. */
+    context?: ChatSendContext,
   ) => BridgeAnswer<'sendPrompt'>;
   /** DSP-147: steering of the ordinary turn that is working. */
   readonly 'chat.steerTurn': (request: SteerTurnRequest) => BridgeAnswer<'steerTurn'>;
@@ -166,7 +169,15 @@ export type ProjectHostMethods = ReviewMethods & {
   ) => LoopDefinitionChooseOutcome;
   readonly 'loop.chatRunStartCheck': (
     definitionKey: string | null | undefined,
-  ) => { readonly refused: ChatLoopRunOutcome } | { readonly graphPath: string };
+  ) =>
+    | { readonly refused: ChatLoopRunOutcome }
+    | {
+        readonly graphPath: string;
+        /** DSP-230: the definition, and how many levels of its project instruction draft are unsaved. */
+        readonly definitionPath: string;
+        readonly graphName: string;
+        readonly unsavedProjectLevels: number;
+      };
   readonly 'loop.startEditorRun': (request: EditorLoopRunRequest) => BridgeAnswer<'startEditorLoopRun'>;
   readonly 'loop.startChatRun': (request: ChatLoopRunRequest) => BridgeAnswer<'startChatLoopRun'>;
   readonly 'loop.currentRun': () => BridgeAnswer<'currentLoopRun'>;

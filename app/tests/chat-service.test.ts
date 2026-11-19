@@ -2933,3 +2933,22 @@ test('SIMULATED: a handover is refused when the chat is on another conversation 
   assert.deepEqual(adapter.sent, []);
   await service.dispose();
 });
+
+test('SIMULATED: project instructions under discussion go in front of one message, kept apart from the person\'s words (DSP-230)', async () => {
+  const store = storeFor('project-context');
+  const open = await recapHarness('project-context', store, []);
+  const { service, adapter, workspace } = open('1');
+  const session = await service.startChatSession({ kind: 'folder', path: workspace });
+  const context = '===== project instructions under discussion =====\nDRAFT\n===== end of project instructions under discussion =====';
+  await service.sendPrompt('is the reviewer rule right?', [], context);
+  assert.equal(adapter.sent[0], `${context}\n\nis the reviewer rule right?`);
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+  await service.sendPrompt('thanks');
+  assert.equal(adapter.sent[1], 'thanks', 'only the message it was asked for');
+  adapter.emit({ type: 'run.finished', status: 'finished' });
+  const saved = store.read(session.conversationId).conversation?.messages ?? [];
+  assert.equal(saved[0]?.prompt, 'is the reviewer rule right?');
+  assert.equal(saved[0]?.projectContext, context);
+  assert.equal('projectContext' in (saved[1] ?? {}), false);
+  await service.dispose();
+});

@@ -46,6 +46,7 @@ import type {
   WorkspaceChange,
   WorkspaceReport,
   UiAgentEvent,
+  ProjectDiscussionRequest,
 } from '../shared/bridge';
 import { ActivityLine } from './DiscussionAnswer';
 import { FinalRunCard } from './FinalRunCard';
@@ -145,6 +146,8 @@ import { branchRows, branchSummaryLine, fanOutNodesIn } from '../shared/branch-p
 import { BranchList } from './BranchList';
 import { StepReportCard } from './StepReportCard';
 import { GraphProposalGroup, useGraphProposals } from './GraphProposalCard';
+import { ChatProjectProposal, useProjectProposals } from './ProjectInstructionsPanel';
+import type { ProjectInstructionProposal } from '../shared/project-draft';
 import {
   branchGroupKey,
   branchReplyGroups,
@@ -417,6 +420,29 @@ function Workbench({
   );
   const [actionError, setActionError] = useState<BridgeFailure | null>(null);
   /**
+   * DSP-230: project instructions the person asked to discuss from the graph editor. Shown
+   * above the composer and removable; the host builds their current draft into the next
+   * message when it is sent, in front of the person's words.
+   */
+  const [projectDiscussion, setProjectDiscussion] = useState<ProjectDiscussionRequest | null>(() => {
+    try {
+      const waiting = window.sessionStorage.getItem('dspatch.projectDiscussion');
+      window.sessionStorage.removeItem('dspatch.projectDiscussion');
+      return waiting === null ? null : (JSON.parse(waiting) as ProjectDiscussionRequest);
+    } catch {
+      return null;
+    }
+  });
+  useEffect(
+    () =>
+      window.dspatch.onProjectDiscussion((request) => {
+        setProjectDiscussion(request);
+        window.location.hash = '';
+        window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('textarea[data-ev="prompt"]')?.focus(), 0);
+      }),
+    [],
+  );
+  /**
    * Whether the user removed the summary of a new provider session (DSP-121). The
    * main process confirms the removal; the window remembers that it asked, so the
    * new-session block can say so until the next message goes. Reset when a session
@@ -638,6 +664,8 @@ function Workbench({
   }, [chat.turns, loopTurns, loopInstructions]);
   const restoredMessages = session?.restoredHistory.messages ?? NO_RESTORED_MESSAGES;
   const proposalPlacement = useGraphProposals(restoredMessages);
+  // DSP-230: the chat's project instruction proposals, drawn at the turn that made them.
+  const projectProposals = useProjectProposals(session?.conversationId ?? null);
   const transcript = useMemo(
     () =>
       mergeTranscript(chat.turns, loopTurns, loopInstructions, restoredMessages).filter(
@@ -647,6 +675,17 @@ function Workbench({
       ),
     [chat.turns, loopTurns, loopInstructions, placedMessages, restoredMessages],
   );
+  // DSP-230: project instruction proposals by the turn that made them; the rest after everything.
+  const { projectProposalsByTurn, projectProposalsUnplaced } = useMemo(() => {
+    const turns = new Set(transcript.flatMap((item) => (item.kind === 'history' ? [item.message.dspatchRunId] : item.kind === 'chat' ? [item.turn.dspatchRunId] : [])));
+    const byTurn = new Map<string, ProjectInstructionProposal[]>();
+    const unplaced: ProjectInstructionProposal[] = [];
+    for (const proposal of projectProposals) {
+      if (proposal.turnRunId !== null && turns.has(proposal.turnRunId)) byTurn.set(proposal.turnRunId, [...(byTurn.get(proposal.turnRunId) ?? []), proposal]);
+      else unplaced.push(proposal);
+    }
+    return { projectProposalsByTurn: byTurn, projectProposalsUnplaced: unplaced };
+  }, [projectProposals, transcript]);
   /** DSP-147: what the column shows now, read when a message is sent into running work. */
   const shownChat = useRef(chat);
   shownChat.current = chat;
@@ -2482,7 +2521,14 @@ function Workbench({
             }
           }
         } else {
-          await window.dspatch.sendPrompt(text, acknowledgedAttemptIds);
+          const discussing = projectDiscussion;
+          await window.dspatch.sendPrompt(
+            text,
+            acknowledgedAttemptIds,
+            discussing === null ? undefined : { projectInstructions: discussing },
+          );
+          // DSP-230: the context went with this message; a later one is the person's to ask for again.
+          if (discussing !== null) setProjectDiscussion((current) => (current === discussing ? null : current));
           if (sendGeneration.current === generation) {
             clearSent();
           }
@@ -2531,6 +2577,7 @@ function Workbench({
       checkConnection,
       composerState,
       prompt,
+      projectDiscussion,
       refreshRunState,
     ],
   );
@@ -3287,6 +3334,7 @@ function Workbench({
                       entries={proposalPlacement.byTurn.get(item.message.dspatchRunId)}
                       onApplied={() => void refreshLoopDefinitions()}
                     />
+                    <ProjectProposalGroup proposals={projectProposalsByTurn.get(item.message.dspatchRunId)} />
                   </Fragment>
                 ) : item.kind === 'chat' ? (
                   <Fragment key={item.turn.dspatchRunId}>
@@ -3301,6 +3349,7 @@ function Workbench({
                       entries={proposalPlacement.byTurn.get(item.turn.dspatchRunId)}
                       onApplied={() => void refreshLoopDefinitions()}
                     />
+                    <ProjectProposalGroup proposals={projectProposalsByTurn.get(item.turn.dspatchRunId)} />
                   </Fragment>
                 ) : item.kind === 'loop' ? (
                   <LoopTurnEntry
@@ -3333,6 +3382,7 @@ function Workbench({
               )}
               {/* A proposal whose turn cannot be named, which a current host never sends: not guessed into a turn. */}
               <GraphProposalGroup entries={proposalPlacement.unplaced} onApplied={() => void refreshLoopDefinitions()} />
+              <ProjectProposalGroup proposals={projectProposalsUnplaced} />
               {/*
                 One subdued line saying what is happening, and the live log behind
                 it for whoever wants it.
@@ -3602,6 +3652,25 @@ function Workbench({
                   <p className="app__note" data-ev="handover-not-sent">
                     {handoverNotSent}
                   </p>
+                )}
+                {/* DSP-230: the project instructions the next message carries, disclosed and removable. */}
+                {projectDiscussion === null || loopBusy ? null : (
+                  <div className="app__note project-discussion" data-ev="project-discussion-pending">
+                    <span>
+                      Your next message carries <strong>{projectDiscussion.label}</strong>: the graph, its repository
+                      {projectDiscussion.nodeId === null ? '' : ', the step and its role'} and the current draft, unsaved changes included.
+                      Documents are named, not attached.
+                    </span>{' '}
+                    <button
+                      type="button"
+                      className="button"
+                      data-ev="project-discussion-remove"
+                      title="Send the next message without the project instructions"
+                      onClick={() => setProjectDiscussion(null)}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 )}
                 {/* DSP-209 S7: what the next message will also carry, disclosed and removable. */}
                 {runState?.pendingLoopRecap === undefined || loopBusy ? null : (
@@ -5133,6 +5202,13 @@ function RestoredMessage({
         <details className="turn__resent" data-ev={`${at}-resent`}>
           <summary>{sentWithSummaryLine(message.resentContext.length)}</summary>
           <pre className="turn__answer">{message.resentContext}</pre>
+        </details>
+      )}
+      {/* DSP-230: the project instructions under discussion, sent with this message. */}
+      {message.projectContext !== undefined && (
+        <details className="turn__resent" data-ev={`${at}-project-context`}>
+          <summary>Sent with the project instructions under discussion ({String(message.projectContext.length)} characters)</summary>
+          <pre className="turn__answer">{message.projectContext}</pre>
         </details>
       )}
       {/* DSP-209 S7: DSpatch's recap of loop runs, sent with this message; never the person's words. */}
@@ -7794,6 +7870,13 @@ function Turn({
         the new-session block's vocabulary, and the same on a read-back turn
         (`sentWithSummaryLine`, DSP-121).
       */}
+      {/* DSP-230: the project instructions under discussion, sent with this message. */}
+      {turn.projectContext !== null && (
+        <details className="turn__resent" data-ev={`turn-${String(index)}-project-context`}>
+          <summary>Sent with the project instructions under discussion ({String(turn.projectContext.length)} characters)</summary>
+          <pre className="turn__answer">{turn.projectContext}</pre>
+        </details>
+      )}
       {/* DSP-209 S7: DSpatch's recap of loop runs, sent with this message; never the person's words. */}
       {turn.loopRecap !== null && (
         <details className="turn__resent" data-ev={`turn-${String(index)}-loop-recap`}>
@@ -8502,5 +8585,17 @@ function FolderSidebar({
         }}
       />
     </aside>
+  );
+}
+
+/** DSP-230: the project instruction proposals one turn made, each with its own Apply and Reject. */
+function ProjectProposalGroup({ proposals }: { readonly proposals: readonly ProjectInstructionProposal[] | undefined }): JSX.Element | null {
+  if (proposals === undefined || proposals.length === 0) return null;
+  return (
+    <div className="graph-proposals" data-ev="project-proposals">
+      {proposals.map((proposal) => (
+        <ChatProjectProposal key={proposal.id} proposal={proposal} />
+      ))}
+    </div>
   );
 }

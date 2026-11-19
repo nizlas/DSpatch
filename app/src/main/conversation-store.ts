@@ -975,6 +975,7 @@ function parseMessages(value: unknown): StoredConversation['messages'] {
       ...storedHandoverField(entry['handover']),
       // DSP-209 S7: the loop recap a message carried or the person removed, in this build's shape only.
       ...storedLoopRecapField(entry['loopRecap']),
+      ...(typeof entry['projectContext'] === 'string' ? { projectContext: entry['projectContext'] } : {}),
       answer: asString(entry['answer'], ''),
       deltaCount: asNumber(entry['deltaCount'], 0),
       toolEvents: asNumber(entry['toolEvents'], 0),

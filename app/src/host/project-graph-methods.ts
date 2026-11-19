@@ -13,12 +13,14 @@ import path from 'node:path';
 import type { ProviderId } from '../adapter/types';
 import { createFileRoleResolver } from '../main/loop-graph-roles';
 import { discoverLoopDefinitions, type LoopDefinitionRow } from '../main/loop-definition-files';
-import { planProjectGraph, readProjectGraph, referenceProblems, saveProjectInstructions, writeProjectGraph } from '../main/project-graph';
+import { planProjectGraph, readProjectGraph, referenceProblems, writeProjectGraph } from '../main/project-graph';
+import { ProjectDraftStore, type DraftAnswer, type DraftSource } from '../main/project-drafts';
 import { runRecommendation } from '../main/project-recommend-run';
 import type { LoopGraph, RoleResolver } from '../shared/loop-graph';
 import { referencedRoles } from '../shared/loop-graph-editing';
 import { parseLoopGraph } from '../shared/loop-graph-load';
 import type { ProjectGraphAnswer, ProjectGraphDescription, ProjectGraphRequest, ProjectGraphSource } from '../shared/project-graph-bridge';
+import type { ProjectDraftView } from '../shared/project-draft';
 import { emptyProjectInstructions } from '../shared/project-instructions';
 import { recommendationPrompt, targetKeys } from '../shared/project-recommendations';
 
@@ -34,9 +36,25 @@ export interface ProjectGraphHost {
   readonly recommendRefusal: (provider: ProviderId) => string | null;
   readonly createAnalysisAdapter: (provider: ProviderId) => Parameters<typeof runRecommendation>[0]['adapter'] & { dispose?: () => Promise<void> };
   readonly log?: (line: string) => void;
+  /** DSP-230: where unsaved drafts are kept (DSpatch's data folder), `null` for memory only. */
+  readonly draftsDir?: string | null;
+  /** DSP-230: a draft changed; every window that shows it is told. */
+  readonly onDraftChange?: (view: ProjectDraftView) => void;
+}
+
+export interface ProjectGraphService {
+  readonly handle: (request: ProjectGraphRequest) => Promise<ProjectGraphAnswer>;
+  /** DSP-230: the one draft store, also used by the chat's tools and the run start. */
+  readonly drafts: ProjectDraftStore;
+  /** The project graph a chat tool names by its definition id, as a definition key. */
+  readonly definitionKeyFor: (loopId: string) => string | null;
 }
 
 export function projectGraphMethods(host: ProjectGraphHost): (request: ProjectGraphRequest) => Promise<ProjectGraphAnswer> {
+  return projectGraphService(host).handle;
+}
+
+export function projectGraphService(host: ProjectGraphHost): ProjectGraphService {
   const running = new Map<string, AbortController>();
   const refused = (...problems: string[]): ProjectGraphAnswer => ({ kind: 'refused', problems });
   const templates = (): readonly LoopDefinitionRow[] => {
@@ -94,7 +112,35 @@ export function projectGraphMethods(host: ProjectGraphHost): (request: ProjectGr
     };
   };
 
-  return async (request) => {
+  const draftSource = (definitionKey: string): DraftSource | { readonly problem: string } => {
+    const row = projectRows().find((candidate) => path.resolve(candidate.filePath) === path.resolve(definitionKey));
+    if (row === undefined) return { problem: 'That project graph is not in this workspace any more.' };
+    const reading = readProjectGraph(row);
+    if ('problem' in reading) return { problem: reading.problem };
+    const described = describe({ definitionKey: row.filePath });
+    if (typeof described === 'string') return { problem: described };
+    return {
+      definitionKey: row.filePath,
+      graphName: row.definition?.name ?? described.outline.name,
+      repository: reading.repository,
+      instructionsPath: reading.instructionsPath,
+      outline: described.outline,
+      graph: graphOf(row)?.graph ?? null,
+    };
+  };
+  const drafts = new ProjectDraftStore({
+    dir: host.draftsDir ?? null,
+    source: draftSource,
+    ...(host.onDraftChange === undefined ? {} : { onChange: host.onDraftChange }),
+  });
+  const answerOf = (answer: DraftAnswer): ProjectGraphAnswer => {
+    if (!answer.ok) return { kind: 'refused', problems: [answer.problem], ...(answer.view === undefined ? {} : { view: answer.view }) };
+    const row = projectRows().find((candidate) => candidate.filePath === answer.view.definitionKey);
+    const graph = row === undefined ? null : (graphOf(row)?.graph ?? null);
+    return { kind: 'draft', view: answer.view, note: answer.note ?? null, references: referenceProblems(answer.view.repository, answer.view.draft, graph) };
+  };
+
+  const handle = async (request: ProjectGraphRequest): Promise<ProjectGraphAnswer> => {
     switch (request.kind) {
       case 'options': {
         const agent = host.agent();
@@ -136,20 +182,25 @@ export function projectGraphMethods(host: ProjectGraphHost): (request: ProjectGr
         host.choose(planned.plan.definitionPath);
         return { kind: 'applied', definitionKey: planned.plan.definitionPath, written: written.written, references };
       }
-      case 'save': {
-        const row = projectRows().find((candidate) => candidate.filePath === request.definitionKey);
-        if (row === undefined) return refused('That project graph is not in this workspace any more.');
-        const reading = readProjectGraph(row);
-        if ('problem' in reading) return refused(reading.problem);
-        const graph = graphOf(row)?.graph ?? null;
-        const saved = saveProjectInstructions({
-          reading: { instructionsPath: reading.instructionsPath, instructionsSha256: request.expectedSha256 },
-          instructions: request.instructions,
-          graph,
-        });
-        if (!saved.ok) return refused(saved.problem);
-        return { kind: 'saved', sha256: saved.sha256, references: referenceProblems(reading.repository, request.instructions, graph) };
+      case 'draft':
+        return answerOf(drafts.view(request.definitionKey));
+      case 'draftEdit':
+        return answerOf(drafts.edit(request.definitionKey, request.edits));
+      case 'draftSave': {
+        const answer = drafts.save(request.definitionKey);
+        if (answer.ok) host.log?.(`[project-graph] saved the project instructions of ${request.definitionKey}`);
+        return answerOf(answer);
       }
+      case 'draftDiscard':
+        return answerOf(drafts.discard(request.definitionKey));
+      case 'draftTakeDisk':
+        return answerOf(drafts.takeDisk(request.definitionKey));
+      case 'proposalApply':
+        return answerOf(drafts.applyProposal(request.definitionKey, request.proposalId));
+      case 'proposalReject':
+        return answerOf(drafts.rejectProposal(request.definitionKey, request.proposalId));
+      case 'proposals':
+        return { kind: 'proposals', proposals: drafts.proposalsFor(request.conversationId) };
       case 'check': {
         const row = rowFor(request.source);
         const graph = row === null ? null : (graphOf(row)?.graph ?? null);
@@ -193,5 +244,11 @@ export function projectGraphMethods(host: ProjectGraphHost): (request: ProjectGr
         return { kind: 'cancelled' };
       }
     }
+  };
+  return {
+    handle,
+    drafts,
+    definitionKeyFor: (loopId) =>
+      projectRows().find((row) => row.definition?.id === loopId && row.definition.projectInstructions !== undefined)?.filePath ?? null,
   };
 }

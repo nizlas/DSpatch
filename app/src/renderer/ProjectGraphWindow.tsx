@@ -9,12 +9,17 @@
  * themselves. The preview of a step is the run's own assembly. The agent's recommendations are
  * proposals beside the person's text: they change nothing until a person takes one, and a stop or
  * a failure leaves every edit as it was.
+ *
+ * DSP-230: a project graph's window edits the one draft the host keeps, which the editor's right
+ * panel edits too; Save writes it, Discard changes returns to the file, and closing the window
+ * keeps the draft. Only applying a built-in workflow still works on the window's own copy, since
+ * there is no project graph yet to keep a draft for.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ProjectGraphAnswer, ProjectGraphDescription, ProjectGraphSource, PlannedFileView } from '../shared/project-graph-bridge';
+import { levelName, sectionAt as sectionOf, withSection } from '../shared/project-draft';
 import {
-  EMPTY_SECTION,
   emptyProjectInstructions,
   projectInstructionsText,
   type DocumentReference,
@@ -23,23 +28,12 @@ import {
   type ReferenceProblem,
 } from '../shared/project-instructions';
 import type { RecommendationAnswer, RecommendationTarget } from '../shared/project-recommendations';
+import { DraftStatus, ProjectProposalCard, useProjectDraft } from './ProjectInstructionsPanel';
 
 export type ProjectWindowMode = { readonly mode: 'apply' } | { readonly mode: 'edit'; readonly definitionKey: string };
 
 type Options = Extract<ProjectGraphAnswer, { kind: 'options' }>;
 type SectionKey = string; // 'common' | `role:${id}` | `node:${id}`
-
-function sectionOf(value: ProjectInstructions, key: SectionKey): InstructionSection {
-  if (key === 'common') return value.common;
-  if (key.startsWith('role:')) return value.roles[key.slice(5)] ?? EMPTY_SECTION;
-  return value.nodes[key.slice(5)] ?? EMPTY_SECTION;
-}
-
-function withSection(value: ProjectInstructions, key: SectionKey, section: InstructionSection): ProjectInstructions {
-  if (key === 'common') return { ...value, common: section };
-  if (key.startsWith('role:')) return { ...value, roles: { ...value.roles, [key.slice(5)]: section } };
-  return { ...value, nodes: { ...value.nodes, [key.slice(5)]: section } };
-}
 
 let requestCounter = 0;
 
@@ -60,12 +54,18 @@ export function ProjectGraphWindow({
   const [name, setName] = useState('');
   const [step, setStep] = useState<'setup' | 'customize' | 'review'>(mode.mode === 'apply' ? 'setup' : 'customize');
   const [description, setDescription] = useState<ProjectGraphDescription | null>(null);
-  const [instructions, setInstructions] = useState<ProjectInstructions>(emptyProjectInstructions());
-  const [saved, setSaved] = useState<string>(JSON.stringify(emptyProjectInstructions()));
-  const [sha, setSha] = useState<string | null>(null);
+  const [local, setLocal] = useState<ProjectInstructions>(emptyProjectInstructions());
+  // DSP-230: a project graph's instructions are the shared draft; a template's are this window's.
+  const shared = useProjectDraft(mode.mode === 'edit' ? mode.definitionKey : null);
+  const instructions = mode.mode === 'edit' ? (shared.draft ?? emptyProjectInstructions()) : local;
+  const setInstructions = (change: (value: ProjectInstructions) => ProjectInstructions): void => {
+    if (mode.mode === 'edit') shared.edit(change);
+    else setLocal(change);
+  };
   const [selected, setSelected] = useState<SectionKey>('common');
   const [problems, setProblems] = useState<readonly string[]>([]);
-  const [references, setReferences] = useState<readonly ReferenceProblem[]>([]);
+  const [checked, setReferences] = useState<readonly ReferenceProblem[]>([]);
+  const references = mode.mode === 'edit' ? shared.references : checked;
   const [files, setFiles] = useState<readonly PlannedFileView[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -75,7 +75,7 @@ export function ProjectGraphWindow({
   const [taken, setTaken] = useState<ReadonlySet<string>>(new Set());
   const source: ProjectGraphSource | null = mode.mode === 'edit' ? { definitionKey: mode.definitionKey } : templateKey === '' ? null : { templateKey };
   const repositoryNow = mode.mode === 'edit' ? (description?.repository ?? '') : repository;
-  const dirty = JSON.stringify(instructions) !== saved;
+  const dirty = mode.mode === 'edit' ? (shared.view?.unsaved.length ?? 0) > 0 : false;
 
   useEffect(() => {
     void bridge.projectGraph({ kind: 'options' }).then((answer) => {
@@ -97,14 +97,9 @@ export function ProjectGraphWindow({
       }
       setDescription(answer.description);
       setProblems(answer.description.problems);
-      if (mode.mode === 'edit') {
-        setInstructions(answer.description.instructions);
-        setSaved(JSON.stringify(answer.description.instructions));
-        setSha(answer.description.instructionsSha256);
-      }
       return true;
     },
-    [bridge, mode.mode],
+    [bridge],
   );
   useEffect(() => {
     if (mode.mode === 'edit') void describe({ definitionKey: mode.definitionKey });
@@ -112,7 +107,7 @@ export function ProjectGraphWindow({
 
   // The references, checked as they change, against the repository.
   useEffect(() => {
-    if (source === null || repositoryNow === '' || step === 'setup') return;
+    if (mode.mode === 'edit' || source === null || repositoryNow === '' || step === 'setup') return;
     const timer = setTimeout(() => {
       void bridge.projectGraph({ kind: 'check', repository: repositoryNow, source, instructions }).then((answer) => {
         if (answer.kind === 'checked') setReferences(answer.references);
@@ -164,7 +159,14 @@ export function ProjectGraphWindow({
 
   const plan = async (): Promise<void> => {
     if (mode.mode === 'edit') {
-      setFiles([{ relative: description?.instructionsFile ?? 'the project instructions file', action: 'change', what: 'the project\'s instructions' }]);
+      const view = shared.view;
+      setFiles([
+        {
+          relative: view?.instructionsFile ?? description?.instructionsFile ?? 'the project instructions file',
+          action: 'change',
+          what: `the project's instructions: ${view === null ? '' : view.unsaved.map((level) => levelName(view.outline, level)).join(', ')}`,
+        },
+      ]);
       setStep('review');
       return;
     }
@@ -183,18 +185,16 @@ export function ProjectGraphWindow({
 
   const save = async (): Promise<void> => {
     setBusy('Saving…');
-    const answer =
-      mode.mode === 'edit'
-        ? await bridge.projectGraph({ kind: 'save', definitionKey: mode.definitionKey, instructions, expectedSha256: sha })
-        : await bridge.projectGraph({ kind: 'apply', templateKey, repository, name, instructions });
-    setBusy(null);
-    if (answer.kind === 'saved') {
-      setSha(answer.sha256);
-      setSaved(JSON.stringify(instructions));
-      setReferences(answer.references);
-      setNote('Saved. The next run reads these; a run in progress keeps the instructions it started with. Nothing was committed.');
+    if (mode.mode === 'edit') {
+      const ok = await shared.act('draftSave');
+      setBusy(null);
+      if (ok) setNote('Saved. The next run reads these; a run in progress keeps the instructions it started with. Nothing was committed.');
       setStep('customize');
-    } else if (answer.kind === 'applied') {
+      return;
+    }
+    const answer = await bridge.projectGraph({ kind: 'apply', templateKey, repository, name, instructions });
+    setBusy(null);
+    if (answer.kind === 'applied') {
       onApplied(answer.definitionKey);
     } else {
       setProblems(answer.kind === 'refused' ? answer.problems : ['Nothing was saved.']);
@@ -217,6 +217,17 @@ export function ProjectGraphWindow({
     <div className="dialog-backdrop">
       <div className="dialog project-window" role="dialog" aria-label={mode.mode === 'apply' ? 'Apply to repository' : 'Project instructions'} data-ev="project-window">
         <h2>{mode.mode === 'apply' ? 'Apply a workflow to a repository' : 'Project instructions'}</h2>
+        {mode.mode === 'edit' ? <DraftStatus handle={shared} /> : null}
+        {mode.mode === 'edit' && (shared.view?.proposals.filter((proposal) => proposal.status === 'proposed').length ?? 0) > 0 ? (
+          <details className="project-window__chat-proposals" data-ev="project-window-chat-proposals">
+            <summary>Proposals from the chat, not applied ({String(shared.view?.proposals.filter((proposal) => proposal.status === 'proposed').length ?? 0)})</summary>
+            {(shared.view?.proposals ?? [])
+              .filter((proposal) => proposal.status === 'proposed')
+              .map((proposal) => (
+                <ProjectProposalCard key={proposal.id} proposal={proposal} handle={shared} />
+              ))}
+          </details>
+        ) : null}
         {step === 'setup' ? (
           <div className="project-setup" data-ev="project-setup">
             <p className="muted">
@@ -454,7 +465,9 @@ export function ProjectGraphWindow({
 
               {selectedNode !== null ? (
                 <details className="project-preview" data-ev="project-preview" open>
-                  <summary>What this step is sent, in order</summary>
+                  <summary data-ev="project-preview-label">
+                    {dirty ? 'What this step would be sent once your unsaved changes are saved, in order' : 'What this step is sent, in order'}
+                  </summary>
                   <ol className="muted">
                     <li>
                       The generic role <strong>{selectedNode.roleId}</strong>, from <code>{description?.roleTexts[selectedNode.roleId ?? '']?.sourcePath ?? '?'}</code>
@@ -522,7 +535,7 @@ export function ProjectGraphWindow({
             </button>
           ) : null}
           {step === 'customize' ? (
-            <button type="button" data-ev="project-review-files" disabled={busy !== null || outline === null || (mode.mode === 'edit' && !dirty)} onClick={() => void plan()}>
+            <button type="button" data-ev="project-review-files" disabled={busy !== null || outline === null || (mode.mode === 'edit' && (!dirty || shared.view?.disk === 'changed'))} onClick={() => void plan()}>
               Review and save…
             </button>
           ) : null}
@@ -541,10 +554,12 @@ export function ProjectGraphWindow({
             data-ev="project-close"
             onClick={() => {
               if (recommending !== null) void bridge.projectGraph({ kind: 'cancelRecommend', requestId: recommending });
-              if (!dirty || window.confirm('Close without saving these instructions?')) onClose();
+              // A project graph's draft is kept by the host, so closing loses nothing; a template's is not.
+              if (mode.mode === 'edit' || step === 'setup' || window.confirm('Close without applying? What you wrote here is not kept.')) onClose();
             }}
+            title={dirty ? 'Your unsaved changes stay in the draft, in the graph editor\'s panel too' : undefined}
           >
-            {dirty ? 'Close without saving' : 'Close'}
+            {dirty ? 'Close (keep the draft unsaved)' : 'Close'}
           </button>
         </div>
       </div>

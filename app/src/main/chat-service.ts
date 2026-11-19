@@ -851,6 +851,8 @@ interface TurnRecord {
   readonly handover: StoredHandover | null;
   /** DSP-209 S7: the loop recap sent in front of this prompt, or the runs whose recap was removed. */
   readonly loopRecap: StoredLoopRecap | null;
+  /** DSP-230: the project instructions DSpatch sent in front of the message, verbatim. */
+  readonly projectContext: string | null;
   readonly startedAtUtc: string;
   deltaCount: number;
   deltaText: string;
@@ -1575,6 +1577,8 @@ export class ChatService {
 
   /** DSP-209 S7: the loop recap the next `run.started` belongs to, the way the DSP-121 recap is carried. */
   private pendingLoopRecapRecord: StoredLoopRecap | null = null;
+  /** DSP-230: the project instructions context of the message being sent. */
+  private pendingProjectContext: string | null = null;
 
   /** DSP-209 S7: the recap of loop runs the next ordinary message would carry, or `null`. */
   pendingLoopRecap(): PendingLoopRecap | null {
@@ -3294,8 +3298,10 @@ export class ChatService {
   async sendPrompt(
     prompt: string,
     acknowledgedAttemptIds: readonly AttemptAcknowledgement[] = [],
+    /** DSP-230: project instructions under discussion, sent in front of the message and kept apart from it. */
+    projectContext: string | null = null,
   ): Promise<{ readonly dspatchRunId: string }> {
-    return this.sendTurn(prompt, acknowledgedAttemptIds, null);
+    return this.sendTurn(prompt, acknowledgedAttemptIds, null, projectContext);
   }
 
   /**
@@ -3355,6 +3361,7 @@ export class ChatService {
     prompt: string,
     acknowledgedAttemptIds: readonly AttemptAcknowledgement[],
     handover: StoredHandover | null,
+    projectContext: string | null = null,
   ): Promise<{ readonly dspatchRunId: string }> {
     const { adapter, session } = this.requireSession();
     if (handover === null && prompt.trim() === '') {
@@ -3440,7 +3447,10 @@ export class ChatService {
         : removed.length > 0
           ? { runIds: removed, text: null }
           : null;
-    const withLoopRecap = loopRecap === null ? body : `${loopRecap.text}\n\n${body}`;
+    // DSP-230: the project instructions under discussion go right before the person's words.
+    this.pendingProjectContext = handover === null ? projectContext : null;
+    const withContext = this.pendingProjectContext === null ? body : `${this.pendingProjectContext}\n\n${body}`;
+    const withLoopRecap = loopRecap === null ? withContext : `${loopRecap.text}\n\n${withContext}`;
     const sentText = resent === null ? withLoopRecap : `${resent}\n\n${withLoopRecap}`;
     const attempt = ledger.open('agent-turn', promptLabel(handover === null ? prompt : handoverLabel(handover.fromStep)), {
       adapterProcess: adapter.runsLocalProcess === true,
@@ -4974,6 +4984,11 @@ export class ChatService {
     return this.currentTurn?.conversationId ?? null;
   }
 
+  /** DSP-230: the run id of the turn that is working, where its proposals are drawn. */
+  workingTurnRunId(): string | null {
+    return this.currentTurn?.dspatchRunId ?? null;
+  }
+
   /** DSP-209 S23a: every graph proposal in a conversation, oldest first, as saved and as made now. */
   graphProposals(conversationId: string): readonly GraphEditProposal[] {
     return this.mergedMessages(conversationId).flatMap((message) => message.graphProposals ?? []);
@@ -6256,6 +6271,7 @@ export class ChatService {
         resentContext: this.pendingResentContext,
         handover: this.pendingHandover,
         loopRecap: this.pendingLoopRecapRecord,
+        projectContext: this.pendingProjectContext,
         startedAtUtc: event.at,
         deltaCount: 0,
         deltaText: '',
@@ -6483,7 +6499,13 @@ export class ChatService {
         : shown;
     // DSP-209 S7: the loop recap a message carried, so the window can show what was sent.
     this.options.send(
-      event.type === 'run.started' && recapText !== null ? { ...withHandover, loopRecap: recapText } : withHandover,
+      event.type === 'run.started'
+        ? {
+            ...withHandover,
+            ...(recapText === null ? {} : { loopRecap: recapText }),
+            ...(this.pendingProjectContext === null ? {} : { projectContext: this.pendingProjectContext }),
+          }
+        : withHandover,
     );
   }
 }
@@ -6598,6 +6620,7 @@ function toStoredMessage(turn: TurnRecord): StoredMessage {
     resentContext: turn.resentContext,
     ...(turn.handover === null ? {} : { handover: turn.handover }),
     ...(turn.loopRecap === null ? {} : { loopRecap: turn.loopRecap }),
+    ...(turn.projectContext === null ? {} : { projectContext: turn.projectContext }),
     // The final message when there is one, because it is the provider's own complete
     // text; the assembled deltas otherwise, because a turn that was interrupted has
     // only those and they are still what was received.

@@ -1,5 +1,7 @@
 import type { HostBrowsePage, HostLinkBridge, HostLinkState, SetupBridge, SshQuestion } from '../shared/host-link';
 import type { ProjectGraphAnswer, ProjectGraphRequest } from '../shared/project-graph-bridge';
+import type { ProjectDraftView } from '../shared/project-draft';
+import type { ChatSendContext, ProjectDiscussionRequest } from '../shared/bridge';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import type { HelpBridge, RemoteSetupScript } from '../shared/remote-setup';
 
@@ -151,6 +153,9 @@ const RESOLVE_LOOP_ROLES: BridgeChannel = 'dspatch:resolve-loop-roles';
 const REVEAL_ROLE_SOURCE: BridgeChannel = 'dspatch:reveal-role-source';
 const OPEN_LOOP_EDITOR: BridgeChannel = 'dspatch:open-loop-editor';
 const GRAPH_PROPOSALS: BridgeChannel = 'dspatch:graph-proposals';
+const PROJECT_DRAFT: BridgeChannel = 'dspatch:project-draft';
+const DISCUSS_PROJECT_INSTRUCTIONS: BridgeChannel = 'dspatch:discuss-project-instructions';
+const PROJECT_DISCUSSION: BridgeChannel = 'dspatch:project-discussion';
 const OPEN_BRANCH_OUTPUT: BridgeChannel = 'dspatch:open-branch-output';
 const OPEN_REVIEW: BridgeChannel = 'dspatch:open-review';
 const OPEN_EXAMPLE_REVIEW: BridgeChannel = 'dspatch:open-example-review';
@@ -267,8 +272,8 @@ const bridge: DspatchBridge = {
   discardPendingRecap: (which?: 'resend' | 'loop-recap') =>
     ipcRenderer.invoke(DISCARD_PENDING_RECAP, which) as Promise<SessionContinuity>,
   copyText: (text: string) => ipcRenderer.invoke(COPY_TEXT, text) as Promise<void>,
-  sendPrompt: (text: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
-    ipcRenderer.invoke(SEND_PROMPT, text, acknowledgedAttemptIds) as Promise<{
+  sendPrompt: (text: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[], context?: ChatSendContext) =>
+    ipcRenderer.invoke(SEND_PROMPT, text, acknowledgedAttemptIds, context) as Promise<{
       readonly dspatchRunId: string;
     }>,
   cancelRun: () => ipcRenderer.invoke(CANCEL_RUN) as Promise<CancelOutcome>,
@@ -410,6 +415,21 @@ const bridge: DspatchBridge = {
   projectGraph: (request: ProjectGraphRequest) => ipcRenderer.invoke(PROJECT_GRAPH, request) as Promise<ProjectGraphAnswer>,
   pickProjectDocument: (repository: string) =>
     ipcRenderer.invoke(PICK_PROJECT_DOCUMENT, repository) as Promise<{ readonly path: string; readonly external: boolean } | null>,
+  onProjectDraft: (listener: (view: ProjectDraftView) => void) => {
+    const handler = (_event: unknown, payload: ProjectDraftView): void => listener(payload);
+    ipcRenderer.on(PROJECT_DRAFT, handler);
+    return () => {
+      ipcRenderer.removeListener(PROJECT_DRAFT, handler);
+    };
+  },
+  discussProjectInstructions: (request: ProjectDiscussionRequest) => ipcRenderer.invoke(DISCUSS_PROJECT_INSTRUCTIONS, request) as Promise<void>,
+  onProjectDiscussion: (listener: (request: ProjectDiscussionRequest) => void) => {
+    const handler = (_event: unknown, payload: ProjectDiscussionRequest): void => listener(payload);
+    ipcRenderer.on(PROJECT_DISCUSSION, handler);
+    return () => {
+      ipcRenderer.removeListener(PROJECT_DISCUSSION, handler);
+    };
+  },
   chooseLoopDefinition: (definitionPath: string | null) =>
     ipcRenderer.invoke(
       CHOOSE_LOOP_DEFINITION,

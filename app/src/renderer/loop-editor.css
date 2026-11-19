@@ -1808,3 +1808,95 @@
 .project-diff > div {
   min-width: 0;
 }
+
+/* DSP-230: project instructions in the right panel, the shared draft's status, and the chat's proposals. */
+.project-panel {
+  border-top: 1px solid #2c3540;
+  margin-top: 12px;
+  padding-top: 8px;
+  min-width: 0;
+}
+.project-panel code,
+.project-proposal-card code {
+  overflow-wrap: anywhere;
+}
+.project-draft-status {
+  border-left: 3px solid #3c6e4f;
+  padding: 4px 8px;
+  margin: 6px 0;
+}
+.project-draft-status--unsaved {
+  border-left-color: #e0b05a;
+}
+.project-draft-status p {
+  margin: 2px 0;
+}
+.project-level {
+  border: 1px solid #2c3540;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: 6px 0;
+  min-width: 0;
+}
+.project-level--unsaved {
+  border-color: #e0b05a;
+}
+.project-level > summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.project-level .tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: #22303c;
+}
+.project-level .tag--inherited {
+  background: #2a2f37;
+  color: #a9b4c0;
+}
+.project-level .tag--unsaved {
+  background: #4a3b1c;
+  color: #f0c97a;
+}
+.project-level__text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.project-level .project-document {
+  grid-template-columns: 1fr;
+}
+.project-panel__levels {
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.project-panel pre,
+.project-proposal-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 22em;
+  overflow-y: auto;
+}
+.project-proposal-change {
+  border-left: 2px solid #2c3540;
+  padding-left: 8px;
+  margin: 8px 0;
+  min-width: 0;
+}
+.project-proposal-card .project-diff {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.project-panel .project-diff {
+  grid-template-columns: minmax(0, 1fr);
+}
+.project-discussion {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .project-proposal-card .project-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -19,7 +19,11 @@ import { createFileRoleResolver } from '../src/main/loop-graph-roles';
 import { runLiveGraph } from '../src/main/loop-live-run';
 import { planProjectGraph, readProjectGraph, referenceProblems, saveProjectInstructions, sha256, writeProjectGraph } from '../src/main/project-graph';
 import { PresentationAdapter } from '../src/main/presentation-adapter';
-import { projectGraphMethods } from '../src/host/project-graph-methods';
+import { projectGraphMethods, projectGraphService } from '../src/host/project-graph-methods';
+import { projectInstructionTools } from '../src/host/project-instruction-tools';
+import { ProjectDraftStore } from '../src/main/project-drafts';
+import { openChosenLoop } from '../src/main/loop-definition-choice';
+import { discussionContext, previewForStep, readProposedChanges, sectionAt, type ProjectDraftView } from '../src/shared/project-draft';
 import { chatPromptFor } from '../src/shared/loop-chat';
 import { loadLoopGraph } from '../src/shared/loop-graph-load';
 import { parseLoopDefinition } from '../src/shared/loop-definition';
@@ -395,11 +399,221 @@ test('the host applies, chooses and saves; recommendations reuse one inventory a
   const reading = readProjectGraph(discoverLoopDefinitions([repository]).rows[0]!);
   assert.ok(!('problem' in reading));
   assert.equal(reading.instructionsSha256, described.description.instructionsSha256);
-  // A save with the hash it was read with.
-  const saved = await methods({ kind: 'save', definitionKey: applied.definitionKey, instructions: INSTRUCTIONS, expectedSha256: described.description.instructionsSha256 });
-  assert.ok(saved.kind === 'saved', JSON.stringify(saved));
-  const stale = await methods({ kind: 'save', definitionKey: applied.definitionKey, instructions: INSTRUCTIONS, expectedSha256: described.description.instructionsSha256 });
-  assert.ok(stale.kind === 'refused', 'a second save with the old hash is refused');
+  // DSP-230: the draft is edited level by level and saved; the file is written only then.
+  const levels = ['common', ...Object.keys(INSTRUCTIONS.roles).map((id) => `role:${id}`), ...Object.keys(INSTRUCTIONS.nodes).map((id) => `node:${id}`)];
+  const edited = await methods({ kind: 'draftEdit', definitionKey: applied.definitionKey, edits: levels.map((level) => ({ level, section: sectionAt(INSTRUCTIONS, level) })) });
+  assert.ok(edited.kind === 'draft' && edited.view.unsaved.length === levels.length, JSON.stringify(edited));
+  assert.equal(sha256(fs.readFileSync(reading.instructionsPath, 'utf8')), described.description.instructionsSha256, 'editing the draft writes nothing');
+  const saved = await methods({ kind: 'draftSave', definitionKey: applied.definitionKey });
+  assert.ok(saved.kind === 'draft' && saved.view.unsaved.length === 0, JSON.stringify(saved));
   assert.equal(parseLoopDefinition(fs.readFileSync(applied.definitionKey, 'utf8')).definition?.projectInstructions, 'orders-workflow.project.json');
-  assert.equal(sha256(fs.readFileSync(reading.instructionsPath, 'utf8')), saved.sha256);
+  assert.equal(sha256(fs.readFileSync(reading.instructionsPath, 'utf8')), saved.view.savedSha256);
+});
+
+// ---------------------------------------------------------------------------------------------
+// DSP-230: one shared draft, the chat's proposals, and what a run reads.
+
+/** A project graph with INSTRUCTIONS saved, and a service on it whose drafts are kept in `dir`. */
+function draftFixture(dir: string | null = null) {
+  const { root, row } = templateFolder();
+  const repository = project();
+  const plan = apply(repository, row);
+  const changes: ProjectDraftView[] = [];
+  const service = projectGraphService({
+    workspaceFolders: () => [repository],
+    ownRoot: () => root,
+    appVersion: '9.9.9',
+    choose: () => undefined,
+    agent: () => ({ provider: 'claude', model: 'sim' }),
+    recommendRefusal: () => null,
+    createAnalysisAdapter: () => new PresentationAdapter() as never,
+    draftsDir: dir,
+    onDraftChange: (view) => changes.push(view),
+  });
+  const instructionsPath = path.join(repository, '.dspatch/loops/orders-workflow.project.json');
+  return { repository, root, key: plan.definitionPath, service, changes, instructionsPath };
+}
+
+function viewOf(answer: Awaited<ReturnType<ReturnType<typeof projectGraphService>['handle']>>): ProjectDraftView {
+  assert.ok(answer.kind === 'draft', JSON.stringify(answer));
+  return answer.view;
+}
+
+test('a role edit reaches every step with the role and a step edit one step; two places editing share one draft', async () => {
+  const { key, service, instructionsPath, changes } = draftFixture();
+  const onDisk = fs.readFileSync(instructionsPath, 'utf8');
+  const first = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
+  assert.deepEqual(first.unsaved, []);
+  assert.deepEqual(first.outline.nodes.filter((node) => node.roleId === 'maker').map((node) => node.id).sort(), ['crew', 'maker']);
+  const where = { file: first.instructionsFile, repositoryRoot: first.repository };
+  const before = Object.fromEntries(first.outline.nodes.map((node) => [node.id, previewForStep(first.draft, first.outline, node.id, where)]));
+
+  // "The panel" changes the role; "the window", working from the draft it last saw, changes one step.
+  const panel = viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'role:maker', section: { text: 'ROLE-MAKER-2: keep commits small.', documents: [] } }] }));
+  const window = viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'node:scout', section: { text: 'NODE-SCOUT-2: notes in docs/notes only.', documents: [] } }] }));
+  assert.deepEqual([...window.unsaved].sort(), ['node:scout', 'role:maker'], 'neither edit overwrote the other');
+  assert.ok(window.revision > panel.revision);
+  assert.equal(changes.length >= 2, true, 'every window is told');
+  const after = Object.fromEntries(window.outline.nodes.map((node) => [node.id, previewForStep(window.draft, window.outline, node.id, where)]));
+  for (const id of ['maker', 'crew']) {
+    assert.match(after[id] ?? '', /ROLE-MAKER-2/);
+    assert.doesNotMatch(after[id] ?? '', /ROLE-MAKER: run npm test/);
+  }
+  assert.match(after['scout'] ?? '', /NODE-SCOUT-2/);
+  for (const node of window.outline.nodes.filter((each) => !['maker', 'crew', 'scout'].includes(each.id))) {
+    assert.equal(after[node.id], before[node.id], `${node.id} is untouched`);
+  }
+  assert.equal(fs.readFileSync(instructionsPath, 'utf8'), onDisk, 'nothing is saved by editing');
+  // The scope said before an edit.
+  assert.match(discussionContext(window, { nodeId: 'maker' }), /Applies to all 2 steps using/);
+});
+
+test('save writes the draft and the run reads exactly what the draft previewed; a run already started keeps its own', async () => {
+  const { repository, key, service, instructionsPath } = draftFixture();
+  const row = (): LoopDefinitionRow => discoverLoopDefinitions([repository]).rows.find((candidate) => candidate.filePath === key)!;
+  const started = openChosenLoop(row());
+  assert.ok(started.ok);
+  const startedText = JSON.stringify(started.chosen.projectInstructions?.value);
+  const edited = viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'common', section: { text: 'COMMON-2: say what you changed.', documents: [] } }] }));
+  const preview = previewForStep(edited.draft, edited.outline, 'maker', { file: edited.instructionsFile, repositoryRoot: edited.repository });
+  // Before saving, a new run reads the saved version.
+  const beforeSave = openChosenLoop(row());
+  assert.ok(beforeSave.ok);
+  assert.equal(JSON.stringify(beforeSave.chosen.projectInstructions?.value), startedText);
+  assert.deepEqual(service.drafts.unsaved(key), ['common'], 'what the run start asks about');
+  const saved = viewOf(await service.handle({ kind: 'draftSave', definitionKey: key }));
+  assert.deepEqual(saved.unsaved, []);
+  const next = openChosenLoop(row());
+  assert.ok(next.ok && next.chosen.projectInstructions !== null);
+  const graph = loadLoopGraph(fs.readFileSync(next.chosen.graphPath, 'utf8'), { resolveRole: createFileRoleResolver(repository) });
+  assert.ok(graph.graph);
+  const node = graph.graph.nodes.find((each) => each.id === 'maker')!;
+  const runText = stepProjectText(
+    { value: next.chosen.projectInstructions.value, relativeFile: path.relative(repository, instructionsPath).split(path.sep).join('/') },
+    graph.graph,
+    node,
+    {},
+    { repository, workingFolder: repository, same: true },
+  );
+  assert.equal(runText, preview, 'the saved instructions a run reads are what the draft previewed');
+  assert.equal(JSON.stringify(started.chosen.projectInstructions?.value), startedText, 'the run already started keeps what it pinned');
+});
+
+test('a change on disk is followed when the draft is clean, refused at save when it is not, and taken in level by level', async () => {
+  const { key, service, instructionsPath } = draftFixture();
+  viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
+  const disk = (change: (value: ProjectInstructions) => ProjectInstructions): void => {
+    const parsed = parseProjectInstructions(fs.readFileSync(instructionsPath, 'utf8'));
+    assert.ok(parsed.ok);
+    fs.writeFileSync(instructionsPath, `${JSON.stringify(change(parsed.value), null, 2)}\n`);
+  };
+  disk((value) => ({ ...value, nodes: { ...value.nodes, scout: { text: 'DISK-SCOUT', documents: [] } } }));
+  const followed = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
+  assert.equal(followed.disk, 'same');
+  assert.equal(followed.draft.nodes['scout']?.text, 'DISK-SCOUT', 'a clean draft follows the file');
+
+  viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'node:maker', section: { text: 'MINE-MAKER', documents: [] } }] }));
+  disk((value) => ({ ...value, common: { text: 'DISK-COMMON', documents: [] }, nodes: { ...value.nodes, maker: { text: 'DISK-MAKER', documents: [] } } }));
+  const conflicted = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
+  assert.equal(conflicted.disk, 'changed');
+  const refused = await service.handle({ kind: 'draftSave', definitionKey: key });
+  assert.ok(refused.kind === 'refused' && /changed on disk/.test(refused.problems.join(' ')), JSON.stringify(refused));
+  assert.match(fs.readFileSync(instructionsPath, 'utf8'), /DISK-MAKER/, 'nothing overwritten');
+  const taken = await service.handle({ kind: 'draftTakeDisk', definitionKey: key });
+  assert.ok(taken.kind === 'draft' && /node:maker changed both/.test(taken.note ?? ''), JSON.stringify(taken));
+  assert.equal(taken.view.draft.common.text, 'DISK-COMMON', 'a level the person did not change takes the disk version');
+  assert.equal(taken.view.draft.nodes['maker']?.text, 'MINE-MAKER', 'the person\'s level is kept');
+  assert.equal(taken.view.disk, 'same');
+  viewOf(await service.handle({ kind: 'draftSave', definitionKey: key }));
+  assert.match(fs.readFileSync(instructionsPath, 'utf8'), /MINE-MAKER/);
+  // Discard returns to the file.
+  viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'common', section: { text: 'THROWN AWAY', documents: [] } }] }));
+  const discarded = viewOf(await service.handle({ kind: 'draftDiscard', definitionKey: key }));
+  assert.deepEqual(discarded.unsaved, []);
+  assert.equal(discarded.draft.common.text, 'DISK-COMMON');
+});
+
+test('the chat proposes through its tool; applying changes only the draft, and a newer manual edit is never overwritten', async () => {
+  const dir = temp('dsp-drafts-');
+  const { key, service, instructionsPath } = draftFixture(dir);
+  const onDisk = fs.readFileSync(instructionsPath, 'utf8');
+  let turn = 'turn-1';
+  const tools = projectInstructionTools({
+    drafts: service.drafts,
+    definitionKeyFor: (id) => service.definitionKeyFor(id),
+    conversationId: () => 'conv-1',
+    turnRunId: () => turn,
+    newId: (() => {
+      let n = 0;
+      return () => `p${String((n += 1))}`;
+    })(),
+  });
+  const tool = (name: string) => tools.find((each) => each.name === name)!;
+  const read = await tool('read_project_instructions').execute({ graph: 'orders-workflow', step: 'maker' });
+  assert.ok(!read.isError && /ROLE-MAKER: run npm test/.test(read.text) && /Applies to all 2 steps using/.test(read.text), read.text);
+  assert.doesNotMatch(read.text, new RegExp(AGENTS_SECRET), 'documents are named, never included');
+
+  // Malformed: a level the graph lacks is refused and nothing is kept.
+  const bad = await tool('propose_project_instructions').execute({ graph: 'orders-workflow', explanation: 'x', changes: JSON.stringify([{ level: 'role:nobody', text: 'x', reason: 'r' }]) });
+  assert.ok(bad.isError && /no role "nobody"/.test(bad.text));
+
+  const changes = JSON.stringify([
+    { level: 'role:maker', text: 'ROLE-MAKER: run npm test and npm run lint before you finish.', reason: 'Lint is required by CI.', sources: [{ path: '.github/copilot/agents/maker.agent.md', note: 'earlier agent definition; the lint rule is still in CI, the rest is outdated' }] },
+    { level: 'node:scout', remove: true, reason: 'The scout no longer writes notes.' },
+  ]);
+  const proposed = await tool('propose_project_instructions').execute({ graph: 'orders-workflow', explanation: 'Bring the lint rule over.', changes });
+  assert.ok(!proposed.isError, proposed.text);
+  let view = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
+  const p1 = view.proposals.find((proposal) => proposal.id === 'p1')!;
+  assert.equal(p1.turnRunId, 'turn-1');
+  assert.deepEqual(p1.changes.map((change) => [change.level, change.action, [...change.steps].sort()]), [['role:maker', 'change', ['crew', 'maker']], ['node:scout', 'remove', ['scout']]]);
+  assert.match(p1.changes[0]!.sources[0]!.note, /outdated/);
+  assert.deepEqual(view.unsaved, [], 'proposing changes nothing');
+
+  // A second proposal for the role, then the person edits the role by hand.
+  turn = 'turn-2';
+  const second = await tool('propose_project_instructions').execute({ graph: 'orders-workflow', explanation: 'Shorter.', changes: JSON.stringify([{ level: 'role:maker', text: 'ROLE-MAKER: test.', reason: 'shorter' }]) });
+  assert.ok(!second.isError);
+  viewOf(await service.handle({ kind: 'draftEdit', definitionKey: key, edits: [{ level: 'role:maker', section: { text: 'MY OWN ROLE TEXT', documents: [] } }] }));
+  const stale = await service.handle({ kind: 'proposalApply', definitionKey: key, proposalId: 'p2' });
+  assert.ok(stale.kind === 'refused' && /role:maker changed in the draft/.test(stale.problems.join(' ')), JSON.stringify(stale));
+  view = viewOf(await service.handle({ kind: 'draft', definitionKey: key }));
+  assert.equal(view.draft.roles['maker']?.text, 'MY OWN ROLE TEXT', 'the newer manual edit is kept');
+  assert.equal(view.proposals.find((proposal) => proposal.id === 'p2')?.status, 'stale');
+
+  // p1 is stale for the role too; undo the manual edit and it applies whole.
+  viewOf(await service.handle({ kind: 'draftDiscard', definitionKey: key }));
+  const applied = viewOf(await service.handle({ kind: 'proposalApply', definitionKey: key, proposalId: 'p1' }));
+  assert.match(applied.draft.roles['maker']?.text ?? '', /npm run lint/);
+  assert.equal(applied.draft.nodes['scout'], undefined);
+  assert.deepEqual([...applied.unsaved].sort(), ['node:scout', 'role:maker']);
+  assert.equal(fs.readFileSync(instructionsPath, 'utf8'), onDisk, 'applying a proposal saves nothing');
+  assert.equal(applied.proposals.find((proposal) => proposal.id === 'p1')?.status, 'applied');
+
+  // Restarting DSpatch: a new store on the same folder still has the unsaved draft and the history.
+  const again = projectGraphService({
+    workspaceFolders: () => [path.dirname(path.dirname(path.dirname(key)))],
+    ownRoot: () => null,
+    appVersion: '9.9.9',
+    choose: () => undefined,
+    agent: () => ({ provider: null, model: null }),
+    recommendRefusal: () => null,
+    createAnalysisAdapter: () => new PresentationAdapter() as never,
+    draftsDir: dir,
+  }).drafts;
+  assert.ok(again instanceof ProjectDraftStore);
+  const restored = again.view(key);
+  assert.ok(restored.ok);
+  assert.deepEqual([...restored.view.unsaved].sort(), ['node:scout', 'role:maker']);
+  assert.equal(again.proposalsFor('conv-1').length, 2);
+});
+
+test('proposed changes are read strictly: a reason is required, unchanged levels and duplicates are refused', () => {
+  const outline = { name: 'g', roles: [{ id: 'maker', title: 'Maker', summary: '' }], nodes: [{ id: 'maker', label: 'Make', roleId: 'maker', purpose: '' }] };
+  const draft = INSTRUCTIONS;
+  assert.equal(readProposedChanges('[{"level":"common","text":"x"}]', outline, draft).ok, false);
+  assert.equal(readProposedChanges(JSON.stringify([{ level: 'common', text: draft.common.text, reason: 'r' }]), outline, draft).ok, false);
+  assert.equal(readProposedChanges(JSON.stringify([{ level: 'common', text: 'a', reason: 'r' }, { level: 'common', text: 'b', reason: 'r' }]), outline, draft).ok, false);
+  const added = readProposedChanges(JSON.stringify([{ level: 'node:maker', documents: [{ path: 'docs\\TESTING.md', purpose: 'tests', when: 'always' }], reason: 'r' }]), outline, { ...draft, nodes: {} });
+  assert.ok(added.ok && added.changes[0]?.action === 'add' && added.changes[0].after.documents[0]?.path === 'docs/TESTING.md', JSON.stringify(added));
 });

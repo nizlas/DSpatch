@@ -32,6 +32,8 @@ import type {
   BuildIdentity,
   ConversationExportResult,
   ChatLoopCancelOutcome,
+  ChatSendContext,
+  ProjectDiscussionRequest,
   ChatLoopRunOutcome,
   ChatLoopRunRequest,
   StoredRunRecordEntry,
@@ -192,6 +194,8 @@ const CHOOSE_LOOP_DEFINITION: BridgeChannel = 'dspatch:choose-loop-definition';
 const TAKE_GRAPH_TO_EDIT: BridgeChannel = 'dspatch:take-graph-to-edit';
 const GRAPH_TO_EDIT: BridgeChannel = 'dspatch:graph-to-edit';
 const NOTE_UNSAVED_DRAWING: BridgeChannel = 'dspatch:note-unsaved-drawing';
+const DISCUSS_PROJECT_INSTRUCTIONS: BridgeChannel = 'dspatch:discuss-project-instructions';
+const PROJECT_DISCUSSION: BridgeChannel = 'dspatch:project-discussion';
 const GRAPH_SAVED_ELSEWHERE: BridgeChannel = 'dspatch:graph-saved-elsewhere';
 const ADD_LOOP_INSTRUCTION: BridgeChannel = 'dspatch:add-loop-instruction';
 const STEER_TURN: BridgeChannel = 'dspatch:steer-turn';
@@ -2471,6 +2475,38 @@ async function askAboutUnsavedDrawing(
     detail: question.detail,
   });
   return question.answers[chosen.response] ?? 'cancel';
+}
+
+/** DSP-230: scripted answers to the unsaved project instructions question, for window trials. */
+const scriptedProjectDraftAnswers: string[] = chatRunMode
+  ? (process.env['DSPATCH_UNSAVED_PROJECT_DRAFT'] ?? '').split(';').map((entry) => entry.trim()).filter((entry) => entry !== '')
+  : [];
+
+/**
+ * DSP-230: the project instructions draft of the graph about to run has changes that are not
+ * saved. Unlike the drawing, running the saved version is a real answer: the draft is work in
+ * progress and the saved file is what the person last decided on. Cancel is the default.
+ */
+async function askAboutUnsavedProjectDraft(graphName: string, levels: number): Promise<'save' | 'saved' | 'cancel'> {
+  const answers = ['save', 'saved', 'cancel'] as const;
+  if (chatRunMode) {
+    const asked = scriptedProjectDraftAnswers.shift() ?? 'cancel';
+    const answer = answers.find((offered) => offered === asked) ?? 'cancel';
+    log(`scripted unsaved project instructions question answered ${answer} for ${graphName}`);
+    return answer;
+  }
+  const chosen = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['Save and run', 'Run the saved version', 'Cancel'],
+    defaultId: 2,
+    cancelId: 2,
+    title: 'Unsaved project instructions',
+    message: `The project instructions of "${graphName}" have unsaved changes (${String(levels)} ${levels === 1 ? 'level' : 'levels'}).`,
+    detail:
+      'A run uses the saved project instructions. Save and run saves your draft first and runs it. ' +
+      'Run the saved version runs what is on disk and keeps your draft unsaved. Cancel starts nothing.',
+  });
+  return answers[chosen.response] ?? 'cancel';
 }
 
 /**
@@ -4787,8 +4823,8 @@ function registerIpc(): void {
   });
   ipcMain.handle(
     SEND_PROMPT,
-    (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) =>
-      hostCall('chat.sendPrompt', NO_SENDER, prompt, acknowledgedAttemptIds ?? []),
+    (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[], context?: ChatSendContext) =>
+      hostCall('chat.sendPrompt', NO_SENDER, prompt, acknowledgedAttemptIds ?? [], context),
   );
   // DSP-147: steering of the ordinary turn that is working.
   ipcMain.handle(STEER_TURN, (_event, request: SteerTurnRequest) => hostCall('chat.steerTurn', NO_SENDER, request));
@@ -5199,6 +5235,18 @@ function registerLoopGraphIpc(): void {
    */
   ipcMain.handle(LIST_LOOP_DEFINITIONS, (): Promise<LoopDefinitionListing> => hostCall('loop.listDefinitions', NO_SENDER));
 
+  // DSP-230: "Discuss project instructions" in the graph editor brings the main chat forward
+  // with the context waiting for the person's next message. Nothing is sent from here.
+  ipcMain.handle(DISCUSS_PROJECT_INSTRUCTIONS, (_event, request: ProjectDiscussionRequest) => {
+    const target = mainWindow;
+    if (target !== null && !target.isDestroyed()) {
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+    }
+    sendToMainWindow(PROJECT_DISCUSSION, request);
+  });
+
   // DSP-229: "Apply to repository…" and "Project instructions…".
   ipcMain.handle(PROJECT_GRAPH, (_event, request: ProjectGraphRequest) => hostCall('loop.projectGraph', NO_SENDER, request));
   ipcMain.handle(PICK_PROJECT_DOCUMENT, async (_event, repository: unknown) => {
@@ -5402,6 +5450,26 @@ function registerLoopGraphIpc(): void {
         const failure = await writeUnsavedDrawing(pendingSave, 'run');
         if (failure !== null) {
           return { kind: 'failed', note: `Nothing was started. ${failure}` };
+        }
+      }
+      // DSP-230: a run reads the saved project instructions. Unsaved draft changes are asked
+      // about: save them first, run the saved version on purpose, or start nothing.
+      if (check.unsavedProjectLevels > 0) {
+        const answer = await askAboutUnsavedProjectDraft(check.graphName, check.unsavedProjectLevels);
+        if (answer === 'cancel') {
+          log(`chat loop run ${request.runId} cancelled at the unsaved project instructions question`);
+          return {
+            kind: 'refused',
+            reason: `Nothing was started. The project instructions of "${check.graphName}" have unsaved changes, and you chose neither to save them nor to run the saved version.`,
+          };
+        }
+        if (answer === 'save') {
+          const saved = await hostCall('loop.projectGraph', NO_SENDER, { kind: 'draftSave', definitionKey: check.definitionPath });
+          if (saved.kind !== 'draft') {
+            return { kind: 'failed', note: `Nothing was started. ${saved.kind === 'refused' ? saved.problems.join(' ') : 'The project instructions were not saved.'}` };
+          }
+        } else {
+          log(`chat loop run ${request.runId} runs the saved project instructions; the draft keeps its unsaved changes`);
         }
       }
       return hostCall('loop.startChatRun', from(event), request);

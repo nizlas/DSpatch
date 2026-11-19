@@ -9,6 +9,7 @@
  * do is listed here, and it is reached only over IPC.
  */
 
+import type { ProjectDraftView } from './project-draft';
 import type { ProjectInstructions } from './project-instructions';
 import type { ProjectGraphAnswer, ProjectGraphRequest } from './project-graph-bridge';
 import type {
@@ -1499,6 +1500,8 @@ export interface StoredMessage {
    * written before S7 and on every message with no run to recap.
    */
   readonly loopRecap?: StoredLoopRecap;
+  /** DSP-230: the project instructions under discussion, sent in front of the message verbatim. */
+  readonly projectContext?: string;
   /**
    * DSP-209 S23a: the loop graphs the agent proposed in this turn with `propose_loop_graph`,
    * in the order it proposed them, each with its status. A later proposal for the same graph
@@ -1793,6 +1796,8 @@ export interface UiAgentEvent {
   readonly handover?: { readonly runId: string; readonly fromStep: string };
   /** DSP-209 S7: on `run.started`, the loop recap DSpatch sent in front of this message, verbatim. */
   readonly loopRecap?: string;
+  /** DSP-230: on `run.started`, the project instructions DSpatch sent in front of this message. */
+  readonly projectContext?: string;
   /**
    * DSP-145: on `command.started` and `command.finished`, the command DSpatch's tool ran
    * for the agent, as the transcript's short action line needs it. The whole record stays
@@ -2506,6 +2511,8 @@ export interface DspatchBridge {
   sendPrompt(
     text: string,
     acknowledgedAttemptIds?: readonly AttemptAcknowledgement[],
+    /** DSP-230: context DSpatch puts in front of the message, kept apart from the person's words. */
+    context?: ChatSendContext,
   ): Promise<{ readonly dspatchRunId: string }>;
   cancelRun(): Promise<CancelOutcome>;
   /**
@@ -2762,6 +2769,12 @@ export interface DspatchBridge {
    * absolute and marked external when the file is outside it; `null` when nothing was chosen.
    */
   pickProjectDocument(repository: string): Promise<{ readonly path: string; readonly external: boolean } | null>;
+  /** DSP-230: a project graph's instruction draft changed, in any window or by the chat. */
+  onProjectDraft(listener: (view: ProjectDraftView) => void): () => void;
+  /** DSP-230: "Discuss project instructions": bring the main chat forward with this context waiting. */
+  discussProjectInstructions(request: ProjectDiscussionRequest): Promise<void>;
+  /** DSP-230: the main chat is asked to take this context with the next message. */
+  onProjectDiscussion(listener: (request: ProjectDiscussionRequest) => void): () => void;
   /**
    * Select a definition for the next mandate (DSP-84, DSP-85).
    *
@@ -3585,6 +3598,21 @@ export interface ProviderSetupState {
   readonly signedIn: boolean | null;
 }
 
+/**
+ * DSP-230: what DSpatch sends in front of a chat message on the person's behalf. The project
+ * instructions under discussion are built by the host when the message is sent, from the draft.
+ */
+export interface ChatSendContext {
+  readonly projectInstructions?: { readonly definitionKey: string; readonly nodeId: string | null; readonly label: string };
+}
+
+/** DSP-230: "Discuss project instructions" from the graph editor, for the main chat. */
+export interface ProjectDiscussionRequest {
+  readonly definitionKey: string;
+  readonly nodeId: string | null;
+  readonly label: string;
+}
+
 export type BridgeChannel =
   | 'dspatch:provider-step'
   | 'dspatch:ssh-status'
@@ -3638,6 +3666,9 @@ export type BridgeChannel =
   | 'dspatch:open-loop-editor'
   | 'dspatch:open-branch-output'
   | 'dspatch:graph-proposals'
+  | 'dspatch:project-draft'
+  | 'dspatch:discuss-project-instructions'
+  | 'dspatch:project-discussion'
   | 'dspatch:open-review'
   | 'dspatch:open-example-review'
   | 'dspatch:check-review-windows'

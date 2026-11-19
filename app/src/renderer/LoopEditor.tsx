@@ -138,6 +138,7 @@ import {
 import type { LoopRunAgentInfo, LoopRunAgentQuery } from '../shared/loop-run-agent-text';
 import { ModelClassDialog } from './ModelClassDialog';
 import { ProjectGraphWindow, type ProjectWindowMode } from './ProjectGraphWindow';
+import { ProjectInstructionsSection, useProjectDraft, type ProjectDraftHandle } from './ProjectInstructionsPanel';
 import { runningStep, stepStanding } from '../shared/loop-activity';
 import { BRIEF_EXCLUSIONS, briefParts, nodeHelpLabel, nodeHelpText, requiredForKind, type BriefPart } from '../shared/loop-chat';
 import { describeVisitChoices } from '../shared/loop-choices';
@@ -573,6 +574,24 @@ export function LoopEditor(): React.JSX.Element {
    * resolves. So this cannot drift from what would run.
    */
   const chosenLoop = useMemo(() => nextMandateLoopFrom(loopChoices), [loopChoices]);
+  // DSP-230: the graph on the canvas, if it is a project graph, has one shared instructions draft;
+  // a built-in workflow offers Apply to repository… instead, and is never changed from here.
+  const shownChoice = file?.preview === null && file.definition !== null ? (loopChoices?.choices.find((choice) => choice.key === file.definition?.path) ?? null) : null;
+  const projectKey =
+    file?.preview === null && file.definition !== null && (shownChoice?.display.projectInstructions === true || file.projectInstructions !== null) ? file.definition.path : null;
+  const shownIsTemplate = projectKey === null && shownChoice?.display.group === 'built-in';
+  const projectDraft = useProjectDraft(projectKey);
+  const projectSection = (nodeId: string | null): React.ReactNode =>
+    projectKey === null && !shownIsTemplate ? null : (
+      <ProjectInstructionsSection
+        handle={projectKey === null ? null : projectDraft}
+        nodeId={nodeId}
+        onApplyToRepository={() => setProjectWindow({ mode: 'apply' })}
+        onOpenWindow={() => {
+          if (projectKey !== null) setProjectWindow({ mode: 'edit', definitionKey: projectKey });
+        }}
+      />
+    );
 
   /*
    * DSP-84's `openedByHand` is gone, and its problem with it.
@@ -3349,6 +3368,8 @@ export function LoopEditor(): React.JSX.Element {
               onChange={(next) => apply(replaceNode(graph, selectedNode.id, next))}
               onGraphChange={(next) => apply(next)}
               projectInstructions={file?.projectInstructions ?? null}
+              projectDraft={projectKey === null ? null : projectDraft}
+              projectSection={selectedNode.kind === 'agent' ? projectSection(selectedNode.id) : null}
               onDelete={() => {
                 apply(withoutNode(graph, selectedNode.id), `Removed "${selectedNode.id}" and every edge that touched it.`);
                 setSelection(null);
@@ -3375,6 +3396,7 @@ export function LoopEditor(): React.JSX.Element {
               onChangeTarget={changeTarget}
               onChange={(next) => apply(next)}
               onSelect={(target) => setSelection(target)}
+              projectSection={projectSection(null)}
             />
           )}
           </fieldset>
@@ -3432,9 +3454,8 @@ export function LoopEditor(): React.JSX.Element {
         <ProjectGraphWindow
           mode={projectWindow}
           onClose={() => {
+            // DSP-230: the window and the panel share one draft, so nothing needs reading again.
             setProjectWindow(null);
-            // Saved instructions show in the preview of the open graph from its next read.
-            if (chosenLoop !== null) void chooseLoop(chosenLoop.key);
           }}
           onApplied={(definitionKey) => {
             setProjectWindow(null);
@@ -3810,9 +3831,15 @@ function NodeInspector({
   onGraphChange,
   onDelete,
   projectInstructions,
+  projectDraft,
+  projectSection,
 }: {
   /** DSP-229: the project graph's own instructions, as a run started now would read them. */
   readonly projectInstructions?: { readonly value: ProjectInstructions; readonly file: string } | null;
+  /** DSP-230: the shared draft of those instructions, which the brief previews when it has changes. */
+  readonly projectDraft?: ProjectDraftHandle | null;
+  /** DSP-230: the right panel's project instructions section for this step. */
+  readonly projectSection?: React.ReactNode;
   readonly graph: LoopGraph;
   readonly node: LoopNode;
   /** DSP-227: a change that reaches beyond this node, such as its parallel section. */
@@ -3883,13 +3910,17 @@ function NodeInspector({
       : [{ id: 'split' as const, heading: 'How to propose a split', carried: true, present: true, detail: 'Written by DSpatch from the parallel section this step proposes for.', text: [splitText] }]),
   ];
   // DSP-229: the project's own additions, by the run's own assembly, after the role.
+  // DSP-230: from the shared draft when there is one, labelled when it holds unsaved changes.
+  const draftView = projectDraft?.view ?? null;
+  const draftUnsaved = (draftView?.unsaved.length ?? 0) > 0;
+  const projectValue = projectDraft?.draft ?? projectInstructions?.value ?? null;
   const projectText =
-    projectInstructions === undefined || projectInstructions === null || node.kind !== 'agent'
+    projectValue === null || projectInstructions === undefined || node.kind !== 'agent'
       ? ''
       : projectInstructionsText(
-          projectInstructions.value,
+          projectValue,
           { nodeId: node.id, nodeLabel: node.label ?? node.id, roleId: node.role?.id ?? null },
-          { file: projectInstructions.file, repositoryRoot: resourceRoot ?? '(the repository)' },
+          { file: draftView?.instructionsFile ?? projectInstructions?.file ?? '', repositoryRoot: draftView?.repository ?? resourceRoot ?? '(the repository)' },
         );
   const projectPart: BriefPart[] =
     projectText === ''
@@ -3897,11 +3928,12 @@ function NodeInspector({
       : [
           {
             id: 'project',
-            heading: 'The project’s instructions for this step',
+            heading: draftUnsaved ? 'The project’s instructions for this step — preview of unsaved changes' : 'The project’s instructions for this step',
             carried: true,
             present: true,
             detail:
-              `From ${projectInstructions?.file ?? ''}: common, role and step additions, after the role. Their text is in the message; the documents ` +
+              (draftUnsaved ? 'This shows the unsaved draft; a run started now sends the saved version until you save. ' : '') +
+              `From ${draftView?.instructionsFile ?? projectInstructions?.file ?? ''}: common, role and step additions, after the role. Their text is in the message; the documents ` +
               'they name are not attached, the step is told where they are. ' +
               (node.fanOut === undefined ? '' : 'A branch that runs as another step gets that step’s additions instead, in its own worktree.'),
             text: [projectText],
@@ -4077,6 +4109,7 @@ function NodeInspector({
       {/* DSP-227: a fan-out step's section and a proposing step's generated instructions, in view, not under Advanced. */}
       {node.fanOut === undefined ? null : <ParallelSectionPanel graph={graph} node={node} onChange={onGraphChange} />}
       <SplitInstructionsPreview graph={graph} node={node} />
+      {projectSection}
       {effect.callsAnAgent ? (
         <section className="brief-block">
           <h3>What the message to this step contains</h3>
@@ -5021,7 +5054,10 @@ function GraphInspector({
   onChangeTarget,
   onChange,
   onSelect,
+  projectSection,
 }: {
+  /** DSP-230: the project instructions common to every step, or the way to make a template the project's own. */
+  readonly projectSection?: React.ReactNode;
   readonly graph: LoopGraph;
   readonly findings: readonly Finding[];
   /** Which agent runs this loop (DSP-138): the watched run's own line, else a fresh read. */
@@ -5054,6 +5090,7 @@ function GraphInspector({
           onChange={(event) => onChange({ ...graph, purpose: event.target.value })}
         />
       </label>
+      {projectSection}
       <label>
         Entry
         <select value={graph.entry} onChange={(event) => onChange({ ...graph, entry: event.target.value })}>

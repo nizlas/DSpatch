@@ -1,5 +1,7 @@
 import { adoptionNotice } from '../main/host-data';
-import { projectGraphMethods, type ProjectGraphHost } from './project-graph-methods';
+import { projectGraphService, type ProjectGraphHost, type ProjectGraphService } from './project-graph-methods';
+import { projectInstructionTools } from './project-instruction-tools';
+import { discussionContext } from '../shared/project-draft';
 import type { ProjectGraphRequest } from '../shared/project-graph-bridge';
 import { stepProjectText } from '../shared/project-instructions';
 import { hostname } from 'node:os';
@@ -258,6 +260,12 @@ const CHAT_LOOP_ACTIVITY: BridgeChannel = 'dspatch:chat-loop-activity';
 const LOOP_INSTRUCTION_EVENT: BridgeChannel = 'dspatch:loop-instruction-event';
 /** DSP-209 S23b: a conversation's graph proposals, after one is made, applied or discarded. */
 const GRAPH_PROPOSALS_EVENT: BridgeChannel = 'dspatch:graph-proposals';
+
+/** DSP-230: a project graph's draft changed: its view, to every window that edits or shows it. */
+const PROJECT_DRAFT_EVENT: BridgeChannel = 'dspatch:project-draft';
+
+/** DSP-230: the one store of project instruction drafts, made with the host's handlers. */
+let projectGraphs: ProjectGraphService | null = null;
 
 /** DSP-209 S23b: tell the window what a conversation's proposals are now. */
 function announceGraphProposals(conversationId: string): void {
@@ -1190,7 +1198,35 @@ function openPendingWorkspace(): void {
  * S23a adds the four graph tools, on chat sessions only: a loop step is never given these.
  */
 function chatWorkspaceTools(): readonly AppTool[] {
-  return [...chatWorkspaceToolsOnly(), ...chatGraphTools()];
+  return [...chatWorkspaceToolsOnly(), ...chatGraphTools(), ...chatProjectInstructionTools()];
+}
+
+/** DSP-230: read a project graph's instruction draft and propose changes to it; neither saves. */
+function chatProjectInstructionTools(): readonly AppTool[] {
+  const service = projectGraphs;
+  if (service === null) return [];
+  return projectInstructionTools({
+    drafts: service.drafts,
+    definitionKeyFor: (loopId) => service.definitionKeyFor(loopId),
+    conversationId: () => chatService.workingConversationId(),
+    turnRunId: () => chatService.workingTurnRunId(),
+    recorded: (proposal) => log(`[project-graph] the chat proposed ${proposal.id} for ${proposal.definitionKey}; the draft is unchanged`),
+  });
+}
+
+/**
+ * DSP-230: what the chat is sent in front of the person's message when they discuss a project
+ * graph's instructions: the current draft, built when the message is sent, so it is never older
+ * than what the panel shows. `null` when that graph has no draft to discuss.
+ */
+function projectDiscussionText(context: unknown): string | null {
+  if (typeof context !== 'object' || context === null || projectGraphs === null) return null;
+  const asked = (context as { projectInstructions?: unknown }).projectInstructions;
+  if (typeof asked !== 'object' || asked === null) return null;
+  const { definitionKey, nodeId } = asked as { definitionKey?: unknown; nodeId?: unknown };
+  if (typeof definitionKey !== 'string') return null;
+  const answer = projectGraphs.drafts.view(definitionKey);
+  return answer.ok ? discussionContext(answer.view, typeof nodeId === 'string' ? { nodeId } : null) : null;
 }
 
 /** DSP-209 S23a: list, read, describe and propose loop graphs; none writes a graph or runs one. */
@@ -2530,7 +2566,7 @@ function registerLoopMethods(): void {
    * DSP-229: "Apply to repository…" and "Project instructions…". Writes only inside the open
    * workspace's folders, and an apply makes the new graph this workspace's choice; nothing starts.
    */
-  const projectGraph = projectGraphMethods({
+  projectGraphs = projectGraphService({
     workspaceFolders: () => openWorkspaceFolders(),
     ownRoot: () => ownRoot,
     appVersion: config().appVersion,
@@ -2542,7 +2578,11 @@ function registerLoopMethods(): void {
     recommendRefusal: (provider) => adapterFactory.preflight({ provider, purpose: 'analysis' }),
     createAnalysisAdapter: (provider) => adapterFactory.createAdapter({ provider, purpose: 'analysis' }) as unknown as ReturnType<ProjectGraphHost['createAnalysisAdapter']>,
     log,
+    // DSP-230: drafts are DSpatch's data, never the repository's, so a closed window loses nothing.
+    draftsDir: path.join(userDataDir(), 'project-instruction-drafts'),
+    onDraftChange: (view) => sendToEveryWindow(PROJECT_DRAFT_EVENT, view),
   });
+  const projectGraph = projectGraphs.handle;
   handle('loop.projectGraph', (_context, request: ProjectGraphRequest) => projectGraph(request));
 
   /**
@@ -2667,7 +2707,7 @@ function registerLoopMethods(): void {
    */
   handle(
     'loop.chatRunStartCheck',
-    (_event, definitionKey: string | null | undefined): { readonly refused: ChatLoopRunOutcome } | { readonly graphPath: string } => {
+    (_event, definitionKey: string | null | undefined) => {
       if (chatService.openSession() === null) {
         return {
           refused: {
@@ -2692,7 +2732,10 @@ function registerLoopMethods(): void {
         return { refused: { kind: 'failed', note: overlap } };
       }
       const choice = chooseLoop(definitionKey);
-      return choice.ok ? { graphPath: choice.chosen.graphPath } : { refused: { kind: 'failed', note: choice.note } };
+      if (!choice.ok) return { refused: { kind: 'failed', note: choice.note } };
+      // DSP-230: a run reads the saved instructions; unsaved draft levels are asked about first.
+      const unsaved = choice.chosen.projectInstructions === null || projectGraphs === null ? [] : projectGraphs.drafts.unsaved(choice.chosen.definitionPath);
+      return { graphPath: choice.chosen.graphPath, definitionPath: choice.chosen.definitionPath, graphName: choice.chosen.definitionName, unsavedProjectLevels: unsaved.length };
     },
   );
 
@@ -4852,9 +4895,11 @@ function registerCoreMethods(): void {
   handle('chat.steerTurn', (_event, request: SteerTurnRequest) => chatService.steerTurn(request.text, request.anchor));
   handle(
     'chat.sendPrompt',
-    async (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[]) => {
-      if (chatRunScenario !== 'resume-choice') {
-        return chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? []);
+    async (_event, prompt: string, acknowledgedAttemptIds?: readonly AttemptAcknowledgement[], context?: unknown) => {
+      // DSP-230: the project instructions the person is discussing, as they are when sent.
+      const projectContext = projectDiscussionText(context);
+      if (chatRunScenario !== 'resume-choice' || projectContext !== null) {
+        return chatService.sendPrompt(prompt, acknowledgedAttemptIds ?? [], projectContext);
       }
       // The record's host half (DSP-121): a send refused by the guard, with its
       // reason, or one that went - and the adapter's count of what it received.

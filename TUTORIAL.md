@@ -372,7 +372,31 @@ A built-in graph is generic: its roles describe how a planner, an implementer or
 5. **Save.** The project graph is written under `.dspatch/loops/` in the repository: its definition, its graph, the generic roles copied as they are in this version of DSpatch (under `roles/<name>/`) and its own instructions in `<name>.project.json`. Nothing is overwritten and nothing is committed: commit the files with Git when you are ready. The project graph becomes this workspace's choice; nothing starts.
 6. **Run it.** The **Graph** list shows it under **Project workflows**, with its repository's name when several repositories are open, and only in a workspace that includes its repository; DSpatch's own graphs are under **Built-in workflows**. Send an assignment with **Use workflow** on, as for any graph.
 
-Later, **Project instructions…** beside the list reopens the same window for the chosen project workflow. Saving there changes only its instructions file, refuses to overwrite a change made to the file elsewhere, and applies from the next run: a run in progress keeps the instructions it started with. Updating DSpatch does not change a project workflow: its roles are its own copies, and the definition records which template and version it came from.
+Updating DSpatch does not change a project workflow: its roles are its own copies, and the definition records which template and version it came from.
+
+### Keep a project workflow's instructions up to date
+
+A project workflow's instructions are never finished: add to them as the project teaches you what its steps need.
+
+**In the graph editor's right panel.** Select an agent step of a project workflow. Below the step's settings, **Project instructions** shows its own generic role first, then three levels kept apart from it, each with its text and documents:
+
+- **Common**, marked *inherited from the project*, which every step gets.
+- **Role**, marked *inherited from the role*, which every step with that role gets. The panel says whom an edit reaches before you make it, such as *Applies to all 4 steps using generic-reviewer*.
+- **This step**, which only the selected step gets.
+
+Type instructions in your own words; no file is needed. Add documents with **Choose a document…** or **Add by path** at the level they belong to. **Preview** shows what the step will receive, assembled exactly as a run assembles it. With no step selected, the graph panel shows the common level and which roles and steps have additions. **Project instructions…** opens the larger window, with recommendations from the workspace's agent. For a built-in workflow, the panel offers **Apply to repository…** instead; a built-in workflow is never changed from here.
+
+**Through the main chat.** **Discuss project instructions**, in a step's panel or the graph panel, brings the main chat forward. Your next message there carries the workflow, its repository, the selected step and role, and the current draft, including unsaved changes. The chat shows that before you send, and **Remove** sends without it. Documents are named, not attached; the agent opens one only when the discussion needs it. The agent can answer with a **proposal**: for each change, whether it adds, changes or removes something, at which level, which steps it reaches, why, and where it comes from. **Apply to draft** takes it into your draft; **Reject** leaves the draft as it is. If you have edited a level since the agent proposed a change to it, the proposal says so and is not applied, so your newer edit is never overwritten. Ask the agent to propose again from the current draft.
+
+**Proposal, draft and saved version.** There are three versions:
+
+- A **proposal** is the agent's suggestion. It changes nothing until you apply it.
+- The **draft** is what you edit. The right panel and the **Project instructions…** window edit the same draft. Applying a proposal changes the draft, and nothing is saved by that. The draft is kept when you close the window, switch graphs or restart DSpatch.
+- The **saved version** is `<name>.project.json` in the repository. It is what the next run uses.
+
+The status line says which levels are unsaved. **Save** writes the draft; **Discard changes** returns to the file. Save is refused when the file was changed on disk since your draft was based on it, for example by a colleague's commit. **Take in the change on disk** then takes the disk's version of every level you did not change, and keeps yours. If you start a run with unsaved changes, DSpatch asks whether to **Save and run**, **Run the saved version** or cancel. A run in progress keeps the instructions it started with.
+
+**Moving from an earlier way of working.** When you bring over instructions from somewhere else, such as earlier VS Code agent definitions, old guidelines or a review checklist, discuss them with the chat a level at a time. Point the agent at the files, ask which rules still hold, and apply what you agree with. Its proposals name each instruction's source and say when it may be outdated. Nothing old is treated as current just because it exists.
 
 ### Build or adapt a workflow
 
